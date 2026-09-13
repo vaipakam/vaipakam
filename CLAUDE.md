@@ -627,17 +627,27 @@ was fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), each a
 different parsing edge of the same unbounded predicate and four of them false
 reports on a correct tree, with no issue naming a real file in this repo.
 `apps/keeper/scripts/check-keep-vars.mjs` — structural, unconditional in CI —
-is now the whole implemented defence. It asserts the declaration on **every
-configuration that names a var-carrying Worker**, at any depth under `apps/`
-and `ops/`, not just the canonical one per directory: a deploy can be pointed
-at another config with `--config`, and that was the one thing the scanner
-caught which the declaration alone did not (Codex raised it as a P1 on #2171).
-A config is identified by carrying `compatibility_date` — wrangler requires it
-to deploy, so the examined set is exactly the set that can delete a var, and a
-manifest that merely shares the Worker's name is out of scope. The header
-states by name what is still given up. Do not rebuild the scanner; if the
-declaration ever stops being sufficient, the answer is another bounded
-assertion about configs, not a parser for arbitrary text.
+is now the whole implemented defence, and it asserts the declaration on
+**EVERY wrangler config in the tracked tree**, at any depth and in any
+directory, whatever Worker it names and whether or not that Worker has vars
+today. `apps/app` and `apps/www` therefore declare it too.
+
+That unconditionality is itself a #1995-pattern fix, and the second one in this
+PR. A first attempt scoped the rule — configs whose `name` matched a
+var-carrying Worker and which carried a `compatibility_date`, under `apps/` or
+`ops/` — and review returned **six P1s in one round**, each a different way a
+deploy reaches a protected Worker through an excluded config: `--name`
+overrides the stored name, `--compatibility-date` supplies the missing date,
+`--env staging` merges an `env.staging.name`, `--config` reaches any path, a
+sixth Worker is in no list. Answering those needs wrangler's CLI-and-config
+merge semantics — the same unbounded inference, moved from shell text into
+JSON. **Do not reintroduce a scoping predicate here.** A config is identified
+by wrangler's own filename convention (`wrangler*.json`/`.jsonc`/`.toml`),
+which is a test on a string; named environments are asserted rather than
+assumed to inherit; a TOML config is refused with an instruction rather than
+parsed. The one accepted miss — a config checked in under a non-`wrangler*`
+name — is stated in the script's header. Do not rebuild the command scanner
+either.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.

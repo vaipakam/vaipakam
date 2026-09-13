@@ -92,9 +92,14 @@
 # change no PR can make. Until then the invariant is ALSO run inside
 # apps/keeper's `typecheck`, which the REQUIRED `workspaces` job invokes —
 # so removing `keep_vars` from any covered Worker fails a blocking check
-# today, and `WORKSPACES_RE` lists the two ops configs so that job is not
-# path-skipped on exactly that change. The unconditional job stays as the
-# belt: it needs no install and cannot be skipped by a path nobody predicted.
+# today, and `WORKSPACES_RE` matches ANY `wrangler*` config path — at any
+# depth, in any directory — so that job is not path-skipped on exactly that
+# change. It listed the two ops configs by exact path until #2171 r2, which
+# pointed out that the check had grown to reject configs the detector could
+# not see: a non-canonical ops config could be added, be correctly rejected by
+# the unconditional job, and still merge, because that job is not in the
+# ruleset. The unconditional job stays as the belt: it needs no install and
+# cannot be skipped by a path nobody predicted.
 #
 # The operator action once owed here for `keeper deploy guard (--keep-vars,
 # tree-wide)` is DISCHARGED BY DELETION, not by a ruleset edit: that job and
@@ -328,7 +333,7 @@ jobs:
           # mergeable with the unconditional job red (Codex #1995 r22). The
           # config files rather than the directories, so ordinary ops work does
           # not pull in every workspace typecheck.
-          WORKSPACES_RE='^(apps/|packages/|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|.*wrangler[^/]*\.(jsonc|json|toml)$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else

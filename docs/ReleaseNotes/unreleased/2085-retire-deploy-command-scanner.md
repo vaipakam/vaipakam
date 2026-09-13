@@ -27,13 +27,29 @@ and deleting them costs one real guarantee, which is kept rather than
 surrendered. Review caught the first draft claiming it cost none: a deployment
 can be pointed at a different configuration file, and the canonical config's
 declaration is then not the one loaded — the one case the scanner demonstrably
-handled. That is now answered where it belongs, as a property of configuration
-files: every configuration naming a Worker with vars to lose must declare
-preservation, wherever it sits and whichever command selects it. No text is
-read as a command to establish that. Otherwise the declaration is verified
-unconditionally on every pull request, over configurations the check discovers
-rather than a list it is handed, and every Worker holding operator-managed
-values carries it today.
+handled.
+
+Keeping it took two attempts, and the second is the more useful lesson. The
+first kept it by deciding which configurations mattered — those naming a
+Worker with values to lose, carrying a compatibility date, in one of two
+directories. The next review round returned six findings against that, each a
+different way a deployment reaches such a Worker through a configuration the
+rule had excluded: the name can be overridden on the command line, the missing
+date supplied there, a named environment selected, an arbitrary path chosen, a
+newly added Worker absent from any list. Answering those needs the deployment
+tool's own merge semantics — the same open-ended inference this change exists
+to retire, moved from shell text into configuration files.
+
+So the classification is gone. **Every deployment configuration in the tree
+declares preservation**, whatever it names and wherever it sits, identified by
+the tool's own filename convention rather than by anything about its contents.
+Named environments are required to declare it too, since whether the top-level
+setting carries into them is not something the check can establish. Two
+Workers that hold no operator-managed values today declare it as well: that is
+the point rather than an oversight — classifying them was the thing that kept
+going wrong, and one that later gains a value is already safe. What it costs
+them is the trade the others already accept: a deployment can no longer remove
+such a value, so deleting one becomes a deliberate dashboard action.
 
 The functional specification had already reached this conclusion and said so —
 where a check would need another system's execution model, the answer is a
@@ -52,19 +68,25 @@ implementation, so a later attempt inherits what was learned instead of
 rediscovering it.
 
 What the remaining defence does *not* cover is written down where that defence
-lives, rather than left to be inferred — a deploy that explicitly overrides the
-declaration on the command line, a configuration that does not exist in the
-tree when the check runs, and a Worker whose configuration declares no
-operator-managed values while values exist for it in the dashboard. The first
-was never covered by the retired scanner either, and the second was beyond it
-for the same reason it is beyond a file scan: it read the selected
-configuration's checked-in bytes, so a generated one was always invisible.
-Both are exposures inherited, not created.
+lives, rather than left to be inferred — a deployment that explicitly
+overrides the declaration on the command line, a configuration that does not
+exist in the tree when the check runs because it is generated, and a
+configuration checked in under a name that does not follow the tool's
+convention. The first two were never covered by the retired scanner either: it
+read the selected configuration's checked-in bytes, so a generated one was
+always invisible to it for the same reason it is invisible to a file scan.
+Those are exposures inherited, not created. The third is the price of not
+classifying files by their contents, which is what produced the false reports
+in the first place — one accepted miss, named, in place of six edges.
 
-This is the third instance of one pattern, and it is recorded as such in the
-contributor handbook alongside the other two: when successive review rounds
-keep finding edges of the same predicate, the move is to remove the predicate,
-not to add the next edge.
+This is the third and fourth instance of one pattern, and it is recorded as
+such in the contributor handbook alongside the others: when successive review
+rounds keep finding edges of the same rule, the move is to remove the rule,
+not to add the next edge. It happened twice inside this one change — once for
+the command scanner, and once for the classification written to replace part
+of it — which is the clearest evidence available that the pattern is about the
+shape of the question being asked, not about any particular implementation of
+it.
 
 Closes #2085, #2110, #2112, #2113, #2114, #2115, #2116, #2117, #2118, #2119,
 #2121, #2122, #2123, #2124, #2126.

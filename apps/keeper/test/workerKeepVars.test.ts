@@ -72,7 +72,7 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
   it('passes on the tree as committed', () => {
     const r = runCheck();
     expect(r.ok, r.out).toBe(true);
-    expect(r.out).toContain('preserve their dashboard-managed vars');
+    expect(r.out).toContain('wrangler config(s) declare preservation');
   });
 
   it('covers exactly the Workers the script covers', () => {
@@ -108,25 +108,22 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
   });
 
   /**
-   * A configuration that is NOT the Worker's canonical one.
+   * EVERY wrangler config declares preservation — no classification.
    *
-   * `wrangler deploy --config other.jsonc` (and `versions upload`) loads the
-   * selected file, so the canonical config's declaration is not the one in
-   * force. This was the ONE thing the retired command scanner caught that the
-   * declaration alone did not, raised as a P1 on #2171 when the retirement
-   * claimed it traded away no coverage. It is answered here as a property of
-   * configuration FILES rather than of commands — no notion of what runs, no
-   * parsing of text as a command.
+   * Round 1 of #2171 answered "a deploy can select a different config" by
+   * deciding WHICH configs mattered: those naming a var-carrying Worker and
+   * carrying a `compatibility_date`, under `apps/` or `ops/`. Round 2 returned
+   * SIX P1s against that predicate, each a different way to reach a protected
+   * Worker through a config it excluded — `--name`, `--compatibility-date`,
+   * `env.<name>.name` under `--env`, a path outside both roots, and a sixth
+   * Worker's alternate config. So the predicate is gone: the requirement is
+   * unconditional, and a config is identified by wrangler's own filename
+   * convention, which is a test on a string rather than a judgement about
+   * content.
    *
    * Each case seeds a COPY, for the reason `copiedRoot` documents.
    */
-  describe('a non-canonical config naming a var-carrying Worker (#2171 r1 P1)', () => {
-    /** The Worker names, read from the tree — never restated here. */
-    function agentName(): string {
-      const raw = readFileSync(join(REPO_ROOT, 'apps/agent/wrangler.jsonc'), 'utf8');
-      return /"name"\s*:\s*"([^"]+)"/.exec(raw)?.[1] as string;
-    }
-
+  describe('every wrangler config declares preservation (#2171 r2)', () => {
     function withSeeded(rel: string, body: string, assert: (r: ReturnType<typeof runCheck>) => void) {
       const root = copiedRoot();
       try {
@@ -139,79 +136,101 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       }
     }
 
-    it('is REJECTED when it omits the declaration', () => {
-      withSeeded('apps/agent/unsafe.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) => {
-        expect(r.ok, 'a selected config without keep_vars was accepted').toBe(false);
-        expect(r.out).toContain('apps/agent/unsafe.jsonc');
-        expect(r.out).toContain(agentName());
+    /** Every shape round 2 named, and each is rejected for the same reason. */
+    const REJECTED: Array<[string, string, string]> = [
+      // `--name` overrides the stored name, so the stored name cannot gate.
+      ['a config naming an unrelated Worker', 'apps/agent/wrangler.alt.jsonc', '{"name": "something-else", "compatibility_date": "2026-01-01"}'],
+      // `--compatibility-date` supplies what the file omits.
+      ['a config with no compatibility_date', 'apps/agent/wrangler.nodate.jsonc', '{"name": "vaipakam-agent"}'],
+      // `--config` accepts any path — neither root is privileged.
+      ['a config outside apps/ and ops/', 'configs/wrangler.www.jsonc', '{"name": "vaipakam-www", "compatibility_date": "2026-01-01"}'],
+      // A sixth Worker needs no entry in any list to be covered.
+      ['a config for a Worker in no list', 'apps/new-worker/wrangler.jsonc', '{"name": "vaipakam-new", "compatibility_date": "2026-01-01"}'],
+      // Depth is not a factor.
+      ['a config nested several levels down', 'apps/agent/deploy/envs/wrangler.staging.jsonc', '{"name": "vaipakam-agent", "compatibility_date": "2026-01-01"}'],
+      // A manifest sharing the Worker's name is NOT a config — it is not
+      // named `wrangler*`, so it is never read. Asserted from the other side
+      // in the bounds guards below; listed here so the contrast is visible.
+    ];
+
+    it.each(REJECTED)('rejects %s', (_label, rel, body) => {
+      withSeeded(rel, `${body}\n`, (r) => {
+        expect(r.ok, `${rel} was accepted without keep_vars`).toBe(false);
+        expect(r.out).toContain(rel);
       });
     });
 
-    it('is ACCEPTED when it declares it — the rule is the key, not the filename', () => {
+    it('accepts each of those once it declares the key', () => {
+      for (const [, rel, body] of REJECTED) {
+        const withKey = JSON.stringify({ ...JSON.parse(body), keep_vars: true });
+        withSeeded(rel, `${withKey}\n`, (r) =>
+          expect(r.ok, `${rel} was rejected despite declaring keep_vars: ${r.out}`).toBe(true),
+        );
+      }
+    });
+
+    it('requires the key in each named environment, not only at the top', () => {
+      // Whether `keep_vars` inherits into an `env.<name>` block is not
+      // something this check can verify, and `--env staging` merges that
+      // block. It is required there rather than assumed to carry down.
       withSeeded(
-        'apps/agent/safe.jsonc',
-        `{"name": "${agentName()}", "compatibility_date": "2026-01-01", "keep_vars": true}\n`,
-        (r) => expect(r.ok, r.out).toBe(true),
+        'apps/agent/wrangler.envs.jsonc',
+        `{"name": "vaipakam-agent", "keep_vars": true, "env": {"staging": {"name": "vaipakam-agent"}}}\n`,
+        (r) => {
+          expect(r.ok, 'an env block without keep_vars was accepted').toBe(false);
+          expect(r.out).toContain('staging');
+        },
       );
-    });
-
-    it('is found at any depth, not only beside the canonical config', () => {
-      withSeeded('apps/agent/deploy/envs/staging.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) => {
-        expect(r.ok).toBe(false);
-        expect(r.out).toContain('apps/agent/deploy/envs/staging.jsonc');
-      });
-    });
-
-    it('ignores a config naming a Worker that has no vars to lose', () => {
-      const www = /"name"\s*:\s*"([^"]+)"/.exec(
-        readFileSync(join(REPO_ROOT, 'apps/www/wrangler.jsonc'), 'utf8'),
-      )?.[1] as string;
-      expect(VAR_CARRYING_WORKERS).not.toContain('apps/www');
-      withSeeded('apps/agent/other.jsonc', `{"name": "${www}", "compatibility_date": "2026-01-01"}\n`, (r) =>
-        expect(r.ok, r.out).toBe(true),
-      );
-    });
-
-    it('ignores a manifest that merely SHARES the Worker name', () => {
-      // Not hypothetical: `ops/mesh-watcher/package.json` and its lockfile
-      // both carry `"name": "vaipakam-mesh-watcher"`. The first draft of this
-      // rule keyed on the name alone and turned the committed tree red with
-      // four false reports. `compatibility_date` is the marker instead —
-      // wrangler requires it to deploy, so a file without one cannot publish
-      // and cannot delete a var.
       withSeeded(
-        'apps/agent/some-package.json',
-        `{"name": "${agentName()}", "version": "1.0.0"}\n`,
+        'apps/agent/wrangler.envs.jsonc',
+        `{"name": "vaipakam-agent", "keep_vars": true, "env": {"staging": {"keep_vars": true}}}\n`,
         (r) => expect(r.ok, r.out).toBe(true),
-      );
-    });
-
-    it('ignores ordinary JSON and unparseable JSON — it is not a blanket file ban', () => {
-      // Most JSON under apps/ is not a wrangler config, and some of it is
-      // deliberately malformed fixture input. Neither may turn the check red.
-      withSeeded('apps/agent/tsconfig.probe.json', '{"compilerOptions": {}}\n', (r) =>
-        expect(r.ok, r.out).toBe(true),
-      );
-      withSeeded('apps/agent/broken.probe.json', 'not json at all {{{\n', (r) =>
-        expect(r.ok, r.out).toBe(true),
-      );
-    });
-
-    it('does not walk node_modules', () => {
-      withSeeded('apps/agent/node_modules/pkg/wrangler.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) =>
-        expect(r.ok, 'a vendored config was treated as ours').toBe(true),
       );
     });
 
     it('REFUSES a TOML config rather than guessing at its grammar', () => {
-      // Wrangler accepts TOML. Deciding whether a `keep_vars = true` line is
-      // top-level — and not inside a table or a multiline string — is the
-      // class of reasoning the retired scanner failed at, so the check says so
-      // instead of approximating. No TOML exists under apps/ or ops/ today.
-      withSeeded('apps/agent/wrangler.toml', `name = "${agentName()}"\nkeep_vars = true\n`, (r) => {
+      // Deciding whether a `keep_vars = true` line is top-level — and not
+      // inside a table or a multiline string — is the class of reasoning the
+      // retired scanner failed at, so the check says so instead of
+      // approximating. No TOML config exists in the tree.
+      withSeeded('apps/agent/wrangler.toml', 'name = "vaipakam-agent"\nkeep_vars = true\n', (r) => {
         expect(r.ok, 'a TOML config was silently skipped').toBe(false);
-        expect(r.out).toContain('JSON/JSONC configs only');
+        expect(r.out).toContain('JSON/JSONC');
       });
+    });
+
+    // BOUNDS GUARDS — these pass with or without the rule, and are here to
+    // pin that it is not a blanket file ban. Labelled so nobody counts them
+    // as coverage of the rule itself.
+    it('bounds guard: a manifest sharing the Worker name is not a config', () => {
+      // `ops/mesh-watcher/package.json` really does carry
+      // `"name": "vaipakam-mesh-watcher"`, and an earlier draft that keyed on
+      // the name turned the committed tree red on it.
+      withSeeded('apps/agent/package.json', `{"name": "vaipakam-agent", "version": "1.0.0"}\n`, (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: ordinary JSON is not read', () => {
+      withSeeded('apps/agent/tsconfig.probe.json', '{"compilerOptions": {}}\n', (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: vendored trees are not walked', () => {
+      withSeeded('apps/agent/node_modules/pkg/wrangler.jsonc', '{"name": "x"}\n', (r) =>
+        expect(r.ok, 'a vendored config was treated as ours').toBe(true),
+      );
+    });
+
+    it('the real tree carries the key on EVERY config, app and www included', () => {
+      // The two Workers with no `vars` are the ones the deleted predicate
+      // excluded, so their declarations are the part of this change most
+      // likely to be reverted by someone tidying up.
+      for (const rel of ['apps/app/wrangler.jsonc', 'apps/www/wrangler.jsonc']) {
+        const cfg = readFileSync(join(REPO_ROOT, rel), 'utf8');
+        expect(/"keep_vars"\s*:\s*true/.test(cfg), `${rel} lost its declaration`).toBe(true);
+      }
     });
   });
 

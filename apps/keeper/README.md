@@ -135,9 +135,13 @@ actions) without reaching the end.
 
 The flag stays on the package script — it is still correct, and harmless.
 `scripts/check-keep-vars.mjs` asserts the declaration itself, unconditionally
-in CI, over every configuration in `apps/` and `ops/` that names a Worker with
-vars to lose — not only the canonical one per directory, since a deploy can
-select a different config — and is now the whole implemented defence.
+in CI, on **every** wrangler config in the tree — any depth, any directory,
+whatever Worker it names — and is now the whole implemented defence. The rule
+is unconditional because deciding which config a deploy loads, and which
+Worker it targets, are command-line questions (`--config`, `--name`, `--env`,
+`--compatibility-date`) that no file scan can answer; six review findings in
+one round came from trying. `apps/app` and `apps/www` declare the key too,
+though they carry no vars today.
 
 **The trade, stated deliberately:** a deploy can no longer *remove* a var.
 Deleting one is now an explicit dashboard action — see the rollback note in
