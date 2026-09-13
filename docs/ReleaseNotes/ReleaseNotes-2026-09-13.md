@@ -1,19 +1,20 @@
 # Release Notes — 2026-09-13
 
-Three entries. Two are about the check that watches the lender's forced
-close-out card on the deployed build, which reads only copy a sighted
-lender can see. One of its rules was too quick to reject text sitting
-above the page's top edge, not knowing that a scrolling region inside the
-page could bring such text back; another refused any figure it could not
-account for, but knew the words for durations only in English, so a
-grace-window sentence written with a figure in one of five shipped
-non-Latin languages would have been reported as an invented amount. Both
-rules now measure every browser fact they rely on rather than assuming it,
-state the cases they can quantify, and admit rather than guess outside
-them. The third entry is about the protocol's own books: the ledger that
-records delivered funding now measures what actually moves. Neither check
-change touches a product surface, and both still read the live card as
-readable.
+Four entries. Three are about the drive that reviews the deployed build
+on a testnet, and each fixes a rule that could have blamed the product
+for something the product did not do. One rule was too quick to reject
+text sitting above the page's top edge, not knowing that a scrolling
+region inside the page could bring it back. Another refused any figure it
+could not account for, but knew the words for durations only in English,
+so a grace-window sentence written with a figure in one of five shipped
+non-Latin languages would have read as an invented amount. The third let
+one page's network outage vanish into a later page's success, which
+erased the very evidence that would have explained that page's missing
+card. All three now measure what they rely on rather than assuming it and
+say plainly what they cannot decide. The fourth entry is about the
+protocol's own books: the ledger that records delivered funding now
+measures what actually moves. No product surface changed, and the drive
+still reads the live card as readable.
 
 ## Thread — Live-drive visibility rule credits an inner scroll container (PR #2157)
 
@@ -308,3 +309,46 @@ line from being attached to a number on this one.
 
 Closes #2125. No product surface changes.
 <!-- assembled-fragment: 2125-non-latin-durations.md sha256=fd76b744c1215dd88270d865092d38b157010856aa7e929680210f7e8017e1a7 -->
+
+## Thread — One page's network outage no longer disappears into another page's success (PR #2167)
+
+The drive that reviews the deployed build on a testnet watches every
+network call the page makes, so that when a card fails to appear it can
+say whether the app was at fault or the network was. A failed call is not
+by itself a fault: the app retries a failed read and falls back to a
+second provider, so a failure followed by its own retry succeeding is one
+healthy read. The rule that recognises that was matching calls by name
+and arguments alone, which is the same for the same read on every page
+the drive visits. So a genuine outage that spoiled one page was wiped
+from the record the moment a later page made the same read successfully,
+which it always eventually does.
+
+The consequence runs in the worse of the two directions. The run could
+pass while hiding that one page had been observed through a broken
+connection; and worse, that page's missing card would then be reported as
+the product's fault, because the evidence explaining it had been erased.
+The whole point of this drive's two failure verdicts is that "the app did
+something wrong" and "we could not look properly" stay distinct, and this
+could turn the second into the first.
+
+The rule now reconciles a failure only against successes from the same
+page. Three earlier refinements had each narrowed when a success may
+clear a failure — how soon after, whether both came back in the same
+response, whether the success was even requested after the failure was
+known — and none of them could express which page the calls belonged to,
+which is why the same gap kept reappearing at a new edge. Scope is stated
+once, at the source, rather than by narrowing time a fourth time. A
+page's own retries and provider fallbacks all happen within that page, so
+the rule keeps doing exactly what it was written for. Where the browser
+cannot tell the drive which page a request came from, the current page
+stands in, which errs toward reporting a recovered failure rather than
+hiding a real one — the direction this drive takes everywhere. Records
+written before pages were tracked are judged exactly as they were.
+
+The situation has not been reproduced against a real partial outage,
+since arranging one across pages is beyond the test environment; this is
+a correction to the scope of an identity, argued from what that identity
+can and cannot distinguish.
+
+Closes #2100. No product surface changes.
+<!-- assembled-fragment: 2100-rpc-ledger-cohort.md sha256=523a9b5317213afda024b55141c0e829c66d65588049bc37eae49a28945fb5ef -->
