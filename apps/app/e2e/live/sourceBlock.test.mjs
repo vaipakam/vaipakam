@@ -875,6 +875,79 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // round-15 block above, and the computed-KEY case accepted here is
   // precisely its other half: same node, different slot, opposite answer.
 
+  // ROUND 17 — five more, four of them again the ACCEPTING direction.
+  it('refuses the round-17 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a borrowed truncator whose borrower is spelled as a computed name',
+        "const r = String.prototype.slice['call'](s, start, start + 320);",
+      ],
+      [
+        'a borrowed truncator whose METHOD is spelled as a computed name',
+        "const r = String.prototype['slice'].call(s, start, start + 320);",
+      ],
+      [
+        'a later computed KEY, which runs before an earlier static value',
+        "let e = s.indexOf('e');\nclass C { static a = s.slice(start, e); static [(e = start + 320, 'k')] = 1; }",
+      ],
+      [
+        'an initializer in the branch the use is NOT in',
+        "let r;\nif (on) { var end = s.indexOf('e'); } else { r = s.slice(start, end); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('does not refuse the round-17 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an argument past the two a truncator consumes',
+        "const r = s.slice(start, s.indexOf('x'), 320);",
+      ],
+      [
+        'an initializer in the SAME branch as the use',
+        "let r;\nif (on) { var end = s.indexOf('e'); r = s.slice(start, end); }",
+      ],
+      [
+        'an initializer earlier in the same case body as the use',
+        "let r;\nswitch (k) { case 1: var end = s.indexOf('e'); r = s.slice(start, end); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // Round 17's marker finding: one reason cannot excuse two bounds. A
+  // marked helper with a legitimate count was handing that excuse to
+  // every other call in it — the round-7 multi-declarator fault, a
+  // scope wider.
+  it('a function marker excuses one truncator, not every truncator in it', () => {
+    const one =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'function label(t) {\n  return t.slice(0, 40);\n}\n';
+    const two =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'function label(t, src, start) {\n' +
+      '  const region = src.slice(start, start + 320);\n' +
+      '  return t.slice(0, 40) + region;\n' +
+      '}\n';
+    const marks = (src, call) =>
+      markableStatementsOf(src, call.node).some((stmt) =>
+        markedStatement(src, stmt, 'not-a-source-region'),
+      );
+    expect(sliceCallsIn(one).every((c) => marks(one, c))).toBe(true);
+    expect(sliceCallsIn(two).some((c) => marks(two, c))).toBe(false);
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

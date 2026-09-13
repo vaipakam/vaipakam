@@ -354,6 +354,41 @@ in from another file was being refused outright on the grounds that
 imports cannot hold text — which is untrue, and contradicted a limit this
 same file states two screens further down.
 
+The next round confirmed the shift and sharpened the same idea. Naming
+the uncertain part rather than the whole construct was right, but the
+question asked about that part was still being asked about the whole: it
+checked whether the use sat anywhere inside the construct, when what
+matters is whether it sits on the SAME uncertain path. Something set up
+in one branch and used in the other passed that test, and the value would
+not have been set at all. The question is now asked of the part, which is
+also what makes a value set earlier in the same branch, or earlier in the
+same arm of a multi-way choice, correctly accepted.
+
+That round also found the one case where a value stored on the thing
+itself, rather than on each copy of it, is NOT in ordinary order. All the
+names worked out when a shape is written down are worked out before any
+of those stored values are, so a name computed further down can supply
+something a stored value further up reads. Text order and running order
+genuinely differ there, and the check now knows it.
+
+The oldest habit in this work reappeared once more, and it is the one
+worth ending on: two readers of the same question. A reader of "which
+property is this" existed twice — one that could decode a name written
+indirectly and one that refused to look at any — so a truncation spelled
+with an indirect name was invisible to one and misread by the other, and
+slipped past both. That is precisely the fault of the round that had two
+answers to "is this a length", and of the round that had two answers to
+"what does this name mean". There is one reader now.
+
+Two smaller ones, both again the refusing direction: a truncation takes
+at most two bounds and anything after is ignored by the language, but the
+check was reading the ignored one as a length; and a note excusing a
+genuine count, written above a small helper, was excusing every
+truncation in that helper rather than the one it describes — the same
+one-reason-many-bounds fault found earlier on a line declaring several
+names, a scope wider. A note above a helper now excuses it only when
+there is exactly one thing in it to be about.
+
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
 neither a block nor a call, so there was nothing to convert them to. That

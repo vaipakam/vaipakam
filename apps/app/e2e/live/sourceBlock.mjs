@@ -356,8 +356,7 @@ export function sliceCallsIn(src) {
       if (
         inner &&
         inner.type === 'MemberExpression' &&
-        !inner.computed &&
-        inner.property.name === 'bind'
+        memberName(inner) === 'bind'
       ) {
         const method = borrowedTruncator(src, inner, 'bind');
         if (method) {
@@ -365,7 +364,7 @@ export function sliceCallsIn(src) {
             method,
             line: lineOf(src, n.start),
             receiver: c.arguments[0] ? src.slice(c.arguments[0].start, c.arguments[0].end) : '',
-            args: n.arguments,
+            args: effective(n.arguments),
             text: src.slice(n.start, n.end),
             node: n,
             receiverNode: c.arguments[0] ?? null,
@@ -384,7 +383,7 @@ export function sliceCallsIn(src) {
         method: borrowed,
         line: lineOf(src, n.start),
         receiver: n.arguments[0] ? src.slice(n.arguments[0].start, n.arguments[0].end) : '',
-        args: borrowedArgs(c.property.name, n.arguments),
+        args: effective(borrowedArgs(memberName(c), n.arguments)),
         text: src.slice(n.start, n.end),
         node: n,
         receiverNode: n.arguments[0] ?? null,
@@ -396,13 +395,7 @@ export function sliceCallsIn(src) {
     // INSPECTED ANYWAY rather than skipped (round 7) — `src[`slice`](…)`
     // was dropping out of enforcement entirely, and a call nobody can
     // name is not a reason to stop looking at it.
-    const name = !c.computed
-      ? c.property.name
-      : c.property.type === 'Literal'
-        ? c.property.value
-        : c.property.type === 'TemplateLiteral' && c.property.expressions.length === 0
-          ? c.property.quasis.map((q) => q.value.cooked).join('')
-          : UNREADABLE;
+    const name = memberName(c);
     // `substring` and `substr` truncate identically; the invariant is
     // about source REGIONS, not one spelling of the String API (round 5).
     if (name !== UNREADABLE && !TRUNCATORS.has(name)) continue;
@@ -410,7 +403,7 @@ export function sliceCallsIn(src) {
       method: name,
       line: lineOf(src, n.start),
       receiver: src.slice(c.object.start, c.object.end),
-      args: n.arguments,
+      args: effective(n.arguments),
       text: src.slice(n.start, n.end),
       // The call itself, so a caller can ask which STATEMENT it belongs
       // to. A marker keyed to nearby LINES excused a neighbour (#2144
@@ -446,6 +439,20 @@ const BORROWERS = new Set(['call', 'apply']);
  * this cannot read statically (a spread, a name) yields no arguments,
  * which refuses, and refusing an unreadable bound is the right way round.
  */
+/**
+ * The arguments a truncator actually CONSUMES.
+ *
+ * `slice`, `substring` and `substr` all take at most two; JavaScript
+ * ignores anything after. Scanning every argument classified the ignored
+ * `320` in `src.slice(start, src.indexOf('end'), 320)` as a character
+ * bound and refused a correctly anchored region (round 17) — the
+ * refusing direction again, and this one would have demanded an
+ * exemption marker asserting that correct code counts characters.
+ */
+function effective(args) {
+  return args.slice(0, 2);
+}
+
 function borrowedArgs(via, args) {
   const rest = args.slice(1);
   if (via !== 'apply') return rest;
@@ -455,12 +462,40 @@ function borrowedArgs(via, args) {
 }
 
 function borrowedTruncator(src, callee, only) {
-  if (callee.computed) return null;
-  const via = callee.property.name;
+  const via = memberName(callee);
   if (only ? via !== only : !BORROWERS.has(via)) return null;
   const inner = callee.object;
-  if (!inner || inner.type !== 'MemberExpression' || inner.computed) return null;
-  return TRUNCATORS.has(inner.property.name) ? inner.property.name : null;
+  if (!inner || inner.type !== 'MemberExpression') return null;
+  const method = memberName(inner);
+  return TRUNCATORS.has(method) ? method : null;
+}
+
+/**
+ * The property name a member expression READS, statically — ONE reader,
+ * used by every layer that needs one.
+ *
+ * There were two of these: the direct-call path decoded computed names
+ * (a string, a no-substitution template, otherwise UNREADABLE) while
+ * `borrowedTruncator` refused any computed member outright. So
+ * `String.prototype.slice['call'](src, start, start + 320)` was invisible
+ * to the borrowed path AND read as a plain `call` by the direct one,
+ * leaving the window unexamined by both (round 17).
+ *
+ * Two readers of the same thing is the shape this file keeps being
+ * caught by — round 6 had two answers to "is this a length", round 15
+ * had two to "what does this name mean". The fix each time is one
+ * reader, and it is the fix here.
+ *
+ * `UNREADABLE` is a Symbol, so it is in neither name set and falls
+ * through to the inspect-anyway path rather than being skipped.
+ */
+function memberName(member) {
+  if (!member.computed) return member.property.name;
+  if (member.property.type === 'Literal') return member.property.value;
+  if (member.property.type === 'TemplateLiteral' && member.property.expressions.length === 0) {
+    return member.property.quasis.map((q) => q.value.cooked).join('');
+  }
+  return UNREADABLE;
 }
 
 /**
@@ -538,11 +573,28 @@ export function bindingOf(src, node) {
  */
 function alwaysRunsBefore(src, decl, use) {
   const { parents } = astOf(src, 'alwaysRunsBefore');
-  const contains = (n) => n.start <= use.start && n.end >= use.end;
   for (let c = decl, p = parents.get(c); p; c = p, p = parents.get(p)) {
-    if (inGuardedSlot(SKIPPABLE, p, c) && !contains(p)) return false;
+    const slot = guardedSlot(SKIPPABLE, p, c);
+    // The use must share the SAME guarded slot, not merely sit somewhere
+    // inside the construct (round 17). `if (on) { var end = at('e'); }
+    // else { s.slice(start, end) }` put both in one `IfStatement`, and
+    // asking whether the STATEMENT contained the use said yes — so a
+    // declaration in the branch that did not run was treated as
+    // guaranteed, which is the unsound direction.
+    if (slot && !slotContains(slot, use)) return false;
   }
   return decl.start < use.start;
+}
+
+/** Whether a slot's extent covers `use`. A slot may be a list — a case
+ *  body, a block's statements — and the whole list is one guarded path,
+ *  so a use in a LATER statement of it is still on that path. */
+function slotContains(slot, use) {
+  const parts = Array.isArray(slot) ? slot.filter(Boolean) : [slot];
+  if (parts.length === 0) return false;
+  const start = Math.min(...parts.map((n) => n.start));
+  const end = Math.max(...parts.map((n) => n.end));
+  return start <= use.start && end >= use.end;
 }
 
 /**
@@ -580,16 +632,23 @@ function definitelyAfter(src, decl, use) {
  * up: a template is not text or code, its quasis are text and its holes
  * are code. A node is not skipped or run, its slots are.
  */
-function inGuardedSlot(table, parent, child) {
+function guardedSlot(table, parent, child) {
   const slots =
     parent.type === 'PropertyDefinition' && parent.static
       ? // A STATIC field initializer runs where it is written, in
-        // class-definition order, so nothing about it is guarded.
+        // class-definition order, so nothing about it is guarded. The
+        // one way that is not the whole story is handled by
+        // `keyPrecedesStaticValue` rather than here — see its note.
         undefined
       : table[parent.type];
-  if (!slots) return false;
-  if (slots === ALL_SLOTS) return true;
-  return slots.some((slot) => holds(parent[slot], child));
+  if (!slots) return null;
+  if (slots === ALL_SLOTS) return parent;
+  for (const slot of slots) if (holds(parent[slot], child)) return parent[slot];
+  return null;
+}
+
+function inGuardedSlot(table, parent, child) {
+  return guardedSlot(table, parent, child) !== null;
 }
 
 /** Whether a slot's value IS `child`, or is a list containing it. */
@@ -680,7 +739,14 @@ export function markableStatementsOf(src, node) {
   const { parents } = astOf(src, 'markableStatementsOf');
   const out = [];
   for (let n = node; n; n = parents.get(n)) {
-    if (n.type === 'FunctionDeclaration') out.push(n);
+    // A function marker excuses ONE truncator (round 17). A marked
+    // helper containing a legitimate count handed the same excuse to
+    // every other call in it, so adding an unsafe window to an
+    // already-marked helper left the suite green — the same
+    // one-reason-many-bounds fault round 7 found on a multi-declarator
+    // statement, a scope wider. Where there is more than one, the
+    // reason cannot say which it is about, so it excuses none.
+    if (n.type === 'FunctionDeclaration' && truncatorCount(src, n) === 1) out.push(n);
     if (n.type !== 'VariableDeclarator') continue;
     const stmt = parents.get(n);
     // One name per marked statement, or the reason is ambiguous.
@@ -689,6 +755,11 @@ export function markableStatementsOf(src, node) {
     }
   }
   return out;
+}
+
+/** How many truncating calls `fn` contains. */
+function truncatorCount(src, fn) {
+  return sliceCallsIn(src).filter((c) => c.node.start >= fn.start && c.node.end <= fn.end).length;
 }
 
 /**
@@ -754,7 +825,44 @@ function writeReaches(src, writes, useAt) {
   let useNode = null;
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
   if (useNode && deferred(useNode)) return true;
-  return writes.some((w) => w.start < useAt || deferred(w));
+  return writes.some(
+    (w) => w.start < useAt || deferred(w) || keyPrecedesStaticValue(parents, w, useNode),
+  );
+}
+
+/**
+ * Whether `write` sits in a computed KEY that runs before `use`'s static
+ * field initializer — in which case a later position does not mean later
+ * execution.
+ *
+ * INSIDE A CLASS BODY, TEXT ORDER IS NOT EVALUATION ORDER (round 17).
+ * Every computed key in the body is evaluated when the class is defined,
+ * and all of them run before ANY static initializer. So
+ *
+ *     class C { static a = s.slice(start, end); static [(end = 320, 'k')] = 1 }
+ *
+ * lets a TEXTUALLY LATER key supply the bound the EARLIER static field
+ * reads, and comparing positions certifies a window that is fixed.
+ *
+ * This is the one place the static-field exemption is not the whole
+ * story, and it is kept here rather than folded into the slot tables
+ * because it is not a containment question: nothing guards either node.
+ * It is an ordering question, and the answer is that these two phases
+ * run in the opposite order from how they are written.
+ */
+function keyPrecedesStaticValue(parents, write, use) {
+  if (!use) return false;
+  const body = enclosingClassPart(parents, write, (p, c) => p.computed && p.key === c);
+  return body !== null && body === enclosingClassPart(parents, use, (p, c) => p.static && p.value === c);
+}
+
+/** The `ClassBody` whose `PropertyDefinition` holds `n` in the slot
+ *  `match` names, or null. */
+function enclosingClassPart(parents, n, match) {
+  for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (p.type === 'PropertyDefinition' && match(p, c)) return parents.get(p) ?? null;
+  }
+  return null;
 }
 
 
