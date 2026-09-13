@@ -117,9 +117,27 @@ recognise a length, the check recognises a LANDMARK — a search for text,
 a small helper that performs one, a name holding the result, the measured
 length of the thing searched for, and simple combinations of those. That
 list is short and closed, because it is what these checks actually write.
-Anything else is treated as a length and has to say what it counts. A new
-way of hiding a number cannot be invented, because there is nothing left
-to evade: unrecognised is refused.
+Anything else is treated as a length and has to say what it counts.
+Unrecognised is refused, so no new way of SPELLING a number gets in by
+being one the check had not met.
+
+That is a real result and it is narrower than it first reads, which is
+worth stating plainly rather than leaving to be discovered. Closing the
+set of spellings does not close the set of ways a shape the check DOES
+recognise can turn out not to be a landmark after all. A search reads as
+a landmark, but the check does not yet establish that it searches the
+same text being narrowed — so a search through some unrelated string can
+carry a fixed count through in good standing. A name holding a search
+reads as a landmark even where the thing it names was never set, because
+control left the block before the line that sets it. And a stand-in
+object that only looks like a searchable thing is caught when it is
+written out plainly and not when it is chosen between two of them.
+
+None of these is a way of writing a number; each is a way for a
+recognised landmark to be hollow. They are recorded as open work rather
+than described as closed, because a check that overstates what it
+guarantees is the same failure as a window that overstates what it
+bounds.
 
 Measured before adopting it: phrased this way the check objects to
 exactly the three places that genuinely do count characters, and to
