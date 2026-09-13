@@ -2867,3 +2867,65 @@ test('a body that clips at its own box narrows the slit probe', async ({ page })
   expect(result.rowBottom).toBeLessThan(0);
   expect(result.row, 'a scrollport covered over the whole opening a clipping body leaves').toBe(false);
 });
+
+// #2157 round 14 — a non-replaced inline box is not transformable and takes
+// no containment, so on a `display: inline` span only `filter` /
+// `backdrop-filter` (and `position`) establish a containing block. Measured
+// in Chromium 141 for every property the hint predicate reads.
+test('an inline wrapper with a transform is not a containing block; one with a filter is', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: an absolute row inside a transformed INLINE span inside a
+         scroller; its real containing block is the relative box above -->
+    <div style="position:relative; width:300px; height:40px">
+      <div id="inlineTScroller" style="height:40px; overflow:auto">
+        <span id="inlineT" style="transform:scale(1)">inline<p id="inlineTRow" style="position:absolute; top:-600px; height:20px">not held by an inline transform</p></span>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- 40..80: the same shape with a filter on the span, which does hold
+         the row, so the scroller carries it -->
+    <div style="position:relative; width:300px; height:40px">
+      <div id="inlineFScroller" style="height:40px; overflow:auto">
+        <span id="inlineF" style="filter:blur(0px)">inline<p id="inlineFRow" style="position:absolute; top:0; height:20px">held by an inline filter</p></span>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('inlineTScroller').scrollTop = 600;
+    byId('inlineFScroller').scrollTop = 300;
+    return {
+      inlineTDisplay: getComputedStyle(byId('inlineT')).display,
+      inlineTTransform: getComputedStyle(byId('inlineT')).transform,
+      inlineTRowBottom: byId('inlineTRow').getBoundingClientRect().bottom,
+      inlineTRow: visible(byId('inlineTRow')),
+      inlineFDisplay: getComputedStyle(byId('inlineF')).display,
+      inlineFFilter: getComputedStyle(byId('inlineF')).filter,
+      inlineFSpanTop: byId('inlineF').getBoundingClientRect().top,
+      inlineFRowTop: byId('inlineFRow').getBoundingClientRect().top,
+      inlineFRow: visible(byId('inlineFRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Measured: the transformed span keeps `display: inline`, its computed
+  // transform is the identity matrix, and the row is anchored to the
+  // relative box (bottom -580), not to the span — so the scroller's credit
+  // never moves it, and it is condemned.
+  expect(result.inlineTDisplay).toBe('inline');
+  expect(result.inlineTTransform).toBe('matrix(1, 0, 0, 1, 0, 0)');
+  expect(result.inlineTRowBottom).toBe(-580);
+  expect(result.inlineTRow, 'an absolute row under a transformed inline span').toBe(false);
+  // Measured: the filtered span IS the containing block — the row's top
+  // equals the span's, both carried 300 up by the scroller — so the
+  // scroller's credit admits.
+  expect(result.inlineFDisplay).toBe('inline');
+  expect(result.inlineFFilter).toBe('blur(0px)');
+  expect(result.inlineFRowTop).toBe(result.inlineFSpanTop);
+  expect(result.inlineFRowTop).toBeLessThan(0);
+  expect(result.inlineFRow, 'an absolute row under a filtered inline span').toBe(true);
+});

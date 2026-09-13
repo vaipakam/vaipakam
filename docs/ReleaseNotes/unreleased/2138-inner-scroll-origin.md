@@ -150,7 +150,12 @@ the property itself; makes the cover check look through only the
 ancestors that actually carry the scrolling region, so a box the region
 is not clipped by cannot narrow the check to itself; and treats a page
 body that clips at its own edge, rather than standing in for the
-viewport, as the real clipper it is.
+viewport, as the real clipper it is. A fourteenth round measured that a
+plain inline span cannot be transformed or contained, so declaring a
+transform on one does not make it the reference for an absolutely
+positioned row inside it; only a filter does. The rule now reads inline
+wrappers accordingly, so a scrolling region between such a wrapper and
+the row's real reference is neither credited nor blamed for the row.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

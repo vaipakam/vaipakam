@@ -64,11 +64,31 @@ export function visibilityHelpers() {
   // containing block — so it is deliberately absent although this
   // repository uses it. Listing it would skip real scrollers in the credit
   // walk and revoke real clipping in the clip walk.
-  const establishesCB = (cs) =>
-    // `content-visibility: auto | hidden` measured in the same Chromium
-    // (#2157 round 8): an absolute child is positioned against the
-    // container.
-    cs.contentVisibility === 'auto' ||
+  const establishesCB = (cs) => {
+    // A NON-REPLACED INLINE box is not transformable and takes no
+    // containment (#2157 round 14, MEASURED in the same Chromium): on a
+    // `display: inline` span, `transform` / `translate` / `rotate` /
+    // `scale` / `perspective` / `offset-path`, every `contain` value,
+    // `content-visibility` and the `will-change` hints for all of those
+    // leave an absolute child positioned against the next real block;
+    // only `filter` / `backdrop-filter` and their hints — and `position`,
+    // which the caller reads — establish the block there. Reading the
+    // transform arm on such a span made an inline wrapper the containing
+    // block of a row it does not hold, so an intervening scroller was
+    // credited with carrying it. A REPLACED inline element (`<img>`, an
+    // inline `<svg>`) is transformable, but holds no HTML descendant this
+    // family asks about; an inline `<svg>` with `<foreignObject>` is the
+    // one exception and is beyond the stated scope (#2162).
+    const inline = cs.display === 'inline';
+    if (cs.filter !== 'none') return true;
+    if (typeof cs.backdropFilter === 'string' && cs.backdropFilter !== 'none') return true;
+    if (willChangeEstablishesCB(cs.willChange, inline)) return true;
+    if (inline) return false;
+    return (
+      // `content-visibility: auto | hidden` measured in the same Chromium
+      // (#2157 round 8): an absolute child is positioned against the
+      // container.
+      cs.contentVisibility === 'auto' ||
     cs.contentVisibility === 'hidden' ||
     cs.transform !== 'none' ||
     // The individual properties establish one even at identity (`scale: 1`),
@@ -79,22 +99,21 @@ export function visibilityHelpers() {
     cs.perspective !== 'none' ||
     // A motion path positions absolute descendants against the element too
     // (measured, #2157 round 12).
-    (typeof cs.offsetPath === 'string' && cs.offsetPath !== 'none') ||
-    cs.filter !== 'none' ||
-    (typeof cs.backdropFilter === 'string' && cs.backdropFilter !== 'none') ||
-    /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
-    // `backdrop-filter` is spelled out although `\bfilter\b` already matched
-    // inside it across the hyphen (#2157 round 7): a reader should not have
-    // to know that to see it is covered.
-    // `will-change` establishes the block in advance for any property whose
-    // non-initial value would — MEASURED in the same Chromium (#2157 round
-    // 12): `contain`, `translate` / `rotate` / `scale` and `offset-path` do;
-    // `content-visibility`, `container-type` and `opacity` do NOT, although
-    // the first is a containing block when actually set, so they are left
-    // out on that evidence. Matched as WHOLE property names (round 13): the
-    // computed value is a comma-separated list, and a word-boundary regex
-    // read `transform-origin` and `contain-intrinsic-size` as hits.
-    willChangeEstablishesCB(cs.willChange);
+      (typeof cs.offsetPath === 'string' && cs.offsetPath !== 'none') ||
+      /\b(paint|layout|strict|content)\b/.test(cs.contain || '')
+    );
+  };
+  // `will-change` establishes the block in advance for any property whose
+  // non-initial value would — MEASURED in the same Chromium (#2157 round
+  // 12): `contain`, `translate` / `rotate` / `scale` and `offset-path` do;
+  // `content-visibility`, `container-type` and `opacity` do NOT, although
+  // the first is a containing block when actually set, so they are left
+  // out on that evidence. `backdrop-filter` is spelled out on its own
+  // (round 7). Matched as WHOLE property names (round 13): the computed
+  // value is a comma-separated list, and a word-boundary regex read
+  // `transform-origin` and `contain-intrinsic-size` as hits. On a
+  // non-replaced inline box only the filter pair takes effect (round 14,
+  // measured), as for the properties themselves.
   const WILL_CHANGE_CB = new Set([
     'transform',
     'perspective',
@@ -106,10 +125,13 @@ export function visibilityHelpers() {
     'scale',
     'offset-path',
   ]);
-  const willChangeEstablishesCB = (willChange) =>
-    String(willChange || '')
+  const WILL_CHANGE_CB_INLINE = new Set(['filter', 'backdrop-filter']);
+  const willChangeEstablishesCB = (willChange, inline = false) => {
+    const allowed = inline ? WILL_CHANGE_CB_INLINE : WILL_CHANGE_CB;
+    return String(willChange || '')
       .split(',')
-      .some((t) => WILL_CHANGE_CB.has(t.trim().toLowerCase()));
+      .some((t) => allowed.has(t.trim().toLowerCase()));
+  };
 
   /**
    * Is `n` judged as the VIEWPORT rather than as its own layout box? The
