@@ -39,6 +39,12 @@ scanner reads; the sample numbers used to collect every grammatical form
 are taken from each language's own plural rules rather than a fixed list;
 a counter followed directly by a ticker or asset glyph is not a duration;
 and a one-letter symbol classifies the same whether its accent is stored
-composed or decomposed.
+composed or decomposed. A second round kept a multi-word unit as one
+phrase, so a linking word inside it is never a unit on its own; judged the
+first word after a counter even when a particle follows it, so a
+denomination there is still an amount; matched units regardless of
+sentence capitalisation, in the language's own casing rules; and made the
+per-language cache immune to a malformed language tag masquerading as a
+list of tags.
 
 Closes #2125. No product surface changes.

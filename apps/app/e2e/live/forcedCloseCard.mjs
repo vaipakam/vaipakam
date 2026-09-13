@@ -593,6 +593,15 @@ const PLURAL_CANDIDATES = [
 ];
 const TOKEN_RUN = /[\p{L}\p{M}\p{N}]+/u;
 const tokenOf = (word) => word.normalize('NFC').match(TOKEN_RUN)?.[0] ?? '';
+// Folded for comparison (#2125 round 2): CLDR writes `siku`, a sentence
+// writes `Siku`, and German capitalises its nouns; the English list is
+// already case-insensitive. Folded with the LOCALE, since case is not
+// language-neutral.
+const foldUnit = (s, locale) => s.normalize('NFC').toLocaleLowerCase(locale ?? undefined);
+// A unit phrase is stored WHOLE (#2125 round 2): Tagalog's `4 na araw`
+// is one unit part, and splitting it into words made the linker `na` a
+// unit on its own, exempting `4 na USDC`. Up to this many tokens.
+const MAX_PHRASE_TOKENS = 3;
 export function durationSamplesFor(tag) {
   const pr = new Intl.PluralRules(tag);
   const byCategory = new Map();
@@ -611,7 +620,11 @@ export function durationUnitsFor(locale) {
   const tags = (Array.isArray(locale) ? locale : [locale]).filter(
     (t) => typeof t === 'string' && t !== '',
   );
-  const key = tags.join('|');
+  // Encoded without delimiter ambiguity (#2125 round 2): joining on `|`
+  // let the malformed scalar `'en|ja'` share a cache slot with the valid
+  // array `['en', 'ja']`, so whichever was asked first decided the other's
+  // vocabulary.
+  const key = JSON.stringify(tags);
   if (unitVocabulary.has(key)) return unitVocabulary.get(key);
   const words = new Set();
   for (const tag of tags) {
@@ -629,10 +642,8 @@ export function durationUnitsFor(locale) {
         for (const n of samples) {
           for (const part of nf.formatToParts(n)) {
             if (part.type !== 'unit') continue;
-            for (const w of part.value.split(/\s+/)) {
-              const token = tokenOf(w);
-              if (token !== '') words.add(token);
-            }
+            const phrase = part.value.split(/\s+/).map(tokenOf).filter(Boolean).join(' ');
+            if (phrase !== '') words.add(foldUnit(phrase, tag));
           }
         }
       }
@@ -677,24 +688,91 @@ const sameScript = (a, b) => {
   const sb = scriptOf(b);
   return sa === -1 || sb === -1 || sa === sb;
 };
-function matchUnit(run, units) {
+/**
+ * The continuation after a prefix-matched counter has to read as a
+ * PARTICLE, not as a denomination (#2125 rounds 1–2): `3日USDC`, `3日Ξ`
+ * and `3日ethです` all continue in a different script, and accepting `日`
+ * there exempted an amount on the strength of the counter in front of its
+ * ticker. The suffix's LEADING SCRIPT RUN — `eth` out of `ethです` — is
+ * what is judged, so a denomination followed by a particle is still seen;
+ * a suffix that opens with a ticker, an asset glyph, a lower-case asset
+ * unit or a magnitude word is evidence of an amount, and the run is then
+ * not a unit at all.
+ */
+function leadingScriptRun(s) {
+  let i = 1;
+  while (i < s.length && sameScript(s[0], s[i])) i += 1;
+  return s.slice(0, i);
+}
+function denominationLeads(suffix) {
+  const head = leadingScriptRun(suffix);
+  return (
+    isTicker(head) ||
+    ASSET_GLYPH.test(suffix.slice(0, 2)) ||
+    LOWERCASE_ASSET_UNIT.test(head) ||
+    MAGNITUDE_WORD.test(head)
+  );
+}
+
+/**
+ * The locale unit that starts `after` — the text following the figure —
+ * and where it ends, or `null`. Whole phrases first, longest first, so
+ * `na araw` is matched as one unit and never as `na`; then the prefix
+ * rule on the first token alone, for a counter written without a space
+ * before its particle. The lead-in may be the same separators `trailing`
+ * allows: whitespace and hyphens.
+ */
+const PHRASE_LEAD = /^[\s‐-―-]*/u;
+function unitAfter(after, units, locale) {
   if (units.size === 0) return null;
-  const r = run.normalize('NFC');
-  if (units.has(r)) return r;
+  const lead = after.match(PHRASE_LEAD)[0].length;
+  const rest = after.slice(lead);
+  const tokens = [...rest.matchAll(/[\p{L}\p{M}\p{N}]+/gu)].slice(0, MAX_PHRASE_TOKENS);
+  if (tokens.length === 0 || tokens[0].index !== 0) return null;
+  for (let k = tokens.length; k >= 1; k -= 1) {
+    const last = tokens[k - 1];
+    const span = rest.slice(0, last.index + last[0].length);
+    // A phrase is tokens separated by whitespace alone — never across
+    // punctuation, which ends the phrase as it ends a clause.
+    if (k > 1 && !/^[\p{L}\p{M}\p{N}]+(\s+[\p{L}\p{M}\p{N}]+)+$/u.test(span)) continue;
+    const phrase = foldUnit(tokens.slice(0, k).map((t) => t[0]).join(' '), locale);
+    if (units.has(phrase)) return { unit: phrase, end: lead + span.length };
+  }
+  const raw = tokens[0][0].normalize('NFC');
+  const run = foldUnit(raw, locale);
+  // The prefix rule needs the folded and the raw run to line up, so the
+  // suffix judged for a denomination is the text as written (folding
+  // would lower-case a ticker out of recognition). Where folding changes
+  // the length the rule declines, which reports — the loud direction.
+  if (run.length !== raw.length) return null;
   for (const u of units) {
-    if (r.length > u.length && r.startsWith(u) && !sameScript(u[u.length - 1], r[u.length])) {
-      // The continuation has to read as a PARTICLE, not as a denomination
-      // (#2125 round 1): `3日USDC` and `3日Ξ` also continue in a different
-      // script, and accepting `日` there exempted an amount on the strength
-      // of the counter in front of its ticker. A suffix that is itself a
-      // ticker, an asset glyph or a lower-case asset unit is evidence of
-      // an amount, and the run is then not a unit at all.
-      const suffix = r.slice(u.length);
-      if (isTicker(suffix) || ASSET_GLYPH.test(suffix.slice(0, 2)) || LOWERCASE_ASSET_UNIT.test(suffix)) {
-        return null;
-      }
-      return u;
+    if (u.includes(' ')) continue;
+    if (run.length > u.length && run.startsWith(u) && !sameScript(u[u.length - 1], run[u.length])) {
+      if (denominationLeads(raw.slice(u.length))) return null;
+      return { unit: u, end: lead + u.length };
     }
+  }
+  return null;
+}
+
+/**
+ * The locale unit that ENDS `before` — a language writing the unit in
+ * front of the figure, Swahili's `siku 3` (#2125 round 1) — or `null`.
+ * Whole phrases, longest first, folded with the locale (round 2: `Siku 3`
+ * at the start of a sentence). Exact match only: the prefix rule is about
+ * a counter and the particle after it.
+ */
+function unitBefore(before, units, locale) {
+  if (units.size === 0) return null;
+  for (let k = MAX_PHRASE_TOKENS; k >= 1; k -= 1) {
+    const m = before.match(
+      new RegExp(`((?:[\\p{L}\\p{M}\\p{N}]+\\s+){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)\\s*$`, 'u'),
+    );
+    if (!m) continue;
+    const phrase = foldUnit(m[1].split(/\s+/).join(' '), locale);
+    // `start` is where the phrase begins in `before`, so the duration
+    // context can be read from the text in front of it.
+    if (units.has(phrase)) return { unit: phrase, start: m.index };
   }
   return null;
 }
@@ -1009,10 +1087,16 @@ export function monetaryAmountsIn(text, { locale } = {}) {
     if (trailing) {
       const run = trailing[1];
       const next = trailing[2];
-      // The English list, or the LOCALE's own words (#2125) — which may
-      // be a prefix of the run in a script that writes no space between
-      // a counter and the particle after it. See `matchUnit`.
-      const unit = NON_MONETARY_UNIT.test(run) ? run : matchUnit(run, localeUnits);
+      // The English list, or the LOCALE's own words (#2125) — a whole
+      // phrase, or a prefix of the first token in a script that writes no
+      // space between a counter and the particle after it. See
+      // `unitAfter`. Read from a longer window than `after`: a three-token
+      // phrase does not fit in sixteen characters.
+      const afterLong = text.slice(end, end + 48);
+      const matched = NON_MONETARY_UNIT.test(run)
+        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length }
+        : unitAfter(afterLong, localeUnits, locale);
+      const unit = matched === null ? null : matched.unit;
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
       // figure and never looks at `USDC` — so the scanner missed
@@ -1023,9 +1107,10 @@ export function monetaryAmountsIn(text, { locale } = {}) {
         // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
         // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
         // Strip the UNIT only — `trailing[0]` also swallows the word
-        // after it, which is precisely the word being looked for. And
-        // only the unit's own length, since it may be a prefix of the run.
-        const afterUnit = after.slice(after.search(/[\p{L}%]/u) + unit.length);
+        // after it, which is precisely the word being looked for. From
+        // where the matched unit ENDS, since it may be a phrase, or a
+        // prefix of the run.
+        const afterUnit = afterLong.slice(matched.end);
         const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
         if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
@@ -1077,10 +1162,11 @@ export function monetaryAmountsIn(text, { locale } = {}) {
     // context. No shipped locale orders its units this way today; the
     // rule is here so the first one that does is not a false FAIL.
     if (leading && !trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower) {
-      const unitBefore = localeUnits.has(leading[1].normalize('NFC')) ? leading[1].normalize('NFC') : null;
-      if (unitBefore !== null) {
-        const temporal = DURATION_LEAD.test(before.slice(0, leading.index)) || DURATION_TRAIL.test(after);
-        if (isAmbiguousUnit(unitBefore) && !temporal) {
+      const matchedBefore = unitBefore(before, localeUnits, locale);
+      if (matchedBefore !== null) {
+        const { unit, start: unitStart } = matchedBefore;
+        const temporal = DURATION_LEAD.test(before.slice(0, unitStart)) || DURATION_TRAIL.test(after);
+        if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
         }
         continue;

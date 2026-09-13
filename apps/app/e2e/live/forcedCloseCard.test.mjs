@@ -7576,7 +7576,15 @@ describe('#2125 — duration words sourced per locale', () => {
         .formatToParts(3)
         .find((p) => p.type === 'unit')?.value;
       expect(typeof day, locale).toBe('string');
-      expect(words.has(day.split(/\s+/)[0].replace(/[.॰۔]+$/u, '')), `${locale}: ${day}`).toBe(true);
+      // Stored as the scanner reads it: the letter-run of each word, the
+      // whole phrase, folded with the locale.
+      const stored = day
+        .split(/\s+/)
+        .map((w) => w.normalize('NFC').match(/[\p{L}\p{M}\p{N}]+/u)?.[0] ?? '')
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase(locale);
+      expect(words.has(stored), `${locale}: ${day}`).toBe(true);
     }
   });
 
@@ -7750,5 +7758,41 @@ describe('#2125 round 1 — unit order, tokeniser parity, plural categories, suf
     expect(composed.normalize('NFC')).toBe(decomposed.normalize('NFC'));
     expect(monetaryAmountsIn(composed)).toHaveLength(1);
     expect(monetaryAmountsIn(decomposed)).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 2 — whole phrases, denomination prefixes, sentence case, cache keys', () => {
+  // A multi-word unit is one unit: its linker word is not a unit alone.
+  it('keeps a multi-word unit phrase atomic', () => {
+    expect(durationUnitsFor('tl').has('na araw')).toBe(true);
+    expect(durationUnitsFor('tl').has('na')).toBe(false);
+    expect(monetaryAmountsIn('4 na araw', { locale: 'tl' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 4 na USDC', { locale: 'tl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('4 na', { locale: 'tl' })).toHaveLength(1);
+  });
+
+  // The suffix's LEADING SCRIPT RUN is judged, so a denomination followed
+  // by a particle is still a denomination.
+  it('sees a denomination that a particle follows inside a counter suffix', () => {
+    expect(monetaryAmountsIn('3日ethです', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日USDCです', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Sentence case, folded with the locale, on both sides of the figure.
+  it('matches sentence-cased units before and after the figure', () => {
+    expect(monetaryAmountsIn('Siku 3 zimebaki.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('Bado siku 3.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('Noch 3 Tage.', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('Noch 3 TAGE.', { locale: 'de' })).toEqual([]);
+  });
+
+  // The cache key cannot make a malformed scalar and a valid array share
+  // a vocabulary, in either order.
+  it('keeps cache slots distinct for a tag array and a delimited scalar', () => {
+    expect(durationUnitsFor(['en', 'ja']).size).toBeGreaterThan(0);
+    expect(durationUnitsFor('en|ja').size).toBe(0);
+    expect(monetaryAmountsIn('3日', { locale: 'en|ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日', { locale: ['en', 'ja'] })).toEqual([]);
   });
 });
