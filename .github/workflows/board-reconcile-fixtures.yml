@@ -45,5 +45,9 @@ jobs:
       - name: Run the fixtures
         run: |
           set -euo pipefail
+          # The trace parser first, on its own: the step fixtures run the
+          # real file, so a parser regression would surface there too — but
+          # as a step failure, one level away from the line that is wrong.
+          bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
           bash .github/scripts/board-reconcile-list-step.selftest.sh
-          echo "Board-reconcile list-step fixtures OK." >> "$GITHUB_STEP_SUMMARY"
+          echo "Board-reconcile fixtures OK (trace parser + list step)." >> "$GITHUB_STEP_SUMMARY"
