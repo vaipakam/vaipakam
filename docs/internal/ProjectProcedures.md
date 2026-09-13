@@ -429,9 +429,12 @@ For every finding:
   round counts as converged, with P3s fixed or deferred at the agent's
   judgment. A coding PR iterates until a round returns zero P1/P2; escalate
   to the owner rather than continuing past **ten** rounds after the last
-  substantive surface change — the backstop `CLAUDE.md` sets (an earlier
-  revision here said twelve, from a stale agent note). Docs-only PRs
-  merge after two rounds, converged or not.
+  substantive surface change, and **never go past thirty rounds at all**
+  (user directive 2026-09-13) — the backstops `CLAUDE.md` sets (an earlier
+  revision here said twelve, from a stale agent note). Docs-only PRs loop
+  to convergence and **never past ten rounds**, merging at ten if no P1
+  stands; the earlier "merge after two rounds, converged or not" wording
+  is superseded by that same directive.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's

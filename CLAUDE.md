@@ -1278,24 +1278,40 @@ Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
 ONLY when its trigger words appear in the PR description or a PR
 comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
-- **Docs-only PRs**: **merge after 2 Codex review rounds** (user
-  directive 2026-08-07, verbatim "merge after 2 rounds as these are
-  docs only PR, we can go for full convergence on codex findings for
-  PR with code" — superseding the 2026-07-10 "up to 5 rounds"
-  directive, which had itself superseded an earlier 2-round wording).
-  Run round 1 → triage/fix every finding → round 2 → triage/fix →
-  merge, regardless of whether round 2 was clean; merge earlier if a
-  round converges (zero P1/P2). The cap bounds ROUNDS, not diligence —
-  every finding still gets the accept-fix / refute / defer triage
-  gate. Skipping entirely remains OK for trivial mechanical edits —
-  say so in the thread.
-- **Coding PRs**: keep triggering rounds until findings **converge**,
-  allowing up to 10 rounds after the last SURFACE CHANGE in the code
-  as a hard backstop. Only a substantive code change resets the
-  count; replies, thread resolutions, and comment-only / docs-only
-  tweaks do NOT (amended 2026-07-05, superseding the earlier
-  "after the last diff push" wording). Re-trigger after every fix
-  push.
+> **Round caps — user directive 2026-09-13, verbatim:** "if the PR is docs
+> only don't go beyond 10 rounds, merge them after 10 rounds if there are
+> no P1 findings; if its code related, then don't go beyond 30 rounds,
+> take a step back and see if you can fix the issue at the root rather
+> than patching them in every path." These caps are written INTO the two
+> bullets below rather than beside them; **10** replaces the 2026-08-07
+> two-round docs rule outright, and **30** is the coding loop's outer
+> bound.
+
+- **Docs-only PRs**: loop to convergence, and **never past round 10**;
+  at round 10 merge if **no P1 finding stands** (user directive
+  2026-09-13). Merge earlier the moment a round converges (zero P1/P2) —
+  most docs PRs still end at round 1 or 2. The 2026-08-07 "merge after 2
+  rounds" wording is SUPERSEDED: two rounds is no longer a gate to stop
+  at, and a docs PR with findings keeps looping up to the cap. (That
+  wording had itself superseded a 2026-07-10 "up to 5 rounds" directive;
+  the history is recorded here only so an operator who remembers an older
+  number knows which one is live.) The cap bounds ROUNDS, not diligence —
+  every finding still gets the accept-fix / refute / defer triage gate.
+  Skipping Codex entirely remains OK for trivial mechanical edits — say
+  so in the thread.
+- **Coding PRs**: keep triggering rounds until findings **converge**, and
+  **never past round 30** (user directive 2026-09-13). Two earlier
+  signals still fire inside that ceiling: escalate to the owner rather
+  than grinding past 10 rounds after the last SURFACE CHANGE in the code
+  (only a substantive code change resets that count; replies, thread
+  resolutions and comment-only / docs-only tweaks do NOT — amended
+  2026-07-05, superseding the earlier "after the last diff push"
+  wording), and **when successive rounds keep finding the same seam —
+  the same helper, the same class of input — the next step is a ROOT fix**
+  (one shared rule, one tokeniser, one module boundary) rather than
+  another per-path patch. Record the root fix in the PR as such. A loop
+  that has patched the same seam three rounds running is the signal,
+  whatever the round number. Re-trigger after every fix push.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
@@ -1315,10 +1331,10 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   independent adversarial self-review BEFORE Codex round 1 so the
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
-- Merge gate: **coding PRs** only after a converged round AND green CI;
-  **docs-only PRs** after the 2-round cap above (converged or not) AND
-  green CI. All review conversations must be resolved before merge
-  (repo rule) in both cases.
+- Merge gate: **coding PRs** only after a converged round AND green CI,
+  never past round 30; **docs-only PRs** after a converged round, or at
+  the round-10 cap with no P1 standing, AND green CI. All review
+  conversations must be resolved before merge (repo rule) in both cases.
 
 ## Release notes — per-PR fragments
 
