@@ -13,33 +13,52 @@ count as exact, so deleting the very line it exists to protect would have
 left it passing. Too long, and a rule about one region silently starts
 matching its neighbours.
 
-Every such region is now bounded by a second anchor: something in
-the code that means the region has ended, such as the declaration that
-follows it. A new helper takes a region between two anchors and refuses
-to return anything when either anchor is missing, or when the closing one
-does not follow the opening one — that last case would otherwise hand
-back an empty region, and a rule asserted over nothing passes by checking
-nothing, which is the failure this whole family of helpers exists to
-refuse. Regions that are brace-delimited blocks use the existing
-block helper rather than a second anchor.
+Every such region is now bounded by something that means the region has
+ended — the statement it belongs to, the block it opens, or a named
+landmark in the code that follows it. The helpers refuse to return
+anything when a landmark is missing, or when the closing one does not
+follow the opening one; that last case would otherwise hand back an empty
+region, and a rule asserted over nothing passes by checking nothing,
+which is the failure this whole family exists to refuse.
 
-Review caught the same mistake twice, and the second time is the more
-useful one. Both attempts claimed the conversion was complete on the
-strength of a search written by hand, and both searches were narrower
-than the thing they were looking for: the first demanded a particular
-starting point and missed several, the second could not see a window
-written across four lines because it stopped at the first closing bracket
-it met. Each time the claim read as verified and was not.
+Review caught the same mistake three times, and the third time is what
+changed the approach. Each attempt established that the conversion was
+complete using something that read the file as plain text, and each
+reader was narrower than what it was looking for. The first missed
+several windows because it insisted they start a particular way. The
+second could not see a window written across four lines, because it
+stopped at the first closing bracket it met. The third, a hand-written
+reader of its own, missed a bound hidden behind a comment, a bound
+written as text rather than as a number, and a bound given a name — and
+quietly skipped any call whose brackets it could not pair up, so ordinary
+formatting was enough to slip past it.
 
-So the claim is no longer made in prose. The suite asserts it: it reads
-every check in this family, works out what bounds each region it takes,
-and fails when that bound is a number rather than something in the code.
-It reads the bound as a whole — however many lines and nested calls it
-spans — and ignores numbers that appear inside quoted fragments of the
-code being searched for, which is what a hand-written pattern could not
-be trusted to do. Reintroducing one of the removed windows turns it red.
+Each fix was correct and the next gap was already waiting, because
+"where does this piece of code end" is a question the language's own
+grammar answers, and a reader assembled by hand is a worse answer to it
+every time. So these checks no longer read the file as text. They parse
+it, the way the language itself does, and every region is a piece of the
+parse rather than a stretch of characters. Quotes, comments, patterns and
+the punctuation that means two different things stop being special cases
+to remember.
 
-Three of the windows survived both earlier passes for a reason worth
+That also fixed a fault the hand-written reader had been shipping: a
+declaration containing a search pattern was cut in half, and one
+containing an unbalanced bracket was reported as having no end at all —
+the same silent truncation this whole effort exists to remove, produced
+by the tool meant to remove it.
+
+The completeness claim is now made by the suite rather than in prose, and
+it is made the safe way round: rather than working out which values hold
+source code and checking only those — a question with no bounded answer,
+and every gap in it a hiding place — it checks every such bound in the
+family, and the handful that legitimately count characters say so in a
+short note at their own declaration, naming what they count. Nine of
+those became three notes, because saying it once per reason is also how
+a fourth gets noticed. Putting a removed window back, in any of the four
+disguises review demonstrated, turns the suite red.
+
+Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
 neither a block nor a call, so there was nothing to convert them to. That
 missing bound now exists — a region may be taken as the statement it

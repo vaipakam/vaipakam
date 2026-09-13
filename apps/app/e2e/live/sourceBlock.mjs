@@ -1,69 +1,189 @@
 /**
- * Brace-matched slices of the drive's source, for the source tests.
+ * Regions of the drive's source, for the source tests — cut by PARSING
+ * the JavaScript, not by scanning its characters.
  *
  * WHY THIS EXISTS. `live-position-observe.mjs` runs the whole drive on
  * import, so several of its branches cannot be executed from a unit test
  * and are asserted against the source text instead (extraction is
- * tracked in #2120). Every such test needs the same thing: the block
+ * tracked in #2120). Every such test needs the same thing: the region
  * under a given header, and NOTHING past its close.
  *
  * The tempting way to get one is a fixed character window —
  * `src.slice(start, start + 1600)` — and it is wrong in two directions,
- * both of which this PR has paid for:
+ * both of which #2144 has paid for:
  *
- *   - TOO SHORT, silently. The slice stops inside the block, so a rule
+ *   - TOO SHORT, silently. The slice stops inside the region, so a rule
  *     asserted over it is blind to the tail. `confirmTrial.test.mjs`
  *     counted the assignments that record the trial's outcome and found
  *     two, over a block that has three — the third sat 137 characters
  *     past the window. It had been asserting `toBe(2)` and calling it
  *     exact, so deleting the unguarded arm's assignment — precisely the
  *     regression the test exists to catch — would have left it green.
- *   - TOO LONG, eventually. The slice runs past the block into whatever
- *     follows, and a rule "about" the block starts matching its
- *     neighbours.
+ *   - TOO LONG, eventually. The slice runs past the region into whatever
+ *     follows, and a rule "about" it starts matching its neighbours.
  *
  * Both failure modes move with unrelated edits, which is the tell: a
  * test that fails because the file GREW teaches nothing, and trains the
  * next reader to widen the number rather than ask what it bounds.
  *
- * Extracted rather than copied. Two files needed it, and a second copy
+ * WHY A PARSER, AND NOT A SCANNER (#2144 round 3). The first three
+ * versions of this module found region boundaries by walking characters
+ * and counting brackets, and every review round found another construct
+ * the walk was wrong about: brackets inside string anchors, a semicolon
+ * inside a comment, a template's `${…}` holes, then a regex literal
+ * whose `/;/` ends a statement early and whose unmatched `)` makes the
+ * helper report no statement at all. Each fix was correct and the next
+ * construct was already waiting — because "where does this construct
+ * end" is the question a JavaScript grammar answers, and a hand-rolled
+ * scanner is a worse implementation of it every time.
+ *
+ * So the boundaries come from `acorn`. Strings, template holes,
+ * comments, regex literals and division all stop being special cases:
+ * a node's `start` and `end` are the region, by construction. The
+ * helpers below keep their old signatures — callers name an anchor in
+ * the code and get the region that anchor introduces — so this is a
+ * change of mechanism, not of contract.
+ *
+ * Extracted rather than copied. Several files need it, and a second copy
  * of a helper is how `notClipped` / `paintsText` / `shownBox` /
  * `visibleTextOf` ended up with one fixed site and one stale one
  * (#2102).
  */
+import { parse } from 'acorn';
+
+const PARSE_OPTIONS = { ecmaVersion: 'latest', sourceType: 'module', ranges: true };
+
+// Parsing is not free and the suites read the same few files dozens of
+// times. Keyed by the source text itself, so a changed file is a
+// different key and no staleness is possible.
+const trees = new Map();
+
+function astOf(src, label) {
+  if (typeof src !== 'string') throw new Error(`${label} needs source text, got ${typeof src}`);
+  const cached = trees.get(src);
+  if (cached) return cached;
+  let tree;
+  try {
+    tree = parse(src, PARSE_OPTIONS);
+  } catch (e) {
+    // A region asked for out of unparseable text is not a region. Say so
+    // rather than falling back to a character scan, which is the whole
+    // class of failure this module stopped doing.
+    throw new Error(`${label}: source does not parse as a module — ${e.message}`);
+  }
+  const nodes = [];
+  const parents = new Map();
+  walk(tree, (n, parent) => {
+    nodes.push(n);
+    parents.set(n, parent);
+  });
+  // Innermost-first for containment queries: a later start, or an equal
+  // start with an earlier end, is the more specific node.
+  nodes.sort((a, b) => a.start - b.start || a.end - b.end);
+  const built = { tree, nodes, parents };
+  trees.set(src, built);
+  return built;
+}
+
+function walk(node, visit, parent = null) {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) walk(child, visit, parent);
+    return;
+  }
+  if (typeof node.type !== 'string') return;
+  visit(node, parent);
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end' || key === 'range') continue;
+    walk(node[key], visit, node);
+  }
+}
+
+function anchorAt(src, anchor, label) {
+  if (typeof anchor !== 'string' || anchor === '') {
+    throw new Error(`${label} needs a non-empty anchor`);
+  }
+  const at = src.indexOf(anchor);
+  if (at === -1) throw new Error(`${anchor} was renamed or removed`);
+  return at;
+}
+
+// A `{ … }` in the grammar, whichever form. `blockFrom`'s contract is
+// "the header through the close of the brace it opens", and that brace
+// may belong to a function body, a control-flow block, a class, a switch
+// or an object literal — including a `= {}` default in a signature,
+// which is the documented caveat those callers take `between` for.
+const BRACED = new Set([
+  'BlockStatement',
+  'ClassBody',
+  'ObjectExpression',
+  'ObjectPattern',
+  'StaticBlock',
+  'SwitchStatement',
+]);
+
+const STATEMENT = /(?:Statement|Declaration)$/;
 
 /**
  * The source of the block introduced by `header`, from the header
- * through its matching close brace.
+ * through the close of the first brace it opens.
  *
  * Throws rather than returning an empty string if the header is gone: a
  * rule asserted over `''`, or over a slice taken from `-1`, passes by
  * measuring nothing, which is the vacuous shape this suite has been
  * caught by four times.
  *
- * Brace counting is naive about braces inside strings, comments and
- * template literals. That is sound for the headers used here — whole
- * functions and control-flow blocks in the drive — and the callers all
- * assert something about the content they get back, so a slice that
- * ended in the wrong place would not quietly satisfy them.
+ * The brace is located in the parse tree, so a brace inside a string, a
+ * comment, a template hole or a regex literal is not a brace — which is
+ * what the character-counting version got wrong four times running.
  */
 export function blockFrom(src, header) {
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`${header} was renamed or removed`);
-  return balanced(src, start, '{', '}', 'close brace', header);
+  const start = anchorAt(src, header, 'blockFrom');
+  const { nodes } = astOf(src, 'blockFrom');
+  const brace = nodes.find((n) => BRACED.has(n.type) && n.start >= start);
+  if (!brace) throw new Error(`${header} opens no block`);
+  return src.slice(start, brace.end);
+}
+
+/**
+ * The source of the STATEMENT introduced by `header`, from the header
+ * through the end of that statement.
+ *
+ * For the region a declaration owns — `const x = a && b && c;` spread
+ * over several lines — which is neither a brace block nor a call, and
+ * which `between` can only bound by naming whatever happens to follow
+ * it. That "whatever follows" is the weakness: it is a real anchor in
+ * the file but it means nothing ABOUT the region, so it moves when an
+ * unrelated declaration is inserted after this one, and a rule about
+ * this statement silently starts reading the insertion too.
+ *
+ * Every fixed-length window #2144 set out to retire was over exactly
+ * this shape — a multi-line initializer with no closing brace to match —
+ * which is why they survived two passes of conversion: there was nothing
+ * to convert them TO. This is that missing bound.
+ *
+ * Where the statement ENDS is the parser's answer, so a semicolon inside
+ * a string, a comment, a template hole or a regex literal ends nothing,
+ * and an ASI-terminated statement with no semicolon at all still has an
+ * end. The hand-written version was wrong about the last two.
+ */
+export function statementFrom(src, header) {
+  const start = anchorAt(src, header, 'statementFrom');
+  const { nodes } = astOf(src, 'statementFrom');
+  const stmt = nodes.find((n) => STATEMENT.test(n.type) && n.start === start);
+  if (!stmt) {
+    throw new Error(`${header} does not begin a statement — check the anchor starts at one`);
+  }
+  return src.slice(start, stmt.end);
 }
 
 /**
  * The source BETWEEN two anchors — from `from` up to (not including) the
  * next occurrence of `to` after it.
  *
- * For a region that is neither a brace block nor a paren call: a
- * declaration and the few lines that belong with it, a neighbourhood of
- * statements. `blockFrom` cannot bound those — there is no brace to match
- * — and the tempting substitute is the fixed window this module exists to
- * refuse (#2144). A following anchor bounds the region by something that
- * MEANS the region ended, so it moves with the code instead of with the
- * file's length.
+ * Purely textual, and deliberately so: it bounds a NEIGHBOURHOOD that is
+ * not a grammatical unit — a declaration and the few lines that belong
+ * with it — so there is no node to ask for. The anchors are the meaning.
  *
  * Throws if either anchor is gone, and if `to` does not follow `from`.
  * The empty-slice failure is the one worth naming: a rule asserted over
@@ -87,90 +207,9 @@ export function between(src, from, to) {
 }
 
 /**
- * The source of the STATEMENT introduced by `header`, from the header
- * through its own terminating semicolon.
+ * The source of the call that CONTAINS `needle`.
  *
- * For the region a declaration owns — `const x = a && b && c;` spread over
- * several lines — which is neither a brace block nor a call, and which
- * `between` can only bound by naming whatever happens to follow it. That
- * "whatever follows" is the weakness: it is a real anchor in the file but
- * it means nothing ABOUT the region, so it moves when an unrelated
- * declaration is inserted after this one, and a rule about this statement
- * silently starts reading the insertion too.
- *
- * Every fixed-length window this module set out to retire (#2144) was over
- * exactly this shape — a multi-line initializer with no closing brace to
- * match — which is why they survived two passes of conversion: there was
- * nothing to convert them TO. This is that missing bound.
- *
- * Depth-tracked over `()`, `[]` and `{}`, so a semicolon inside an
- * arrow body or an object literal does not end the statement. String
- * literals and comments are SKIPPED rather than scanned, unlike
- * `blockFrom`'s naive brace count: a `;` inside a message string is
- * ordinary here, where a stray brace in a whole-function header is not.
- */
-export function statementFrom(src, header) {
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`${header} was renamed or removed`);
-  const OPEN = { '(': ')', '[': ']', '{': '}' };
-  let depth = 0;
-  for (let i = start; i < src.length; i += 1) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] === '/') {
-      const nl = src.indexOf('\n', i);
-      i = nl === -1 ? src.length : nl;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '*') {
-      const close = src.indexOf('*/', i + 2);
-      if (close === -1) throw new Error(`${header} has an unterminated comment`);
-      i = close + 1;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') {
-      i = endOfString(src, i, c, header);
-      continue;
-    }
-    if (OPEN[c]) depth += 1;
-    else if (c === ')' || c === ']' || c === '}') depth -= 1;
-    else if (c === ';' && depth === 0) return src.slice(start, i + 1);
-  }
-  throw new Error(`${header} has no terminating semicolon`);
-}
-
-function endOfString(src, open, quote, label) {
-  for (let i = open + 1; i < src.length; i += 1) {
-    if (src[i] === '\\') {
-      i += 1;
-      continue;
-    }
-    // A template's `${…}` holds EXPRESSIONS, which may carry their own
-    // strings — including another backtick. Walking straight past them
-    // would read that inner quote as this template's close and hand the
-    // rest of the file back as code, so the hole is skipped by brace depth.
-    if (quote === '`' && src[i] === '$' && src[i + 1] === '{') {
-      let depth = 1;
-      let j = i + 2;
-      for (; j < src.length && depth > 0; j += 1) {
-        const c = src[j];
-        if (c === "'" || c === '"' || c === '`') j = endOfString(src, j, c, label);
-        else if (c === '{') depth += 1;
-        else if (c === '}') depth -= 1;
-      }
-      if (depth > 0) throw new Error(`${label} has an unterminated \${} in a template`);
-      i = j - 1;
-      continue;
-    }
-    if (src[i] === quote) return i;
-  }
-  throw new Error(`${label} has an unterminated ${quote} string`);
-}
-
-/**
- * The source of the call that CONTAINS `needle`, from `callee` through
- * its matching close paren.
- *
- * For regions whose boundary is a paren rather than a brace — a report
+ * For regions whose boundary is a call rather than a block — a report
  * built as one long `console.log(...)` of concatenated template
  * literals, which is the case this was written for. The anchor is a
  * string inside the call rather than the call's own opening, because
@@ -182,77 +221,168 @@ function endOfString(src, open, quote, label) {
  * any other reader — a later predicate consulting the same field keeps
  * it looking consumed while its report line is gone, so the evidence
  * disappears from the operator's output with every test green.
+ *
+ * `callee` names the call to look for and keeps its old spelling, with
+ * the trailing `(` optional; it is matched against the callee's own
+ * source text.
  */
 export function callContaining(src, needle, callee = 'console.log(') {
-  const inside = src.indexOf(needle);
-  if (inside === -1) throw new Error(`${needle} was renamed or removed`);
-  const start = src.lastIndexOf(callee, inside);
-  if (start === -1) throw new Error(`${needle} is not inside a ${callee} call`);
-  const call = balanced(src, start, '(', ')', 'close paren', needle);
-  // The anchor has to be INSIDE what came back. If the call closed before
-  // reaching it — an unbalanced paren in a string literal is the way that
-  // happens — the slice is some earlier call and every rule over it is
-  // about the wrong code.
-  if (!call.includes(needle)) throw new Error(`${needle} is not inside the ${callee} call found`);
-  return call;
+  const inside = anchorAt(src, needle, 'callContaining');
+  const want = callee.endsWith('(') ? callee.slice(0, -1) : callee;
+  const { nodes } = astOf(src, 'callContaining');
+  // Innermost first: `nodes` is sorted so more specific containers come
+  // later, and the LAST match is the tightest call around the anchor.
+  const calls = nodes.filter(
+    (n) =>
+      (n.type === 'CallExpression' || n.type === 'NewExpression') &&
+      n.start <= inside &&
+      n.end >= inside + needle.length &&
+      src.slice(n.callee.start, n.callee.end) === want,
+  );
+  if (calls.length === 0) throw new Error(`${needle} is not inside a ${callee} call`);
+  return src.slice(calls[calls.length - 1].start, calls[calls.length - 1].end);
 }
 
 /**
- * The ARGUMENT TEXT of the call whose open paren sits at `open`, without
- * the parens themselves — `null` if the call never closes.
+ * Every `.slice(…)` call in `src`, as `{ line, args }` — `args` being
+ * the argument NODES, for a caller that needs to judge the bounds.
  *
- * Finding a delimited region is this module's job, and the #2144 guard in
- * the sibling test needs one: to decide whether a bound is an anchor or a
- * number it has to read the whole argument list, however many lines and
- * nested calls it spans. Reading it there would have meant the guard
- * narrowing source by hand in order to forbid narrowing source by hand.
- *
- * Returns `null` rather than throwing. A caller SCANNING a file meets
- * text that is not a call and should move on; the anchored helpers above
- * are told exactly what to find and throw when it is gone.
+ * The #2144 guard needs exactly this and must not obtain it by reading
+ * text: a bound hidden by a comment, a regex literal or a line break is
+ * a bound the guard would silently skip, which recreates the defect it
+ * exists to refuse. Finding a call is this module's job, so the guard
+ * asks rather than scanning — otherwise it would be narrowing source by
+ * hand in order to forbid narrowing source by hand.
  */
-export function balancedArgs(src, open) {
-  if (src[open] !== '(') return null;
-  let depth = 0;
-  for (let i = open; i < src.length; i += 1) {
-    const c = src[i];
-    // Skipped, not counted. The arguments here are ANCHORS — string
-    // literals quoting the code being looked for — and the realistic one
-    // is `indexOf('for (const l of readyFirst) {')`, whose own brackets
-    // are text. Counting them walks the depth off by two and the call
-    // "closes" somewhere in the next test.
-    if (c === "'" || c === '"' || c === '`') {
-      // A quote that never closes means this was not a call after all —
-      // an apostrophe in a comment is the usual way. Same answer as an
-      // unclosed paren: not a call, move on.
-      try {
-        i = endOfString(src, i, c, 'balancedArgs');
-      } catch {
-        return null;
-      }
-      continue;
-    }
-    if ('([{'.includes(c)) depth += 1;
-    else if (')]}'.includes(c)) {
-      depth -= 1;
-      if (depth === 0) return src.slice(open + 1, i);
+export function sliceCallsIn(src) {
+  const { nodes } = astOf(src, 'sliceCallsIn');
+  const out = [];
+  for (const n of nodes) {
+    if (n.type !== 'CallExpression') continue;
+    const c = n.callee;
+    if (!c || c.type !== 'MemberExpression') continue;
+    const name = c.computed
+      ? c.property.type === 'Literal'
+        ? c.property.value
+        : null
+      : c.property.name;
+    if (name !== 'slice') continue;
+    out.push({
+      line: lineOf(src, n.start),
+      receiver: src.slice(c.object.start, c.object.end),
+      args: n.arguments,
+      text: src.slice(n.start, n.end),
+    });
+  }
+  return out;
+}
+
+// Nodes that introduce a binding scope. Close enough to the language's
+// own rules for the question asked here — "which `WINDOW` is this?" —
+// and `var`'s hoisting to function scope is the one simplification,
+// noted below where it can matter.
+const SCOPES = new Set([
+  'Program',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+  'BlockStatement',
+  'StaticBlock',
+  'ForStatement',
+  'ForOfStatement',
+  'ForInStatement',
+  'CatchClause',
+]);
+
+/**
+ * The value bound to `name` where `at` stands, or `null` when it is not
+ * bound to a number there — or not bound in this file at all.
+ *
+ * Scope-aware ON PURPOSE, and the reason is a false positive that a
+ * file-wide name table produced on the first attempt: `headSampling`
+ * binds `i` to an `indexOf` result in one test and, elsewhere in the
+ * same file, to `0` as a loop counter. A flat table saw a number and
+ * flagged a perfectly anchored slice. A guard that cries wolf on correct
+ * code is worse than one gap, because the fix people learn is to
+ * silence it.
+ *
+ * Resolution stops at the NEAREST enclosing scope that declares the
+ * name, which is what the language does. `var` is treated as belonging
+ * to the block it is written in rather than hoisting to the function;
+ * that can only resolve a name EARLIER than the language would, which
+ * errs toward finding a number rather than missing one.
+ */
+export function numericBindingAt(src, name, at) {
+  const { nodes, parents } = astOf(src, 'numericBindingAt');
+  // The innermost node covering the position, then outward.
+  let node = null;
+  for (const n of nodes) if (n.start <= at && n.end >= at) node = n;
+  for (let scope = node; scope; scope = parents.get(scope)) {
+    if (!SCOPES.has(scope.type)) continue;
+    for (const decl of declarationsDirectlyIn(scope)) {
+      if (decl.name !== name) continue;
+      return decl.init === null ? null : numericValueOf(decl.init);
     }
   }
   return null;
 }
 
-function balanced(src, start, open, close, what, label) {
-  const from = src.indexOf(open, start);
-  if (from === -1) throw new Error(`${label} opens no block`);
-  let depth = 0;
-  for (let i = from; i < src.length; i += 1) {
-    if (src[i] === open) depth += 1;
-    else if (src[i] === close) {
-      depth -= 1;
-      if (depth === 0) return src.slice(start, i + 1);
+function declarationsDirectlyIn(scope) {
+  const out = [];
+  const add = (id, init) => {
+    if (id && id.type === 'Identifier') out.push({ name: id.name, init: init ?? null });
+  };
+  for (const p of scope.params ?? []) add(p, null);
+  if (scope.type === 'CatchClause') add(scope.param, null);
+  const statements =
+    scope.type === 'Program' || scope.type === 'BlockStatement' || scope.type === 'StaticBlock'
+      ? (scope.body ?? [])
+      : scope.type === 'ForStatement' ||
+          scope.type === 'ForOfStatement' ||
+          scope.type === 'ForInStatement'
+        ? [scope.init ?? scope.left].filter(Boolean)
+        : [];
+  for (const s of statements) {
+    if (s.type === 'VariableDeclaration') {
+      for (const d of s.declarations) add(d.id, d.init);
+    } else if (s.type === 'FunctionDeclaration') {
+      add(s.id, null);
     }
   }
-  throw new Error(`${label} has no matching ${what}`);
+  return out;
+}
+
+/**
+ * The number this node denotes, or `null` if it does not denote one.
+ *
+ * A character count need not be written as a number. `'320'` coerces,
+ * `-320` is a unary expression rather than a literal, and `320 + 1` is
+ * arithmetic over two of them — all of which a scan for digit characters
+ * in the source text either misses or cannot interpret (#2144 round 3).
+ */
+export function numericValueOf(node) {
+  if (!node) return null;
+  if (node.type === 'Literal') {
+    if (typeof node.value === 'number') return node.value;
+    // `'320'` is a 320-character bound after coercion, and erasing string
+    // literals before looking for digits is exactly how it hid.
+    if (typeof node.value === 'string' && node.value.trim() !== '') {
+      const n = Number(node.value);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  if (node.type === 'UnaryExpression' && (node.operator === '-' || node.operator === '+')) {
+    const inner = numericValueOf(node.argument);
+    return inner === null ? null : node.operator === '-' ? -inner : inner;
+  }
+  return null;
+}
+
+function lineOf(src, index) {
+  let n = 1;
+  for (let i = 0; i < index; i += 1) if (src[i] === '\n') n += 1;
+  return n;
 }
 
 /**
