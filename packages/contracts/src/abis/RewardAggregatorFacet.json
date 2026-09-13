@@ -1961,6 +1961,22 @@
   },
   {
     "type": "error",
+    "name": "DeliveredFreshBoundExceeded",
+    "inputs": [
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DeliveredFreshShortfall",
     "inputs": [
       {
@@ -2872,6 +2888,27 @@
     "type": "error",
     "name": "RecoveryUserHasNoVault",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycleInflowUnverified",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "delta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -1352,9 +1352,19 @@ contract MeshThreeChainE2ETest is Test {
         // PR's verification re-running it.)
         vpfiOf[ARB].mint(arbD, BUCKET_SEED + 100_000 ether);
         vm.chainId(ARB);
+        // #1566 closure 2 — a mirror pays fresh reward value only out of
+        // DELIVERED funding, legacy days included; with an empty delivered
+        // ledger this witness claim is refused at the chokepoint. Seed the
+        // ledger so the witness can run, and assert the charge it leaves.
+        _mut(ARB).setArmedFreshLedgerRaw(1_000_000 ether, 0);
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();
         assertGt(paid, 0, "the claim surface is live on this mirror");
+        assertEq(
+            _mut(ARB).getArmedFreshPaidRaw(),
+            paid,
+            "the delivered ledger was charged by exactly the fresh paid (no recycled drawn)"
+        );
         (,,, uint256 paidOutRecycled) =
             RewardAggregatorFacet(arbD).getGovernorCommitState();
         assertEq(paidOutRecycled, 0, "and it drew nothing from the bucket");

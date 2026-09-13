@@ -1613,16 +1613,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(dc.lenderPool18, 3e18, "pools credited pending the era");
     }
 
+    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for:
+    /// a compensation credit counts its authenticated fresh amount at INGRESS,
+    /// whatever the day's vintage (the chain is unarmed here), and confirmation
+    /// promotes NOTHING — it clears the provisional flag and leaves the ledger
+    /// exactly where the credit put it. Before closure 2 the credit landed in
+    /// `uncounted` (day unarmed) and the #1634 r3 reclassification moved it
+    /// into `received` at confirmation; that promotion is gone because there
+    /// is nothing left to promote.
     function testProvisionalConfirmedInPlace() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);
-        // Credited while the chain was UNARMED (no broadcast yet), so
-        // nothing counted toward the armed-fresh ledger at credit time.
         assertEq(
             _rlens().getDayCompensation(3).armedFreshCounted,
-            0,
-            "unarmed at credit - uncounted"
+            5e18,
+            "counted in full at credit - vintage-blind"
         );
+        (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted0, 5e18, "ledger credited at ingress");
+        assertEq(uncounted0, 0, "nothing parked");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true; // genuinely zeroed, matching era
@@ -1633,14 +1642,10 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
         assertEq(_rlens().getStrandedRecoveryReserved(), 0, "no quarantine");
-        // #1634 r3 — the confirming broadcast ALSO installed D* (the core
-        // runs before the hook), so the credit reclassifies against it:
-        // the delivered-fresh bound must see this day's backing.
-        assertEq(
-            dc.armedFreshCounted,
-            5e18,
-            "reclassified against the now-installed arming day"
-        );
+        assertEq(dc.armedFreshCounted, 5e18, "confirmation changes nothing");
+        (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted1, counted0, "confirmation promotes nothing");
+        assertEq(uncounted1, uncounted0, "and demotes nothing");
     }
 
     /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
@@ -1703,14 +1708,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
+    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for:
+    /// the demotion branch ALONE reverses exactly the original provisional
+    /// credit — `received` falls by what the credit added, and that amount
+    /// moves to `uncounted` beside the recovery reservation. Proven against
+    /// the credit it starts from, not by composing confirm-then-demote, which
+    /// the production state machine cannot do.
     function testProvisionalDemoted_EraMismatch() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+        (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted0, 5e18, "credited in full at ingress");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
 
+        (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted1, 0, "demotion removed exactly what the credit added");
+        assertEq(uncounted1, uncounted0 + 5e18, "...and parked it as uncounted");
         LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertFalse(dc.compensated, "provisional state deleted");
         LibVaipakam.StrandedRecovery memory sr =

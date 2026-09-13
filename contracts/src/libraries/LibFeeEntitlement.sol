@@ -183,6 +183,9 @@ library LibFeeEntitlement {
         // free-balance {fullOptInConfirmed}), so downgrading here would leave the
         // borrower the cheaper fee with no paired `C*` (Codex #1366 r4 P2). A
         // revert rolls the whole accept — bump included — back atomically.
+        // #1566 closure 2 — snapshot before the pull; the credit below is a
+        // delta-checked operation that verifies the balance actually rose.
+        uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
         try
             VaultFactoryFacet(address(this)).vaultWithdrawERC20(
                 party,
@@ -199,11 +202,7 @@ library LibFeeEntitlement {
             party,
             s.protocolTrackedVaultBalance[party][vpfi]
         );
-        LibVpfiRecycle.credit(
-            LibVpfiRecycle.RecycleSource.FullTariff,
-            loanId,
-            cStar
-        );
+        LibVpfiRecycle.creditFullTariff(loanId, cStar, balanceBefore);
         return (LibVaipakam.FeeEntitlementMode.Full, cStar);
     }
 
