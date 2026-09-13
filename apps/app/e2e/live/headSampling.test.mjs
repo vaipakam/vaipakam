@@ -15,9 +15,12 @@
  * the module's, and are kept because they pin SHAPE a behavioural test does
  * not see — where a stamp is taken, which clock it takes, that there is one
  * admission. What this file still owns outright is the drive's WIRING: the
- * order of settle, sample and scrape at the two call sites, which clock the
- * drive hands the tracker, and that the report consumes what the
- * observation produces. None of that can run without the drive.
+ * order at the two call sites — at the pre-render site, drain the pending
+ * reads, then sample the floor, then read the card; at the post-scrape
+ * site, read the card, then drain, then sample the observed head and ask
+ * the provider for the ceiling — which clock the drive hands the tracker,
+ * and that the report consumes what the observation produces. None of
+ * that can run without the drive.
  *
  * WHAT IT PROTECTS. `page.on('response', …)` accepts an async listener
  * and Playwright does not await it. A `latest`-block reply that arrives

@@ -79,6 +79,22 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
   const predicates = [VISIBILITY_SOURCE];
 
   await page.setContent(`
+    <!-- #2138 — FIRST in the document on purpose. An inner scroll
+         container at the top of the page, scrolled down by 300, carries
+         its first row to a NEGATIVE viewport rect while window.scrollY is
+         still 0. A bare document-origin test condemned that row; the
+         lender can scroll the container straight back to it. Placed
+         first so the container really does sit near the origin —
+         further down the page the row's document coordinates would stay
+         positive and the case would test nothing. -->
+    <div id="innerScroller" style="height:40px; overflow:auto; margin:0">
+      <p id="scrolledAbove" style="height:20px; margin:0">scrolled above an inner slit, reachable</p>
+      <!-- Parked far above inside the SAME scrolled container: the
+           container's 300 of scroll cannot carry -9999 back, so the
+           exemption must not become a blanket one. -->
+      <p id="parkedInScroller" style="position:absolute; top:-9999px; margin:0">This loan can be closed out now.</p>
+      <p style="height:400px; margin:0">filler</p>
+    </div>
     <div id="collapsed" style="height:0; overflow:hidden">
       <p id="clipped">a fee row the lender cannot see</p>
     </div>
@@ -196,6 +212,20 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
           fixedUnderPositioned: visible(byId('fixedUnderPositioned')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
+          // #2138 — the container is scrolled HERE, inside the page, so
+          // the row's rect is negative while window.scrollY is 0; the
+          // measurement the issue records, reproduced rather than assumed.
+          ...(() => {
+            const scroller = byId('innerScroller')!;
+            scroller.scrollTop = 300;
+            const row = byId('scrolledAbove')!.getBoundingClientRect();
+            return {
+              scrolledAboveRectTop: row.top,
+              scrolledAbovePageScrollY: window.scrollY,
+              scrolledAbove: visible(byId('scrolledAbove')),
+              parkedInScroller: visible(byId('parkedInScroller')),
+            };
+          })(),
           // ROUND 48 — `clip-path` hides the CONTENT and leaves every
           // other signal intact: full-size box, `checkVisibility`
           // positive, no overflow to walk, an opaque colour.
@@ -304,6 +334,17 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
     // reachable, and condemning it would be a false failure — the
     // direction that gets a check switched off.
     expect(result.scrolledOut, `scrolled out of a scroller`).toBe(true);
+    // #2138 — and scrolled ABOVE an inner scroller's slit is the same
+    // reachability, arriving through a negative rect the page's own
+    // scroll offset does not explain. The two geometry reads guard the
+    // guard: if the row's rect were not negative, or the page had
+    // scrolled, the case would be passing without testing the rule.
+    expect(result.scrolledAboveRectTop, 'the row sits above the viewport').toBeLessThan(0);
+    expect(result.scrolledAbovePageScrollY, 'and the page itself has not scrolled').toBe(0);
+    expect(result.scrolledAbove, `scrolled above an inner scroller's slit`).toBe(true);
+    // The exemption is quantified by the container's own scroll offset,
+    // not granted to everything under a scrolled container.
+    expect(result.parkedInScroller, `parked at -9999px inside that scroller`).toBe(false);
     // ROUND 48 P2 — `clip-path: inset(50%)` is the modern
     // visually-hidden idiom, and every other test in this predicate
     // vouches for it: the box is full size, `checkVisibility` is
@@ -1440,4 +1481,695 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.generatedMixedText.unresolved,
     'a counter mixed with a unit leaves the claim unestablished',
   ).toBe(true);
+});
+
+// #2138 review — THE SCROLL CREDIT IS WHAT A SCROLLER CAN ACTUALLY DO TO
+// THIS BOX. Five ways the first version of the credit was wrong, each a
+// Codex finding on #2157, each pinned against a real engine:
+//
+//   - a scroller between an absolutely positioned box and its containing
+//     block does not move it, and nothing moves a viewport-fixed one;
+//   - `<body>` as an independent scroller (standards mode, `html`
+//     overflow hidden) is real credit while `window.scrollY` stays 0;
+//   - an element's own scroll carries its glyphs and not its box;
+//   - the credit goes through ancestor transforms — under `scale(2)`
+//     restoring 300 moves the row 600;
+//   - a `column-reverse` scroller rests at 0 and scrolls into negative
+//     values, so its restorable distance is to its minimum, not to 0.
+//
+// Every scrolled fixture also asserts the geometry it relies on — a
+// negative rect with the page unscrolled — so a case cannot pass by never
+// reaching the state it claims to test. Layout is stacked from the top of
+// an unscrolled document so the arithmetic in each comment holds.
+test('the scroll credit counts only what moves the box, mapped through transforms', async ({
+  page,
+}) => {
+  // STANDARDS MODE, stated. Without a doctype `setContent` yields a quirks
+  // document, where `body.clientHeight` is the viewport's and a body
+  // scroller's own numbers are wrong; the app under test has a doctype.
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- y 0..40 -->
+    <div id="staticScroller" style="height:40px; overflow:auto">
+      <p id="absUnderStatic" style="position:absolute; top:-100px">absolute, scroller is not its containing block</p>
+      <p id="fixedUnderScroller" style="position:fixed; top:-100px">fixed, nothing carries it</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 40..80 -->
+    <div id="positionedScroller" style="position:relative; height:40px; overflow:auto">
+      <p id="absUnderPositioned" style="position:absolute; top:0; height:20px">absolute under its own scrolling containing block</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 80..120: a 40px box whose own text is followed by 600px of
+         block filler, so it scrolls its text out of its own slit -->
+    <p id="selfScroller" style="height:40px; overflow:auto">an element scrolling its own text<span style="display:block; height:600px"></span></p>
+    <!-- y 120..200: a 40px scroller drawn at twice its size -->
+    <div style="transform:scale(2); transform-origin:0 0; height:80px">
+      <div id="scaledScroller" style="height:40px; overflow:auto">
+        <p id="scaledRow" style="height:20px">under a scaled ancestor</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- y 200..240 -->
+    <div id="reverseScroller" style="height:40px; overflow:auto; display:flex; flex-direction:column-reverse">
+      <p style="height:400px; flex:none">filler shown first</p>
+      <p id="reverseRow" style="height:20px; flex:none">earlier content, above the slit at rest</p>
+    </div>
+    <!-- y 240..280: a clipper whose inner scroller's slit (340..380) lies
+         wholly outside it — an inner scroll range must not exempt this -->
+    <div id="outsideClipper" style="height:40px; overflow:hidden">
+      <div id="outsideScroller" style="margin-top:100px; height:40px; overflow:auto">
+        <p id="outsideRow" style="height:20px">in a scroller the clipper never shows</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- y 280..320: content the scroller can only carry FURTHER away -->
+    <div id="awayScroller" style="height:40px; overflow:auto">
+      <p id="awayRow" style="margin-top:-100px; height:20px">above the slit, and scrolling only moves it up</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 320..360: a scroller turned upside down, resting at its minimum,
+         whose FAR end is the one that rescues -->
+    <div style="transform:rotate(180deg); transform-origin:50% 50%; height:40px">
+      <div id="rotatedScroller" style="height:40px; overflow:auto">
+        <p style="height:400px">filler shown first</p>
+        <p id="rotatedRow" style="height:20px">local bottom, viewport top</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    const top = (id: string) => byId(id).getBoundingClientRect().top;
+    // Scroll the three ordinary scrollers by 300 and the self-scroller as
+    // far as it goes; the reverse scroller already rests with its earlier
+    // content above. Then judge.
+    for (const id of ['staticScroller', 'positionedScroller', 'scaledScroller']) {
+      byId(id).scrollTop = 300;
+    }
+    byId('selfScroller').scrollTop = 600;
+    byId('outsideScroller').scrollTop = 300;
+    const selfText = document.createRange();
+    selfText.selectNodeContents(byId('selfScroller').firstChild!);
+    return {
+      pageScrollY: window.scrollY,
+      absUnderStaticTop: top('absUnderStatic'),
+      absUnderStatic: visible(byId('absUnderStatic')),
+      fixedUnderScrollerTop: top('fixedUnderScroller'),
+      fixedUnderScroller: visible(byId('fixedUnderScroller')),
+      absUnderPositionedTop: top('absUnderPositioned'),
+      absUnderPositioned: visible(byId('absUnderPositioned')),
+      selfScrollTop: byId('selfScroller').scrollTop,
+      selfScrollerBoxTop: top('selfScroller'),
+      selfTextBottom: selfText.getBoundingClientRect().bottom,
+      selfScroller: visible(byId('selfScroller')),
+      scaledRowTop: top('scaledRow'),
+      scaledRow: visible(byId('scaledRow')),
+      reverseScrollTop: byId('reverseScroller').scrollTop,
+      reverseRowTop: top('reverseRow'),
+      reverseRow: visible(byId('reverseRow')),
+      outsideRowTop: top('outsideRow'),
+      outsideRow: visible(byId('outsideRow')),
+      awayRowTop: top('awayRow'),
+      awayRow: visible(byId('awayRow')),
+      rotatedScrollTop: byId('rotatedScroller').scrollTop,
+      rotatedRowTop: top('rotatedRow'),
+      rotatedRow: visible(byId('rotatedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+
+  expect(result.pageScrollY, 'the page itself never scrolled').toBe(0);
+  // NOT carried by the scroller. The static scroller is not the absolute
+  // box's containing block, so it sits at -100 whatever the scroll offset
+  // is, and a credit of 0 leaves it before the origin; the fixed box is
+  // carried by nothing.
+  expect(result.absUnderStaticTop).toBe(-100);
+  expect(result.absUnderStatic, 'absolute under a static scroller').toBe(false);
+  expect(result.fixedUnderScrollerTop).toBe(-100);
+  expect(result.fixedUnderScroller, 'fixed under a scroller').toBe(false);
+  // Carried. The positioned scroller IS the containing block: at rest the
+  // row is at 40, the 300 of scroll puts it at -260, and 300 of credit
+  // brings its bottom back to +60.
+  expect(result.absUnderPositionedTop).toBe(-260);
+  expect(result.absUnderPositioned, 'absolute under its scrolling containing block').toBe(true);
+  // Own scroll. The box stays at 80 while its text is carried far above
+  // (the block filler is the scroll range); the credit applies to the
+  // glyphs.
+  expect(result.selfScrollTop).toBeGreaterThan(500);
+  expect(result.selfScrollerBoxTop).toBe(80);
+  expect(result.selfTextBottom).toBeLessThan(0);
+  expect(result.selfScroller, 'an element scrolling its own text').toBe(true);
+  // Scaled. The row rests at 120; scrolling 300 under scale(2) puts it at
+  // 120 - 600 = -480. A raw credit of 300 would leave it at -180 and
+  // condemn it; the mapped credit of 600 reaches it.
+  expect(result.scaledRowTop).toBe(-480);
+  expect(result.scaledRow, 'a row under a scale(2) ancestor').toBe(true);
+  // Reverse. At rest (scrollTop 0) the row is 380 above the slit's top of
+  // 200, and the restorable distance is the 380 of negative range, not 0.
+  expect(result.reverseScrollTop).toBe(0);
+  expect(result.reverseRowTop).toBe(-180);
+  expect(result.reverseRow, 'earlier content in a column-reverse scroller').toBe(true);
+  // #2157 round 2 — the clipper exemption is not blanket. The inner
+  // scroller's slit (340..380) never shows through a clipper at 240..280,
+  // whatever it scrolls: the row (at 340 - 300 = 40, so not before the
+  // origin) is condemned by the clip walk, not the origin test.
+  expect(result.outsideRowTop).toBe(40);
+  expect(result.outsideRow, 'a scroller whose slit lies outside its clipper').toBe(false);
+  // And a scroller at rest can only carry a negative-margin row further
+  // up: at 180 it is not before the origin, and no scroll position brings
+  // it into the 280..320 slit.
+  expect(result.awayRowTop).toBe(180);
+  expect(result.awayRow, 'content the scroller can only move away').toBe(false);
+  // Upside down, at rest (scrollTop 0 = its minimum): the row sits at the
+  // scroller's local bottom, which rotation puts 360 above the slit's top
+  // of 320, i.e. at -60. Moving toward the MAXIMUM offset — the end a
+  // toward-minimum credit never considers — carries it back.
+  expect(result.rotatedScrollTop).toBe(0);
+  expect(result.rotatedRowTop).toBe(-60);
+  expect(result.rotatedRow, 'a rotated scroller rescued by its far end').toBe(true);
+});
+
+test('body as an independent scroller is credited when it is not the page scroller', async ({
+  page,
+}) => {
+  // Standards mode, as above: in a quirks document body is the page
+  // scroller or reports the viewport's numbers, and the premise fails.
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0; height: 40px; overflow: auto }</style>
+    <p id="bodyRow" style="height:20px; margin:0">scrolled above body's own slit</p>
+    <p style="height:400px; margin:0">filler</p>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    document.body.scrollTop = 300;
+    return {
+      bodyIsPageScroller: document.scrollingElement === document.body,
+      bodyScrollTop: document.body.scrollTop,
+      pageScrollY: window.scrollY,
+      rowTop: document.getElementById('bodyRow')!.getBoundingClientRect().top,
+      row: visible(document.getElementById('bodyRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The premise, asserted: body scrolled as its own container while the
+  // viewport did not — otherwise this is the ordinary page-scroll case.
+  expect(result.bodyIsPageScroller).toBe(false);
+  expect(result.bodyScrollTop).toBe(300);
+  expect(result.pageScrollY).toBe(0);
+  expect(result.rowTop).toBe(-300);
+  expect(result.row, 'a row scrolled above an independent body scroller').toBe(true);
+});
+
+// #2157 round 3 — two more things "scroller" has to mean:
+//
+//   - NESTED. An inner scrollport currently below an outer scroller's slit
+//     is carried into view TOGETHER with its row when the outer one
+//     scrolls. Intersecting the inner slit with the outer box where it
+//     currently sits condemned that row.
+//   - ZERO EXTENT. `overflow: auto` whose content fits is a clipper by
+//     behaviour whatever its style says; a relatively positioned row
+//     shifted out of it cannot be scrolled back and gets the half rule.
+test('nested scrollers carry the inner slit, and a zero-extent scroller is a clipper', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- y 0..40: the outer scroller, at rest; its inner scroller sits 200
+         down, outside the outer slit until the outer one scrolls -->
+    <div id="outer" style="height:40px; overflow:auto">
+      <p style="height:200px">outer filler</p>
+      <div id="inner" style="height:40px; overflow:auto">
+        <p id="nestedRow" style="height:20px">above the inner slit, below the outer one</p>
+        <p style="height:400px">inner filler</p>
+      </div>
+    </div>
+    <!-- y 40..80: scroller styling, no scroll extent -->
+    <div id="zeroExtent" style="height:40px; overflow:auto">
+      <p id="shiftedRow" style="position:relative; top:-39px; height:20px">one pixel of this is inside the box</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('inner').scrollTop = 300;
+    const zero = byId('zeroExtent');
+    return {
+      pageScrollY: window.scrollY,
+      outerScrollTop: byId('outer').scrollTop,
+      innerScrollTop: byId('inner').scrollTop,
+      innerTop: byId('inner').getBoundingClientRect().top,
+      nestedRowTop: byId('nestedRow').getBoundingClientRect().top,
+      nestedRow: visible(byId('nestedRow')),
+      zeroSpan: zero.scrollHeight - zero.clientHeight,
+      shiftedRowTop: byId('shiftedRow').getBoundingClientRect().top,
+      shiftedRow: visible(byId('shiftedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+
+  expect(result.pageScrollY).toBe(0);
+  // The premise: outer at rest with the inner scroller 200 below its slit,
+  // inner scrolled 300 so the row sits at 200 - 300 = -100. Scrolling the
+  // outer by 200 brings the inner slit to 0..40; scrolling the inner back
+  // brings the row into it.
+  expect(result.outerScrollTop).toBe(0);
+  expect(result.innerScrollTop).toBe(300);
+  expect(result.innerTop).toBe(200);
+  expect(result.nestedRowTop).toBe(-100);
+  expect(result.nestedRow, 'a row in a nested scroller the outer one can reveal').toBe(true);
+  // No movement to credit: the row shifted to 1 leaves one pixel of twenty
+  // inside the box and nothing scrolls it back, so the half rule condemns.
+  expect(result.zeroSpan).toBe(0);
+  expect(result.shiftedRowTop).toBe(1);
+  expect(result.shiftedRow, 'a row shifted out of a zero-extent scroller').toBe(false);
+});
+
+// #2157 round 4 — four more, each pinned against a real engine:
+//
+//   - ONE scroll position has to serve every box: a slit placed inside an
+//     outer scroller cannot then be re-placed elsewhere to satisfy a
+//     clipper above it;
+//   - scroller-vs-clipper is decided in VIEWPORT axes: a rotated vertical
+//     scroller moves its content horizontally;
+//   - an ancestor that clips one axis leaves the slit alone on the other;
+//   - `rtl` and `row-reverse` together cancel (measured: [0, span]).
+test('one scroll position serves every box above the slit', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a clipper. The outer scroller's fixed box (100..140) lies
+         wholly outside it, so nothing the inner scroller shows can ever
+         be seen — but an offset chosen freely for the clipper alone would
+         place the inner slit at 0..40 and pass it. -->
+    <div id="clip" style="height:40px; overflow:hidden">
+      <div id="outer" style="margin-top:100px; height:40px; overflow:auto">
+        <p style="height:300px">outer filler</p>
+        <div id="inner" style="height:40px; overflow:auto">
+          <p id="row" style="height:20px">seen through two boxes that never both show it</p>
+          <p style="height:400px">inner filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('inner').scrollTop = 300;
+    return {
+      outerTop: byId('outer').getBoundingClientRect().top,
+      innerTop: byId('inner').getBoundingClientRect().top,
+      rowTop: byId('row').getBoundingClientRect().top,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  expect(result.outerTop).toBe(100);
+  expect(result.innerTop).toBe(400);
+  // At +100 the row is not before the origin: only the clip walk decides.
+  expect(result.rowTop).toBe(100);
+  expect(result.row, 'a slit that cannot serve the outer box and the clipper at once').toBe(false);
+});
+
+test('a rotated vertical scroller is a horizontal scroller in viewport axes', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- local (x, y) → viewport (40 - y, x): the 200×40 scroller stands
+         on its side at x 0..40, y 0..200, and its vertical scroll moves
+         content along viewport X. -->
+    <div style="transform:translate(40px, 0) rotate(90deg); transform-origin:0 0; width:200px; height:40px">
+      <div id="scroller" style="width:200px; height:40px; overflow:auto">
+        <p id="row" style="height:20px">carried sideways</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scroller').scrollTop = 300;
+    const box = byId('scroller').getBoundingClientRect();
+    const row = byId('row').getBoundingClientRect();
+    return {
+      boxRight: box.right,
+      boxBottom: box.bottom,
+      rowLeft: row.left,
+      rowTop: row.top,
+      rootBoxBottom: document.documentElement.getBoundingClientRect().bottom,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The row sits 280 to the RIGHT of the box after 300 of local scroll —
+  // no vertical overlap question at all, and a local-axis classification
+  // would apply the half rule on X and condemn it.
+  expect(result.boxRight).toBe(40);
+  expect(result.boxBottom).toBe(200);
+  expect(result.rowLeft).toBe(320);
+  expect(result.rowTop).toBe(0);
+  // And the root's own layout box (40px, the wrapper's unrotated height)
+  // is shorter than the standing scroller: `html { overflow: hidden }`
+  // clips at the VIEWPORT, not at that box, and reading the box condemned
+  // this row before the rule was corrected.
+  expect(result.rootBoxBottom).toBeLessThan(200);
+  expect(result.row, 'reachable by the scroll that moves it, whichever axis that is').toBe(true);
+});
+
+test('an ancestor that clips one axis leaves the slit alone on the other', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..12: a vertical clipper showing 12px of a 40px scrollport. In
+         between, a wrapper that clips X only and is shorter than the
+         scroller; trimming the slit to it would make the clipper's share
+         look like 12 of 20 instead of 12 of 40. -->
+    <div style="height:12px; overflow-y:hidden">
+      <div style="height:20px; overflow-x:clip; overflow-y:visible">
+        <div id="scroller" style="height:40px; overflow:auto">
+          <p id="row" style="height:20px">mostly hidden scrollport</p>
+          <p style="height:400px">filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scroller').scrollTop = 300;
+    return {
+      scrollerBottom: byId('scroller').getBoundingClientRect().bottom,
+      rowTop: byId('row').getBoundingClientRect().top,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  expect(result.scrollerBottom).toBe(40);
+  expect(result.rowTop).toBe(-300);
+  expect(result.row, 'a 40px scrollport of which the clipper shows 12').toBe(false);
+});
+
+test('rtl and row-reverse together cancel, and either alone reverses', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0; flex: none; height: 20px }</style>
+    <div id="both" dir="rtl" style="display:flex; flex-direction:row-reverse; overflow:auto; width:200px; height:40px">
+      <p style="width:400px">filler</p><p id="bothRow" style="width:100px">off to the right, reachable</p>
+    </div>
+    <div id="rtlOnly" dir="rtl" style="display:flex; overflow:auto; width:200px; height:40px">
+      <p style="width:400px">filler</p><p id="rtlRow" style="width:100px">off to the left, reachable</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    return {
+      bothScrollLeft: byId('both').scrollLeft,
+      bothRowLeft: byId('bothRow').getBoundingClientRect().left,
+      bothRow: visible(byId('bothRow')),
+      rtlScrollLeft: byId('rtlOnly').scrollLeft,
+      rtlRowLeft: byId('rtlRow').getBoundingClientRect().left,
+      rtlRow: visible(byId('rtlRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Measured shape: both reversals cancel, the overflow is on the right
+  // and the range is [0, span]; a single reversal puts it on the left
+  // with [-span, 0]. Treating the pair as a single reversal would point
+  // the credit the wrong way and condemn the first row.
+  expect(result.bothScrollLeft).toBe(0);
+  expect(result.bothRowLeft).toBe(400);
+  expect(result.bothRow, 'rtl + row-reverse').toBe(true);
+  expect(result.rtlScrollLeft).toBe(0);
+  expect(result.rtlRowLeft).toBe(-300);
+  expect(result.rtlRow, 'rtl alone').toBe(true);
+});
+
+// #2157 round 5 — the range helper reads the styles that actually move
+// content: a flex reversal reverses only a flex container, and the
+// individual `rotate` / `scale` properties are transforms too.
+test('flex reversal applies only to flex containers, and individual transform properties count', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a BLOCK scroller carrying flex-direction: column-reverse,
+         which does nothing to it; its range is the ordinary [0, span], so
+         a negative-margin row above the slit can only be carried away. -->
+    <div id="blockReverse" style="height:40px; overflow:auto; flex-direction:column-reverse; margin-top:120px">
+      <p id="blockRow" style="margin-top:-100px; height:20px">above, and the reversal is a no-op</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a 40px scroller drawn at twice its size via the individual
+         property, not transform: scale(2) -->
+    <div style="scale:2; transform-origin:0 0; height:80px">
+      <div id="scaledScroller" style="height:40px; overflow:auto">
+        <p id="scaledRow" style="height:20px">under an individual scale</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scaledScroller').scrollTop = 300;
+    return {
+      blockDisplay: getComputedStyle(byId('blockReverse')).display,
+      blockFlexDirection: getComputedStyle(byId('blockReverse')).flexDirection,
+      blockScrollTop: byId('blockReverse').scrollTop,
+      blockRowTop: byId('blockRow').getBoundingClientRect().top,
+      blockRow: visible(byId('blockRow')),
+      wrapperTransform: getComputedStyle(byId('scaledScroller').parentElement!).transform,
+      wrapperScale: getComputedStyle(byId('scaledScroller').parentElement!).scale,
+      scaledRowTop: byId('scaledRow').getBoundingClientRect().top,
+      scaledRow: visible(byId('scaledRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The computed flex-direction IS reported on the block scroller, and
+  // must be ignored: at rest the row sits at 120 - 100 = 20, outside the
+  // 120..160 slit, and no scroll position brings it in.
+  expect(result.blockDisplay).toBe('block');
+  expect(result.blockFlexDirection).toBe('column-reverse');
+  expect(result.blockScrollTop).toBe(0);
+  expect(result.blockRowTop).toBe(20);
+  expect(result.blockRow, 'a block scroller is not reversed by flex-direction').toBe(false);
+  // `scale: 2` leaves computed `transform` at none; the row still sits at
+  // 160 - 600 = -440 and a raw credit of 300 would condemn it.
+  expect(result.wrapperTransform).toBe('none');
+  expect(result.wrapperScale).toBe('2');
+  expect(result.scaledRowTop).toBe(-440);
+  expect(result.scaledRow, 'a row under an individual scale property').toBe(true);
+});
+
+// #2157 round 6 — what the credit declines to model, and where occlusion
+// is judged when the row is off-screen:
+//
+//   - a projective chain (ancestor `perspective`, any 3-D transform) and a
+//     vertical writing mode are UNQUANTIFIABLE — admitted, stated, never
+//     mis-scaled; nothing the drive reads uses either;
+//   - a row admitted only by scroll credit is judged for occlusion at the
+//     slit it would come back to, so an overlay parked over the whole
+//     scrollport condemns it.
+test('unmodelled chains admit, and an overlay over the slit condemns an off-screen row', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller in a 3-D scene -->
+    <div style="perspective:100px">
+      <div id="persp" style="transform:translateZ(-50px); height:40px; overflow:auto">
+        <p id="perspRow" style="height:20px">scrolled out under perspective</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- 40..240: a vertical-rl scroller, whose horizontal range is negative -->
+    <div id="vert" style="writing-mode:vertical-rl; width:40px; height:200px; overflow:auto">
+      <p id="vertRow" style="width:20px; height:200px">vertical</p>
+      <p style="width:400px; height:200px">filler</p>
+    </div>
+    <!-- 240..280: a scroller whose slit an opaque overlay covers entirely;
+         the row is scrolled far above the viewport -->
+    <div style="position:relative">
+      <div id="covered" style="height:40px; overflow:auto">
+        <p id="coveredRow" style="height:20px">hidden at every scroll offset</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; inset:0; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('persp').scrollTop = 300;
+    byId('vert').scrollLeft = -300;
+    byId('covered').scrollTop = 600;
+    return {
+      perspRowTop: byId('perspRow').getBoundingClientRect().top,
+      perspRow: visible(byId('perspRow')),
+      vertScrollLeft: byId('vert').scrollLeft,
+      vertRow: visible(byId('vertRow')),
+      coveredRowBottom: byId('coveredRow').getBoundingClientRect().bottom,
+      coveredRow: visible(byId('coveredRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Perspective-scaled displacement: the row is above the origin and the
+  // credit is not quantifiable, so it is admitted rather than mis-scaled.
+  expect(result.perspRowTop).toBeLessThan(0);
+  expect(result.perspRow, 'a projective chain admits').toBe(true);
+  // The negative horizontal range is the premise; the credit declines it.
+  expect(result.vertScrollLeft).toBeLessThan(0);
+  expect(result.vertRow, 'a vertical writing mode admits').toBe(true);
+  // Off-screen (bottom < 0), reachable by the scroll — and the slit it
+  // would come back to is covered, so it is not visible at any offset.
+  expect(result.coveredRowBottom).toBeLessThan(0);
+  expect(result.coveredRow, 'an overlay over the whole scrollport').toBe(false);
+});
+
+// #2157 round 7 — seven more corrections to the same model, each pinned:
+//
+//   - the off-screen slit probe runs only where the PAGE scroll cannot
+//     help (glyphs before the document origin);
+//   - that probe samples the scroller's CLIENT area, not its border;
+//   - a viewport-fixed row gets no page-scroll credit, whatever scrollY is;
+//   - `will-change: backdrop-filter` establishes a containing block;
+//   - CSS `zoom` is unquantifiable (admits);
+//   - the outer offset is chosen for the ROW's reachable band, not the
+//     slit's centre;
+//   - stacked clippers are measured against the ORIGINAL slit extent.
+test('the slit probe respects page scroll and borders; fixed rows get no page credit', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0; height: 3000px } p { margin: 0 }</style>
+    <!-- a fixed overlay over the bottom 120px of the viewport -->
+    <div style="position:fixed; left:0; right:0; bottom:0; height:120px; background:#000"></div>
+    <!-- a scroller whose top 20px show beneath that overlay; its row sits
+         BELOW the viewport and comes back by page scroll, not inner scroll -->
+    <div id="belowScroller" style="position:absolute; top:700px; height:100px; overflow:auto">
+      <p style="height:50px">head</p>
+      <p id="belowRow" style="height:20px">below the fold, page-scrollable</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a BORDERED scroller whose client area an overlay covers -->
+    <div style="position:absolute; top:200px; left:0; width:120px">
+      <div id="bordered" style="height:60px; width:100px; overflow:auto; border:10px solid #888">
+        <p id="borderedRow" style="height:20px">hidden behind the client-area overlay</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; top:10px; left:10px; width:100px; height:60px; background:#000"></div>
+    </div>
+    <!-- a viewport-fixed row above the viewport -->
+    <p id="fixedRow" style="position:fixed; top:-100px; height:20px">never on screen</p>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('bordered').scrollTop = 600;
+    const before = {
+      belowRowTop: byId('belowRow').getBoundingClientRect().top,
+      belowRow: visible(byId('belowRow')),
+      borderedRowBottom: byId('borderedRow').getBoundingClientRect().bottom,
+      borderedRow: visible(byId('borderedRow')),
+    };
+    window.scrollTo(0, 1000);
+    return {
+      ...before,
+      viewportHeight: window.innerHeight,
+      scrollY: window.scrollY,
+      fixedRowTop: byId('fixedRow').getBoundingClientRect().top,
+      fixedRow: visible(byId('fixedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Below the viewport (750 > 720) behind a fixed overlay: page scroll
+  // brings both scroller and row away from the overlay, so admitted.
+  expect(result.viewportHeight).toBe(720);
+  expect(result.belowRowTop).toBe(750);
+  expect(result.belowRow, 'a page-scrollable row under a fixed overlay').toBe(true);
+  // Scrolled above the origin, and the only place it can come back to is
+  // covered — probing the border would have found the scroller itself.
+  expect(result.borderedRowBottom).toBeLessThan(0);
+  expect(result.borderedRow, 'a bordered scroller whose client area is covered').toBe(false);
+  // Fixed 100 above the viewport with the page scrolled by 1000: the page
+  // offset must not be added, so it is before the origin with no credit.
+  expect(result.scrollY).toBe(1000);
+  expect(result.fixedRowTop).toBe(-100);
+  expect(result.fixedRow, 'a viewport-fixed row gets no page-scroll credit').toBe(false);
+});
+
+test('containing-block hints, zoom, joint outer offset and stacked clippers', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller made the containing block only by a will-change hint -->
+    <div id="hinted" style="will-change:backdrop-filter; height:40px; overflow:auto">
+      <p id="hintedRow" style="position:absolute; top:0; height:20px">absolute under a hinted containing block</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- 40..120: zoom is not modelled -->
+    <div style="zoom:2">
+      <div id="zoomed" style="height:40px; overflow:auto">
+        <p id="zoomedRow" style="height:20px">under zoom</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- 120..160: a 40px outer scroller at rest holding a 200px inner
+         scroller whose first row is scrolled above the origin; the row can
+         come back only to the inner slit's TOP, which the outer box shows -->
+    <div id="outerShort" style="height:40px; overflow:auto">
+      <div id="innerTall" style="height:200px; overflow:auto">
+        <p id="jointRow" style="height:20px">reachable at the inner slit's top</p>
+        <p style="height:600px">inner filler</p>
+      </div>
+      <p style="height:400px">outer filler</p>
+    </div>
+    <!-- 160..170: two clippers each keeping half of what the previous left:
+         10 of a 40px slit is a quarter, not "half of half" -->
+    <div style="height:10px; overflow:hidden">
+      <div style="height:20px; overflow:hidden">
+        <div id="stacked" style="height:40px; overflow:auto">
+          <p id="stackedRow" style="height:20px">seen through a quarter of its slit</p>
+          <p style="height:400px">filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('hinted').scrollTop = 300;
+    byId('zoomed').scrollTop = 300;
+    byId('innerTall').scrollTop = 300;
+    return {
+      hintedRowTop: byId('hintedRow').getBoundingClientRect().top,
+      hintedRow: visible(byId('hintedRow')),
+      zoomValue: getComputedStyle(byId('zoomed').parentElement!).zoom,
+      zoomedRowTop: byId('zoomedRow').getBoundingClientRect().top,
+      zoomedRow: visible(byId('zoomedRow')),
+      outerScrollTop: byId('outerShort').scrollTop,
+      jointRowTop: byId('jointRow').getBoundingClientRect().top,
+      jointRow: visible(byId('jointRow')),
+      stackedRowTop: byId('stackedRow').getBoundingClientRect().top,
+      stackedRow: visible(byId('stackedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Carried by its hinted containing block: -300 with 300 of credit.
+  expect(result.hintedRowTop).toBe(-300);
+  expect(result.hintedRow, 'an absolute row under a will-change: backdrop-filter scroller').toBe(true);
+  // Zoom: declared unquantifiable, admitted.
+  expect(result.zoomValue).toBe('2');
+  expect(result.zoomedRowTop).toBeLessThan(0);
+  expect(result.zoomedRow, 'zoom admits').toBe(true);
+  // Outer at rest; the row restores to the inner slit's top (120..140),
+  // which is inside the outer box (120..160). Centring the 200px inner
+  // slit in the 40px box demanded the row at 200..240 and condemned it.
+  expect(result.outerScrollTop).toBe(0);
+  expect(result.jointRowTop).toBe(-180);
+  expect(result.jointRow, 'the outer offset is chosen for the row').toBe(true);
+  // 10 of the original 40 shows: a quarter, condemned; halving twice
+  // would have passed it.
+  expect(result.stackedRowTop).toBe(160);
+  expect(result.stackedRow, 'stacked clippers keep a quarter of the slit').toBe(false);
 });
