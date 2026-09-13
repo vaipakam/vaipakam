@@ -1853,6 +1853,40 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // Round 38. The else-if exemption was written as "a body that is an
+  // if" rather than as "an else-if chain", so it excused any header
+  // whose unbraced body happened to be one — and those headers then
+  // handed back the nested block as if they had opened it, which is the
+  // plausible partial region this check exists to refuse.
+  it('refuses a header whose unbraced body merely happens to be an if', () => {
+    for (const [why, src, header] of [
+      ['a labelled if', 'label: if (ready) { one(); } else { two(); }\n', 'label:'],
+      ['a loop with an unbraced if body', 'while (ready) if (x) { work(); }\n', 'while (ready)'],
+    ]) {
+      expect(() => blockFrom(src, header), why).toThrow(/opens no block of its own/);
+    }
+  });
+
+  // Two supported forms combined is a third form, and it had to be said
+  // once for callees and again for tags: a name given its value by
+  // assignment, then used as a tag; and a second name aliasing the
+  // first.
+  it('finds a bound truncator however many names it passes through', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['assigned after declaration, then used as a tag', 'let cut;\ncut = s.slice.bind(s);\nconst r = cut`320`;'],
+      [
+        'held by a second name',
+        'const cut = s.slice.bind(s);\nconst alias = cut;\nconst r = alias(start, start + 320);',
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
   // Round 36 REVERSES an earlier accepting case. "Just BEFORE a
   // landmark" was pinned as accepted for several rounds, and it is not
   // safe: when the landmark sits at the very start of the text the

@@ -437,12 +437,20 @@ function taggedTruncator(src, tag) {
     if (!method) return null;
     return { method, receiverNode: tag.object };
   }
-  const held = tag.type === 'Identifier' ? resolveAlias(src, tag) : tag;
-  if (!held || held.type !== 'CallExpression') return null;
-  const inner = unwrapChain(held.callee);
+  // A NAME tag goes through the same every-value resolution an ordinary
+  // callee does (round 38). It went through the alias resolver instead,
+  // which refuses a reassigned name — so `let cut; cut = s.slice.bind(s);
+  // cut\`320\`` was dropped, combining two forms each of which was
+  // already handled on its own. Two paths asking one question again.
+  if (tag.type === 'Identifier') {
+    const held = boundTruncatorValues(src, tag);
+    return held ? { method: held.method, receiverNode: held.call.arguments[0] ?? null } : null;
+  }
+  if (tag.type !== 'CallExpression') return null;
+  const inner = unwrapChain(tag.callee);
   if (!inner || inner.type !== 'MemberExpression' || memberName(inner) !== 'bind') return null;
   const method = borrowedTruncator(src, inner, 'bind');
-  return method ? { method, receiverNode: held.arguments[0] ?? null } : null;
+  return method ? { method, receiverNode: tag.arguments[0] ?? null } : null;
 }
 
 /**
@@ -465,7 +473,14 @@ function boundTruncatorValues(src, node) {
     if (p?.type === 'AssignmentExpression' && p.left === ref.identifier) values.push(p.right);
   }
   const bound = values
-    .map((v) => unwrapChain(v))
+    // A candidate may itself be a NAME holding the bound function
+    // (round 38): `const cut = src.slice.bind(src); const alias = cut;`
+    // put one more hop between the bind and the call, and unwrapping
+    // without resolving discarded it for not being a call.
+    .map((v) => {
+      const u = unwrapChain(v);
+      return u?.type === 'Identifier' ? unwrapChain(resolveAlias(src, u)) : u;
+    })
     .filter((v) => v?.type === 'CallExpression')
     .map((call) => {
       const inner = unwrapChain(call.callee);
@@ -1125,8 +1140,17 @@ function unbracedBody(node, at = -1) {
       : node.body;
   if (!body || typeof body.type !== 'string') return false;
   // An `else if` chains rather than opening a block of its own, and the
-  // nested `if` is its own owner — so it is not an unbraced body.
-  if (body.type === 'IfStatement') return false;
+  // nested `if` is its own owner — so it is not an unbraced body. ONLY
+  // an else-if, though (round 38): written unconditionally this excused
+  // any header whose unbraced body happens to be an `if`, so
+  // `while (ready) if (x) { work(); }` and `label: if (a) {…} else {…}`
+  // both returned the nested block as though the outer header had opened
+  // it — a plausible partial region, which is the thing this check
+  // exists to refuse. The exemption is about the `else if` CHAIN, so it
+  // is written as that and not as a shape that resembles one.
+  if (node.type === 'IfStatement' && body === node.alternate && body.type === 'IfStatement') {
+    return false;
+  }
   return BODY_BEARING.has(node.type) && !BRACED.has(body.type);
 }
 
