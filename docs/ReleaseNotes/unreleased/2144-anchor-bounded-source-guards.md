@@ -217,8 +217,17 @@ page of a paginated list and my check read only the first. Nothing
 merged, but only because a rule about resolving conversations stopped it,
 not because my own check caught the mistake.
 
-Putting a removed window back, in any of the fifty disguises review has
-demonstrated, turns the suite red.
+Putting a removed window back, in any of the disguises review has
+demonstrated, turns the suite red — each one written down as its own
+case, and each rule that ACCEPTS something written down beside it, so
+neither half can quietly rot into the other.
+
+No count is given for that list, on purpose. An earlier draft of this
+note asserted one, and a careful recount could not reproduce it: the
+obvious way to tally the cases mixes the ones that must be refused with
+the ones that must be allowed. Twice already in this work a number has
+been stated on the strength of a check narrower than the thing it
+counted. The honest version is the list itself, which anyone can read.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
