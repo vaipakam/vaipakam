@@ -16,8 +16,8 @@ import {
   between,
   blockFrom,
   callContaining,
-  numericBindingAt,
-  numericValueOf,
+  enclosingStatementOf,
+  reachesNumber,
   sliceCallsIn,
   statementFrom,
   stripLineComments,
@@ -307,40 +307,36 @@ describe('#2144 — no source region is bounded by a character count', () => {
 
   const MARKER = 'not-a-source-region';
 
-  // A bound is a CHARACTER COUNT if a number can be reached anywhere
-  // inside it — written as one, coerced from a string, or bound to a
-  // name in scope. Anything else is an anchor: an `indexOf`, a variable
-  // holding one, a call.
-  const countsCharacters = (src, arg) => {
-    let found = false;
-    const visit = (n) => {
-      if (found || n === null || typeof n !== 'object') return;
-      if (Array.isArray(n)) {
-        n.forEach(visit);
-        return;
-      }
-      if (typeof n.type !== 'string') return;
-      if (numericValueOf(n) !== null) found = true;
-      if (n.type === 'Identifier' && numericBindingAt(src, n.name, n.start) !== null) found = true;
-      for (const k of Object.keys(n)) {
-        if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
-        visit(n[k]);
-      }
-    };
-    visit(arg);
-    return found;
+  // A bound is a CHARACTER COUNT when a number is reachable inside it —
+  // the module answers that, for a bound and for a binding's initializer
+  // with one function, because they are one question. Round 4 caught them
+  // being two, with the weaker one letting `const WINDOW = BASE` and
+  // `const WINDOW = 160 * 2` through.
+  const countsCharacters = (src, arg) => reachesNumber(src, arg);
+
+  // The marker excuses the STATEMENT it precedes, and only calls inside
+  // that statement. Proximity alone excused a neighbour (round 4): a
+  // fixed window written next to a legitimate count inherited its pass.
+  const excused = (src, call) => {
+    const stmt = enclosingStatementOf(src, call.node);
+    if (!stmt) return false;
+    const lines = src.split('\n');
+    let n = lineOf(src, stmt.start) - 1;
+    // Walk back over the comment lines immediately above the statement.
+    // A marker has to be part of that run to excuse it; a blank line or
+    // any code ends the run, so it cannot reach across a neighbour.
+    while (n >= 1 && lines[n - 1].trimStart().startsWith('//')) {
+      if (lines[n - 1].includes(MARKER)) return true;
+      n -= 1;
+    }
+    return lines[lineOf(src, stmt.start) - 1].includes(MARKER);
   };
 
-  // The marker sits on the call's line or the lines just above it, so it
-  // reads as a note on the declaration rather than as configuration
-  // somewhere else. Out-of-band allowlists drift away from the code they
-  // excuse; this one cannot.
-  const excused = (src, line) => {
-    const lines = src.split('\n');
-    // The guard's own rule, applied to the guard — and the reason the
-    // marker names WHAT it counts rather than merely asserting innocence.
-    // not-a-source-region: counts LINES of an already-split array
-    return lines.slice(Math.max(0, line - 4), line).some((l) => l.includes(MARKER));
+  const lineOf = (src, index) => {
+    let n = 1;
+    // not-a-source-region: counts NEWLINES up to an index, to report one
+    for (let i = 0; i < index; i += 1) if (src[i] === '\n') n += 1;
+    return n;
   };
 
   it('finds the suites to check', () => {
@@ -352,7 +348,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
     const src = fs.readFileSync(path.join(dir, file), 'utf8');
     const counted = sliceCallsIn(src)
       .filter((c) => c.args.some((a) => countsCharacters(src, a)))
-      .filter((c) => !excused(src, c.line))
+      .filter((c) => !excused(src, c))
       .map((c) => `${file}:${c.line} — ${c.text.replace(/\s+/g, ' ')}`);
     expect(
       counted,
@@ -371,6 +367,10 @@ describe('#2144 — no source region is bounded by a character count', () => {
       ["const s = f();\nconst r = s.slice(start, '320');", 'a coerced string'],
       ['const W = 320;\nconst s = f();\nconst r = s.slice(start, start + W);', 'a named constant'],
       ["const s = f();\nconst r = s.slice(start, start - -320);", 'a unary minus'],
+      // ROUND 4 — an initializer is not just its root.
+      ['const BASE = 320;\nconst W = BASE;\nconst s = f();\nconst r = s.slice(start, start + W);', 'an alias'],
+      ['const W = 160 * 2;\nconst s = f();\nconst r = s.slice(start, start + W);', 'arithmetic'],
+      ['const W = { n: 320 }.n;\nconst s = f();\nconst r = s.slice(start, start + W);', 'a member of a literal'],
     ];
     for (const [code, why] of cases) {
       const calls = sliceCallsIn(code);
@@ -407,12 +407,70 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(call.args.some((a) => countsCharacters(code, a))).toBe(false);
   });
 
-  it('excuses only what is marked, and only near the marker', () => {
-    const marked = `// ${MARKER}: drops the 0x prefix\nconst a = x.slice(2);\nconst b = y.slice(2);`;
-    const calls = sliceCallsIn(marked);
-    expect(excused(marked, calls[0].line)).toBe(true);
-    expect(excused(marked, calls[1].line)).toBe(true);
-    const far = `// ${MARKER}: reason\n\n\n\n\nconst c = z.slice(2);`;
-    expect(excused(far, sliceCallsIn(far)[0].line)).toBe(false);
+  // ROUND 4's second finding, and my own fixture had codified the bug: a
+  // marker three lines up excused whatever sat between. It now excuses
+  // the STATEMENT it precedes and nothing else.
+  it('excuses the statement the marker precedes, and not its neighbour', () => {
+    const src = [
+      `// ${MARKER}: drops the 0x prefix`,
+      'const a = x.slice(2);',
+      'const b = y.slice(start, start + 320);',
+    ].join('\n');
+    const [marked, neighbour] = sliceCallsIn(src);
+    expect(excused(src, marked)).toBe(true);
+    expect(excused(src, neighbour)).toBe(false);
+  });
+
+  it('reaches back over a run of comment lines, and stops at a blank one', () => {
+    const near = [
+      '// why this counts, at length',
+      `// ${MARKER}: drops the 0x prefix`,
+      'const a = x.slice(2);',
+    ].join('\n');
+    expect(excused(near, sliceCallsIn(near)[0])).toBe(true);
+    const broken = [`// ${MARKER}: reason`, '', 'const a = x.slice(2);'].join('\n');
+    expect(excused(broken, sliceCallsIn(broken)[0])).toBe(false);
+  });
+
+  // One marker covers every count INSIDE its statement, which is the
+  // point of collapsing six identical truncations into one helper.
+  it('covers the calls inside the statement it marks', () => {
+    const src = [`// ${MARKER}: assertion label`, 'const label = (t) => t.slice(0, 40);'].join('\n');
+    expect(excused(src, sliceCallsIn(src)[0])).toBe(true);
+  });
+
+  // ROUND 4's third finding: `var` hoists to the function, so a numeric
+  // one declared in an inner block is in scope after that block. A
+  // resolver that only looks at the block let this window through.
+  it('resolves a hoisted var declared in an inner block', () => {
+    const src = [
+      'function f(src, start, enabled) {',
+      '  if (enabled) { var WINDOW = 320; }',
+      '  return src.slice(start, start + WINDOW);',
+      '}',
+    ].join('\n');
+    const [call] = sliceCallsIn(src);
+    expect(call.args.some((a) => countsCharacters(src, a))).toBe(true);
+  });
+
+  // And the hoist stops at a function boundary, or every `var` anywhere
+  // would poison every name.
+  it('does not hoist a var out of a nested function', () => {
+    const src = [
+      'function outer(src, start) {',
+      '  function inner() { var WINDOW = 320; return WINDOW; }',
+      "  const WINDOW = src.indexOf('x');",
+      '  return src.slice(start, WINDOW);',
+      '}',
+    ].join('\n');
+    const [call] = sliceCallsIn(src);
+    expect(call.args.some((a) => countsCharacters(src, a))).toBe(false);
+  });
+
+  // A pair of names defined in terms of each other must not spin.
+  it('terminates on a cyclic binding rather than recursing forever', () => {
+    const src = 'const a = b;\nconst b = a;\nconst s = f();\nconst r = s.slice(start, a);';
+    const [call] = sliceCallsIn(src);
+    expect(call.args.some((c) => countsCharacters(src, c))).toBe(false);
   });
 });

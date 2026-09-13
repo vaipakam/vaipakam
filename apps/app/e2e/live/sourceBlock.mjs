@@ -272,15 +272,16 @@ export function sliceCallsIn(src) {
       receiver: src.slice(c.object.start, c.object.end),
       args: n.arguments,
       text: src.slice(n.start, n.end),
+      // The call itself, so a caller can ask which STATEMENT it belongs
+      // to. A marker keyed to nearby LINES excused a neighbour (#2144
+      // round 4); keyed to the statement, it cannot.
+      node: n,
     });
   }
   return out;
 }
 
-// Nodes that introduce a binding scope. Close enough to the language's
-// own rules for the question asked here — "which `WINDOW` is this?" —
-// and `var`'s hoisting to function scope is the one simplification,
-// noted below where it can matter.
+// Nodes that introduce a binding scope.
 const SCOPES = new Set([
   'Program',
   'FunctionDeclaration',
@@ -294,37 +295,113 @@ const SCOPES = new Set([
   'CatchClause',
 ]);
 
+// `var` hoists to the nearest FUNCTION (or the module), not to the block
+// it is written in. Round 4 corrected a claim made here that block-scoping
+// it could only over-find: a `var` in an inner block, used after that
+// block, resolves at function scope, and a resolver that never looks
+// inside the block returns nothing and lets a real fixed window through.
+const FUNCTIONS = new Set([
+  'Program',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+  'StaticBlock',
+]);
+
 /**
- * The value bound to `name` where `at` stands, or `null` when it is not
- * bound to a number there — or not bound in this file at all.
+ * The statement `node` belongs to — the unit a marker can excuse.
+ *
+ * Proximity is not a relationship (round 4). A marker three lines above a
+ * call excused whatever else happened to sit between them, so a fixed
+ * window introduced beside a legitimate one went unreported. A marker now
+ * attaches to the STATEMENT it precedes and excuses only what is inside
+ * that statement.
+ */
+export function enclosingStatementOf(src, node) {
+  const { parents } = astOf(src, 'enclosingStatementOf');
+  for (let n = node; n; n = parents.get(n)) if (STATEMENT.test(n.type)) return n;
+  return null;
+}
+
+/**
+ * The initializer bound to `name` where `at` stands: `{ found, init }`.
  *
  * Scope-aware ON PURPOSE, and the reason is a false positive that a
  * file-wide name table produced on the first attempt: `headSampling`
- * binds `i` to an `indexOf` result in one test and, elsewhere in the
- * same file, to `0` as a loop counter. A flat table saw a number and
- * flagged a perfectly anchored slice. A guard that cries wolf on correct
- * code is worse than one gap, because the fix people learn is to
- * silence it.
+ * binds `i` to an `indexOf` result in one test and, elsewhere in the same
+ * file, to `0` as a loop counter. A flat table saw a number and flagged a
+ * perfectly anchored slice. A guard that cries wolf on correct code is
+ * worse than one gap, because the fix people learn is to silence it.
  *
- * Resolution stops at the NEAREST enclosing scope that declares the
- * name, which is what the language does. `var` is treated as belonging
- * to the block it is written in rather than hoisting to the function;
- * that can only resolve a name EARLIER than the language would, which
- * errs toward finding a number rather than missing one.
+ * Resolution stops at the nearest enclosing scope that declares the name,
+ * which is what the language does — with `var` collected at the function
+ * it hoists to rather than the block it is written in.
  */
-export function numericBindingAt(src, name, at) {
-  const { nodes, parents } = astOf(src, 'numericBindingAt');
-  // The innermost node covering the position, then outward.
+export function bindingAt(src, name, at) {
+  const { nodes, parents } = astOf(src, 'bindingAt');
   let node = null;
   for (const n of nodes) if (n.start <= at && n.end >= at) node = n;
   for (let scope = node; scope; scope = parents.get(scope)) {
     if (!SCOPES.has(scope.type)) continue;
     for (const decl of declarationsDirectlyIn(scope)) {
-      if (decl.name !== name) continue;
-      return decl.init === null ? null : numericValueOf(decl.init);
+      if (decl.name === name) return { found: true, init: decl.init };
+    }
+    if (FUNCTIONS.has(scope.type)) {
+      for (const decl of hoistedVarsIn(scope)) {
+        if (decl.name === name) return { found: true, init: decl.init };
+      }
     }
   }
-  return null;
+  return { found: false, init: null };
+}
+
+/**
+ * Whether a NUMBER is reachable from `node` — written as one, coerced
+ * from a string, negated, combined by arithmetic, or bound to a name
+ * whose own initializer reaches one.
+ *
+ * Round 4's first finding: `const BASE = 320; const WINDOW = BASE;` and
+ * `const WINDOW = 160 * 2;` each hid a fixed window, because the
+ * classifier looked at an initializer's ROOT rather than into it. One
+ * function now answers the question for a slice bound and for a binding's
+ * initializer alike — they were always the same question, and having had
+ * two answers is why one of them was weaker.
+ *
+ * `seen` breaks the cycle a pair of mutually-referring declarations would
+ * otherwise make. Unresolvable is NOT a number: an `indexOf`, a call, or
+ * a name bound to either, is an anchor.
+ */
+export function reachesNumber(src, node, seen = new Set()) {
+  let found = false;
+  const visit = (n) => {
+    if (found || n === null || typeof n !== 'object') return;
+    if (Array.isArray(n)) {
+      n.forEach(visit);
+      return;
+    }
+    if (typeof n.type !== 'string') return;
+    if (numericValueOf(n) !== null) {
+      found = true;
+      return;
+    }
+    if (n.type === 'Identifier') {
+      const key = `${n.name}@${n.start}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const bound = bindingAt(src, n.name, n.start);
+        if (bound.found && bound.init && reachesNumber(src, bound.init, seen)) {
+          found = true;
+          return;
+        }
+      }
+    }
+    for (const k of Object.keys(n)) {
+      if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
+      visit(n[k]);
+    }
+  };
+  visit(node);
+  return found;
 }
 
 function declarationsDirectlyIn(scope) {
@@ -349,6 +426,31 @@ function declarationsDirectlyIn(scope) {
       add(s.id, null);
     }
   }
+  return out;
+}
+
+/** Every `var` declared under `fn`, not crossing into a nested function. */
+function hoistedVarsIn(fn) {
+  const out = [];
+  const descend = (n, top) => {
+    if (n === null || typeof n !== 'object') return;
+    if (Array.isArray(n)) {
+      for (const c of n) descend(c, top);
+      return;
+    }
+    if (typeof n.type !== 'string') return;
+    if (!top && FUNCTIONS.has(n.type)) return;
+    if (n.type === 'VariableDeclaration' && n.kind === 'var') {
+      for (const d of n.declarations) {
+        if (d.id && d.id.type === 'Identifier') out.push({ name: d.id.name, init: d.init ?? null });
+      }
+    }
+    for (const k of Object.keys(n)) {
+      if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
+      descend(n[k], false);
+    }
+  };
+  descend(fn, true);
   return out;
 }
 

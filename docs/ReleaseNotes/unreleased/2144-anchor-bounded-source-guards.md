@@ -55,8 +55,21 @@ and every gap in it a hiding place — it checks every such bound in the
 family, and the handful that legitimately count characters say so in a
 short note at their own declaration, naming what they count. Nine of
 those became three notes, because saying it once per reason is also how
-a fourth gets noticed. Putting a removed window back, in any of the four
-disguises review demonstrated, turns the suite red.
+a fourth gets noticed. A note covers the one declaration it sits above
+and nothing else; an earlier version covered whatever happened to follow
+within a few lines, which would have let a fixed window inherit a pass by
+being written next to a legitimate count.
+
+Deciding whether a bound is a count, rather than a landmark, is also
+asked of the value a name is given, and of the value that name is given
+in turn. Review found those being answered by two separate pieces of
+code, of which the weaker looked only at the surface of a definition — so
+a length that had been given a name, or worked out by arithmetic, or
+handed on through a second name, read as a landmark. There is one answer
+to it now, used in both places, because it was always one question.
+
+Putting a removed window back, in any of the eight disguises review has
+demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
