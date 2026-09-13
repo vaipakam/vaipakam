@@ -163,8 +163,10 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # that word is looked for in EVERY message field, so a multi-error body
   # that lists the secondary refusal before the primary one is still the
   # secondary shape (#2149 r17).
-  printf '%s' "$message" | grep -qiE 'API rate limit (already )?exceeded' || return 1
-  printf '%s' "$message" | grep -qi 'secondary' && return 1
+  # Same `-c` discipline as the Retry-After check below: a body with many
+  # message fields is still a pipe a `-q` could close early.
+  [ "$(printf '%s\n' "$message" | grep -aicE 'API rate limit (already )?exceeded')" -gt 0 ] || return 1
+  [ "$(printf '%s\n' "$message" | grep -aic 'secondary')" -eq 0 ] || return 1
   # A Retry-After beside the shape is the header-defined secondary form,
   # and the named-miss contract says that is a miss even with a spent
   # bucket alongside (#2149 r18): a retry timed to the primary reset could
@@ -175,7 +177,12 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # PRESENCE is the header LINE existing, whatever its value: an empty
   # `Retry-After:` is present, and inferring absence from an empty parsed
   # value would read it as absent (#2149 r19).
-  if printf '%s\n' "$last" | grep -aqiE '^[[:space:]]*<?[[:space:]]*retry-after:'; then
+  # `grep -c`, NOT `grep -q`: -q exits on the first match, and on a body
+  # larger than the pipe buffer the producer then takes SIGPIPE, which
+  # `pipefail` turns into a false pipeline — the veto would silently not
+  # fire on exactly the large responses a limited listing carries (#2149
+  # r20, the same hazard the status line hit in r4). -c reads to EOF.
+  if [ "$(printf '%s\n' "$last" | grep -aicE '^[[:space:]]*<?[[:space:]]*retry-after:')" -gt 0 ]; then
     return 1
   fi
 
@@ -461,6 +468,18 @@ selftest() {
 < X-Ratelimit-Reset: 1789188527
 {\"data\":{\"padding\":\"$big\"},\"message\":\"API rate limit already exceeded for user ID 275282153.\"}" \
     1789188167 0 360
+
+  # A LARGE BODY BESIDE A RETRY-AFTER (#2149 r20). The header sits near the
+  # start; the body runs 300 KB past it. A `grep -q` presence check matches
+  # on the header and exits, the producer takes SIGPIPE, `pipefail` makes
+  # the pipeline false, and the veto silently does not fire. It must.
+  expect "an empty Retry-After survives a 300 KB body — still the miss" \
+"< HTTP/2.0 403 Forbidden
+< Retry-After:
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{\"data\":{\"padding\":\"${big}${big::100000}\"},\"message\":\"API rate limit exceeded for user ID 275282153.\"}" \
+    1789188167 1
 
   if [ "$fail" -ne 0 ]; then echo "gh-trace-ratelimit-wait selftest: FAILED" >&2; return 1; fi
   echo "gh-trace-ratelimit-wait selftest: all passed"
