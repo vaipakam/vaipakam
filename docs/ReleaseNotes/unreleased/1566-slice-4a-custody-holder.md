@@ -45,15 +45,19 @@ history to import. The in-place facet refresh runs the rebase itself while the
 Diamond is still paused, after the reward-role backfill and before service
 resumes, and refuses to default the figure: the operator states the
 reconstructed total or declares there is none. On a chain whose reward role is
-inactive the rebase accepts only a history-free chain; a detached chain
-carrying paid history keeps its guard open until it is re-attached, so the
-baseline is never installed under the wrong role. Replacing a holder is run
+inactive the rebase accepts only a history-free chain, meaning nothing to
+import and nothing on either the paid or the received side; a detached chain
+carrying history on either counter keeps its guard open until it is
+re-attached, so the baseline is never installed under the wrong role. Replacing a holder is run
 through its own script, which rewrites the deployment record's holder address
 in the same run so no later tool reads the emptied previous address as
 custody. Before governance handover the script runs the ceremony directly;
 after handover, where pausing and administration sit with different signers,
-it stages the two calls for those signers, and a final record step reconciles
-the deployment record only once the platform reports a new holder as bound.
+it stages the two calls for those signers — staging the pause unless the
+platform is durably paused by its manual flag, since a time-bounded automatic
+pause can lapse while the delayed call waits — and a final record step
+reconciles the deployment record only once the platform reports a new holder
+as bound.
 In neither mode does the ceremony resume service: a replacement leaves the
 platform paused, and unpausing stays a fresh decision, because a ceremony
 that lifted the pause could also lift an unrelated emergency pause raised in

@@ -974,9 +974,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         //   ARMED_FRESH_REBASE_NO_HISTORY=true   there is nothing to import.
         //
         // The facet refuses a nonzero import — or any import over a nonzero
-        // paid counter — on an INACTIVE role (Unconfigured / Detached), so a
-        // detached chain with history keeps its guard open for the
-        // re-attachment ceremony. That named refusal is a DEFERRAL here
+        // paid OR received counter — on an INACTIVE role (Unconfigured /
+        // Detached), so a detached chain with history on either side keeps
+        // its guard open for the re-attachment ceremony. That named refusal is a DEFERRAL here
         // whatever total the operator stated (Codex #2158 r2 P1): the
         // truthful reconstruction is logged and carried to the
         // re-attachment ceremony, the guard stays open, and the refresh
@@ -1006,9 +1006,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     console.log("slice-4: armed-fresh paid side already rebased - skipped");
                 } else if (sel == IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector) {
                     console.log(
-                        "slice-4: inactive reward role (Unconfigured/Detached) with paid history "
-                        "or a stated total - rebase DEFERRED, guard left OPEN; carry this total "
-                        "to the re-attachment ceremony:",
+                        "slice-4: inactive reward role (Unconfigured/Detached) with history on "
+                        "the paid or received side, or a stated total - rebase DEFERRED, guard "
+                        "left OPEN; carry this total to the re-attachment ceremony:",
                         total
                     );
                 } else {

@@ -5919,13 +5919,16 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > paused, after the role backfill and before service resumes
 > (`ARMED_FRESH_PAID_TOTAL` or `ARMED_FRESH_REBASE_NO_HISTORY=true`, the
 > seed's refuse-to-default posture), and the rebase refuses a nonzero import
-> — or any import over a nonzero paid counter — on an INACTIVE role, so a
-> detached chain with history keeps its guard open for the re-attachment
-> ceremony rather than closing the door on a deficit. Replacement is run
+> — or any import over a nonzero paid OR received counter — on an INACTIVE
+> role, so a detached chain with history on either side keeps its guard open
+> for the re-attachment ceremony rather than closing the door on a deficit
+> (review r5: a pre-role-field chain detached before residual retirement
+> carries `received > 0, paid == 0`). Replacement is run
 > through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
-> the roles, or staged after governance handover (the Pauser Safe's `pause`
-> and the Timelock's `replace` calldata written to a ceremony record; NO
-> unpause is pre-authorised — and the direct path does not unpause either,
+> the roles, or staged after governance handover (the Pauser Safe's `pause` —
+> staged unless the Diamond is durably paused by the manual flag, since an
+> auto-pause window can lapse during the Timelock delay — and the Timelock's
+> `replace` calldata written to a ceremony record; NO unpause is pre-authorised — and the direct path does not unpause either,
 > since either could lift an unrelated emergency pause raised meanwhile;
 > then `record()` reconciles the artifact only once the chain reports a new
 > holder bound). `DeployRewardCustodyHolder.s.sol` (the live-chain initial

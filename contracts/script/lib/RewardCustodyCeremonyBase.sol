@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {RewardCustodyHolder} from "../../src/RewardCustodyHolder.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {Deployments} from "./Deployments.sol";
 
 /**
@@ -54,6 +55,23 @@ abstract contract RewardCustodyCeremonyBase is Script {
             recorded == bound,
             "reward-custody ceremony: the artifact's .rewardCustodyHolder does not match the bound holder -- reconcile the record before running a ceremony"
         );
+    }
+
+    // ─── Pause state a ceremony may rely on ─────────────────────────────────
+
+    /// @dev Whether the Diamond is DURABLY paused — by the indefinite manual
+    ///      flag — as opposed to an auto-pause window that expires on its
+    ///      own. `paused()` is true for both, but a replacement scheduled
+    ///      through the Timelock waits out a delay, and an auto-pause that
+    ///      lapses meanwhile would fail the ceremony's `requirePaused()` at
+    ///      execution (Codex #2158 r6 P1). When an auto-pause window is
+    ///      active the manual flag cannot be read apart from it, so the
+    ///      answer is `false` and the ceremony stages the manual pause
+    ///      anyway — a second `pause()` on an already manually paused
+    ///      Diamond rewrites the same flag and costs nothing.
+    function _durablyPaused(address diamond) internal view returns (bool) {
+        AdminFacet a = AdminFacet(diamond);
+        return a.paused() && a.pausedUntil() <= block.timestamp;
     }
 
     // ─── Ceremony record ────────────────────────────────────────────────────

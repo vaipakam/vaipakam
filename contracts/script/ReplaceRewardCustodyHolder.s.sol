@@ -19,16 +19,20 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
  *         the old holder's whole balance into it and flips the pointer.
  *         Nothing is staged, supplied or predicted here.
  *
- *  - `run()`    — DIRECT: `ADMIN_PRIVATE_KEY` holds `ADMIN_ROLE` and, when the
- *                 Diamond is not already paused, `PAUSER_ROLE`. Pauses if
- *                 needed, replaces, reconciles the artifact from chain state
- *                 — and LEAVES THE DIAMOND PAUSED. Refuses before any
- *                 broadcast when the key lacks a role it would need.
+ *  - `run()`    — DIRECT: `ADMIN_PRIVATE_KEY` holds `ADMIN_ROLE` and, unless
+ *                 the Diamond is already DURABLY paused (the manual flag,
+ *                 not an auto-pause window that may lapse), `PAUSER_ROLE`.
+ *                 Pauses if needed, replaces, reconciles the artifact from
+ *                 chain state — and LEAVES THE DIAMOND PAUSED. Refuses before
+ *                 any broadcast when the key lacks a role it would need.
  *  - `stage()`  — STAGED, for a handed-over deployment where `ADMIN_ROLE`
  *                 sits on the Timelock and `PAUSER_ROLE` on the Pauser Safe:
  *                 broadcasts nothing; writes a ceremony record with the
  *                 calldata each signer executes against the Diamond —
- *                   1. Pauser Safe: `pause()`  (skip if already paused)
+ *                   1. Pauser Safe: `pause()`  (skipped ONLY when the Diamond
+ *                      is durably paused by the manual flag — an auto-pause
+ *                      window can expire while the Timelock delay runs and
+ *                      would fail step 2's `requirePaused()`; Codex #2158 r6)
  *                   2. Timelock:    `replaceRewardCustodyHolder()`
  *  - `record()` — after the signers executed the bundle: rewrites
  *                 `.rewardCustodyHolder` from the chain's own report of a NEW
@@ -61,7 +65,9 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         (address diamond, address previous) = _boundDiamond();
         AccessControlFacet acl = AccessControlFacet(diamond);
         AdminFacet adminFacet = AdminFacet(diamond);
-        bool wasPaused = adminFacet.paused();
+        // Only a DURABLE (manual) pause is relied on; an auto-pause window
+        // could lapse between the two transactions, so it is paused over.
+        bool wasPaused = _durablyPaused(diamond);
 
         // Every role the direct path will exercise is checked BEFORE any
         // broadcast, so a handed-over deployment is told to stage rather
@@ -72,7 +78,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         );
         require(
             wasPaused || acl.hasRole(LibAccessControl.PAUSER_ROLE, admin),
-            "ReplaceRewardCustodyHolder: the Diamond is not paused and ADMIN_PRIVATE_KEY does not hold PAUSER_ROLE -- pause it through the Pauser Safe first, or use stage() / record()"
+            "ReplaceRewardCustodyHolder: the Diamond is not durably (manually) paused and ADMIN_PRIVATE_KEY does not hold PAUSER_ROLE -- pause it through the Pauser Safe first, or use stage() / record()"
         );
 
         console.log("=== Reward custody holder replacement (direct) ===");
@@ -91,7 +97,10 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
 
     function stage() external {
         (address diamond, address previous) = _boundDiamond();
-        bool wasPaused = AdminFacet(diamond).paused();
+        // An auto-pause window is NOT durable: it can expire while the
+        // Timelock delay runs, so the manual pause is staged unless the
+        // manual flag itself is already set.
+        bool wasPaused = _durablyPaused(diamond);
         bytes memory pauseCall = abi.encodeCall(AdminFacet.pause, ());
         bytes memory replaceCall = abi.encodeCall(RewardCustodyFacet.replaceRewardCustodyHolder, ());
 
@@ -100,7 +109,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         console.log("Previous holder: ", previous);
         console.log("Execute against the Diamond, in order:");
         if (wasPaused) {
-            console.log("  1. (already paused - skip)");
+            console.log("  1. (already durably paused by the manual flag - skip)");
         } else {
             console.log("  1. Pauser Safe  pause()");
             console.logBytes(pauseCall);
@@ -112,7 +121,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         string memory obj = "ceremony";
         vm.serializeAddress(obj, "diamond", diamond);
         vm.serializeAddress(obj, "previousHolder", previous);
-        vm.serializeBool(obj, "diamondWasPaused", wasPaused);
+        vm.serializeBool(obj, "diamondWasDurablyPaused", wasPaused);
         vm.serializeUint(obj, "stagedAtBlock", block.number);
         vm.serializeBytes(obj, "step1_pauserSafe_pause", pauseCall);
         string memory json = vm.serializeBytes(obj, "step2_timelock_replaceRewardCustodyHolder", replaceCall);
