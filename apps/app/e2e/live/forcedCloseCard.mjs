@@ -846,24 +846,36 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       hits.push(fragment(text, start, end));
       continue;
     }
-    if (trailing) {
-      const run = trailing[1];
-      const next = trailing[2];
-      // The English list, or the LOCALE's own words (#2125) — a whole
-      // phrase, or a prefix of the first token in a script that writes no
-      // space between a counter and the particle after it. See
-      // `unitAfter`. Read from a longer window than `after`: a three-token
-      // phrase does not fit in sixteen characters.
-      const afterLong = text.slice(end, end + 48);
-      // The LOCALE's longest phrase first, then the English list (round
-      // 5): Italian's short past is `3 h fa`, one stored phrase, and
-      // reading the English `h` first reduced it to an ambiguous letter.
-      const matched =
-        unitAfter(afterLong, vocabulary, { isDenomination: denominationLeads }) ??
-        (NON_MONETARY_UNIT.test(run)
-          ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length }
-          : null);
-      const unit = matched === null ? null : matched.unit;
+    // The English list, or the LOCALE's own words (#2125) — a whole
+    // phrase, or a prefix of the first token in a script that writes no
+    // space between a counter and the particle after it. See `unitAfter`.
+    // Read from a longer window than `after`: a three-token phrase does not
+    // fit in sixteen characters. NOT gated on `trailing` (round 6): that
+    // regex wants a letter run after whitespace or a hyphen, and a locale
+    // phrase may open with a bracket — Tagalog's `sa 1 (na) araw`.
+    const afterLong = text.slice(end, end + 48);
+    const run = trailing ? trailing[1] : '';
+    // The LOCALE's longest phrase first, then the English list (round 5):
+    // Italian's short past is `3 h fa`, one stored phrase, and reading the
+    // English `h` first reduced it to an ambiguous letter.
+    const matched =
+      unitAfter(afterLong, vocabulary, { isDenomination: denominationLeads }) ??
+      (trailing && NON_MONETARY_UNIT.test(run)
+        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length, raw: run, tokens: 1 }
+        : null);
+    {
+      // A ONE-WORD unit written as an UPPER-CASE RUN is ticker-shaped
+      // (#2125 round 6): `3 TAGE`, `3 DAYS`. Token symbols are arbitrary,
+      // and this scanner's own ticker rule already reads such a run as an
+      // asset, so the folded match must not erase that evidence — reported,
+      // the loud direction. A one-letter upper-case unit (German `M`) is the
+      // ambiguous path's business, and a multi-word phrase is a phrase.
+      const tickerShaped =
+        matched !== null &&
+        matched.tokens === 1 &&
+        [...matched.raw.replace(/\p{M}/gu, '')].length > 1 &&
+        isTicker(matched.raw);
+      const unit = matched === null || tickerShaped ? null : matched.unit;
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
       // figure and never looks at `USDC` — so the scanner missed
@@ -930,7 +942,7 @@ export function monetaryAmountsIn(text, { locale } = {}) {
         }
         continue;
       }
-      if (isTicker(run)) {
+      if (trailing && isTicker(run)) {
         hits.push(fragment(text, start, end));
         continue;
       }
@@ -964,7 +976,15 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       !isTicker(firstWordAfter)
     ) {
       const matchedBefore = unitBefore(before, vocabulary);
-      if (matchedBefore !== null) {
+      // The same ticker-shaped rule as after the figure (round 6).
+      if (
+        matchedBefore !== null &&
+        !(
+          matchedBefore.tokens === 1 &&
+          [...matchedBefore.raw.replace(/\p{M}/gu, '')].length > 1 &&
+          isTicker(matchedBefore.raw)
+        )
+      ) {
         const { unit, start: unitStart } = matchedBefore;
         const beforeUnit = before.slice(0, unitStart);
         const temporal =

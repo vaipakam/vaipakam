@@ -7721,11 +7721,13 @@ describe('#2125 round 1 — unit order, tokeniser parity, plural categories, suf
     );
     expect(durationUnitsFor('he').has('ימ')).toBe(true);
     expect(monetaryAmountsIn('נותרו 3 ימ׳', { locale: 'he' })).toEqual([]);
-    // Polish's narrow month is `m-ce`; the token read is `m`, a one-letter
-    // abbreviation, so it is ambiguous and reported without context — the
-    // loud direction, as for every one-letter unit.
-    expect(durationUnitsFor('pl').has('m')).toBe(true);
-    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toHaveLength(1);
+    // Polish's narrow month is `m-ce`: since round 6 every token run of a
+    // rendered unit is stored, so it is the two-token phrase `m ce`, which
+    // the text `3 m-ce` matches whole (the hyphen is a separator), and it
+    // is not a one-letter abbreviation.
+    expect(durationUnitsFor('pl').has('m ce')).toBe(true);
+    expect(durationUnitsFor('pl').has('m')).toBe(false);
+    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toEqual([]);
     expect(monetaryAmountsIn('3 dni', { locale: 'pl' })).toEqual([]);
   });
 
@@ -7783,7 +7785,9 @@ describe('#2125 round 2 — whole phrases, denomination prefixes, sentence case,
     expect(monetaryAmountsIn('Siku 3 zimebaki.', { locale: 'sw' })).toEqual([]);
     expect(monetaryAmountsIn('Bado siku 3.', { locale: 'sw' })).toEqual([]);
     expect(monetaryAmountsIn('Noch 3 Tage.', { locale: 'de' })).toEqual([]);
-    expect(monetaryAmountsIn('Noch 3 TAGE.', { locale: 'de' })).toEqual([]);
+    // An all-caps run is TICKER-SHAPED and is reported since round 6 —
+    // see that block — where round 2 had folded it into `tage`.
+    expect(monetaryAmountsIn('Noch 3 TAGE.', { locale: 'de' })).toHaveLength(1);
   });
 
   // The cache key cannot make a malformed scalar and a valid array share
@@ -7930,5 +7934,45 @@ describe('#2125 round 5 — numeric span, locale phrase first, both directions, 
     );
     expect(monetaryAmountsIn('3 घं॰ में', { locale: 'hi' })).toEqual([]);
     expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 6 — punctuation inside phrases, placement, ticker-shaped units', () => {
+  // A phrase's words may be separated by any punctuation short of a line
+  // break, since the vocabulary was built by dropping exactly that.
+  it('matches localized phrases whose words are separated by punctuation', () => {
+    expect(new Intl.RelativeTimeFormat('tl', { numeric: 'always' }).format(1, 'day')).toBe('sa 1 araw');
+    expect(monetaryAmountsIn('sa 1 (na) araw', { locale: 'tl' })).toEqual([]);
+    expect(new Intl.RelativeTimeFormat('te', { numeric: 'always', style: 'short' }).format(1, 'hour')).toBe(
+      '1 గం.లో',
+    );
+    expect(monetaryAmountsIn('1 గం.లో', { locale: 'te' })).toEqual([]);
+    // A line break is still a boundary.
+    expect(monetaryAmountsIn('4 na\naraw', { locale: 'tl' })).toHaveLength(1);
+  });
+
+  // A form observed only after the number is not accepted in front of it.
+  it('keeps each form to the side of the number it was sourced on', () => {
+    const de = durationVocabularyFor('de');
+    expect(de.after.has('tage')).toBe(true);
+    expect(de.before.has('tage')).toBe(false);
+    expect(monetaryAmountsIn('Tage 3', { locale: 'de' })).toHaveLength(1);
+    expect(durationVocabularyFor('sw').before.has('siku')).toBe(true);
+    expect(monetaryAmountsIn('siku 3', { locale: 'sw' })).toEqual([]);
+  });
+
+  // An upper-case run spelling a unit word is ticker evidence, before or
+  // after the figure and in English too.
+  it('reports a ticker-shaped unit word', () => {
+    expect(monetaryAmountsIn('You receive 3 TAGE', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('TAGE 3', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('SIKU 3', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS')).toHaveLength(1);
+    // Ordinary casing, a one-letter abbreviation with context, and a phrase
+    // are unaffected.
+    expect(monetaryAmountsIn('3 Tage', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
   });
 });

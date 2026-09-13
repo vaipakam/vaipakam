@@ -74,7 +74,11 @@ const TOKEN_RUN = /[\p{L}\p{M}\p{N}]+/u;
 const ABBREVIATION_MARKS = '[.॰۔׳]';
 const MAX_PHRASE_TOKENS = 3;
 
-const tokenOf = (word) => word.normalize('NFC').match(TOKEN_RUN)?.[0] ?? '';
+// EVERY token run of a rendered string, in order (round 6): Telugu's short
+// hour is `గం.లో`, one whitespace-free word holding two runs around an
+// abbreviation mark, and reading only the leading run stored `గం` alone.
+// Matching reads runs the same way, so the two cannot disagree.
+const tokensIn = (text) => [...text.normalize('NFC').matchAll(new RegExp(TOKEN_RUN.source, 'gu'))].map((m) => m[0]);
 /**
  * Folded for comparison: CLDR writes `siku`, a sentence writes `Siku`, and
  * German capitalises its nouns; the scanner's English list is already
@@ -111,6 +115,8 @@ const vocabularies = new Map();
 export const EMPTY_VOCABULARY = Object.freeze({
   tags: Object.freeze([]),
   units: new Set(),
+  after: new Set(),
+  before: new Set(),
   leads: new Set(),
   trails: new Set(),
 });
@@ -122,8 +128,12 @@ export function durationUnitsFor(locale) {
 
 /**
  * `tags`: the locale tags the runtime knows, in the order given. `units`:
- * the duration words and phrases. `leads` / `trails`: the temporal
- * context around a duration, before the figure and after the unit.
+ * every duration word and phrase; `after` / `before`: the same words split
+ * by WHERE they were observed relative to the number (round 6), so a form
+ * only ever seen after a figure — German `Tage` — is not accepted in front
+ * of one, where `TAGE 3` would otherwise read as a duration rather than a
+ * ticker and its quantity. `leads` / `trails`: the temporal context around
+ * a duration, before the figure and after the unit.
  *
  * @param {string | string[] | undefined} locale a BCP 47 tag or a fallback list
  */
@@ -145,8 +155,14 @@ export function durationVocabularyFor(locale) {
     }
   });
   const units = new Set();
+  const after = new Set();
+  const before = new Set();
   const leads = new Set();
   const trails = new Set();
+  const learn = (phrase, placedBefore) => {
+    units.add(phrase);
+    (placedBefore ? before : after).add(phrase);
+  };
   for (const tag of tags) {
     const { samples } = durationSamplesFor(tag);
     let unitFirst = false;
@@ -157,10 +173,11 @@ export function durationVocabularyFor(locale) {
           const parts = nf.formatToParts(n);
           const at = (type) => parts.findIndex((p) => p.type === type);
           if (at('unit') >= 0 && at('integer') >= 0 && at('unit') < at('integer')) unitFirst = true;
+          const unitAt = at('unit');
           for (const part of parts) {
             if (part.type !== 'unit') continue;
-            const phrase = part.value.split(/\s+/).map(tokenOf).filter(Boolean).join(' ');
-            if (phrase !== '') units.add(foldUnit(phrase, [tag]));
+            const phrase = tokensIn(part.value).join(' ');
+            if (phrase !== '') learn(foldUnit(phrase, [tag]), unitAt < at('integer'));
           }
         }
       }
@@ -187,15 +204,14 @@ export function durationVocabularyFor(locale) {
           if (first < 0) continue;
           let last = first;
           while (last + 1 < parts.length && NUMERIC_PARTS.has(parts[last + 1].type)) last += 1;
-          const tokensOf = (part) =>
-            part && part.type === 'literal' ? part.value.split(/\s+/).map(tokenOf).filter(Boolean) : [];
+          const tokensOf = (part) => (part && part.type === 'literal' ? tokensIn(part.value) : []);
           const left = tokensOf(parts[first - 1]);
           const right = tokensOf(parts[last + 1]);
           let unitOnLeft = unitFirst;
           if (unitOnLeft && left.length === 0 && right.length > 0) unitOnLeft = false;
           if (!unitOnLeft && right.length === 0 && left.length > 0) unitOnLeft = true;
           const unitToks = unitOnLeft ? left.slice(-MAX_PHRASE_TOKENS) : right.slice(0, MAX_PHRASE_TOKENS);
-          if (unitToks.length > 0) units.add(foldUnit(unitToks.join(' '), [tag]));
+          if (unitToks.length > 0) learn(foldUnit(unitToks.join(' '), [tag]), unitOnLeft);
           const contextToks = unitOnLeft ? right.slice(0, MAX_PHRASE_TOKENS) : left.slice(-MAX_PHRASE_TOKENS);
           if (contextToks.length > 0) {
             (unitOnLeft ? trails : leads).add(foldUnit(contextToks.join(' '), [tag]));
@@ -204,7 +220,7 @@ export function durationVocabularyFor(locale) {
       }
     }
   }
-  const vocabulary = Object.freeze({ tags: Object.freeze(tags), units, leads, trails });
+  const vocabulary = Object.freeze({ tags: Object.freeze(tags), units, after, before, leads, trails });
   vocabularies.set(key, vocabulary);
   return vocabulary;
 }
@@ -214,9 +230,18 @@ export function durationVocabularyFor(locale) {
  * the same set the scanner's own lookaheads skip.
  */
 export const CONTEXT_SEP = /^[\s(\[{:,;«»"'‘’“”)\]}–—-]*/u;
-// The lead-in a unit phrase may have after the figure: whitespace and
-// hyphens, as in a compound duration (`3-day`).
-const PHRASE_LEAD = /^[\s‐-―-]*/u;
+// The lead-in a unit phrase may have after the figure: whitespace, hyphens
+// (a compound duration, `3-day`) and opening brackets (Tagalog's
+// `sa 1 (na) araw`, round 6).
+const PHRASE_LEAD = /^[\s‐-―(\[{«"'‘“-]*/u;
+// Between the words of a phrase: anything that is not a token and not a
+// line break (round 6) — CLDR writes `(na) araw` and `గం.లో`, and the
+// vocabulary was built by dropping exactly that punctuation, so matching
+// must drop it too. A line break stays a boundary: `innerText` puts one
+// between rendered elements, and a phrase does not span two of them.
+// Non-empty, so a single word cannot be read as several words joined by
+// nothing.
+const BETWEEN_WORDS = '[^\\p{L}\\p{M}\\p{N}\\n]+';
 
 /**
  * Does a lead phrase of the locale's temporal wording END `before` —
@@ -307,25 +332,24 @@ const particleFollows = (last, next) => PARTICLE_TRANSITIONS.has(`${scriptOf(las
  * @param {string} after text following the figure
  * @param {ReturnType<typeof durationVocabularyFor>} vocabulary
  * @param {{isDenomination: (suffix: string) => boolean}} judge
- * @returns {{unit: string, end: number} | null}
+ * @returns {{unit: string, end: number, raw: string, tokens: number} | null}
+ *   `raw` is the first matched token as written, `tokens` how many the
+ *   phrase spans — the scanner reads both for its own evidence.
  */
 export function unitAfter(after, vocabulary, { isDenomination }) {
-  const { units, tags } = vocabulary;
+  const { after: units, tags } = vocabulary;
   if (units.size === 0) return null;
   const lead = after.match(PHRASE_LEAD)[0].length;
   const rest = after.slice(lead);
   const tokens = [...rest.matchAll(/[\p{L}\p{M}\p{N}]+/gu)].slice(0, MAX_PHRASE_TOKENS);
   if (tokens.length === 0 || tokens[0].index !== 0) return null;
-  const phraseSpan = new RegExp(
-    `^[\\p{L}\\p{M}\\p{N}]+(?:${ABBREVIATION_MARKS}*\\s+[\\p{L}\\p{M}\\p{N}]+)+$`,
-    'u',
-  );
+  const phraseSpan = new RegExp(`^[\\p{L}\\p{M}\\p{N}]+(?:${BETWEEN_WORDS}[\\p{L}\\p{M}\\p{N}]+)+$`, 'u');
   for (let k = tokens.length; k >= 1; k -= 1) {
     const last = tokens[k - 1];
     const span = rest.slice(0, last.index + last[0].length);
     if (k > 1 && !phraseSpan.test(span)) continue;
     const phrase = foldUnit(tokens.slice(0, k).map((t) => t[0]).join(' '), tags);
-    if (units.has(phrase)) return { unit: phrase, end: lead + span.length };
+    if (units.has(phrase)) return { unit: phrase, end: lead + span.length, raw: tokens[0][0], tokens: k };
   }
   const raw = tokens[0][0].normalize('NFC');
   const run = foldUnit(raw, tags);
@@ -338,7 +362,7 @@ export function unitAfter(after, vocabulary, { isDenomination }) {
     if (u.includes(' ')) continue;
     if (run.length > u.length && run.startsWith(u) && particleFollows(u[u.length - 1], run[u.length])) {
       if (isDenomination(raw.slice(u.length))) return null;
-      return { unit: u, end: lead + u.length };
+      return { unit: u, end: lead + u.length, raw: raw.slice(0, u.length), tokens: 1 };
     }
   }
   return null;
@@ -353,24 +377,28 @@ export function unitAfter(after, vocabulary, { isDenomination }) {
  * `בעוד יום (1)`). Exact match only: the prefix rule is about a counter
  * and the particle after it.
  *
- * @returns {{unit: string, start: number} | null}
+ * @returns {{unit: string, start: number, raw: string, tokens: number} | null}
+ *   `raw` is the last matched token as written (the one beside the figure).
  */
 export function unitBefore(before, vocabulary) {
-  const { units, tags } = vocabulary;
+  const { before: units, tags } = vocabulary;
   if (units.size === 0) return null;
   for (let k = MAX_PHRASE_TOKENS; k >= 1; k -= 1) {
     const m = before.match(
       new RegExp(
-        `((?:[\\p{L}\\p{M}\\p{N}]+${ABBREVIATION_MARKS}*\\s+){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)` +
+        `((?:[\\p{L}\\p{M}\\p{N}]+${BETWEEN_WORDS}){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)` +
           `${ABBREVIATION_MARKS}*[\\s(\\[{«"'‘“]*$`,
         'u',
       ),
     );
     if (!m) continue;
-    const phrase = foldUnit(m[1].split(/\s+/).map(tokenOf).filter(Boolean).join(' '), tags);
+    const words = [...m[1].matchAll(/[\p{L}\p{M}\p{N}]+/gu)].map((w) => w[0]);
+    const phrase = foldUnit(words.join(' '), tags);
     // `start` is where the phrase begins in `before`, so the duration
     // context can be read from the text in front of it.
-    if (units.has(phrase)) return { unit: phrase, start: m.index };
+    if (units.has(phrase)) {
+      return { unit: phrase, start: m.index, raw: words[words.length - 1], tokens: words.length };
+    }
   }
   return null;
 }

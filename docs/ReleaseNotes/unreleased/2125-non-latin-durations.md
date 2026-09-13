@@ -65,6 +65,11 @@ could not misfile a context word as a unit; preferred a language's own
 longest phrase to an English abbreviation; learned both "in" and "ago"
 forms for languages with a single grammatical number; kept a malformed
 language tag in a fallback list from raising an error at match time; and
-matched phrases whose words carry abbreviation marks.
+matched phrases whose words carry abbreviation marks. A sixth round let
+phrase words be separated by any punctuation short of a line break,
+remembered on which side of a number each word was seen so a word only
+ever seen after a figure is not accepted in front of one, and treated a
+unit word written entirely in capitals as the ticker it might be rather
+than the duration it might be, in every language including English.
 
 Closes #2125. No product surface changes.
