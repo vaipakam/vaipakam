@@ -446,6 +446,18 @@ const STATUS_ACTIVE = 0;
  * false` for every unresolved card, and nothing would look broken.
  * Sourcing it means a rename fails loudly at startup instead.
  */
+/**
+ * The locale the browser context is pinned to (see `newContext` below),
+ * and therefore the language every string this drive reads is rendered
+ * in. Carried with the forced-close copy so the amount scanner can source
+ * that language's duration words (#2125) — the bundle read below and the
+ * locale pinned there must name the same language. Declared ABOVE the
+ * copy binding that reads it: the first live run after adding it hit the
+ * temporal dead zone (`Cannot access 'PINNED_LOCALE' before
+ * initialization`) and exited BLOCKED, which a source guard now pins.
+ */
+const PINNED_LOCALE = 'en-US';
+
 const FORCED_CLOSE_COPY = (() => {
   try {
     return readForcedCloseCopy();
@@ -466,15 +478,6 @@ const FORCED_CLOSE_COPY = (() => {
     process.exit(2);
   }
 })();
-
-/**
- * The locale the browser context is pinned to (see `newContext` below),
- * and therefore the language every string this drive reads is rendered
- * in. Carried with the forced-close copy so the amount scanner can source
- * that language's duration words (#2125) — the bundle read here and the
- * locale pinned there must name the same language.
- */
-const PINNED_LOCALE = 'en-US';
 
 /**
  * Read and validate the forced-close copy this drive matches against.

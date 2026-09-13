@@ -7662,3 +7662,26 @@ describe('#2125 — duration words sourced per locale', () => {
     expect(noLocale.why).toMatch(/states an amount/);
   });
 });
+
+describe('#2125 — the drive declares its pinned locale before the copy that carries it', () => {
+  // The first live run after threading the locale exited BLOCKED with
+  // `Cannot access 'PINNED_LOCALE' before initialization`: the constant
+  // was declared below the module-level binding whose initialiser reads
+  // it. Anchored on the declarations themselves, not on offsets.
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'live-position-observe.mjs'),
+    'utf8',
+  );
+  it('declares PINNED_LOCALE above FORCED_CLOSE_COPY, and both readers use it', () => {
+    const declared = src.indexOf("const PINNED_LOCALE = 'en-US';");
+    const copyBinding = src.indexOf('const FORCED_CLOSE_COPY = (() => {');
+    expect(declared).toBeGreaterThan(-1);
+    expect(copyBinding).toBeGreaterThan(declared);
+    // The copy carries it, and the browser context is pinned to the same name.
+    // Exactly two readers — the copy and the browser context — and the
+    // literal appears once, in the declaration (a comment elsewhere quotes
+    // it, so this is counted rather than asserted absent).
+    expect((src.match(/locale: PINNED_LOCALE,/g) ?? []).length).toBe(2);
+    expect((src.match(/'en-US'/g) ?? []).length).toBe(2);
+  });
+});
