@@ -5965,7 +5965,8 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > auto-pause window does not qualify, and the in-place refresh proves or sets
 > the manual flag before its migrations (review r18). The pre-flight's holder
 > read fails closed on a transport failure, the loupe alone deciding "not
-> routed" (review r18). Simulations neither create nor erase
+> routed" (review r18), and an unexecuted bind record over a holderless chain
+> refuses before any broadcast (review r20). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

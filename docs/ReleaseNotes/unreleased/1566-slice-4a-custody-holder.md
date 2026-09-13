@@ -97,7 +97,11 @@ ceremony record to explain it, refuses the run before anything is sent — and a
 holder state that cannot be read at all, for any reason other than the platform
 not yet routing the getter, refuses the run rather than reading as absent; a
 pending ceremony record is accepted as the explanation only after the ceremony
-script itself validates it, the same way the record step will. A direct
+script itself validates it, the same way the record step will; and a bind
+record left by a staged or direct bind that never executed, over a chain that
+reports no holder, refuses the run before anything is sent, since the one-shot
+bind refuses to run over such a record and would otherwise only say so after
+the refresh had broadcast. A direct
 ceremony's pending record names only what its run can know — the deployment,
 the mode and the block it was prepared against — never an inclusion block,
 which is proven by the record step from live chain state. On a chain whose reward role is

@@ -147,9 +147,11 @@
 #   guarantee. The bound-holder /
 #   artifact relation is classified in the pre-flight too, by the same rule
 #   [4b] applies after the refresh: a divergence refuses before any broadcast,
-#   and a pending bind record is validated by the ceremony script's own
-#   check() (what record() will require) before it is accepted as the
-#   explanation.
+#   a pending bind record is validated by the ceremony script's own check()
+#   (what record() will require) before it is accepted as the explanation,
+#   and a bind record over a chain that reports NO holder — a staged or
+#   direct bind that never executed, which the one-shot bind refuses to run
+#   over — refuses before any broadcast as well.
 #
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
@@ -243,7 +245,13 @@ dec_add() {
 #             CLOSED on it (Codex #2158 r18 P2: a transient error must not
 #             read as "unrouted" and wave a divergent holder past the
 #             pre-flight)
-#   unbound   routed and zero: the one-shot bind is owed
+#   unbound   routed and zero, and no bind record exists: the one-shot bind
+#             is owed
+#   unexecuted no holder on chain (unrouted or zero) but a bind ceremony
+#             record exists — a staged or direct bind that never executed.
+#             DeployRewardCustodyHolder refuses to bind over it, so both
+#             consumers refuse: execute the staged bind (then record()) or
+#             remove the record deliberately (Codex #2158 r20 P2)
 #   recorded  bound, and the artifact names the same holder
 #   pending   bound, artifact differs, a bind ceremony record file exists —
 #             the pre-flight then VALIDATES it through the ceremony script's
@@ -253,21 +261,31 @@ dec_add() {
 #   diverged  bound, artifact differs, and no record explains it
 #   malformed the getter answered something that is not an address
 holder_state() {
-  local slug="$1" diamond="$2" rpc="$3" sel routed bound recorded
+  local slug="$1" diamond="$2" rpc="$3" sel routed bound recorded has_record=0
+  [ -f "deployments/$slug/reward-custody-bind.json" ] && has_record=1
   # Routed or not is the LOUPE's answer (every Diamond routes it), so a
   # failed read anywhere below is a transport failure, never "not routed".
   sel="$(cast sig 'rewardCustodyHolder()')"
   routed="$(cast call "$diamond" 'facetAddress(bytes4)(address)' "$sel" --rpc-url "$rpc" 2>/dev/null)" \
     || { echo "unreadable loupe"; return 0; }
   case "$routed" in
-    0x0000000000000000000000000000000000000000) echo "unrouted"; return 0 ;;
+    0x0000000000000000000000000000000000000000)
+      # No holder can be bound on an unrouted Diamond; a record here is one
+      # that never executed (or was copied in by hand) and run() refuses it.
+      [ "$has_record" -eq 1 ] && { echo "unexecuted"; return 0; }
+      echo "unrouted"; return 0 ;;
     0x[0-9a-fA-F]*) [ "${#routed}" -eq 42 ] || { echo "malformed $routed"; return 0; } ;;
     *) echo "malformed $routed"; return 0 ;;
   esac
   bound="$(cast call "$diamond" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null)" \
     || { echo "unreadable getter"; return 0; }
   case "$bound" in
-    0x0000000000000000000000000000000000000000) echo "unbound $bound"; return 0 ;;
+    0x0000000000000000000000000000000000000000)
+      # Unbound WITH a bind record is a bind that never executed (Codex
+      # #2158 r20 P2): run() refuses over the record, so it must be executed
+      # or deliberately removed before anything is broadcast.
+      [ "$has_record" -eq 1 ] && { echo "unexecuted $bound"; return 0; }
+      echo "unbound $bound"; return 0 ;;
     0x[0-9a-fA-F]*) [ "${#bound}" -eq 42 ] || { echo "malformed $bound"; return 0; } ;;
     *) echo "malformed $bound"; return 0 ;;
   esac
@@ -570,6 +588,7 @@ for slug in $CHAINS; do
         info "$slug: reward custody holder $holder_addr is bound and a VALID bind ceremony record is pending; [4b] reconciles the artifact after the refresh" ;;
       recorded)  info "$slug: reward custody holder $holder_addr bound and recorded ✓" ;;
       unbound)   info "$slug: reward custody holder unbound; [4b] binds it after the refresh" ;;
+      unexecuted) fail "chain '$slug': no reward custody holder is bound but a bind ceremony record exists at deployments/$slug/reward-custody-bind.json -- a staged or direct bind that never executed. DeployRewardCustodyHolder refuses to bind over it, so [4b] would fail after this chain's refresh had already broadcast; execute the staged bind and run record(), or remove the record deliberately, BEFORE any broadcast; nothing has been sent" ;;
       unrouted)  info "$slug: the loupe reports the reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;
     esac
   fi
@@ -799,6 +818,9 @@ for slug in $CHAINS; do
       ;;
     malformed)
       fail "$slug: rewardCustodyHolder() returned a malformed answer '$bound_holder' -- refusing to proceed"
+      ;;
+    unexecuted)
+      fail "$slug: no holder is bound but a bind ceremony record exists (deployments/$slug/reward-custody-bind.json) -- the one-shot bind refuses over it; execute the staged bind and run record(), or remove the record deliberately, then run [4b] by hand (the all-chain pre-flight refuses this before any broadcast; reaching it here means the record appeared mid-run)"
       ;;
     unbound)
       banner "[4b] $slug — DeployRewardCustodyHolder (one-shot initial bind)"
