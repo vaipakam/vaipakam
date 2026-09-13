@@ -661,9 +661,15 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
   });
 
   it('applies the same safe-integer check the captured reader applies', () => {
-    const i = src.indexOf('hexQuantity(believableResult(await r.json()))');
-    expect(i, 'the probe body moved').toBeGreaterThan(-1);
-    const body = between(src, 'hexQuantity(believableResult(await r.json()))', 'Unreachable, non-JSON, or timed out');
+    // Bounded by the `catch` that ends the probe's try, not by the
+    // sentence inside it. #2144 round 5 found this anchored on a COMMENT —
+    // `between` now refuses a landmark that exists only in prose, which is
+    // how a rule ends up asserted over a region the code does not have.
+    const body = between(
+      src,
+      'const id = hexQuantity(believableResult(await r.json()));',
+      '} catch {',
+    );
     expect(body).toContain('Number.isSafeInteger(n)');
   });
 

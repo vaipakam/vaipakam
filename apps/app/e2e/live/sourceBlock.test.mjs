@@ -16,7 +16,8 @@ import {
   between,
   blockFrom,
   callContaining,
-  enclosingStatementOf,
+  enclosingStatementsOf,
+  markedStatement,
   reachesNumber,
   sliceCallsIn,
   statementFrom,
@@ -189,7 +190,7 @@ describe('#2144 — between(): a region bounded by a following anchor', () => {
   // The closing anchor is searched for AFTER the opening one ends, so an
   // anchor that is a prefix of its own region does not match itself.
   it('does not match the closing anchor inside the opening one', () => {
-    expect(between('const a = 1; const a = 2;', 'const a', 'const a')).toBe('const a = 1; ');
+    expect(between('var a = 1; var a = 2;', 'var a', 'var a')).toBe('var a = 1; ');
   });
 
   // An EMPTY anchor matches at 0, so the helper would otherwise produce
@@ -314,30 +315,14 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // `const WINDOW = 160 * 2` through.
   const countsCharacters = (src, arg) => reachesNumber(src, arg);
 
-  // The marker excuses the STATEMENT it precedes, and only calls inside
-  // that statement. Proximity alone excused a neighbour (round 4): a
-  // fixed window written next to a legitimate count inherited its pass.
-  const excused = (src, call) => {
-    const stmt = enclosingStatementOf(src, call.node);
-    if (!stmt) return false;
-    const lines = src.split('\n');
-    let n = lineOf(src, stmt.start) - 1;
-    // Walk back over the comment lines immediately above the statement.
-    // A marker has to be part of that run to excuse it; a blank line or
-    // any code ends the run, so it cannot reach across a neighbour.
-    while (n >= 1 && lines[n - 1].trimStart().startsWith('//')) {
-      if (lines[n - 1].includes(MARKER)) return true;
-      n -= 1;
-    }
-    return lines[lineOf(src, stmt.start) - 1].includes(MARKER);
-  };
-
-  const lineOf = (src, index) => {
-    let n = 1;
-    // not-a-source-region: counts NEWLINES up to an index, to report one
-    for (let i = 0; i < index; i += 1) if (src[i] === '\n') n += 1;
-    return n;
-  };
+  // The marker excuses a STATEMENT the call sits inside, and only that.
+  // Proximity alone excused a neighbour (round 4). Two further corrections
+  // in round 5: it must BE a comment, since the raw line text let a string
+  // holding the token excuse itself; and ANY enclosing statement counts,
+  // since a block-bodied helper put the call inside a `return` while the
+  // marker sat on the declaration.
+  const excused = (src, call) =>
+    enclosingStatementsOf(src, call.node).some((stmt) => markedStatement(src, stmt, MARKER));
 
   it('finds the suites to check', () => {
     expect(files.length).toBeGreaterThan(10);
@@ -371,11 +356,41 @@ describe('#2144 — no source region is bounded by a character count', () => {
       ['const BASE = 320;\nconst W = BASE;\nconst s = f();\nconst r = s.slice(start, start + W);', 'an alias'],
       ['const W = 160 * 2;\nconst s = f();\nconst r = s.slice(start, start + W);', 'arithmetic'],
       ['const W = { n: 320 }.n;\nconst s = f();\nconst r = s.slice(start, start + W);', 'a member of a literal'],
+      // ROUND 5 — a defaulted parameter is a binding like any other.
+      [
+        'function region(src, start, W = 320) { return src.slice(start, start + W); }',
+        'a default parameter',
+      ],
+      // ROUND 5 — a `const` written straight into a case belongs to the
+      // switch's own block, which was not modelled as a scope at all.
+      [
+        'function f(src, start, k) { switch (k) { case 1: const W = 320; return src.slice(start, start + W); } }',
+        'a switch-case binding',
+      ],
+      // ROUND 5 — the invariant is about source REGIONS, not about one
+      // spelling of the String API.
+      ['const s = f();\nconst r = s.substring(start, start + 320);', 'substring'],
+      ['const s = f();\nconst r = s.substr(start, 320);', 'substr'],
     ];
     for (const [code, why] of cases) {
       const calls = sliceCallsIn(code);
       expect(calls, why).toHaveLength(1);
       expect(calls[0].args.some((a) => countsCharacters(code, a)), why).toBe(true);
+    }
+  });
+
+  // ROUND 5, and the direction that matters most: a CALL is opaque, and
+  // its arguments are not the bound — the bound is what it returns. These
+  // were being flagged because a number appeared somewhere inside them,
+  // which would have forced false exemption markers onto correct code.
+  it('does not read a number inside an anchor call as a count', () => {
+    for (const code of [
+      "const s = f();\nconst r = s.slice(start, s.indexOf('320'));",
+      "const s = f();\nconst r = s.slice(start, s.indexOf('end', start + 1));",
+      'const s = f();\nconst r = s.slice(start, atOffset(320));',
+    ]) {
+      const [call] = sliceCallsIn(code);
+      expect(call.args.some((a) => countsCharacters(code, a)), code).toBe(false);
     }
   });
 
@@ -421,15 +436,44 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(excused(src, neighbour)).toBe(false);
   });
 
-  it('reaches back over a run of comment lines, and stops at a blank one', () => {
+  it('reaches back over a run of comment lines, and stops at CODE', () => {
     const near = [
       '// why this counts, at length',
       `// ${MARKER}: drops the 0x prefix`,
       'const a = x.slice(2);',
     ].join('\n');
     expect(excused(near, sliceCallsIn(near)[0])).toBe(true);
-    const broken = [`// ${MARKER}: reason`, '', 'const a = x.slice(2);'].join('\n');
-    expect(excused(broken, sliceCallsIn(broken)[0])).toBe(false);
+    // A blank line does NOT break it — blank lines are formatting, and a
+    // rule that treated one as a boundary would be an invention of this
+    // guard rather than anything about the code. CODE between the note and
+    // the declaration does break it, which is what makes the note a note
+    // ON this declaration.
+    const spaced = [`// ${MARKER}: reason`, '', 'const a = x.slice(2);'].join('\n');
+    expect(excused(spaced, sliceCallsIn(spaced)[0])).toBe(true);
+    const interrupted = [`// ${MARKER}: reason`, 'const other = 1;', 'const a = x.slice(2);'].join(
+      '\n',
+    );
+    expect(excused(interrupted, sliceCallsIn(interrupted)[0])).toBe(false);
+  });
+
+  // ROUND 5 — the marker has to BE a comment. Testing the raw line text
+  // let a string holding the token excuse the very window beside it.
+  it('does not accept the marker from a string or from other code', () => {
+    const faked = `const reason = '${MARKER}', bad = src.slice(start, start + 320);`;
+    expect(excused(faked, sliceCallsIn(faked)[0])).toBe(false);
+  });
+
+  // ROUND 5 — a block-bodied helper puts the call inside a `return`, so
+  // the nearest statement is not the marked declaration. Any ENCLOSING
+  // statement counts, which is what "one marker covers the helper" meant.
+  it('covers a count nested inside the statement the marker precedes', () => {
+    const src = [
+      `// ${MARKER}: assertion label`,
+      'const label = (text) => {',
+      '  return text.slice(0, 40);',
+      '};',
+    ].join('\n');
+    expect(excused(src, sliceCallsIn(src)[0])).toBe(true);
   });
 
   // One marker covers every count INSIDE its statement, which is the

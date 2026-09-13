@@ -68,8 +68,28 @@ a length that had been given a name, or worked out by arithmetic, or
 handed on through a second name, read as a landmark. There is one answer
 to it now, used in both places, because it was always one question.
 
-Putting a removed window back, in any of the eight disguises review has
-demonstrated, turns the suite red.
+A further round found the rule drawn slightly wrong in both directions at
+once, which is the useful kind of finding. It was too narrow in four
+places — it recognised one of the three standard ways to shorten a piece
+of text and not the other two, it did not see a length supplied as a
+default value or declared inside a branch of a multi-way choice, and the
+note excusing a legitimate count could be faked by an ordinary piece of
+text that merely contained the words. And it was too wide in one: a
+landmark that happened to mention a number was being read as a length,
+which would have forced apologetic notes onto perfectly correct code.
+That last one matters most. A check that complains about correct work
+does not get obeyed, it gets switched off.
+
+The same round found a region in the existing checks bounded by a
+sentence rather than by code. These files quote code in prose constantly
+— naming the thing a rule is about, the call a fix replaced — and one
+check had been ending its region at a mention inside a comment rather
+than at the code it meant to stop before. A landmark is now required to
+be code, and that check is re-anchored. Notes in the margin that mention
+a landmark no longer move it.
+
+Putting a removed window back, in any of the thirteen disguises review
+has demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is

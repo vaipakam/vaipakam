@@ -63,8 +63,13 @@ function astOf(src, label) {
   const cached = trees.get(src);
   if (cached) return cached;
   let tree;
+  // Comments are collected, not discarded. Two rules need them: a marker
+  // has to BE a comment (round 5 — the token in a string excused a real
+  // window), and a textual anchor must not match code quoted in prose,
+  // which these suites do constantly.
+  const comments = [];
   try {
-    tree = parse(src, PARSE_OPTIONS);
+    tree = parse(src, { ...PARSE_OPTIONS, onComment: comments });
   } catch (e) {
     // A region asked for out of unparseable text is not a region. Say so
     // rather than falling back to a character scan, which is the whole
@@ -80,7 +85,7 @@ function astOf(src, label) {
   // Innermost-first for containment queries: a later start, or an equal
   // start with an earlier end, is the more specific node.
   nodes.sort((a, b) => a.start - b.start || a.end - b.end);
-  const built = { tree, nodes, parents };
+  const built = { tree, nodes, parents, comments };
   trees.set(src, built);
   return built;
 }
@@ -197,13 +202,42 @@ export function between(src, from, to) {
   // to refuse, produced by the helper itself. Rejected before searching.
   if (typeof from !== 'string' || from === '') throw new Error('between() needs a non-empty `from`');
   if (typeof to !== 'string' || to === '') throw new Error('between() needs a non-empty `to`');
-  const start = src.indexOf(from);
+  const start = anchorIn(src, from, 0);
   if (start === -1) throw new Error(`${from} was renamed or removed`);
-  const end = src.indexOf(to, start + from.length);
+  const end = anchorIn(src, to, start + from.length);
   if (end === -1) {
     throw new Error(`${to} does not follow ${from} — it was renamed, removed, or moved above it`);
   }
   return src.slice(start, end);
+}
+
+/**
+ * The first occurrence of `anchor` at or after `at` that is CODE rather
+ * than a mention of it in a COMMENT.
+ *
+ * Round 5, and it is specific to what these suites are: they quote code
+ * in prose constantly, naming the declaration a rule is about, the call a
+ * fix replaced, the key that was retired. A closing anchor mentioned in
+ * such a comment ended the region THERE — silently, and a shortened
+ * region can still satisfy the assertions over it, which is the exact
+ * failure the whole #2144 family exists to refuse. `stripLineComments`
+ * had already been added for the same reason on a different helper.
+ *
+ * STRING LITERALS ARE NOT SKIPPED, and that is not an oversight. A string
+ * in the drive is code: `between(src, …, 'Unreachable, non-JSON, or timed
+ * out')` anchors on a message the drive actually emits, and skipping
+ * literals broke it. Comments are the vector here — they are the only
+ * text in a file that is guaranteed not to be the thing a rule is about.
+ *
+ * Only spans the PARSER identifies are skipped, so this cannot disagree
+ * with the language about what a comment is.
+ */
+function anchorIn(src, anchor, at) {
+  const { comments } = astOf(src, 'between');
+  for (let i = src.indexOf(anchor, at); i !== -1; i = src.indexOf(anchor, i + 1)) {
+    if (!comments.some((c) => i >= c.start && i < c.end)) return i;
+  }
+  return -1;
 }
 
 /**
@@ -254,6 +288,8 @@ export function callContaining(src, needle, callee = 'console.log(') {
  * asks rather than scanning — otherwise it would be narrowing source by
  * hand in order to forbid narrowing source by hand.
  */
+const TRUNCATORS = new Set(['slice', 'substring', 'substr']);
+
 export function sliceCallsIn(src) {
   const { nodes } = astOf(src, 'sliceCallsIn');
   const out = [];
@@ -266,7 +302,9 @@ export function sliceCallsIn(src) {
         ? c.property.value
         : null
       : c.property.name;
-    if (name !== 'slice') continue;
+    // `substring` and `substr` truncate identically; the invariant is
+    // about source REGIONS, not one spelling of the String API (round 5).
+    if (!TRUNCATORS.has(name)) continue;
     out.push({
       line: lineOf(src, n.start),
       receiver: src.slice(c.object.start, c.object.end),
@@ -293,6 +331,9 @@ const SCOPES = new Set([
   'ForOfStatement',
   'ForInStatement',
   'CatchClause',
+  // A `switch` body is ONE block in the grammar, and a `const` written
+  // directly in a case belongs to it (round 5).
+  'SwitchStatement',
 ]);
 
 // `var` hoists to the nearest FUNCTION (or the module), not to the block
@@ -309,18 +350,39 @@ const FUNCTIONS = new Set([
 ]);
 
 /**
- * The statement `node` belongs to — the unit a marker can excuse.
+ * The statements `node` sits inside, innermost first — every unit a
+ * marker could be attached to.
  *
- * Proximity is not a relationship (round 4). A marker three lines above a
- * call excused whatever else happened to sit between them, so a fixed
- * window introduced beside a legitimate one went unreported. A marker now
- * attaches to the STATEMENT it precedes and excuses only what is inside
- * that statement.
+ * Round 5 corrected the singular version of this. A marker above
+ * `const label = (t) => { return t.slice(0, 40); };` was being compared
+ * against the inner `return`, so the declaration it actually marked never
+ * came up and the legitimate count was reported. A marker on ANY
+ * enclosing statement excuses the call, which is what "one marker covers
+ * the helper" was supposed to mean.
  */
-export function enclosingStatementOf(src, node) {
-  const { parents } = astOf(src, 'enclosingStatementOf');
-  for (let n = node; n; n = parents.get(n)) if (STATEMENT.test(n.type)) return n;
-  return null;
+export function enclosingStatementsOf(src, node) {
+  const { parents } = astOf(src, 'enclosingStatementsOf');
+  const out = [];
+  for (let n = node; n; n = parents.get(n)) if (STATEMENT.test(n.type)) out.push(n);
+  return out;
+}
+
+/**
+ * Whether a COMMENT carrying `marker` is attached to `stmt` — directly
+ * above it, or on its own line before it, with no code in between.
+ *
+ * Round 5: the previous version tested the raw line text, so
+ * `const reason = 'not-a-source-region', bad = src.slice(start, start + 320);`
+ * excused itself with a string. A marker has to BE a comment, and only
+ * the parser can say what is one. Contiguity is the other half — "no code
+ * between the comment and the statement" is what makes it a note ON this
+ * declaration rather than a token loose in the file.
+ */
+export function markedStatement(src, stmt, marker) {
+  const { comments } = astOf(src, 'markedStatement');
+  return comments.some(
+    (c) => c.end <= stmt.start && c.value.includes(marker) && src.slice(c.end, stmt.start).trim() === '',
+  );
 }
 
 /**
@@ -371,6 +433,8 @@ export function bindingAt(src, name, at) {
  * otherwise make. Unresolvable is NOT a number: an `indexOf`, a call, or
  * a name bound to either, is an anchor.
  */
+const OPAQUE = new Set(['CallExpression', 'NewExpression', 'TaggedTemplateExpression']);
+
 export function reachesNumber(src, node, seen = new Set()) {
   let found = false;
   const visit = (n) => {
@@ -384,6 +448,12 @@ export function reachesNumber(src, node, seen = new Set()) {
       found = true;
       return;
     }
+    // A CALL is opaque, and its arguments are not the bound — the bound
+    // is what it returns. Round 5: `src.indexOf('320')` and
+    // `src.indexOf('end', start + 1)` were being read as counts because a
+    // number appeared somewhere inside them, which is the over-flagging
+    // that makes a guard get silenced rather than obeyed.
+    if (OPAQUE.has(n.type)) return;
     if (n.type === 'Identifier') {
       const key = `${n.name}@${n.start}`;
       if (!seen.has(key)) {
@@ -409,16 +479,24 @@ function declarationsDirectlyIn(scope) {
   const add = (id, init) => {
     if (id && id.type === 'Identifier') out.push({ name: id.name, init: init ?? null });
   };
-  for (const p of scope.params ?? []) add(p, null);
+  // A DEFAULTED parameter is an AssignmentPattern, and its right-hand
+  // side is a binding like any other — `function f(WINDOW = 320)` was
+  // invisible until round 5.
+  for (const p of scope.params ?? []) {
+    if (p && p.type === 'AssignmentPattern') add(p.left, p.right);
+    else add(p, null);
+  }
   if (scope.type === 'CatchClause') add(scope.param, null);
   const statements =
     scope.type === 'Program' || scope.type === 'BlockStatement' || scope.type === 'StaticBlock'
       ? (scope.body ?? [])
-      : scope.type === 'ForStatement' ||
-          scope.type === 'ForOfStatement' ||
-          scope.type === 'ForInStatement'
-        ? [scope.init ?? scope.left].filter(Boolean)
-        : [];
+      : scope.type === 'SwitchStatement'
+        ? (scope.cases ?? []).flatMap((c) => c.consequent ?? [])
+        : scope.type === 'ForStatement' ||
+            scope.type === 'ForOfStatement' ||
+            scope.type === 'ForInStatement'
+          ? [scope.init ?? scope.left].filter(Boolean)
+          : [];
   for (const s of statements) {
     if (s.type === 'VariableDeclaration') {
       for (const d of s.declarations) add(d.id, d.init);
