@@ -18,8 +18,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * **This contract keeps no ledger.** Which part of its balance is live
  * fresh funding, which is recycled, which is a stranded recovery and so on
  * is recorded in Diamond storage (`LibVaipakam.Storage.rewardCustodyRows`),
- * credited and debited only by the Diamond. The holder exposes exactly one
- * mutating surface — {release} — and only the Diamond can call it. Keeping
+ * credited and debited only by the Diamond. The holder exposes exactly two
+ * mutating surfaces — {release} for an ERC-20 and {releaseNative} for
+ * native currency forced in — and only the Diamond can call either. Keeping
  * the ledger out of the holder is what makes the holder replaceable at any
  * size: a successor is deployed, the whole balance moves in one call, the
  * Diamond's pointer flips in the same transaction, and the ledger (untouched)
@@ -55,10 +56,17 @@ contract RewardCustodyHolder {
         uint256 amount
     );
 
+    /// @notice Native currency was released by the Diamond.
+    /// @param to     The recipient.
+    /// @param amount The amount moved.
+    event RewardCustodyNativeReleased(address indexed to, uint256 amount);
+
     /// @notice The caller is not the bound Diamond.
     error RewardCustodyHolderOnlyDiamond(address caller);
     /// @notice A construction or release parameter was the zero address.
     error RewardCustodyHolderZeroAddress();
+    /// @notice The native transfer was refused by the recipient.
+    error RewardCustodyHolderNativeReleaseFailed(address to, uint256 amount);
 
     /// @param diamond_ The Vaipakam Diamond this holder answers to.
     constructor(address diamond_) {
@@ -84,5 +92,24 @@ contract RewardCustodyHolder {
         if (to == address(0)) revert RewardCustodyHolderZeroAddress();
         IERC20(token).safeTransfer(to, amount);
         emit RewardCustodyReleased(token, to, amount);
+    }
+
+    /// @notice Move `amount` of native currency from this holder to `to`.
+    /// @dev    Diamond-gated. The holder has no `receive`, so native currency
+    ///         can only be FORCED in (`SELFDESTRUCT`, a coinbase reward, or
+    ///         value sent to the predicted address before construction);
+    ///         without this it would be stranded forever (Codex #2158 r13
+    ///         P2). The Diamond routes it to the treasury through
+    ///         `sweepNativeFromRewardCustody`.
+    /// @param to     The recipient. Zero is refused.
+    /// @param amount The amount to move.
+    function releaseNative(address to, uint256 amount) external {
+        if (msg.sender != DIAMOND) {
+            revert RewardCustodyHolderOnlyDiamond(msg.sender);
+        }
+        if (to == address(0)) revert RewardCustodyHolderZeroAddress();
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert RewardCustodyHolderNativeReleaseFailed(to, amount);
+        emit RewardCustodyNativeReleased(to, amount);
     }
 }

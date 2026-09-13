@@ -252,6 +252,22 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshSeedExceedsCap",
+    "inputs": [
+      {
+        "name": "resulting",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AskBelowPreLoanFloor",
     "inputs": [
       {
@@ -2158,7 +2174,7 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyHolderNotOurs",
+    "name": "RewardCustodyHolderNotConstructedHere",
     "inputs": [
       {
         "name": "holder",

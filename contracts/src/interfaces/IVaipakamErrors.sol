@@ -236,6 +236,21 @@ interface IVaipakamErrors {
     /// @param total The total offered.
     /// @param cap   The pool cap it must not exceed.
     error ArmedFreshRebaseTotalExceedsCap(uint256 total, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P1) — the additive P1-b
+    ///         seed would push the paid counter above the interaction pool's
+    ///         lifetime cap. The seed is the one writer that could install an
+    ///         impossible paid figure ahead of the rebase; bounding it keeps
+    ///         `paid` inside what can ever be rewarded.
+    /// @param resulting The paid counter the seed would produce.
+    /// @param cap       The pool cap it must not exceed.
+    error ArmedFreshSeedExceedsCap(uint256 resulting, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P2) — the address offered
+    ///         to a custody sweep is not a holder this Diamond CONSTRUCTED.
+    ///         Every holder the Diamond creates (the first and every
+    ///         successor) is registered at construction; a getter an
+    ///         arbitrary contract could imitate is never consulted.
+    /// @param holder The address offered.
+    error RewardCustodyHolderNotConstructedHere(address holder);
     /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
     ///         rebase was called on an inactive reward role (`Unconfigured`
     ///         or `Detached`) on a chain that is not history-free: something
@@ -285,11 +300,6 @@ interface IVaipakamErrors {
     ///         leaves only through the reward outflows; the sweep is for
     ///         everything else.
     error RewardCustodySweepIsVpfi();
-    /// @notice #1566 slice 4 PR A — the address offered to the foreign-token
-    ///         sweep is not a holder this Diamond constructed (its `DIAMOND()`
-    ///         is another address, or it has no code).
-    /// @param holder The address offered.
-    error RewardCustodyHolderNotOurs(address holder);
     /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
     ///         to deliver to and none is configured.
     error RewardCustodyTreasuryUnset();

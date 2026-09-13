@@ -17,7 +17,11 @@ surface and would stay behind at a replaced holder, so an administrator can
 recover such a token from any holder the platform constructed to the
 treasury, and only to the treasury, through an audited sweep that refuses the
 configured reward token itself and reports what the treasury actually
-received beside what was requested. A fresh deployment
+received beside what was requested. Native currency forced into a holder,
+which accepts none by itself, is likewise reported and recoverable to the
+treasury the same way. The sweeps act only on holders the platform itself
+constructed, kept in a registry that includes every predecessor, never on an
+address that merely claims to be one. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or
@@ -41,7 +45,9 @@ holder replaceable at any size.
 The change also lands the paid-side migration the design requires for chains
 carrying history that closure 2 now charges: a paused, admin-only, one-shot
 rebase that installs a reconstructed absolute total as a floor, never lowering
-what the counter already holds, and on the canonical chain sets the received
+what the counter already holds and never accepting a figure, requested or
+resulting, above what the reward pool can ever pay out — the older additive
+seed is bounded the same way, and on the canonical chain sets the received
 side to the same figure so a no-provenance deployment starts from zero headroom
 rather than negative headroom. It consumes the older additive seed as well as
 its own guard, so a stale seed can never add historical value on top of an

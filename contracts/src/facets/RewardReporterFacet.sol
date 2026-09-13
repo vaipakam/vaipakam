@@ -1461,8 +1461,15 @@ contract RewardReporterFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
+        // #1566 slice 4 PR A (Codex #2158 r13 P1) — bounded to the pool cap,
+        // as the rebase is: this is the one writer that could install an
+        // impossible paid figure ahead of it.
+        uint256 resulting = s.rewardBudgetArmedFreshPaid + amount;
+        if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert IVaipakamErrors.ArmedFreshSeedExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        }
         s.armedFreshPaidSeeded = true;
-        s.rewardBudgetArmedFreshPaid += amount;
+        s.rewardBudgetArmedFreshPaid = resulting;
         emit ArmedFreshPaidSeeded(amount);
     }
 

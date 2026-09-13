@@ -49,7 +49,10 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  * replacement; in ANY OTHER token (including a former VPFI after a token
  * rotation) it is invisible to the snapshot, stays behind at a replaced
  * holder, and is recoverable only through {sweepForeignTokenFromRewardCustody}
- * (Codex #2158 r8 P2).
+ * (Codex #2158 r8 P2). Native currency forced into a holder (it has no
+ * `receive`) is likewise outside the ledger and the snapshot, reported by
+ * {rewardCustodyNativeHeld} and recoverable only through
+ * {sweepNativeFromRewardCustody} (Codex #2158 r13 P2).
  *
  * @dev Why a separate facet rather than a corner of `RewardReporterFacet`
  *      (which hosts the older one-shot seeder): the reporter is a cross-chain
@@ -108,6 +111,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 received
     );
 
+    /// @notice Native currency forced into a holder was recovered to the
+    ///         treasury.
+    /// @param holder    The holder swept (bound or previous).
+    /// @param treasury  Where it went.
+    /// @param requested How much was released from the holder.
+    /// @param received  How much the treasury's balance actually grew by.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyNativeSwept(
+        address indexed holder,
+        address indexed treasury,
+        uint256 requested,
+        uint256 received
+    );
+
     /// @notice The delivered-fresh ledger's paid side was rebased to an
     ///         absolute total (and, on the canonical chain, the received side
     ///         to the same figure).
@@ -153,6 +170,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyHolderAlreadyBound();
         }
         holder = address(new RewardCustodyHolder(address(this)));
+        s.rewardCustodyHolderConstructed[holder] = true;
         s.rewardCustodyHolder = holder;
         emit RewardCustodyHolderBound(holder);
     }
@@ -202,6 +220,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (token == address(0)) revert IVaipakamErrors.RewardCustodyTokenUnset();
 
         successor = address(new RewardCustodyHolder(address(this)));
+        s.rewardCustodyHolderConstructed[successor] = true;
         uint256 moving = IERC20(token).balanceOf(previous);
         uint256 before = IERC20(token).balanceOf(successor);
         if (moving != 0) {
@@ -254,11 +273,40 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (token == s.vpfiToken) revert IVaipakamErrors.RewardCustodySweepIsVpfi();
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
-        _requireOurHolder(holder);
+        _requireConstructedHere(s, holder);
         uint256 before = IERC20(token).balanceOf(treasury);
         RewardCustodyHolder(holder).release(token, treasury, amount);
         uint256 received = IERC20(token).balanceOf(treasury) - before;
         emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
+    }
+
+    /**
+     * @notice Recover native currency forced into a holder this Diamond
+     *         constructed — the bound one or a previous one — to the
+     *         treasury.
+     * @dev    ADMIN. A holder has no `receive`, so native currency reaches it
+     *         only by force (`SELFDESTRUCT`, a coinbase reward, value sent to
+     *         the predicted address before construction); it is outside the
+     *         attribution ledger and the VPFI snapshot, and would otherwise
+     *         be stranded — silently, at a previous holder after a
+     *         replacement (Codex #2158 r13 P2). Delivers to the configured
+     *         treasury and nowhere else; the event carries the treasury's
+     *         measured receipt.
+     * @param  holder A holder this Diamond constructed (bound or previous).
+     * @param  amount The amount to move to the treasury.
+     */
+    function sweepNativeFromRewardCustody(
+        address holder,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        _requireConstructedHere(s, holder);
+        uint256 before = treasury.balance;
+        RewardCustodyHolder(holder).releaseNative(treasury, amount);
+        uint256 received = treasury.balance - before;
+        emit RewardCustodyNativeSwept(holder, treasury, amount, received);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────
@@ -350,6 +398,14 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
         uint256 paidBefore = s.rewardBudgetArmedFreshPaid;
         uint256 receivedBefore = s.rewardBudgetArmedFreshReceived;
+        // The RESULT is bounded too (Codex #2158 r13 P1): a paid counter
+        // already above the cap would survive `max` and, on the canonical
+        // chain, be copied into `received` while both guards close. Such a
+        // counter is refused here with the guard left OPEN, so it can be
+        // examined and corrected rather than sealed in.
+        if (paidBefore > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap(paidBefore, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        }
         bool activeRole = role == LibVaipakam.RewardRole.Canonical
             || role == LibVaipakam.RewardRole.Mirror;
         if (!activeRole && (total != 0 || paidBefore != 0 || receivedBefore != 0)) {
@@ -381,6 +437,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
     /// @notice The bound custody holder, or zero while unbound.
     function rewardCustodyHolder() external view returns (address) {
         return LibVaipakam.storageSlot().rewardCustodyHolder;
+    }
+
+    /// @notice Whether `holder` is a `RewardCustodyHolder` this Diamond
+    ///         constructed (the bound one or any predecessor).
+    function rewardCustodyHolderConstructed(address holder) external view returns (bool) {
+        return LibVaipakam.storageSlot().rewardCustodyHolderConstructed[holder];
+    }
+
+    /// @notice Native currency sitting at `holder` — outside the attribution
+    ///         ledger and the VPFI snapshot, recoverable only through
+    ///         {sweepNativeFromRewardCustody}. Reported for any address (a
+    ///         predecessor included) so a forced deposit is never silent.
+    function rewardCustodyNativeHeld(address holder) external view returns (uint256) {
+        return holder.balance;
     }
 
     /// @notice Whether the one-shot paid-side rebase has run on this chain.
@@ -462,19 +532,18 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
     // ─── Internals ──────────────────────────────────────────────────────────
 
-    /// @dev A holder this Diamond constructed answers `DIAMOND() == this`.
-    ///      Only the foreign-token sweep takes a holder address at all (to
-    ///      reach a PREVIOUS holder after a replacement); binding and
-    ///      replacement construct their own. A codeless address or one
-    ///      answering another Diamond is refused by name.
-    function _requireOurHolder(address holder) private view {
-        if (holder.code.length == 0) {
-            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
-        }
-        try RewardCustodyHolder(holder).DIAMOND() returns (address d) {
-            if (d != address(this)) revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
-        } catch {
-            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
+    /// @dev Only the sweeps take a holder address at all (to reach a
+    ///      PREVIOUS holder after a replacement); binding and replacement
+    ///      construct their own and REGISTER what they constructed. The
+    ///      sweeps consult that registry — never a getter an arbitrary
+    ///      contract could imitate (Codex #2158 r13 P2) — so `release` is
+    ///      only ever called on a contract this Diamond created.
+    function _requireConstructedHere(
+        LibVaipakam.Storage storage s,
+        address holder
+    ) private view {
+        if (!s.rewardCustodyHolderConstructed[holder]) {
+            revert IVaipakamErrors.RewardCustodyHolderNotConstructedHere(holder);
         }
     }
 

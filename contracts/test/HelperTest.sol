@@ -2341,7 +2341,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](12);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2351,6 +2351,9 @@ contract HelperTest {
         selectors[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
         selectors[7] = RewardCustodyFacet.armedFreshLedger.selector;
         selectors[8] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
+        selectors[9] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
+        selectors[10] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
+        selectors[11] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

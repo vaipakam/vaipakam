@@ -7379,6 +7379,14 @@ library LibVaipakam {
         ///      been installed. A fresh deploy consumes it at deploy with a
         ///      zero total, exactly as the seeder is consumed.
         bool armedFreshPaidRebased;
+        /// @dev #1566 slice 4 PR A (Codex #2158 r13 P2) — every
+        ///      `RewardCustodyHolder` this Diamond CONSTRUCTED, the first and
+        ///      every successor, registered at construction and never
+        ///      removed. The sweeps consult this registry — not a getter an
+        ///      arbitrary contract could imitate — before calling `release`
+        ///      on an address, so a previous holder stays reachable for
+        ///      recovery while nothing else ever is.
+        mapping(address => bool) rewardCustodyHolderConstructed;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

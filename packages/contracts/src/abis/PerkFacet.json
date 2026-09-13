@@ -363,6 +363,22 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshSeedExceedsCap",
+    "inputs": [
+      {
+        "name": "resulting",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -2188,7 +2204,7 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyHolderNotOurs",
+    "name": "RewardCustodyHolderNotConstructedHere",
     "inputs": [
       {
         "name": "holder",

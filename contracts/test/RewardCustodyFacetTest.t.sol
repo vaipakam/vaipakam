@@ -71,6 +71,14 @@ contract CreditOnlyERC20 {
     }
 }
 
+/// @dev An impostor that answers `DIAMOND()` with the real Diamond — the
+///      getter-spoofing contract the sweeps must never call `release` on.
+contract ImpostorHolder {
+    address public immutable DIAMOND;
+    constructor(address d) { DIAMOND = d; }
+    function release(address, address, uint256) external {}
+}
+
 /// @dev A "token" whose balanceOf reverts — a proxy upgraded into a broken
 ///      implementation. The snapshot must report the balance as unknown.
 contract RevertingBalanceToken {
@@ -115,6 +123,12 @@ contract RewardCustodyFacetTest is SetupTest {
     event RewardCustodyForeignTokenSwept(
         address indexed holder,
         address indexed token,
+        address indexed treasury,
+        uint256 requested,
+        uint256 received
+    );
+    event RewardCustodyNativeSwept(
+        address indexed holder,
         address indexed treasury,
         uint256 requested,
         uint256 received
@@ -510,6 +524,36 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(received, cap);
     }
 
+    /// @dev Codex #2158 r13 P1 — the RESULT is bounded too: a paid counter
+    ///      already above the cap (the seeder used to allow it) is refused
+    ///      with the guard left open, never sealed in by `max`. And the
+    ///      seeder itself now refuses to create such a counter.
+    function test_Rebase_RefusesAPaidCounterAlreadyAboveTheCap() public {
+        _becomeCanonical();
+        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
+        _mut().setArmedFreshLedgerRaw(0, cap + 1);
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
+            )
+        );
+        _custody().rebaseArmedFreshPaid(0);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard left open for correction");
+    }
+
+    function test_Seed_RefusesToPushPaidAboveTheCap() public {
+        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshSeedExceedsCap.selector, cap + 1, cap)
+        );
+        _rep().seedArmedFreshPaid(cap + 1);
+        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
+        _rep().seedArmedFreshPaid(cap);
+        (, uint256 paid) = _custody().armedFreshLedger();
+        assertEq(paid, cap, "exactly the cap is accepted");
+    }
+
     function test_Rebase_IsOneShot() public {
         _becomeCanonical();
         _pause();
@@ -696,19 +740,65 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(vpfi.balanceOf(holder), 5 ether, "custody untouched");
     }
 
-    function test_Sweep_RefusesAHolderThatIsNotOurs() public {
-        _bind();
+    /// @dev Codex #2158 r13 P2 — the sweeps consult the registry of holders
+    ///      this Diamond CONSTRUCTED, never a getter: a holder built for
+    ///      another Diamond, an EOA, a genuine holder built by someone else
+    ///      for THIS Diamond, and an impostor answering `DIAMOND() == this`
+    ///      are all refused.
+    function test_Sweep_RefusesAnythingThisDiamondDidNotConstruct() public {
+        address holder = _bind();
         _treasury();
         PlainERC20 foreign = new PlainERC20();
-        RewardCustodyHolder other = new RewardCustodyHolder(makeAddr("otherDiamond"));
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotOurs.selector, address(other))
-        );
-        _custody().sweepForeignTokenFromRewardCustody(address(other), address(foreign), 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotOurs.selector, nonAdmin)
-        );
-        _custody().sweepForeignTokenFromRewardCustody(nonAdmin, address(foreign), 1);
+        address[4] memory outsiders = [
+            address(new RewardCustodyHolder(makeAddr("otherDiamond"))),
+            nonAdmin,
+            address(new RewardCustodyHolder(address(diamond))),
+            address(new ImpostorHolder(address(diamond)))
+        ];
+        for (uint256 i; i < outsiders.length; ++i) {
+            assertFalse(_custody().rewardCustodyHolderConstructed(outsiders[i]));
+            vm.expectRevert(
+                abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotConstructedHere.selector, outsiders[i])
+            );
+            _custody().sweepForeignTokenFromRewardCustody(outsiders[i], address(foreign), 1);
+            vm.expectRevert(
+                abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotConstructedHere.selector, outsiders[i])
+            );
+            _custody().sweepNativeFromRewardCustody(outsiders[i], 1);
+        }
+        assertTrue(_custody().rewardCustodyHolderConstructed(holder), "the bound holder is registered");
+    }
+
+    /// @dev Codex #2158 r13 P2 — native currency forced into a holder (no
+    ///      receive) is reported and recoverable to the treasury, from the
+    ///      bound holder and from a predecessor.
+    function test_SweepNative_RecoversForcedNativeFromBoundAndPreviousHolders() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        vm.deal(holder, 1 ether); // forced in (SELFDESTRUCT / coinbase / pre-construction)
+        assertEq(_custody().rewardCustodyNativeHeld(holder), 1 ether, "reported, never silent");
+
+        _pause();
+        address successor = _custody().replaceRewardCustodyHolder();
+        assertEq(holder.balance, 1 ether, "replacement moves only the configured VPFI; native stays behind");
+        assertTrue(_custody().rewardCustodyHolderConstructed(holder), "a predecessor stays registered");
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardCustodyNativeSwept(holder, treasury, 1 ether, 1 ether);
+        _custody().sweepNativeFromRewardCustody(holder, 1 ether);
+        assertEq(treasury.balance, 1 ether, "recovered to the treasury");
+        assertEq(holder.balance, 0);
+
+        vm.deal(successor, 0.5 ether);
+        _custody().sweepNativeFromRewardCustody(successor, 0.5 ether);
+        assertEq(treasury.balance, 1.5 ether, "also from the bound holder");
+    }
+
+    function test_SweepNative_IsAdminOnly() public {
+        address holder = _bind();
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().sweepNativeFromRewardCustody(holder, 1);
     }
 
     /// @dev Codex #2158 r8 P2 — a token that is not the configured VPFI is
