@@ -617,11 +617,20 @@ Do NOT go back to requiring `--keep-vars` per call site: that predicate is
 unbounded (package scripts, manifest aliases, Makefile variables, sourced
 helpers, shell functions and aliases, matrix expressions, reusable-workflow
 inputs, Windows shims, `eval`, marketplace actions), and #1995 spent 242 review
-findings demonstrating it. The flag is still correct where it appears and the
-tree-wide scanner
-(`apps/keeper/scripts/check-deploy-invocations.mjs`) is kept as defence in
-depth — it now reads `keep_vars` too, so it stays quiet while the declaration
-holds and resumes full command-level scrutiny for any Worker that loses it.
+findings demonstrating it. The flag is still correct where it appears.
+
+**The tree-wide scanner that enforced it is RETIRED** —
+`apps/keeper/scripts/check-deploy-invocations.mjs` and its fixtures are
+deleted, and so is the `keeper deploy guard (--keep-vars, tree-wide)` CI job.
+#1995 kept it as defence in depth on top of the declaration; what that bought
+was fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), each a
+different parsing edge of the same unbounded predicate and four of them false
+reports on a correct tree, with no issue naming a real file in this repo.
+`apps/keeper/scripts/check-keep-vars.mjs` — five files, structurally parsed,
+unconditional in CI — is now the whole defence, and its header states by name
+what the retirement gives up. Do not rebuild the scanner; if the declaration
+ever stops being sufficient, the answer is a bounded assertion about configs,
+not a parser for arbitrary text.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.
