@@ -1,4 +1,4 @@
-## Thread — The drive's source guards are bounded by meaning, not by character count (PR #TBD)
+## Thread — The drive's source guards are bounded by meaning, not by character count (PR #2170)
 
 Parts of the drive that reviews the deployed build cannot be run from a
 unit test, because importing the file runs the whole drive. Those parts

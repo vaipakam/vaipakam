@@ -50,6 +50,7 @@
  * (#2102).
  */
 import { parse } from 'acorn';
+import { analyze } from 'eslint-scope';
 
 const PARSE_OPTIONS = { ecmaVersion: 'latest', sourceType: 'module', ranges: true };
 
@@ -85,7 +86,20 @@ function astOf(src, label) {
   // Innermost-first for containment queries: a later start, or an equal
   // start with an earlier end, is the more specific node.
   nodes.sort((a, b) => a.start - b.start || a.end - b.end);
-  const built = { tree, nodes, parents, comments };
+  // Scope analysis by the library that implements the specification
+  // (#2144 round 15). `variableOf` maps each identifier USE to the
+  // binding it resolves to, so no rule here has to know what a
+  // declaration looks like.
+  const manager = analyze(tree, { ecmaVersion: 2024, sourceType: 'module' });
+  const variableOf = new Map();
+  const collect = (scope) => {
+    for (const ref of scope.references) {
+      if (ref.resolved) variableOf.set(ref.identifier, ref.resolved);
+    }
+    scope.childScopes.forEach(collect);
+  };
+  collect(manager.globalScope);
+  const built = { tree, nodes, parents, comments, manager, variableOf };
   trees.set(src, built);
   return built;
 }
@@ -258,11 +272,15 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
   const skipped = [...comments.map((c) => [c.start, c.end])];
   if (skipStrings) {
     for (const n of nodes) {
-      if (
-        (n.type === 'Literal' && typeof n.value === 'string') ||
-        n.type === 'TemplateLiteral'
-      ) {
-        skipped.push([n.start, n.end]);
+      // LITERAL TEXT only (round 15). Skipping a whole `TemplateLiteral`
+      // also skipped its `${…}` holes, which are executable code — a real
+      // header written inside one was reported missing. And a REGEX body
+      // is literal text too: `/if (target) {/` was being matched, binding
+      // `blockFrom` to an unrelated brace after it.
+      if (n.type === 'Literal' && typeof n.value === 'string') skipped.push([n.start, n.end]);
+      else if (n.type === 'Literal' && n.regex) skipped.push([n.start, n.end]);
+      else if (n.type === 'TemplateLiteral') {
+        for (const q of n.quasis) skipped.push([q.start, q.end]);
       }
     }
   }
@@ -331,6 +349,31 @@ export function sliceCallsIn(src) {
   for (const n of nodes) {
     if (n.type !== 'CallExpression') continue;
     const c = n.callee;
+    // `f.bind(src)(a, b)` — the receiver sits on the INNER call and the
+    // bounds on the outer one, so neither filter saw it (round 15).
+    if (c && c.type === 'CallExpression') {
+      const inner = c.callee;
+      if (
+        inner &&
+        inner.type === 'MemberExpression' &&
+        !inner.computed &&
+        inner.property.name === 'bind'
+      ) {
+        const method = borrowedTruncator(src, inner, 'bind');
+        if (method) {
+          out.push({
+            method,
+            line: lineOf(src, n.start),
+            receiver: c.arguments[0] ? src.slice(c.arguments[0].start, c.arguments[0].end) : '',
+            args: n.arguments,
+            text: src.slice(n.start, n.end),
+            node: n,
+            receiverNode: c.arguments[0] ?? null,
+          });
+        }
+      }
+      continue;
+    }
     if (!c || c.type !== 'MemberExpression') continue;
     // `String.prototype.slice.call(src, a, b)` is the same operation with
     // the receiver moved into the arguments (round 8). Recognised, and
@@ -379,55 +422,148 @@ export function sliceCallsIn(src) {
   return out;
 }
 
+// `bind` returns the bound function rather than calling it, so
+// `String.prototype.slice.bind(src)(a, b)` slipped through both filters —
+// the outer call's callee is a call, the inner one's method is `bind`
+// (round 15).
+const BORROWERS = new Set(['call', 'apply']);
+
 /**
- * The truncator a `.call`/`.apply` is borrowing, or `null`.
+ * The truncator a `.call`/`.apply`/`.bind` is borrowing, or `null`.
  *
  * `String.prototype.slice.call(src, start, start + 320)` is an ordinary
  * way to write the same truncation, and a filter keyed to direct method
  * calls omitted it entirely — the guard reporting green having never
  * looked (round 8).
  */
-function borrowedTruncator(src, callee) {
-  if (callee.computed || (callee.property.name !== 'call' && callee.property.name !== 'apply')) {
-    return null;
-  }
+function borrowedTruncator(src, callee, only) {
+  if (callee.computed) return null;
+  const via = callee.property.name;
+  if (only ? via !== only : !BORROWERS.has(via)) return null;
   const inner = callee.object;
   if (!inner || inner.type !== 'MemberExpression' || inner.computed) return null;
   return TRUNCATORS.has(inner.property.name) ? inner.property.name : null;
 }
 
-// Nodes that introduce a binding scope.
-const SCOPES = new Set([
-  'Program',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-  'BlockStatement',
-  'StaticBlock',
+/**
+ * What the name at `node` is bound to, answered by a REAL scope analyser.
+ *
+ * WHY A LIBRARY, AND WHY THIS IS THE SAME LESSON AS THE PARSER (#2144
+ * round 15). Round 6 stopped this module lexing JavaScript by hand,
+ * because every review round found another construct the scanner was
+ * wrong about. Underneath that it went on doing SCOPE ANALYSIS by hand —
+ * a list of scope-introducing node types, a list of declaration shapes, a
+ * hoisting pass, a write search — and the same thing happened for nine
+ * more rounds: pattern-bound names, `switch` cases, defaulted parameters,
+ * hoisted `var`s, class declarations, named function expressions, named
+ * class expressions, `var` redeclarations, exported declarations, import
+ * bindings. Each fix was right and the next shape was already waiting.
+ *
+ * "What does this name mean here" is a question the language specifies
+ * and `eslint-scope` implements. A hand-written list of declaration forms
+ * is a worse implementation of it every time, and the list has no end.
+ *
+ * Returns, for an identifier used as a bound:
+ *   - `found`    — whether it resolves to a binding in this file at all;
+ *   - `init`     — the initializer of the definition that reaches it, or
+ *                  `null` when there is none or it cannot be known;
+ *   - `notText`  — the binding is a function, a class, or an import, so
+ *                  it cannot hold source text;
+ *   - `writes`   — the write references, for the ordering rule.
+ */
+export function bindingOf(src, node) {
+  const { variableOf } = astOf(src, 'bindingOf');
+  const variable = variableOf.get(node);
+  if (!variable) return { found: false, init: null, notText: false, writes: [] };
+  const defs = variable.defs;
+  if (defs.length === 0) return { found: true, init: null, notText: false, writes: [] };
+  const notText = defs.some((d) => NOT_TEXT_DEFS.has(d.type));
+  // The LAST definition carrying an initializer is the one that stands:
+  // `var end; var end = s.indexOf('e');` declares one binding twice, and
+  // taking the first left a real landmark looking unknown (round 15).
+  // Ordering against the use is the write rule's job, not this one's.
+  // The LAST definition carrying an initializer is the one that stands:
+  // `var end; var end = s.indexOf('e');` declares one binding twice, and
+  // taking the first left a real landmark looking unknown (round 15).
+  // It is trusted only if it DEFINITELY runs on the way to the use — an
+  // initializer inside a branch the use is outside of leaves the name
+  // undefined when that branch did not run (round 8).
+  const withInit = defs.filter((d) => d.node?.init);
+  // A definition that MIGHT have run and might not — one inside a branch
+  // the use is outside of — poisons the binding rather than being
+  // skipped: `var e = t.indexOf('e'); if (on) { var { e } = obj; }` may
+  // leave `e` holding either (round 12, restated here).
+  const uncertain = withInit.some(
+    (d) => !alwaysRunsBefore(src, d.node, node) && !definitelyAfter(src, d.node, node),
+  );
+  const initialised = uncertain
+    ? undefined
+    : [...withInit].reverse().find((d) => alwaysRunsBefore(src, d.node, node));
+  return {
+    found: true,
+    init: initialised ? initialised.node.init : null,
+    notText,
+    // A declaration's OWN initialiser counts as a write reference, and
+    // it is not one for this purpose — `const at = s.indexOf(…)` would
+    // otherwise report itself as reassigned. `ref.init` marks it.
+    writes: variable.references
+      .filter((r) => r.isWrite() && !r.init)
+      .map((r) => r.identifier),
+  };
+}
+
+/**
+ * Whether `decl` definitely executes on the way to `use`.
+ *
+ * A declaration inside a branch the use sits OUTSIDE of may not have run
+ * at all, which leaves the name `undefined` and the region running to the
+ * end of the text (round 8, restated here now that the language's own
+ * scope rules do the resolving). Crossing a conditional construct that
+ * does not also contain the use is the test; everything else is ordinary
+ * straight-line position.
+ */
+function alwaysRunsBefore(src, decl, use) {
+  const { parents } = astOf(src, 'alwaysRunsBefore');
+  const contains = (n) => n.start <= use.start && n.end >= use.end;
+  for (let p = parents.get(decl); p; p = parents.get(p)) {
+    if (CONDITIONAL.has(p.type) && !contains(p)) return false;
+  }
+  return decl.start < use.start;
+}
+
+/**
+ * Whether `decl` definitely runs only AFTER `use`, so it cannot affect
+ * it. A declaration inside anything deferred is never in this class,
+ * because a function body runs whenever it is called.
+ */
+function definitelyAfter(src, decl, use) {
+  if (decl.start < use.end) return false;
+  const { parents } = astOf(src, 'definitelyAfter');
+  for (let p = parents.get(decl); p; p = parents.get(p)) {
+    if (DEFERRABLE.has(p.type)) return false;
+  }
+  return true;
+}
+
+// Constructs whose body may be skipped entirely.
+const CONDITIONAL = new Set([
+  'IfStatement',
   'ForStatement',
   'ForOfStatement',
   'ForInStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'SwitchCase',
+  'TryStatement',
   'CatchClause',
-  // A named CLASS expression binds its own name throughout its body
-  // (round 14), the same way a named function expression does.
-  'ClassExpression',
-  // A `switch` body is ONE block in the grammar, and a `const` written
-  // directly in a case belongs to it (round 5).
-  'SwitchStatement',
+  'ConditionalExpression',
+  'LogicalExpression',
 ]);
 
-// `var` hoists to the nearest FUNCTION (or the module), not to the block
-// it is written in. Round 4 corrected a claim made here that block-scoping
-// it could only over-find: a `var` in an inner block, used after that
-// block, resolves at function scope, and a resolver that never looks
-// inside the block returns nothing and lets a real fixed window through.
-const FUNCTIONS = new Set([
-  'Program',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-  'StaticBlock',
-]);
+// Definition kinds that cannot hold source text, whichever syntax
+// introduced them — `function f(){}`, `class C{}`, `export class C{}`,
+// `import x from …` all land here.
+const NOT_TEXT_DEFS = new Set(['FunctionName', 'ClassName', 'ImportBinding']);
 
 /**
  * The DECLARATORS `node` sits inside, innermost first — the units a
@@ -501,170 +637,13 @@ export function markedStatement(src, stmt, marker) {
   });
 }
 
-/**
- * The initializer bound to `name` where `at` stands: `{ found, init }`.
- *
- * Scope-aware ON PURPOSE, and the reason is a false positive that a
- * file-wide name table produced on the first attempt: `headSampling`
- * binds `i` to an `indexOf` result in one test and, elsewhere in the same
- * file, to `0` as a loop counter. A flat table saw a number and flagged a
- * perfectly anchored slice. A guard that cries wolf on correct code is
- * worse than one gap, because the fix people learn is to silence it.
- *
- * Resolution stops at the nearest enclosing scope that declares the name,
- * which is what the language does — with `var` collected at the function
- * it hoists to rather than the block it is written in.
- */
-export function bindingAt(src, name, at) {
-  const found = resolveBinding(src, name, at);
-  if (!found) return { found: false, init: null, decl: null, notText: false, reassigned: false };
-  return {
-    found: true,
-    init: found.init,
-    decl: found.decl,
-    notText: Boolean(found.notText),
-    reassigned: assignsTo(src, name, found, at),
-  };
-}
-
-/**
- * The declaration `name` resolves to where `at` stands, without asking
- * whether it is later written to.
- *
- * Split from `bindingAt` so the write check can resolve each write's OWN
- * binding without recursing back into itself.
- */
-function resolveBinding(src, name, at) {
-  const { nodes, parents } = astOf(src, 'bindingAt');
-  let node = null;
-  for (const n of nodes) if (n.start <= at && n.end >= at) node = n;
-  for (let scope = node; scope; scope = parents.get(scope)) {
-    if (!SCOPES.has(scope.type)) continue;
-    for (const decl of declarationsDirectlyIn(scope)) {
-      if (decl.name === name) return { ...decl, scope };
-    }
-    if (FUNCTIONS.has(scope.type)) {
-      for (const decl of hoistedVarsIn(scope)) {
-        // A `var` written DIRECTLY in this function's body, before the
-        // use, runs unconditionally on the way there — so its
-        // initializer is as good as a `const`'s (round 10). Only the
-        // nested or later ones are unknown.
-        if (decl.name === name && decl.direct && decl.decl.end <= at) {
-          return { ...decl, scope };
-        }
-        // A HOISTED `var` is found, and its initializer is NOT trusted
-        // (round 8). `if (x) { var END = s.indexOf('e'); }` used after
-        // the branch is `undefined` when the branch did not run, and the
-        // region then runs to the end of the file. The name exists; what
-        // it holds at this point is unknown.
-        if (decl.name === name) return { name, init: null, decl: decl.decl, scope };
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Whether `name` is written to in a way that could reach the use at
- * `useAt`.
- *
- * Position matters (round 10). Scanning the whole scope rejected a
- * correctly anchored slice because the collection was mutated AFTER it:
- * `const r = s.slice(start, ends[0]); ends.push(start + 320);` cannot be
- * affected by a write that has not happened yet, and reporting it is the
- * false-positive direction this guard's own premise says to avoid.
- *
- * A write counts when it sits BEFORE the use, or when both are inside
- * something that can run more than once — a loop or a function body —
- * where "after" in the text can still be "before" in time.
- */
-function assignsTo(src, name, found, useAt) {
-  const { nodes, parents } = astOf(src, 'assignsTo');
-  return nodes.some((n) => {
-    // A later `var` DECLARATOR with an initializer writes the same
-    // function-scoped binding (round 9).
-    if (n.type === 'VariableDeclarator') {
-      // Through a PATTERN as well (round 12): `var { end } = obj` in a
-      // branch re-initialises the same function-scoped `end` as a plain
-      // `var end = …` does, and checking only an identifier-shaped `id`
-      // left the first initializer's classification standing.
-      return (
-        n !== found.decl &&
-        n.init !== null &&
-        writtenNames(n.id).has(name) &&
-        inScopeOf(n) &&
-        reaches(n) &&
-        sameBinding(n)
-      );
-    }
-    const target =
-      n.type === 'AssignmentExpression'
-        ? n.left
-        : n.type === 'UpdateExpression'
-          ? n.argument
-          : n.type === 'ForOfStatement' || n.type === 'ForInStatement'
-            ? n.left
-            : null;
-    if (!target) return false;
-    // Destructuring is a write too — `[end] = […]` and `({ end } = …)`
-    // reach the same binding as `end = …` (round 8).
-    if (!writtenNames(target).has(name)) return false;
-    return inScopeOf(n) && reaches(n) && sameBinding(n);
-  });
-
-  /**
-   * Whether a write could execute before the use.
-   *
-   * Straight-line code is ordered by position: a write BELOW the slice
-   * cannot affect it, and reporting one demanded a marker claiming a
-   * character count that was not happening (round 13).
-   *
-   * A write inside a FUNCTION or a LOOP counts wherever it sits, because
-   * neither can be ordered against the use without a call graph — round
-   * 11 showed a helper declared before the use but never called being
-   * treated as already run, and one declared after but called earlier
-   * being missed. Unknown order is treated as "it might", which refuses
-   * rather than certifies.
-   */
-  function reaches(n) {
-    // A DEFERRED USE cannot be ordered against anything either (round
-    // 14): `function region() { return s.slice(start, end); }` runs
-    // whenever it is called, so a write below it may well execute first.
-    // Position only means something when BOTH sit in straight-line code.
-    if (deferred(useNode())) return true;
-    if (n.start < useAt) return true;
-    return deferred(n);
-  }
-
-  function deferred(n) {
-    for (let p = n; p; p = parents.get(p)) if (DEFERRABLE.has(p.type)) return true;
-    return false;
-  }
-
-  function useNode() {
-    let node = null;
-    for (const n of nodes) if (n.start <= useAt && n.end >= useAt) node = n;
-    return node;
-  }
-
-  function inScopeOf(n) {
-    for (let p = n; p; p = parents.get(p)) if (p === found.scope) return true;
-    return false;
-  }
-
-  // A write only disqualifies OUR binding. An unrelated nested scope
-  // reusing the name writes to its own, and treating that as a write to
-  // ours rejected a perfectly immutable landmark (round 8).
-  function sameBinding(write) {
-    const here = resolveBinding(src, name, write.start);
-    return here !== null && here.decl === found.decl;
-  }
-}
-
 // Constructs whose body may run at a time position cannot express — a
 // loop repeats, a function runs whenever it is called. A write inside one
 // is treated as reaching any use, which refuses rather than certifies.
 const DEFERRABLE = new Set([
+  // A class FIELD initializer runs at construction, not where it is
+  // written (round 15), so a write below the class can execute first.
+  'PropertyDefinition',
   'ForStatement',
   'ForOfStatement',
   'ForInStatement',
@@ -674,6 +653,29 @@ const DEFERRABLE = new Set([
   'FunctionExpression',
   'ArrowFunctionExpression',
 ]);
+
+/**
+ * Whether a write to `variable` could reach the use at `useAt`.
+ *
+ * Position means something only when BOTH ends sit in straight-line code
+ * (round 14). A write inside a function or a loop runs at a time position
+ * cannot express, and so does a USE inside one — a region taken inside a
+ * function runs whenever it is called, so a write below it may execute
+ * first. Unknown order refuses rather than certifies.
+ */
+function writeReaches(src, writes, useAt) {
+  if (writes.length === 0) return false;
+  const { nodes, parents } = astOf(src, 'writeReaches');
+  const deferred = (n) => {
+    for (let p = n; p; p = parents.get(p)) if (DEFERRABLE.has(p.type)) return true;
+    return false;
+  };
+  let useNode = null;
+  for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
+  if (useNode && deferred(useNode)) return true;
+  return writes.some((w) => w.start < useAt || deferred(w));
+}
+
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
@@ -765,13 +767,13 @@ export function kindOf(src, node, seen = new Set()) {
       const key = `${node.name}@${node.start}`;
       if (seen.has(key)) return null;
       seen.add(key);
-      const bound = bindingAt(src, node.name, node.start);
-      if (!bound.found || !bound.init) return null;
+      const bound = bindingOf(src, node);
+      if (!bound.found || !bound.init || bound.notText) return null;
       // A name that is WRITTEN TO after it is declared cannot be trusted
       // to still hold what it was declared with (round 7):
       // `let end = s.indexOf('x'); end = start + 320;` had the window
       // inheriting the declaration's classification.
-      if (bound.reassigned) return null;
+      if (writeReaches(src, bound.writes, node.start)) return null;
       return kindOf(src, bound.init, seen);
     }
 
@@ -854,7 +856,7 @@ export function isBoundedRegion(src, node, seen = new Set()) {
     if (
       node.callee.type === 'Identifier' &&
       REGION_HELPERS.has(node.callee.name) &&
-      !bindingAt(src, node.callee.name, node.callee.start).found
+      importedFromThisModule(src, node.callee)
     ) {
       return true;
     }
@@ -866,9 +868,9 @@ export function isBoundedRegion(src, node, seen = new Set()) {
     const key = `regionFn:${node.callee.name}@${node.callee.start}`;
     if (seen.has(key)) return false;
     seen.add(key);
-    const fn = bindingAt(src, node.callee.name, node.callee.start);
+    const fn = bindingOf(src, node.callee);
     return fn.found &&
-      !fn.reassigned &&
+      !writeReaches(src, fn.writes, node.callee.start) &&
       fn.init &&
       fn.init.type === 'ArrowFunctionExpression' &&
       fn.init.body.type !== 'BlockStatement'
@@ -879,13 +881,36 @@ export function isBoundedRegion(src, node, seen = new Set()) {
   const key = `region:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingAt(src, node.name, node.start);
-  return bound.found && !bound.reassigned && bound.init
+  const bound = bindingOf(src, node);
+  return bound.found && !writeReaches(src, bound.writes, node.start) && bound.init
     ? isBoundedRegion(src, bound.init, seen)
     : false;
 }
 
 const REGION_HELPERS = new Set(['blockFrom', 'between', 'statementFrom', 'callContaining']);
+
+/**
+ * Whether `node` names a helper IMPORTED FROM THIS MODULE.
+ *
+ * Round 15: trusting "no binding found" as proof of the canonical import
+ * was only ever true while imports were invisible to the resolver. With
+ * real scope analysis they are visible, so the question can be asked
+ * properly — `import { raw as blockFrom } from './fixture.mjs'` resolves
+ * to an import from somewhere else and is refused, and a local of the
+ * same name is refused too.
+ */
+function importedFromThisModule(src, node) {
+  if (node.type !== 'Identifier') return false;
+  const { variableOf } = astOf(src, 'importedFromThisModule');
+  const variable = variableOf.get(node);
+  if (!variable) return false;
+  return variable.defs.some(
+    (d) =>
+      d.type === 'ImportBinding' &&
+      typeof d.parent?.source?.value === 'string' &&
+      d.parent.source.value.endsWith('sourceBlock.mjs'),
+  );
+}
 
 /** Whether `node` is a bound that may end a source region. */
 export function isAnchored(src, node, seen = new Set()) {
@@ -936,8 +961,8 @@ function helperKind(src, callee, seen) {
   const key = `fn:${callee.name}@${callee.start}`;
   if (seen.has(key)) return null;
   seen.add(key);
-  const bound = bindingAt(src, callee.name, callee.start);
-  if (!bound.found || bound.reassigned) return null;
+  const bound = bindingOf(src, callee);
+  if (!bound.found || writeReaches(src, bound.writes, callee.start)) return null;
   const fn = bound.init;
   if (!fn || fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
   return kindOf(src, fn.body, seen);
@@ -973,9 +998,9 @@ function suspectReceiver(src, node, seen) {
   const key = `recv:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingAt(src, node.name, node.start);
+  const bound = bindingOf(src, node);
   if (!bound.found) return false;
-  if (bound.reassigned || bound.notText) return true;
+  if (bound.notText || writeReaches(src, bound.writes, node.start)) return true;
   if (!bound.init) return false;
   const t = bound.init.type;
   // A function or a class is not text either, and a property can be
@@ -1030,123 +1055,7 @@ function isPlainName(node) {
   return Boolean(node) && node.type === 'Identifier';
 }
 
-function declarationsDirectlyIn(scope) {
-  const out = [];
-  const add = (id, init, decl, notText = false) => {
-    if (!id) return;
-    if (id.type === 'Identifier') {
-      out.push({ name: id.name, init: init ?? null, decl, notText });
-      return;
-    }
-    // A name bound inside a PATTERN still shadows (round 10): without
-    // this, `function region(s, start, { end })` resolved its `end` to an
-    // outer landmark and inherited an anchor the caller may never supply.
-    // What a pattern binds is unknown, so it is recorded with no value —
-    // which shadows, and is not a landmark.
-    for (const n of writtenNames(id)) out.push({ name: n, init: null, decl });
-  };
-  // A DEFAULTED parameter is an AssignmentPattern, and its right-hand
-  // side is a binding like any other — `function f(WINDOW = 320)` was
-  // invisible until round 5.
-  // A NAMED function expression binds its own name INSIDE itself, and it
-  // refers to the function (round 13): `const f = function end() { … }`
-  // has an `end` in scope that is the function, not whatever `end` means
-  // outside. Bound with no value, so it shadows and is not a landmark.
-  if ((scope.type === 'FunctionExpression' || scope.type === 'ClassExpression') && scope.id) {
-    add(scope.id, null, scope, true);
-  }
-  // A PARAMETER's value comes from the caller, so it is never a landmark
-  // — including one with a landmark-shaped DEFAULT, which a caller may
-  // simply not use (round 8). Recorded by name with nothing known.
-  for (const p of scope.params ?? []) {
-    add(p && p.type === 'AssignmentPattern' ? p.left : p, null, p);
-  }
-  if (scope.type === 'CatchClause') add(scope.param, null, scope);
-  const statements =
-    scope.type === 'Program' || scope.type === 'BlockStatement' || scope.type === 'StaticBlock'
-      ? (scope.body ?? [])
-      : scope.type === 'SwitchStatement'
-        ? (scope.cases ?? []).flatMap((c) => c.consequent ?? [])
-        : scope.type === 'ForStatement' ||
-            scope.type === 'ForOfStatement' ||
-            scope.type === 'ForInStatement'
-          ? [scope.init ?? scope.left].filter(Boolean)
-          : [];
-  for (const s of statements) {
-    // `var` is NOT collected here — it belongs to the function it hoists
-    // to, and `hoistedVarsIn` is what finds it. Collecting it at the
-    // block made a redeclaration inside a branch look like a second,
-    // separate binding, so the write it performs on the first one went
-    // unseen (round 9).
-    if (s.type === 'VariableDeclaration' && s.kind !== 'var') {
-      for (const d of s.declarations) add(d.id, d.init, d);
-    } else if (s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') {
-      // Recorded as NOT TEXT (round 14): a declaration carries no `init`,
-      // so a receiver introduced by `class Fake {}` looked like it might
-      // hold source text. It cannot.
-      // A CLASS binds its name too (round 12). Missing it let
-      // `{ class end {}; s.slice(start, end); }` resolve outward to an
-      // outer landmark while the real value is the constructor. Bound
-      // with no value: it shadows, and it is not a landmark.
-      add(s.id, null, s, true);
-    }
-  }
-  return out;
-}
-
-/**
- * Every `var` declared under `fn`, not crossing into a nested function.
- *
- * `direct` marks the ones written as statements of `fn`'s own body, which
- * therefore execute unconditionally; anything inside a branch or a loop
- * may not run at all, and its initializer cannot be trusted.
- */
-function hoistedVarsIn(fn) {
-  const out = [];
-  const body = fn.type === 'Program' ? fn.body : (fn.body?.body ?? []);
-  const directDecls = new Set(
-    (body ?? []).filter((st) => st.type === 'VariableDeclaration' && st.kind === 'var'),
-  );
-  const descend = (n, top) => {
-    if (n === null || typeof n !== 'object') return;
-    if (Array.isArray(n)) {
-      for (const c of n) descend(c, top);
-      return;
-    }
-    if (typeof n.type !== 'string') return;
-    if (!top && FUNCTIONS.has(n.type)) return;
-    if (n.type === 'VariableDeclaration' && n.kind === 'var') {
-      for (const d of n.declarations) {
-        if (!d.id) continue;
-        if (d.id.type === 'Identifier') {
-          out.push({
-            name: d.id.name,
-            init: d.init ?? null,
-            decl: d,
-            direct: directDecls.has(n),
-          });
-          continue;
-        }
-        // A `var` PATTERN hoists every name it binds (round 11). Without
-        // this, `var { end } = obj` left the function scope with no
-        // `end`, so resolution fell through to an outer landmark and
-        // accepted a caller-controlled bound. What a pattern binds is
-        // unknown, so it hoists with no value: it shadows, and it is not
-        // a landmark.
-        for (const nm of writtenNames(d.id)) {
-          out.push({ name: nm, init: null, decl: d, direct: false });
-        }
-      }
-    }
-    for (const k of Object.keys(n)) {
-      if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
-      descend(n[k], false);
-    }
-  };
-  descend(fn, true);
-  return out;
-}
-
+/** The 1-based line `index` falls on. */
 function lineOf(src, index) {
   let n = 1;
   for (let i = 0; i < index; i += 1) if (src[i] === '\n') n += 1;

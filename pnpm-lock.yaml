@@ -125,6 +125,9 @@ importers:
       eslint-plugin-react-refresh:
         specifier: ^0.5.2
         version: 0.5.2(eslint@9.39.4)
+      eslint-scope:
+        specifier: ^8.4.0
+        version: 8.4.0
       globals:
         specifier: ^17.4.0
         version: 17.6.0

@@ -16,7 +16,7 @@ import {
   between,
   blockFrom,
   callContaining,
-  bindingAt,
+  bindingOf,
   isAnchored,
   isBoundedRegion,
   markableStatementsOf,
@@ -50,6 +50,25 @@ describe('blockFrom', () => {
     // The `else` arm is a SEPARATE block — the if's own brace closes
     // before it, and callers that want the arm take what follows.
     expect(body).not.toContain('two();');
+  });
+
+  // ROUND 15 — literal TEXT only. Skipping a whole template also skipped
+  // its `${…}` holes, which are executable code, so a real header inside
+  // one was reported missing; and a regex body is literal text too, so
+  // `/if (target) {/` was being matched.
+  it('skips a header in a regex but finds one in a template hole', () => {
+    const inHole = "const t = `${flag ? (() => { if (target) { work(); } })() : ''}`;";
+    expect(blockFrom(inHole, 'if (target) {')).toContain('work();');
+    const inRegex = [
+      'const re = /if (target) {/;',
+      'const unrelated = {};',
+      'if (target) {',
+      '  work();',
+      '}',
+    ].join('\n');
+    const body = blockFrom(inRegex, 'if (target) {');
+    expect(body).toContain('work();');
+    expect(body).not.toContain('unrelated');
   });
 
   // ROUND 14 — and a header quoted in a STRING is the same hazard by a
@@ -726,6 +745,45 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // ROUND 15 — the round that replaced hand-written scope analysis with
+  // the library that implements the specification. These are the shapes
+  // that exposed the hand-written one.
+  it('refuses the round-15 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a receiver from an EXPORTED class declaration',
+        'export class Fake {}\nFake.indexOf = () => start + 320;\nconst r = s.slice(start, Fake.indexOf());',
+      ],
+      [
+        'a class FIELD initializer, which runs at construction',
+        "let e = s.indexOf('e');\nclass C { field = s.slice(start, e); }\ne = start + 320;",
+      ],
+      [
+        'a truncator borrowed through bind',
+        'const r = String.prototype.slice.bind(s)(start, start + 320);',
+      ],
+      [
+        'a structural helper imported from somewhere else',
+        "import { raw as blockFrom } from './fixture.mjs';\nconst b = blockFrom(s);\nconst r = b.slice(start);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 15's false positive: one binding declared twice, the second
+  // time with the landmark. Taking the FIRST definition left a real
+  // anchor looking unknown.
+  it('takes the initializer that reaches the use, not the first one', () => {
+    const code =
+      "function g(s) { const a = s.indexOf('a'); var e; var e = s.indexOf('e'); return s.slice(a, e); }";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
   // The other side of the same rules, so they cannot be satisfied by
   // refusing everything.
   it('still accepts the landmark shapes this suite writes', () => {
@@ -736,7 +794,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
       ['a helper with an expression body', "const at = (n) => s.indexOf(n);\nconst r = s.slice(start, at('x'));"],
       [
         'no end, on an already-bounded region',
-        "const b = blockFrom(s, 'if (x) {');\nconst r = b.slice(b.indexOf('y'));",
+        "import { blockFrom } from './sourceBlock.mjs';\nconst b = blockFrom(s, 'if (x) {');\nconst r = b.slice(b.indexOf('y'));",
       ],
     ]) {
       const code = lead + tail;
@@ -1002,8 +1060,9 @@ describe('#2144 — no source region is bounded by a character count', () => {
       '  return s.slice(start, END);',
       '}',
     ].join('\n');
-    expect(bindingAt(src, 'END', src.indexOf('s.slice')).found).toBe(true);
-    expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(false);
+    const use = sliceCallsIn(src)[0].args[1];
+    expect(bindingOf(src, use).found).toBe(true);
+    expect(isAnchored(src, use)).toBe(false);
   });
 
   // And the hoist stops at a function boundary, or every `var` anywhere
