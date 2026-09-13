@@ -796,6 +796,14 @@ describe('#2144 — no source region is bounded by a character count', () => {
         'no end, on an already-bounded region',
         "import { blockFrom } from './sourceBlock.mjs';\nconst b = blockFrom(s, 'if (x) {');\nconst r = b.slice(b.indexOf('y'));",
       ],
+      // The static twin of the round-15 field case: a STATIC initializer
+      // runs where it is written, so ordinary position applies and the
+      // later write cannot reach it. Refusing it would be the check
+      // objecting to correct work.
+      [
+        'a STATIC class field, which runs in place',
+        "let e = s.indexOf('e');\nclass C { static field = s.slice(start, e); }\ne = start + 320;",
+      ],
     ]) {
       const code = lead + tail;
       const call = sliceCallsIn(code).at(-1);

@@ -481,10 +481,6 @@ export function bindingOf(src, node) {
   // The LAST definition carrying an initializer is the one that stands:
   // `var end; var end = s.indexOf('e');` declares one binding twice, and
   // taking the first left a real landmark looking unknown (round 15).
-  // Ordering against the use is the write rule's job, not this one's.
-  // The LAST definition carrying an initializer is the one that stands:
-  // `var end; var end = s.indexOf('e');` declares one binding twice, and
-  // taking the first left a real landmark looking unknown (round 15).
   // It is trusted only if it DEFINITELY runs on the way to the use — an
   // initializer inside a branch the use is outside of leaves the name
   // undefined when that branch did not run (round 8).
@@ -540,7 +536,7 @@ function definitelyAfter(src, decl, use) {
   if (decl.start < use.end) return false;
   const { parents } = astOf(src, 'definitelyAfter');
   for (let p = parents.get(decl); p; p = parents.get(p)) {
-    if (DEFERRABLE.has(p.type)) return false;
+    if (isDeferred(p)) return false;
   }
   return true;
 }
@@ -641,8 +637,9 @@ export function markedStatement(src, stmt, marker) {
 // loop repeats, a function runs whenever it is called. A write inside one
 // is treated as reaching any use, which refuses rather than certifies.
 const DEFERRABLE = new Set([
-  // A class FIELD initializer runs at construction, not where it is
+  // An INSTANCE field initializer runs at construction, not where it is
   // written (round 15), so a write below the class can execute first.
+  // `isDeferred` below exempts the static case, which does run in place.
   'PropertyDefinition',
   'ForStatement',
   'ForOfStatement',
@@ -653,6 +650,20 @@ const DEFERRABLE = new Set([
   'FunctionExpression',
   'ArrowFunctionExpression',
 ]);
+
+/**
+ * Whether `n` defers what is inside it to a time a position cannot state.
+ *
+ * A STATIC field initializer is the one exception in the set above: it
+ * runs where it is written, in class-definition order, so it is ordinary
+ * straight-line code. Only an INSTANCE field waits for construction. The
+ * distinction is kept because refusing a static field would object to
+ * correct work, and a check that does that gets switched off.
+ */
+function isDeferred(n) {
+  if (n.type === 'PropertyDefinition') return !n.static;
+  return DEFERRABLE.has(n.type);
+}
 
 /**
  * Whether a write to `variable` could reach the use at `useAt`.
@@ -667,7 +678,7 @@ function writeReaches(src, writes, useAt) {
   if (writes.length === 0) return false;
   const { nodes, parents } = astOf(src, 'writeReaches');
   const deferred = (n) => {
-    for (let p = n; p; p = parents.get(p)) if (DEFERRABLE.has(p.type)) return true;
+    for (let p = n; p; p = parents.get(p)) if (isDeferred(p)) return true;
     return false;
   };
   let useNode = null;

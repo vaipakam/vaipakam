@@ -267,6 +267,49 @@ the ones that must be allowed. Twice already in this work a number has
 been stated on the strength of a check narrower than the thing it
 counted. The honest version is the list itself, which anyone can read.
 
+Four further rounds narrowed the same short list, and the last of them
+ended the way the parsing round did — by replacing something written by
+hand with the thing that already exists to do it properly.
+
+The remaining findings had almost all stopped being about lengths and
+become about NAMES: what a name means at the place it is used. Answering
+that had quietly grown its own hand-written machinery — which shapes
+introduce a new scope, which spellings declare a name, which declarations
+are hoisted to the top of the piece of code they sit in, what counts as
+changing a name. Nine rounds each added one more shape to that list: a
+name taken apart from a larger value, a name declared inside one branch
+of a multi-way choice, a name given a fallback value, an older kind of
+name that floats to the top, a name introduced by a class, a name a
+function or a class gives only to itself, the same name declared twice, a
+name declared and published in one breath, and a name brought in from
+another file.
+
+That is the open set again, wearing different clothes. "What does this
+name mean here" is written down in the specification of the language and
+implemented by a well-used component that does nothing else. So the
+question is asked of that component now, and about a hundred and eighty
+lines of language rules re-implemented by hand are gone. Only the two
+questions it does not answer stay local — whether a definition definitely
+runs on the way to the use, and whether a change to a name could reach
+it — and both refuse when the order cannot be known rather than assume
+the convenient answer.
+
+Two other fixes in the same stretch are worth recording because they are
+the kind that keeps the check honest rather than merely stricter. Order
+means something only when both ends of the comparison sit in
+straight-line code: a region taken inside a function runs whenever that
+function is called, so a change written below it may still happen first.
+And a value set up inside a class's own fields runs when an object is
+made rather than where it is written — unless it belongs to the class
+itself, which does run in place, so that case is accepted rather than
+refused. A check that objects to correct work gets switched off.
+
+One boundary was still located by reading text where the grammar could
+have answered: a piece of text borrowed from another and then measured
+was slipping past the collector, and so was a header written inside the
+gap of a piece of assembled text, which is code and was being skipped as
+though it were quotation.
+
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
 neither a block nor a call, so there was nothing to convert them to. That
