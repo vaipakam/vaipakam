@@ -636,15 +636,49 @@ export function durationUnitsFor(locale) {
     }
     if (!supported) continue;
     const { samples } = durationSamplesFor(tag);
+    let unitFirst = false;
     for (const unit of DURATION_UNITS) {
       for (const unitDisplay of UNIT_DISPLAYS) {
         const nf = new Intl.NumberFormat(tag, { style: 'unit', unit, unitDisplay });
         for (const n of samples) {
-          for (const part of nf.formatToParts(n)) {
+          const parts = nf.formatToParts(n);
+          const at = (type) => parts.findIndex((p) => p.type === type);
+          if (at('unit') >= 0 && at('integer') >= 0 && at('unit') < at('integer')) unitFirst = true;
+          for (const part of parts) {
             if (part.type !== 'unit') continue;
             const phrase = part.value.split(/\s+/).map(tokenOf).filter(Boolean).join(' ');
             if (phrase !== '') words.add(foldUnit(phrase, tag));
           }
+        }
+      }
+    }
+    // CONTEXTUAL forms (#2125 round 3): unit formatting gives the
+    // standalone word, and a language that inflects by case writes `in 3
+    // Tagen` where the standalone is `Tage`. Relative-time formatting is
+    // the same CLDR data in sentence position, so the literal on the
+    // unit's side of the number — after it, or before it where the
+    // language writes units first — is taken as a phrase of up to three
+    // tokens: `Tagen`, `days ago`, `日後`, `दिन में`, `baada ya siku`. The
+    // phrase is stored whole and only whole, so a linker inside it is
+    // never a unit alone; the preposition on the OTHER side (`in`,
+    // `vor`, `dans`) is not a unit and is not taken.
+    for (const unit of DURATION_UNITS) {
+      for (const style of UNIT_DISPLAYS) {
+        let rtf;
+        try {
+          rtf = new Intl.RelativeTimeFormat(tag, { numeric: 'always', style });
+        } catch {
+          continue;
+        }
+        for (const n of samples.flatMap((s) => (s === 0 ? [0] : [s, -s]))) {
+          const parts = rtf.formatToParts(n, unit);
+          const i = parts.findIndex((p) => p.type === 'integer');
+          if (i < 0) continue;
+          const lit = unitFirst ? parts[i - 1] : parts[i + 1];
+          if (!lit || lit.type !== 'literal') continue;
+          const toks = lit.value.split(/\s+/).map(tokenOf).filter(Boolean);
+          const phraseToks = unitFirst ? toks.slice(-MAX_PHRASE_TOKENS) : toks.slice(0, MAX_PHRASE_TOKENS);
+          if (phraseToks.length > 0) words.add(foldUnit(phraseToks.join(' '), tag));
         }
       }
     }
@@ -688,6 +722,13 @@ const sameScript = (a, b) => {
   const sb = scriptOf(b);
   return sa === -1 || sb === -1 || sa === sb;
 };
+// The only continuation read as a PARTICLE (#2125 round 3): Hiragana
+// after a Han counter — `3日で`, `3か月です`. Hiragana is where Japanese
+// writes its grammar; Katakana is where it writes loanwords, and an
+// asset name is a loanword (`3日ビットコイン`), so "any other script" was a
+// hole. Index pairs into `SCRIPT_TESTS`: Han is 0, Hiragana 1.
+const PARTICLE_TRANSITIONS = new Set(['0>1']);
+const particleFollows = (last, next) => PARTICLE_TRANSITIONS.has(`${scriptOf(last)}>${scriptOf(next)}`);
 /**
  * The continuation after a prefix-matched counter has to read as a
  * PARTICLE, not as a denomination (#2125 rounds 1–2): `3日USDC`, `3日Ξ`
@@ -747,7 +788,7 @@ function unitAfter(after, units, locale) {
   if (run.length !== raw.length) return null;
   for (const u of units) {
     if (u.includes(' ')) continue;
-    if (run.length > u.length && run.startsWith(u) && !sameScript(u[u.length - 1], run[u.length])) {
+    if (run.length > u.length && run.startsWith(u) && particleFollows(u[u.length - 1], run[u.length])) {
       if (denominationLeads(raw.slice(u.length))) return null;
       return { unit: u, end: lead + u.length };
     }
@@ -1161,12 +1202,17 @@ export function monetaryAmountsIn(text, { locale } = {}) {
     // ambiguity rule: a one-letter unit in front still needs duration
     // context. No shipped locale orders its units this way today; the
     // rule is here so the first one that does is not a false FAIL.
-    if (leading && !trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower) {
+    // IMMEDIATE evidence cancels it — a currency mark, glyph, lower-case
+    // asset unit or ticker as the very next word (`siku 3 USDC`) — while
+    // a ticker LATER in the clause counts only against an ambiguous unit
+    // (#2125 round 3), exactly as for a unit after the figure: `Bado siku
+    // 3 kabla USDC irudi` states a duration and then names an asset.
+    if (leading && !hugsCurrency && !trailingGlyph && !trailingLower && !isTicker(firstWordAfter)) {
       const matchedBefore = unitBefore(before, localeUnits, locale);
       if (matchedBefore !== null) {
         const { unit, start: unitStart } = matchedBefore;
         const temporal = DURATION_LEAD.test(before.slice(0, unitStart)) || DURATION_TRAIL.test(after);
-        if (isAmbiguousUnit(unit) && !temporal) {
+        if (isAmbiguousUnit(unit) && (!temporal || trailingTicker)) {
           hits.push(fragment(text, start, end));
         }
         continue;

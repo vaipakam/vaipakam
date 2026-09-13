@@ -7796,3 +7796,45 @@ describe('#2125 round 2 — whole phrases, denomination prefixes, sentence case,
     expect(monetaryAmountsIn('3日', { locale: ['en', 'ja'] })).toEqual([]);
   });
 });
+
+describe('#2125 round 3 — contextual forms, particle transitions, preceding units', () => {
+  // Case-inflected forms come from relative-time formatting, the same
+  // CLDR data in sentence position; prepositions on the other side of
+  // the number are not taken.
+  it('learns inflected unit forms from relative-time phrases', () => {
+    const de = durationUnitsFor('de');
+    expect(de.has('tagen')).toBe(true);
+    expect(de.has('in')).toBe(false);
+    expect(de.has('vor')).toBe(false);
+    expect(monetaryAmountsIn('in 3 Tagen', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('vor 3 Tagen', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 日後', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3天后', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 दिन में', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
+    // A unit-first language: the phrase before the number, and not the
+    // adverb after it.
+    expect(durationUnitsFor('sw').has('baada ya siku')).toBe(true);
+    expect(durationUnitsFor('sw').has('zilizopita')).toBe(false);
+    expect(monetaryAmountsIn('baada ya siku 3', { locale: 'sw' })).toEqual([]);
+  });
+
+  // Only Hiragana after a Han counter reads as a particle. Katakana is
+  // where Japanese writes loanwords — and asset names.
+  it('reads only a Hiragana continuation as a particle', () => {
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3か月です', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 3日ビットコイン', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日ビットコイン', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 日本円', { locale: 'ja' })).toHaveLength(1);
+  });
+
+  // A preceding, unambiguous unit survives an asset named later in the
+  // clause, as a following one does; immediate evidence still cancels.
+  it('keeps a preceding unit when an asset is only mentioned later', () => {
+    expect(monetaryAmountsIn('Bado siku 3 kabla USDC irudi.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3 USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 Ξ', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 eth', { locale: 'sw' })).toHaveLength(1);
+  });
+});

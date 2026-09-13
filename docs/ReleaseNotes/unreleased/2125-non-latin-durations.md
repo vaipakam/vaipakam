@@ -45,6 +45,13 @@ first word after a counter even when a particle follows it, so a
 denomination there is still an amount; matched units regardless of
 sentence capitalisation, in the language's own casing rules; and made the
 per-language cache immune to a malformed language tag masquerading as a
-list of tags.
+list of tags. A third round taught the scanner the forms a unit takes in
+a sentence rather than standing alone, such as the German dative after
+"in", by reading the same locale data's relative-time phrases; narrowed
+the unspaced-script rule so that only Japanese grammatical script after a
+counter reads as a particle, since the script used for loanwords is also
+where asset names are written; and let a duration written before the
+number stand when an asset is merely mentioned later in the sentence, as
+one written after the number already did.
 
 Closes #2125. No product surface changes.
