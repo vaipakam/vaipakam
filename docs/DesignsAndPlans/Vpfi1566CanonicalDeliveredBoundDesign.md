@@ -5909,11 +5909,16 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (the Diamond
 > CONSTRUCTS its own holders — one-shot bind; a paused replacement that
 > creates the successor, moves the whole balance and flips the pointer in
-> one transaction, verifying the successor GREW by exactly what was released
+> one transaction, verifying BOTH ends of the move — the successor grew and
+> the previous holder was debited by exactly what was released, the one
+> measured move a predecessor recovery goes through as well (review r15) —
 > and reporting any dust already at the predicted address as unattributed
 > rather than refusing; `rebaseArmedFreshPaid`; a read surface incl. the raw
 > received/paid pair that reports an unreadable balance as unknown), the
-> `RewardCustodyRow` enum and three appended storage fields. No externally
+> `RewardCustodyRow` enum and FOUR appended storage fields — the holder
+> pointer, the attribution rows, the one-shot rebase guard and the registry
+> of Diamond-constructed holders that authenticates every sweep and
+> recovery (review r13; the count said three until review r15). No externally
 > supplied address is ever accepted as a holder (review r3). Two things the
 > review added to this plan: the in-place refresh runs the rebase itself,
 > paused, after the role backfill and before service resumes
@@ -5938,7 +5943,9 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > live-chain initial bind) has the same direct / `stage()` / `record()`
 > shape through a shared ceremony base, and `redeploy-testnet-inplace.sh` carries
 > `ARMED_FRESH_PAID_TOTAL_<PREFIX>` / `ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX>`
-> per chain with the seed's preflight. Simulations neither create nor erase
+> per chain with the seed's preflight, and that preflight reads the EXISTING
+> paid counter of every not-yet-rebased chain, refusing one over the pool cap
+> before any broadcast (review r15). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

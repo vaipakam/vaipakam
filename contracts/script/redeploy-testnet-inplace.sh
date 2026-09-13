@@ -123,6 +123,13 @@
 #   ARMED_FRESH_REBASE_NO_HISTORY, per chain, inside the loop — never one
 #   chain's irreversible total for another.
 #
+#   The pre-flight also reads the EXISTING paid counter of every not-yet-
+#   rebased chain (the lens getter `getDeliveredFreshBound()`, first word) and
+#   refuses one above the 69M pool cap before any broadcast, since the rebase
+#   refuses to floor on it. A chain that reports the P1-b seed as run must
+#   expose that counter; on one that never routed the seeder the read is
+#   best-effort, because nothing but the pre-cap seeder could exceed the cap.
+#
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
 #   bash script/redeploy-testnet-inplace.sh
@@ -311,6 +318,9 @@ for slug in $CHAINS; do
     "") fail "chain '$slug': set ${role_var}=canonical|mirror|unconfigured|detached (this Diamond's reward-mesh role per the recorded topology). Refusing to default an irreversible role record." ;;
     *)  fail "chain '$slug': ${role_var}='${role_val}' is not one of canonical|mirror|unconfigured|detached" ;;
   esac
+  # LibVaipakam.VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18 — the lifetime
+  # cap every paid-side figure below is checked against, stated once.
+  pool_cap="69000000000000000000000000"
   seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
   nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
   seed_val="${!seed_var:-}"
@@ -337,9 +347,8 @@ for slug in $CHAINS; do
       ''|*[!0-9]*) fail "chain '$slug': \$$seed_var='${seed_val}' is not a non-negative integer (wei)" ;;
     esac
     seed_norm="$(printf '%s' "$seed_val" | sed 's/^0*//')"; [ -z "$seed_norm" ] && seed_norm="0"
-    seed_cap="69000000000000000000000000"   # LibVaipakam.VPFI_INTERACTION_POOL_CAP
-    if [ "${#seed_norm}" -gt "${#seed_cap}" ] || { [ "${#seed_norm}" -eq "${#seed_cap}" ] && [ "$seed_norm" \> "$seed_cap" ]; }; then
-      fail "chain '$slug': \$$seed_var='${seed_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${seed_cap} wei) -- seedArmedFreshPaid would refuse it on chain; correct the figure"
+    if [ "${#seed_norm}" -gt "${#pool_cap}" ] || { [ "${#seed_norm}" -eq "${#pool_cap}" ] && [ "$seed_norm" \> "$pool_cap" ]; }; then
+      fail "chain '$slug': \$$seed_var='${seed_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- seedArmedFreshPaid would refuse it on chain; correct the figure"
     fi
     info "$slug: P1-b seed = \$$seed_var ($seed_val)"
   elif [ "$nohist_val" = "true" ]; then
@@ -358,6 +367,34 @@ for slug in $CHAINS; do
   already_rebased=""
   if command -v cast >/dev/null 2>&1 && [ -n "${diamond2:-}" ]; then
     already_rebased="$(cast call "$diamond2" 'armedFreshPaidRebased()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
+  fi
+  # The rebase also refuses an EXISTING paid counter above the pool cap (the
+  # guard #2158 r13 left open for a chain seeded before the seeder was
+  # capped), and that refusal must land HERE too, before any chain has
+  # broadcast (Codex #2158 r15 P2) — not at a later chain's paused rebase
+  # after earlier chains completed their irreversible refreshes. Only the
+  # pre-cap seeder could have pushed the counter over the cap (ordinary
+  # payouts are charged out of the 69M pool), so a chain that reports the
+  # P1-b seed as run MUST expose its counter to this preflight, while on a
+  # chain that never routed the seeder the read is best-effort. The counter
+  # is the first word of the lens getter every seeded Diamond routes.
+  if [ "$already_rebased" != "true" ] && [ -n "${diamond2:-}" ]; then
+    live_paid="$(cast call "$diamond2" 'getDeliveredFreshBound()(uint256,uint256)' --rpc-url "$val" 2>/dev/null | head -n 1 | cut -d' ' -f1 | tr -d '[:space:]' || echo '')"
+    case "$live_paid" in
+      ''|*[!0-9]*)
+        if [ "$already_seeded" = "true" ]; then
+          fail "chain '$slug': the P1-b seed has run on this Diamond but its existing armed-fresh paid counter could not be read (getDeliveredFreshBound() via cast) -- the slice-4 rebase refuses a counter above the interaction pool cap, and that must be known BEFORE any chain broadcasts; fix the read and re-run"
+        fi
+        info "$slug: existing armed-fresh paid counter not readable here (the seeder never ran on this Diamond, so the counter is bounded by the pool schedule)"
+        ;;
+      *)
+        live_norm="$(printf '%s' "$live_paid" | sed 's/^0*//')"; [ -z "$live_norm" ] && live_norm="0"
+        if [ "${#live_norm}" -gt "${#pool_cap}" ] || { [ "${#live_norm}" -eq "${#pool_cap}" ] && [ "$live_norm" \> "$pool_cap" ]; }; then
+          fail "chain '$slug': the EXISTING armed-fresh paid counter (${live_paid} wei) already exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- rebaseArmedFreshPaid refuses to floor on it, so this chain's refresh would abort paused after earlier chains had already broadcast. Only a seed placed before the seeder was capped can have produced it and this refresh carries no in-place correction for it; decide this chain's disposition before re-running (nothing has been broadcast)"
+        fi
+        info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
+        ;;
+    esac
   fi
   if [ "$already_rebased" = "true" ]; then
     info "$slug: slice-4 paid-side rebase already run ✓ (migration will be skipped)"
@@ -380,7 +417,6 @@ for slug in $CHAINS; do
     # the facet refuses a larger total (nothing honest can have paid out
     # more than can ever be rewarded), and that refusal must land HERE,
     # before any chain has broadcast, not at a later chain's rebase.
-    pool_cap="69000000000000000000000000"   # LibVaipakam.VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18
     if [ "${#total_norm}" -gt "${#pool_cap}" ] || { [ "${#total_norm}" -eq "${#pool_cap}" ] && [ "$total_norm" \> "$pool_cap" ]; }; then
       fail "chain '$slug': \$$total_var='${total_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- the rebase would refuse it on chain; correct the reconstruction"
     fi

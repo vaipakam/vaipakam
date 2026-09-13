@@ -2165,28 +2165,33 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyPreviousNotEmptied",
-    "inputs": [
-      {
-        "name": "previous",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remaining",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyRecoverTargetsBoundHolder",
     "inputs": [
       {
         "name": "holder",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodySourceNotDebited",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "debited",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

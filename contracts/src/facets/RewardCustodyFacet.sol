@@ -118,14 +118,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ///         brought back into the bound holder as unattributed remainder.
     /// @param predecessor The retired holder it was found at.
     /// @param bound       The bound holder it went to.
-    /// @param requested   How much was released from the predecessor.
-    /// @param received    How much the bound holder's balance actually grew by.
+    /// @param amount      How much moved — verified at both ends of the move,
+    ///                    so there is no separate receipt to report.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyPredecessorVpfiRecovered(
         address indexed predecessor,
         address indexed bound,
-        uint256 requested,
-        uint256 received
+        uint256 amount
     );
 
     /// @notice Native currency forced into a holder was recovered to the
@@ -239,22 +238,14 @@ contract RewardCustodyFacet is DiamondAccessControl {
         successor = address(new RewardCustodyHolder(address(this)));
         s.rewardCustodyHolderConstructed[successor] = true;
         uint256 moving = IERC20(token).balanceOf(previous);
-        uint256 before = IERC20(token).balanceOf(successor);
-        if (moving != 0) {
-            RewardCustodyHolder(previous).release(token, successor, moving);
-        }
-        uint256 delta = IERC20(token).balanceOf(successor) - before;
-        if (delta != moving) {
-            revert IVaipakamErrors.RewardCustodyMoveUnverified(moving, delta);
-        }
-        // Both ends are measured (Codex #2158 r12 P2): the successor grew by
-        // exactly the release AND the previous holder reads empty. A
+        // Both ends of the move are measured, in the one place every
+        // holder-to-holder move of the configured VPFI is measured (Codex
+        // #2158 r12 P2, r15 P2): the successor grew by exactly the release
+        // AND the previous holder was debited by exactly the release — for a
+        // whole-balance move, that is the previous holder reading empty. A
         // non-conforming token crediting without debiting would otherwise
         // strand configured VPFI at an address nothing can reach.
-        uint256 remaining = IERC20(token).balanceOf(previous);
-        if (remaining != 0) {
-            revert IVaipakamErrors.RewardCustodyPreviousNotEmptied(previous, remaining);
-        }
+        uint256 before = _releaseMeasured(token, previous, successor, moving);
 
         s.rewardCustodyHolder = successor;
         emit RewardCustodyHolderReplaced(previous, successor, token, moving, before);
@@ -340,7 +331,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         it shows in {rewardCustodySnapshot} as the unattributed
      *         remainder. Refuses the bound holder itself (what it holds IS
      *         the custody) and any address this Diamond did not construct.
-     *         The event carries the bound holder's measured receipt.
+     *         Both ends of the move are verified before the event is emitted
+     *         (Codex #2158 r15 P2), through the same measured move the
+     *         replacement uses: the bound holder grew by exactly `amount`
+     *         AND the predecessor was debited by exactly `amount`. A token
+     *         that credits without debiting would otherwise report a
+     *         recovery that moved nothing and could be repeated against a
+     *         balance that never leaves.
      * @param  predecessor A retired holder this Diamond constructed.
      * @param  amount      How much configured VPFI to bring back.
      */
@@ -357,10 +354,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyRecoverTargetsBoundHolder(predecessor);
         }
         _requireConstructedHere(s, predecessor);
-        uint256 before = IERC20(token).balanceOf(bound);
-        RewardCustodyHolder(predecessor).release(token, bound, amount);
-        uint256 received = IERC20(token).balanceOf(bound) - before;
-        emit RewardCustodyPredecessorVpfiRecovered(predecessor, bound, amount, received);
+        _releaseMeasured(token, predecessor, bound, amount);
+        emit RewardCustodyPredecessorVpfiRecovered(predecessor, bound, amount);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────
@@ -598,6 +593,50 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ) private view {
         if (!s.rewardCustodyHolderConstructed[holder]) {
             revert IVaipakamErrors.RewardCustodyHolderNotConstructedHere(holder);
+        }
+    }
+
+    /**
+     * @dev The ONE measured move of the configured VPFI out of a holder this
+     *      Diamond constructed — the replacement (whole balance, predecessor
+     *      → successor) and the predecessor recovery (an amount, predecessor
+     *      → bound holder) both go through it, so both ends of every such
+     *      move are verified in one place (Codex #2158 r12 P2, r15 P2): the
+     *      destination grew by exactly `amount` AND the source was debited by
+     *      exactly `amount`. A move either end cannot account for — a
+     *      fee-on-transfer token, a token that credits without debiting —
+     *      reverts the whole operation rather than leaving the ledger
+     *      describing custody that is not there, VPFI stranded at an address
+     *      nothing can reach, or an operation that can be repeated against a
+     *      balance that never moves.
+     * @param  token  The configured VPFI token.
+     * @param  from   The holder released from (constructed here).
+     * @param  to     The destination.
+     * @param  amount What to move; zero moves nothing and verifies nothing
+     *                moved.
+     * @return toBefore The destination's balance before the move — what was
+     *         already there, which a replacement reports as unattributed
+     *         rather than refusing (Codex #2158 r3 P1).
+     */
+    function _releaseMeasured(
+        address token,
+        address from,
+        address to,
+        uint256 amount
+    ) private returns (uint256 toBefore) {
+        uint256 fromBefore = IERC20(token).balanceOf(from);
+        toBefore = IERC20(token).balanceOf(to);
+        if (amount != 0) {
+            RewardCustodyHolder(from).release(token, to, amount);
+        }
+        uint256 credited = IERC20(token).balanceOf(to) - toBefore;
+        if (credited != amount) {
+            revert IVaipakamErrors.RewardCustodyMoveUnverified(amount, credited);
+        }
+        uint256 fromAfter = IERC20(token).balanceOf(from);
+        uint256 debited = fromAfter > fromBefore ? 0 : fromBefore - fromAfter;
+        if (debited != amount) {
+            revert IVaipakamErrors.RewardCustodySourceNotDebited(from, amount, debited);
         }
     }
 

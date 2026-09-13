@@ -136,8 +136,7 @@ contract RewardCustodyFacetTest is SetupTest {
     event RewardCustodyPredecessorVpfiRecovered(
         address indexed predecessor,
         address indexed bound,
-        uint256 requested,
-        uint256 received
+        uint256 amount
     );
 
     uint32 internal constant CHAIN_BASE = 8453;
@@ -424,7 +423,7 @@ contract RewardCustodyFacetTest is SetupTest {
         _pause();
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodyPreviousNotEmptied.selector, holder, 100
+                IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 100, 0
             )
         );
         _custody().replaceRewardCustodyHolder();
@@ -813,7 +812,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
         vpfi.mint(holder, 7 ether); // unsolicited VPFI at the retired predecessor
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit RewardCustodyPredecessorVpfiRecovered(holder, successor, 7 ether, 7 ether);
+        emit RewardCustodyPredecessorVpfiRecovered(holder, successor, 7 ether);
         _custody().recoverVpfiFromPredecessor(holder, 7 ether);
         assertEq(vpfi.balanceOf(holder), 0);
         assertEq(vpfi.balanceOf(successor), 1_007 ether, "back in custody");
@@ -832,6 +831,45 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
         _custody().recoverVpfiFromPredecessor(holder, 1);
+    }
+
+    /// @dev Codex #2158 r15 P2 — the recovery measures BOTH ends, through the
+    ///      same measured move the replacement uses. A token rotated in after
+    ///      the replacement that credits the bound holder without debiting the
+    ///      predecessor would otherwise report a recovery that moved nothing
+    ///      and could be repeated forever; one that skims a fee cannot account
+    ///      for the amount at the destination. Both refuse and every balance
+    ///      is left as it was.
+    function test_RecoverVpfi_RefusesAMoveEitherEndCannotAccountFor() public {
+        address holder = _bind();
+        _pause();
+        address successor = _custody().replaceRewardCustodyHolder();
+
+        // Credits without debiting: the predecessor keeps what it "released".
+        CreditOnlyERC20 creditOnly = new CreditOnlyERC20();
+        _mut().setVpfiTokenRaw(address(creditOnly));
+        creditOnly.mint(holder, 100);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 100, 0
+            )
+        );
+        _custody().recoverVpfiFromPredecessor(holder, 100);
+        assertEq(creditOnly.balanceOf(holder), 100, "predecessor untouched");
+        assertEq(creditOnly.balanceOf(successor), 0, "bound holder untouched");
+
+        // Skims a fee: the bound holder grows by less than was released.
+        FeeSkimmingERC20 skim = new FeeSkimmingERC20();
+        _mut().setVpfiTokenRaw(address(skim));
+        skim.mint(holder, 100);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodyMoveUnverified.selector, 100, 99
+            )
+        );
+        _custody().recoverVpfiFromPredecessor(holder, 100);
+        assertEq(skim.balanceOf(holder), 100, "revert undid the move");
+        assertEq(skim.balanceOf(successor), 0, "bound holder untouched");
     }
 
     function test_SweepNative_IsAdminOnly() public {

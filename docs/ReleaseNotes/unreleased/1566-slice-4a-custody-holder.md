@@ -24,7 +24,11 @@ constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
 retired predecessor after its replacement is brought back into the bound
 holder, where it shows as the unattributed remainder, rather than left
-trapped. A fresh deployment
+trapped — and that move is verified at both ends exactly as a replacement is:
+the bound holder must grow, and the retired holder must be debited, by
+precisely the amount moved, so a token that credits without debiting can
+neither strand value at a replacement nor report a recovery that moved
+nothing. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or
@@ -59,7 +63,11 @@ the seed already was, so neither migration writer can run on a chain with no
 history to import. The in-place facet refresh runs the rebase itself while the
 Diamond is still paused, after the reward-role backfill and before service
 resumes, and refuses to default the figure: the operator states the
-reconstructed total or declares there is none. On a chain whose reward role is
+reconstructed total or declares there is none — and the multi-chain
+pre-flight refuses, before any chain broadcasts, a stated total, a stated seed
+or an already-recorded paid counter above what the reward pool can ever pay
+out, so a later chain's refusal can never land after earlier chains have
+already completed their irreversible refreshes. On a chain whose reward role is
 inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is

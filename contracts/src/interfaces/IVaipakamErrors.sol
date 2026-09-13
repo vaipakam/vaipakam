@@ -281,19 +281,27 @@ interface IVaipakamErrors {
     ///         ledger would describe a custody the successor does not hold.
     ///         Growth, not the starting balance: value already sitting at
     ///         the predicted successor address is reported, never refused.
-    /// @param expected The old holder's whole balance.
-    /// @param delta    What the successor's balance actually grew by.
+    /// @param expected What was released (the old holder's whole balance at
+    ///                 a replacement; the requested amount at a recovery).
+    /// @param delta    What the destination's balance actually grew by.
     error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r12 P2) — after the release the
-    ///         previous holder still reports a balance in the configured
-    ///         VPFI. A token that credits the successor without debiting the
-    ///         source would otherwise pass the growth check and leave VPFI
-    ///         abandoned at an address the Diamond no longer points at —
-    ///         and the foreign-token sweep refuses the configured VPFI, so
-    ///         nothing could reach it.
-    /// @param previous  The holder being replaced.
-    /// @param remaining What it still reports after the release.
-    error RewardCustodyPreviousNotEmptied(address previous, uint256 remaining);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r12 P2, r15 P2) — after a
+    ///         release the SOURCE holder was not debited by exactly what was
+    ///         released. Raised by the one measured move every
+    ///         holder-to-holder transfer of the configured VPFI goes through:
+    ///         the replacement (whose source must end empty) and the
+    ///         predecessor recovery. A token that credits the destination
+    ///         without debiting the source would otherwise pass the growth
+    ///         check and, at a replacement, leave VPFI abandoned at an
+    ///         address the Diamond no longer points at (the foreign-token
+    ///         sweep refuses the configured VPFI, so nothing could reach it);
+    ///         at a recovery, report a move that moved nothing and could be
+    ///         repeated against a balance that never leaves.
+    /// @param source   The holder released from.
+    /// @param expected What was released.
+    /// @param debited  What the source's balance actually fell by (zero when
+    ///                 it did not fall).
+    error RewardCustodySourceNotDebited(address source, uint256 expected, uint256 debited);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and
