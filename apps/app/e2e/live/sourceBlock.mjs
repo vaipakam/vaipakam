@@ -397,7 +397,7 @@ export function sliceCallsIn(src) {
   const out = [];
   for (const n of nodes) {
     if (n.type !== 'CallExpression') continue;
-    const c = n.callee;
+    const c = unwrapChain(n.callee);
     // `f.bind(src)(a, b)` — the receiver sits on the INNER call and the
     // bounds on the outer one, so neither filter saw it (round 15).
     if (c && c.type === 'CallExpression') {
@@ -432,7 +432,7 @@ export function sliceCallsIn(src) {
     // rather than a member, so `borrowedTruncator` refused it and the
     // direct path saw only `apply` (round 19). The receiver is the
     // SECOND argument and the bounds are in the third.
-    const reflected = reflectApplyTruncator(n);
+    const reflected = reflectApplyTruncator(src, n);
     if (reflected) {
       out.push({
         method: reflected,
@@ -550,32 +550,57 @@ export { UNKNOWN_BOUNDS };
 /** The truncator a `Reflect.apply(fn, recv, args)` is borrowing, or null.
  *  Takes the whole call: the borrowed function is its FIRST ARGUMENT,
  *  where every other borrowing form carries it on the callee. */
-function reflectApplyTruncator(call) {
-  const callee = call.callee;
+function reflectApplyTruncator(src, call) {
+  const callee = unwrapChain(call.callee);
   if (callee.object?.type !== 'Identifier' || callee.object.name !== 'Reflect') return null;
   if (memberName(callee) !== 'apply') return null;
-  const fn = call.arguments[0];
-  if (!fn || fn.type !== 'MemberExpression') return null;
+  const fn = resolveAlias(src, unwrapChain(call.arguments[0]));
+  if (!fn || fn.type !== 'MemberExpression') return UNREADABLE;
   const method = memberName(fn);
   if (method === UNREADABLE) return UNREADABLE;
   return TRUNCATORS.has(method) ? method : null;
 }
 
+/** Follow a STABLE alias to what it holds — one hop or many, refusing
+ *  the moment a write reaches it or the chain cannot be followed. */
+function resolveAlias(src, node, seen = new Set()) {
+  if (node?.type !== 'Identifier') return node;
+  const key = `alias:${node.name}@${node.start}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const bound = bindingOf(src, node);
+  if (!bound.found || !bound.init) return null;
+  if (writeReaches(src, bound.writes, node.start)) return null;
+  return resolveAlias(src, bound.init, seen);
+}
+
+/** An optional member is wrapped in a `ChainExpression` (round 26):
+ *  `(src?.slice)(start, start + 320)` puts one in the callee, and there
+ *  is no nested call for the walker to recover it from. */
+function unwrapChain(node) {
+  return node?.type === 'ChainExpression' ? node.expression : node;
+}
+
 function borrowedTruncator(src, callee, only) {
   const via = memberName(callee);
   if (only ? via !== only : !BORROWERS.has(via)) return null;
-  let inner = callee.object;
+  let inner = unwrapChain(callee.object);
   // `const cut = String.prototype.slice; cut.call(src, …)` — the borrowed
   // function through a name (round 25). Resolve it, the way every other
   // rule here resolves a name, rather than giving up and letting the
   // direct path see only `call`.
-  if (inner?.type === 'Identifier') {
-    const bound = bindingOf(src, inner);
-    if (bound.found && bound.init && !writeReaches(src, bound.writes, inner.start)) {
-      inner = bound.init;
-    }
-  }
-  if (!inner || inner.type !== 'MemberExpression') return null;
+  inner = resolveAlias(src, inner);
+  // A BORROWING THIS CANNOT READ IS REFUSED, NOT DROPPED (round 26).
+  // Returning null here handed the call to the direct path, which saw
+  // only `call`/`apply`, so it left the collector entirely — and every
+  // round found another way to be unreadable: one alias, then two, then
+  // a reassigned one, then one behind `Reflect.apply`. That is an open
+  // set, so it is answered the way round 6 answered the bounds: an
+  // unresolved borrowing MIGHT be a truncation and is reported as
+  // UNREADABLE. Measured before adopting — the suites this guard reads
+  // contain NO `call`/`apply`/`bind` borrowings at all, so nothing
+  // correct is newly refused.
+  if (!inner || inner.type !== 'MemberExpression') return UNREADABLE;
   const method = memberName(inner);
   // An UNREADABLE inner name is inspected, not dropped (round 19). The
   // direct path has treated an unreadable computed name that way since
@@ -700,6 +725,13 @@ export function bindingOf(src, node) {
  */
 function alwaysRunsBefore(src, decl, use) {
   const { parents } = astOf(src, 'alwaysRunsBefore');
+  // A `var` HOISTS, so a function called before its initializer runs
+  // sees `undefined` (round 26): `region(); var end = at('e'); function
+  // region() { return s.slice(start, end); }` takes the slice with no
+  // end at all. Textual order proves nothing there. `const`/`let` are
+  // exempt because reaching the use before the declaration would throw,
+  // so any run that gets there has already run it.
+  if (isHoistedVar(src, decl) && crossesDeferredBoundary(parents, decl, use)) return false;
   for (let c = decl, p = parents.get(c); p; c = p, p = parents.get(p)) {
     const slot = guardedSlot(SKIPPABLE, p, c);
     // The use must share the SAME guarded slot, not merely sit somewhere
@@ -711,6 +743,24 @@ function alwaysRunsBefore(src, decl, use) {
     if (slot && !slotContains(slot, use)) return false;
   }
   return decl.start < use.start;
+}
+
+/** Whether `decl` is a `var` declarator — the one declaration form whose
+ *  name exists before its initializer runs. */
+function isHoistedVar(src, decl) {
+  const { parents } = astOf(src, 'isHoistedVar');
+  const stmt = parents.get(decl);
+  return decl.type === 'VariableDeclarator' && stmt?.type === 'VariableDeclaration' && stmt.kind === 'var';
+}
+
+/** Whether `use` sits inside a deferred host that `decl` does not. */
+function crossesDeferredBoundary(parents, decl, use) {
+  for (let c = use, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (inGuardedSlot(DEFERRED, p, c) && !(p.start <= decl.start && p.end >= decl.end)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Whether a slot's extent covers `use`. A slot may be a list — a case
@@ -1035,7 +1085,22 @@ const LOOPS = new Set([
 function keyPrecedesStaticValue(parents, write, use) {
   if (!use) return false;
   const body = enclosingClassPart(parents, write, (p, c) => p.computed && p.key === c);
-  return body !== null && body === enclosingClassPart(parents, use, (p, c) => p.static && p.value === c);
+  if (body === null) return false;
+  // A STATIC BLOCK runs in the same phase as a static field value
+  // (round 26) — after every computed key — so a slice inside one is
+  // reached by a textually later key just as a field value is.
+  return (
+    body === enclosingClassPart(parents, use, (p, c) => p.static && p.value === c) ||
+    body === enclosingStaticBlock(parents, use)
+  );
+}
+
+/** The `ClassBody` whose `StaticBlock` contains `n`, or null. */
+function enclosingStaticBlock(parents, n) {
+  for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (p.type === 'StaticBlock') return parents.get(p) ?? null;
+  }
+  return null;
 }
 
 /** The `ClassBody` whose `PropertyDefinition` holds `n` in the slot

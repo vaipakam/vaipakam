@@ -1257,6 +1257,53 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // ROUND 26 — five, three of them the collector dropping a borrowing
+  // it could not read. That is answered at the root: unresolved means
+  // UNREADABLE, which refuses.
+  it('refuses the round-26 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a truncator behind two aliases',
+        'const cut1 = String.prototype.slice;\nconst cut2 = cut1;\nconst r = cut2.call(s, start, start + 320);',
+      ],
+      [
+        'a truncator alias that is reassigned',
+        "let cut = String.prototype.slice;\ncut = String.prototype.substring;\nconst r = cut.call(s, start, start + 320);",
+      ],
+      [
+        'a truncator alias handed to Reflect.apply',
+        'const cut = String.prototype.slice;\nconst r = Reflect.apply(cut, s, [start, start + 320]);',
+      ],
+      [
+        'an optional member invoked directly',
+        'const r = (s?.slice)(start, start + 320);',
+      ],
+      [
+        'a later computed key reaching a slice in a static block',
+        "let e = s.indexOf('e');\nclass C { static { s.slice(start, e); } static [(e = start + 320, 'k')] = 1; }",
+      ],
+      [
+        'a var initializer that may not have run when the function is called',
+        "region();\nvar end = s.indexOf('e');\nfunction region() { return s.slice(start, end); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // The `const` twin of the last one: reaching the use before the
+  // declaration would throw, so any run that gets there has run it.
+  it('keeps a const landmark usable from a deferred function', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nconst end = s.indexOf('e');\n" +
+      'function region() { return s.slice(start, end); }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.
