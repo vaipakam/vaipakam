@@ -1743,6 +1743,32 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
+  // Round 32, and both of these are holes round 30 OPENED. A guard that
+  // misses a real window is worse than one that objects to a good one,
+  // so these are pinned in the refusing direction.
+  it('refuses a truncator a constructor returns', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'function Factory() { return String.prototype.slice; }\n' +
+      'const cut = new Factory();\n' +
+      'const r = cut.call(s, start, start + 320);';
+    // `new` evaluates to whatever the constructor RETURNS when that is an
+    // object, so this is a real fixed window. It must at least reach the
+    // collector; calling it self-evidently harmless dropped it entirely.
+    const calls = sliceCallsIn(code);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(countsCharacters(code, calls.at(-1))).toBe(true);
+  });
+
+  it("refuses a wrapper mutated through its prototype", () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const copy = new String(s);\n' +
+      'copy.__proto__.indexOf = () => start + 320;\n' +
+      "const r = s.slice(start, copy.indexOf('end'));";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
   // Round 29 made `callContaining` try every occurrence of its needle.
   // The empty string occurs at every index and then clamps to the end of
   // the text, so that loop never advances past it — the call hung the

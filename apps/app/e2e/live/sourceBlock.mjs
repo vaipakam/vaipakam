@@ -605,7 +605,14 @@ const SELF_EVIDENT = new Set([
   'ArrayExpression',
   'Literal',
   'TemplateLiteral',
-  'NewExpression',
+  // `NewExpression` is NOT here, and that is the correction round 32
+  // made to round 30's list. A constructor may RETURN a function, and
+  // then that function is what `new` evaluates to — so
+  // `function Factory() { return String.prototype.slice; }` makes
+  // `new Factory()` a truncator wearing a constructor's spelling.
+  // Calling it self-evidently harmless dropped a real fixed window out
+  // of the collector entirely. An identity that is only visible by
+  // reading the constructor's body is not visible in the text here.
 ]);
 
 function definiteNonTruncator(node) {
@@ -1711,11 +1718,21 @@ function onlyReadThrough(src, node) {
     // The declaration's own initialiser is how the name got its value.
     if (ref.init) return true;
     if (ref.isWrite()) return false;
-    const member = parents.get(id);
+    let member = parents.get(id);
     // Read THROUGH the name, not read AS a value: `f(copy)` hands the
     // object to somebody who may do anything with it.
     if (!member || member.type !== 'MemberExpression' || member.object !== id) return false;
-    const outer = parents.get(member);
+    // The WHOLE chain, not one link of it (round 32).
+    // `copy.__proto__.indexOf = …` replaces the same finder that
+    // `copy.indexOf = …` does, and reaches it one property further out;
+    // checking only the immediate parent saw a member expression, called
+    // it an ordinary read, and trusted a wrapper somebody had just
+    // rewritten. Climb to the end of the chain and ask there.
+    let outer = parents.get(member);
+    while (outer && outer.type === 'MemberExpression' && outer.object === member) {
+      member = outer;
+      outer = parents.get(member);
+    }
     if (!outer) return false;
     // The property being read must not be the property being written.
     if (

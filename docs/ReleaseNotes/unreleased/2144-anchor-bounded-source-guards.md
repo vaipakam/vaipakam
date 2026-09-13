@@ -466,6 +466,29 @@ fair record of the loop: most of what the review found in the late
 rounds was over-strictness, but not all of it, and the one that was not
 would have been a test suite that stops rather than a test that reports.
 
+Two corrections after that are worth recording because both were holes
+the round before them had opened, and both were in the direction that
+matters. A list of values whose identity can be read off the page
+included things built with `new`, on the reasoning that a thing written
+out plainly is plainly what it is. That is true of a piece of text or an
+object written out and false of a construction, because a constructor is
+allowed to hand back something else entirely — so a narrowing borrowed
+through one was not merely misjudged, it was invisible. And the rule that
+a wrapper is trusted only if nobody has touched it was implemented by
+looking at the first thing done to the name rather than the whole of it,
+so reaching one property further along replaced the finder without the
+check noticing.
+
+The second of those is the more instructive. The rule was stated as
+"list what may be done with this and refuse the rest", which is the shape
+that has held up everywhere else here — and then it was implemented
+against a prefix of what was being done rather than the whole of it. The
+principle was right and the reading was short. A guard that misses a real
+window is worse than one that objects to a good one, so both were fixed
+even though the review loop had reached its agreed limit; a limit on how
+long to keep polishing is not permission to ship a hole opened on the way
+there.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the
