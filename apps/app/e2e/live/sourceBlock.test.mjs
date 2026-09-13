@@ -169,4 +169,12 @@ describe('#2144 — between(): a region bounded by a following anchor', () => {
   it('does not match the closing anchor inside the opening one', () => {
     expect(between('const a = 1; const a = 2;', 'const a', 'const a')).toBe('const a = 1; ');
   });
+
+  // An EMPTY anchor matches at 0, so the helper would otherwise produce
+  // the very vacuous region it exists to refuse.
+  it('rejects an empty anchor rather than returning an empty region', () => {
+    expect(() => between(src, '', 'const beta')).toThrow(/non-empty `from`/);
+    expect(() => between(src, 'const alpha', '')).toThrow(/non-empty `to`/);
+    expect(() => between(src, undefined, 'const beta')).toThrow(/non-empty `from`/);
+  });
 });

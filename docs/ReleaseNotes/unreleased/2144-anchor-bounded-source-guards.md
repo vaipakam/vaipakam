@@ -13,7 +13,7 @@ count as exact, so deleting the very line it exists to protect would have
 left it passing. Too long, and a rule about one region silently starts
 matching its neighbours.
 
-Every remaining region is now bounded by a second anchor: something in
+Every such region is now bounded by a second anchor: something in
 the code that means the region has ended, such as the declaration that
 follows it. A new helper takes a region between two anchors and refuses
 to return anything when either anchor is missing, or when the closing one
@@ -22,6 +22,12 @@ back an empty region, and a rule asserted over nothing passes by checking
 nothing, which is the failure this whole family of helpers exists to
 refuse. Regions that are brace-delimited blocks use the existing
 block helper rather than a second anchor.
+
+Review caught the first attempt claiming more than it had done: the
+search used to find the fixed windows was narrower than the windows
+themselves, so eight of the fourteen were missed while the note said none
+remained. The search is now written against the shape being removed —
+arithmetic on a slice bound — and all fourteen are converted.
 
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file

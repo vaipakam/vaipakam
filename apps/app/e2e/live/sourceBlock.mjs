@@ -72,6 +72,11 @@ export function blockFrom(src, header) {
  * rename survived.
  */
 export function between(src, from, to) {
+  // An EMPTY anchor matches at position 0 and would hand back `''` from
+  // `between(src, '', anything)` — the vacuous region this helper exists
+  // to refuse, produced by the helper itself. Rejected before searching.
+  if (typeof from !== 'string' || from === '') throw new Error('between() needs a non-empty `from`');
+  if (typeof to !== 'string' || to === '') throw new Error('between() needs a non-empty `to`');
   const start = src.indexOf(from);
   if (start === -1) throw new Error(`${from} was renamed or removed`);
   const end = src.indexOf(to, start + from.length);

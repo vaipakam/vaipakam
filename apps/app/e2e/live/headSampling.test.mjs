@@ -219,7 +219,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(sample).toBeLessThan(goto);
     // Uncached, for round 13's reason: a height viem answered from a cache
     // filled by an earlier visit is a number this drive already had.
-    const decl = src.slice(sample, sample + 200);
+    const decl = between(src, 'headBeforeNav = await pub.getBlockNumber(', 'pageHeadBeforeNav = sample.head;');
     expect(decl).toContain('cacheTime: 0');
   });
 
@@ -236,7 +236,7 @@ describe('the head sample waits for the readings in flight', () => {
   // which keeps a genuinely dead endpoint loud.
   it('degrades rather than ending the run when that sample fails', () => {
     const sample = at('headBeforeNav = await pub.getBlockNumber(');
-    const decl = src.slice(sample - 200, sample + 200);
+    const decl = between(src, 'let headBeforeNav = null;', 'pageHeadBeforeNav = sample.head;');
     expect(decl).not.toContain('discovery(');
     expect(decl).toContain('catch');
   });
@@ -659,7 +659,7 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
   it('applies the same safe-integer check the captured reader applies', () => {
     const i = src.indexOf('hexQuantity(believableResult(await r.json()))');
     expect(i, 'the probe body moved').toBeGreaterThan(-1);
-    const body = src.slice(i, i + 320);
+    const body = between(src, 'hexQuantity(believableResult(await r.json()))', 'Unreachable, non-JSON, or timed out');
     expect(body).toContain('Number.isSafeInteger(n)');
   });
 

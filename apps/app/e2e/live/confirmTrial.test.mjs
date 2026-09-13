@@ -37,7 +37,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom } from './sourceBlock.mjs';
+import { between, blockFrom } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -214,7 +214,7 @@ describe('the confirmation cluster counts only what is shown', () => {
   it('enters marker-only identification only when BOTH markers are present', () => {
     const i = at('const marked =');
     expect(i, 'the marked test is no longer built here').toBeGreaterThan(-1);
-    const decl = src.slice(i, i + 320);
+    const decl = between(src, 'const marked =', 'const isBack = (b) =>');
     expect(decl).toContain('[data-testid="confirm-receipt-confirm"]');
     expect(decl, 'the Back marker is part of the decision').toContain(
       '[data-testid="confirm-receipt-back"]',
@@ -228,7 +228,9 @@ describe('the confirmation cluster counts only what is shown', () => {
     // than one with a stated residual (round 76).
     const i = at('const isBack = (b) =>');
     expect(i).toBeGreaterThan(-1);
-    expect(src.slice(i, i + 240)).toContain("/back/i.test((b?.innerText ?? '').trim())");
+    expect(between(src, 'const isBack = (b) =>', 'const backButton = panelButtons.find(isBack);')).toContain(
+      "/back/i.test((b?.innerText ?? '').trim())",
+    );
   });
 
   it('selects the action from the FILTERED set', () => {
@@ -237,7 +239,9 @@ describe('the confirmation cluster counts only what is shown', () => {
     // cannot reach, which is the fix defeating itself.
     const i = at('const clusterActions =');
     expect(i, 'the cluster is no longer built here').toBeGreaterThan(-1);
-    expect(src.slice(i, i + 600)).toContain('const confirmButton = clusterActions[0];');
+    expect(between(src, 'const clusterActions =', 'const confirmAction = {')).toContain(
+      'const confirmButton = clusterActions[0];',
+    );
   });
 
   it('still indexes over the card’s WHOLE button list', () => {
@@ -278,7 +282,7 @@ describe('a reading that did not happen is never reported as an absence', () => 
   it('reports a non-timeout fault as INCOMPLETE, not as a missing card', () => {
     const i = at('if (mountFault) {');
     expect(i, 'the mount-fault exit was not found').toBeGreaterThan(-1);
-    const branch = src.slice(i, i + 400);
+    const branch = blockFrom(src, 'if (mountFault) {');
     expect(branch).toContain('nothingEstablished(');
     expect(branch).toContain('scrapeFailed: true');
   });
@@ -356,6 +360,11 @@ describe('a reading that did not happen is never reported as an absence', () => 
     // The whole shape rests on this one field: `undefined` is "nothing
     // was observed", and any value at all would make it a finding.
     const i = at('function nothingEstablished(');
-    expect(src.slice(i, i + 700)).toContain('bodyPresent: undefined,');
+    // `between`, not `blockFrom`: the signature's `overrides = {}` default
+    // opens and closes a brace before the body does, and naive brace
+    // counting stops there. Bounded by the declaration that follows.
+    expect(
+      between(src, 'function nothingEstablished(', 'async function readForcedCloseCard('),
+    ).toContain('bodyPresent: undefined,');
   });
 });
