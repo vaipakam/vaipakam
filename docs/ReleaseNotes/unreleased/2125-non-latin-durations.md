@@ -32,4 +32,13 @@ non-Latin duration is then reported, which is the loud direction rather
 than the silent one. Asset glyphs and tickers are unaffected: the sourced
 words are duration words, never a licence for any non-Latin token.
 
+Review tightened the derivation in five places: a language that writes
+the unit before the number is read from the word in front; abbreviations
+the locale data writes with punctuation are stored in the same shape the
+scanner reads; the sample numbers used to collect every grammatical form
+are taken from each language's own plural rules rather than a fixed list;
+a counter followed directly by a ticker or asset glyph is not a duration;
+and a one-letter symbol classifies the same whether its accent is stored
+composed or decomposed.
+
 Closes #2125. No product surface changes.

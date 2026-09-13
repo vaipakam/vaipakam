@@ -9,6 +9,7 @@ import {
   cardSettled,
   confirmationReady,
   declaredStateConsistent,
+  durationSamplesFor,
   durationUnitsFor,
   forcedCloseCoverage,
   forcedCloseVerdict,
@@ -7683,5 +7684,71 @@ describe('#2125 — the drive declares its pinned locale before the copy that ca
     // it, so this is counted rather than asserted absent).
     expect((src.match(/locale: PINNED_LOCALE,/g) ?? []).length).toBe(2);
     expect((src.match(/'en-US'/g) ?? []).length).toBe(2);
+  });
+});
+
+describe('#2125 round 1 — unit order, tokeniser parity, plural categories, suffix evidence, NFC', () => {
+  const LOCALES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales');
+  const shipped = fs
+    .readdirSync(LOCALES_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace(/\.json$/, ''));
+
+  // A locale that writes the unit BEFORE the figure. Not shipped; the
+  // rule exists so the first one that is does not fail the live check.
+  it('exempts a unit written before the figure, with the same evidence guards', () => {
+    expect(new Intl.NumberFormat('sw', { style: 'unit', unit: 'day', unitDisplay: 'long' }).format(3)).toBe(
+      'siku 3',
+    );
+    expect(monetaryAmountsIn('Bado siku 3.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3 USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 Ξ', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('Bado siku 3.')).toHaveLength(1);
+  });
+
+  // CLDR writes some abbreviations with punctuation the scanner's token
+  // never includes; the vocabulary stores the token the scanner reads.
+  it('stores CLDR units in the token shape the scanner reads', () => {
+    expect(new Intl.NumberFormat('he', { style: 'unit', unit: 'day', unitDisplay: 'short' }).format(3)).toBe(
+      '3 ימ׳',
+    );
+    expect(durationUnitsFor('he').has('ימ')).toBe(true);
+    expect(monetaryAmountsIn('נותרו 3 ימ׳', { locale: 'he' })).toEqual([]);
+    // Polish's narrow month is `m-ce`; the token read is `m`, a one-letter
+    // abbreviation, so it is ambiguous and reported without context — the
+    // loud direction, as for every one-letter unit.
+    expect(durationUnitsFor('pl').has('m')).toBe(true);
+    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 dni', { locale: 'pl' })).toEqual([]);
+  });
+
+  // Samples come from the locale's OWN plural categories.
+  it('reaches every plural category of every shipped locale, and Tagalog and Czech', () => {
+    for (const locale of [...shipped, 'tl', 'cs', 'pl', 'uk', 'ar']) {
+      const { categories, reached } = durationSamplesFor(locale);
+      for (const c of categories) expect(reached, `${locale} misses ${c}`).toContain(c);
+    }
+    expect(new Intl.NumberFormat('tl', { style: 'unit', unit: 'day', unitDisplay: 'long' }).format(4)).toBe(
+      '4 na araw',
+    );
+    expect(monetaryAmountsIn('4 na araw', { locale: 'tl' })).toEqual([]);
+    expect(monetaryAmountsIn('0,1 dne', { locale: 'cs' })).toEqual([]);
+  });
+
+  // A prefix-matched counter followed by a DENOMINATION is not a unit.
+  it('rejects a denomination suffix after a matched unit prefix', () => {
+    expect(monetaryAmountsIn('3日USDC', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日eth', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Decomposed and composed one-letter symbols classify alike.
+  it('normalises a token before the one-letter ticker test', () => {
+    const composed = 'Loan 100 \u00C1 principal';
+    const decomposed = 'Loan 100 A\u0301 principal';
+    expect(composed.normalize('NFC')).toBe(decomposed.normalize('NFC'));
+    expect(monetaryAmountsIn(composed)).toHaveLength(1);
+    expect(monetaryAmountsIn(decomposed)).toHaveLength(1);
   });
 });

@@ -136,9 +136,16 @@ const CURRENCY_MARK = /\p{Sc}/u;
  */
 function isTicker(word) {
   if (typeof word !== 'string') return false;
-  if (/^\p{Lu}$/u.test(word)) return true;
-  if (!/^\p{L}[\p{L}\p{M}\p{N}]+$/u.test(word)) return false;
-  return /\p{Lu}{2}/u.test(word);
+  // NORMALISED first (#2125 round 1): once combining marks are part of a
+  // token, a canonically DECOMPOSED one-letter symbol — `A` + U+0301
+  // rather than `Á` — is two code points, fails the single-letter test
+  // and has one upper-case letter, so it stopped being a ticker while its
+  // composed twin still was. Composed to NFC, then marks dropped for the
+  // case tests, so both spellings classify alike.
+  const w = word.normalize('NFC').replace(/\p{M}/gu, '');
+  if (/^\p{Lu}$/u.test(w)) return true;
+  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(w)) return false;
+  return /\p{Lu}{2}/u.test(w);
 }
 
 /**
@@ -560,13 +567,45 @@ const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
  * is in gets the English list alone and, for other scripts, a loud false
  * hit rather than a silent miss.
  *
- * Trailing abbreviation marks (`Std.`, `घं॰`) are stripped, because the
- * token the scanner reads stops at punctuation.
+ * Each rendered unit is stored in the SHAPE THE SCANNER READS (#2125
+ * round 1): the leading letter-run of every whitespace-separated word,
+ * `[\p{L}\p{M}\p{N}]+`, which is what `trailing` and `leading` capture.
+ * CLDR writes some abbreviations with punctuation inside or after them —
+ * `Std.`, `घं॰`, Hebrew `ימ׳`, Polish `m-ce` — and a vocabulary keeping the
+ * punctuation could never match a token that stops at it. One tokeniser
+ * for storing and for matching, so they cannot disagree.
+ *
+ * The PLURAL SAMPLES are drawn from the locale's own categories: the
+ * candidates below are put through `Intl.PluralRules` and one is kept per
+ * category the locale actually has — a fixed language-independent list
+ * had missed Tagalog's `other` (which `4` selects while `1`, `2`, `3` and
+ * `5` all select `one`) and the fractional categories of Czech, Polish
+ * and Ukrainian. `durationSamplesFor` is exported so the calibration can
+ * assert that every category of every shipped locale is reached.
  */
 const DURATION_UNITS = ['day', 'hour', 'minute', 'second', 'week', 'month', 'year'];
 const UNIT_DISPLAYS = ['long', 'short', 'narrow'];
-// One sample per CLDR plural category: zero, one, two, few, many, other.
-const PLURAL_SAMPLES = [0, 1, 2, 3, 5, 11, 21, 100];
+// Spanish and French put only the exact millions in `many`, hence the two
+// large candidates; the fractions reach the fractional categories.
+const PLURAL_CANDIDATES = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 19, 20, 21, 22, 25, 100, 101, 102, 1000,
+  1000000, 2000000, 0.1, 0.5, 1.1, 1.5, 2.5, 10.5,
+];
+const TOKEN_RUN = /[\p{L}\p{M}\p{N}]+/u;
+const tokenOf = (word) => word.normalize('NFC').match(TOKEN_RUN)?.[0] ?? '';
+export function durationSamplesFor(tag) {
+  const pr = new Intl.PluralRules(tag);
+  const byCategory = new Map();
+  for (const n of PLURAL_CANDIDATES) {
+    const c = pr.select(n);
+    if (!byCategory.has(c)) byCategory.set(c, n);
+  }
+  return {
+    categories: pr.resolvedOptions().pluralCategories,
+    samples: [...byCategory.values()],
+    reached: [...byCategory.keys()],
+  };
+}
 const unitVocabulary = new Map();
 export function durationUnitsFor(locale) {
   const tags = (Array.isArray(locale) ? locale : [locale]).filter(
@@ -583,15 +622,16 @@ export function durationUnitsFor(locale) {
       supported = false;
     }
     if (!supported) continue;
+    const { samples } = durationSamplesFor(tag);
     for (const unit of DURATION_UNITS) {
       for (const unitDisplay of UNIT_DISPLAYS) {
         const nf = new Intl.NumberFormat(tag, { style: 'unit', unit, unitDisplay });
-        for (const n of PLURAL_SAMPLES) {
+        for (const n of samples) {
           for (const part of nf.formatToParts(n)) {
             if (part.type !== 'unit') continue;
             for (const w of part.value.split(/\s+/)) {
-              const bare = w.replace(/[.॰۔]+$/u, '');
-              if (bare !== '') words.add(bare);
+              const token = tokenOf(w);
+              if (token !== '') words.add(token);
             }
           }
         }
@@ -639,9 +679,20 @@ const sameScript = (a, b) => {
 };
 function matchUnit(run, units) {
   if (units.size === 0) return null;
-  if (units.has(run)) return run;
+  const r = run.normalize('NFC');
+  if (units.has(r)) return r;
   for (const u of units) {
-    if (run.length > u.length && run.startsWith(u) && !sameScript(u[u.length - 1], run[u.length])) {
+    if (r.length > u.length && r.startsWith(u) && !sameScript(u[u.length - 1], r[u.length])) {
+      // The continuation has to read as a PARTICLE, not as a denomination
+      // (#2125 round 1): `3日USDC` and `3日Ξ` also continue in a different
+      // script, and accepting `日` there exempted an amount on the strength
+      // of the counter in front of its ticker. A suffix that is itself a
+      // ticker, an asset glyph or a lower-case asset unit is evidence of
+      // an amount, and the run is then not a unit at all.
+      const suffix = r.slice(u.length);
+      if (isTicker(suffix) || ASSET_GLYPH.test(suffix.slice(0, 2)) || LOWERCASE_ASSET_UNIT.test(suffix)) {
+        return null;
+      }
       return u;
     }
   }
@@ -1017,8 +1068,25 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       }
     }
 
-    // A ticker immediately BEFORE the number — `USDC 120`.
     const leading = before.match(/([\p{L}][\p{L}\p{M}\p{N}]*)\s*$/u);
+    // A locale that writes the unit BEFORE the figure (#2125 round 1):
+    // Swahili renders three days as `siku 3`, so a vocabulary consulted
+    // only on `after` never saw it. Exact match only — the prefix rule is
+    // about a counter and the particle that follows it — and the same
+    // ambiguity rule: a one-letter unit in front still needs duration
+    // context. No shipped locale orders its units this way today; the
+    // rule is here so the first one that does is not a false FAIL.
+    if (leading && !trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower) {
+      const unitBefore = localeUnits.has(leading[1].normalize('NFC')) ? leading[1].normalize('NFC') : null;
+      if (unitBefore !== null) {
+        const temporal = DURATION_LEAD.test(before.slice(0, leading.index)) || DURATION_TRAIL.test(after);
+        if (isAmbiguousUnit(unitBefore) && !temporal) {
+          hits.push(fragment(text, start, end));
+        }
+        continue;
+      }
+    }
+    // A ticker immediately BEFORE the number — `USDC 120`.
     if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
       continue;
