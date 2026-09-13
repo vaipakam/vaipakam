@@ -1085,6 +1085,54 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(blockFrom('function f() { a(); }\n', 'function f()')).toContain('a()');
   });
 
+  // ROUND 21 — three, all holes in round 20's own fixes.
+  it('refuses the round-21 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a second measurement bolted onto a stepped position',
+        "const r = s.slice(start, s.indexOf('x') + 'x'.length + 'yyyy'.length);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('does not refuse the round-21 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      // The one composite bound these suites actually write measures a
+      // NAME, not a literal: `block.indexOf(haveControl) +
+      // haveControl.length` in confirmTrial.
+      [
+        'a position stepped by its own landmark, named rather than written out',
+        "const needle = 'x';\nconst r = s.slice(start, s.indexOf(needle) + needle.length);",
+      ],
+      [
+        'the same alias down both arms of a choice',
+        "const end = s.indexOf('e');\nconst alias = end;\nconst r = s.slice(start, on ? alias : alias);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // An anchor may CONTAIN quoted text — `page.on('request', …` is a real
+  // anchor in these suites — but must not straddle the edge of it.
+  it('refuses an anchor that straddles the edge of quoted text', () => {
+    const src = "const a = 1;\n 'if (target) {';\nif (ready) { work(); }\n";
+    expect(() => blockFrom(src, " 'if (target) {")).toThrow(/renamed or removed/);
+    expect(blockFrom("page.on('request', (req) => { go(); });\n", "page.on('request', (req) => {")).toContain(
+      'go()',
+    );
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

@@ -301,8 +301,23 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
       }
     }
   }
+  // An anchor must not STRADDLE the edge of skipped text (round 21).
+  // Testing only its first character let ` 'if (target) {` match: the
+  // leading space sits outside the string literal that follows, so the
+  // match began in code and ran on into quoted text, and `blockFrom`
+  // then took an unrelated later block.
+  //
+  // Straddling, not overlapping. An anchor that CONTAINS a skipped span
+  // whole is ordinary code — `page.on('request', (req) => {` is a real
+  // anchor in these suites and quotes a string in passing. Only a match
+  // whose own start or end falls strictly inside a skipped span has
+  // crossed a boundary it should not have.
   for (let i = src.indexOf(anchor, at); i !== -1; i = src.indexOf(anchor, i + 1)) {
-    if (!skipped.some(([a, b]) => i >= a && i < b)) return i;
+    const end = i + anchor.length;
+    const straddles = skipped.some(
+      ([a, b]) => (i >= a && i < b) || (end > a && end < b),
+    );
+    if (!straddles) return i;
   }
   return -1;
 }
@@ -1078,25 +1093,44 @@ export function kindOf(src, node, seen = new Set()) {
       if (node.operator !== '+' && node.operator !== '-') return null;
       const l = kindOf(src, node.left, seen);
       const r = kindOf(src, node.right, seen);
+      // A POSITION STEPPED BY ITS OWN LANDMARK'S WIDTH, and nothing
+      // else. Round 20 asked "is this distance about the same text";
+      // round 21 showed that question has an open-ended answer as soon
+      // as the arithmetic nests — `s.indexOf('x') + 'x'.length +
+      // 'yyyy'.length` makes the inner sum a position, and the outer
+      // measurement then has no finder to disagree with.
+      //
+      // So this is stated the way round 6 stated the whole rule: as a
+      // CLOSED SHAPE rather than a property to verify. The left side
+      // must be a finder call, the right its own needle's length. A
+      // composite is not that shape and is refused — which is what the
+      // one composite bound these suites actually write looks like:
+      // `block.indexOf(haveControl) + haveControl.length`.
       if (l === 'position' && r === 'offset') {
-        return sameLandmark(src, node.left, node.right, seen) ? 'position' : null;
+        return sameLandmark(src, node.left, node.right) ? 'position' : null;
       }
       if (node.operator === '+' && l === 'offset' && r === 'position') {
-        return sameLandmark(src, node.right, node.left, seen) ? 'position' : null;
+        return sameLandmark(src, node.right, node.left) ? 'position' : null;
       }
       if (node.operator === '-' && l === 'position' && r === 'position') return 'offset';
       if (l === 'offset' && r === 'offset') return 'offset';
       return null;
     }
 
+    // SIBLING branches get their OWN cycle state (round 21). `seen`
+    // exists to stop a name resolving through itself; sharing one set
+    // across two arms made the second arm mistake the first's ordinary
+    // work for recursion, so `on ? alias : alias` — the same acyclic
+    // alias twice — was refused. Cycle detection is per PATH, not per
+    // traversal.
     case 'ConditionalExpression': {
-      const a = kindOf(src, node.consequent, seen);
-      return a !== null && a === kindOf(src, node.alternate, seen) ? a : null;
+      const a = kindOf(src, node.consequent, new Set(seen));
+      return a !== null && a === kindOf(src, node.alternate, new Set(seen)) ? a : null;
     }
 
     case 'LogicalExpression': {
-      const a = kindOf(src, node.left, seen);
-      return a !== null && a === kindOf(src, node.right, seen) ? a : null;
+      const a = kindOf(src, node.left, new Set(seen));
+      return a !== null && a === kindOf(src, node.right, new Set(seen)) ? a : null;
     }
 
     case 'ParenthesizedExpression':
@@ -1155,7 +1189,10 @@ export function isBoundedRegion(src, node, seen = new Set()) {
   // toward a marker asserting a character count that is not there.
   // Both arms must qualify — one unbounded arm is an unbounded region.
   if (node.type === 'ConditionalExpression') {
-    return isBoundedRegion(src, node.consequent, seen) && isBoundedRegion(src, node.alternate, seen);
+    return (
+      isBoundedRegion(src, node.consequent, new Set(seen)) &&
+      isBoundedRegion(src, node.alternate, new Set(seen))
+    );
   }
   if (node.type !== 'Identifier') return false;
   const key = `region:${node.name}@${node.start}`;
@@ -1337,39 +1374,32 @@ function measurable(node) {
  * close: an unreadable template measures nothing nameable, and a literal
  * that is not the needle is caught by the comparison.
  */
-function sameLandmark(src, positionNode, offsetNode, seen) {
-  const measured = measuredText(offsetNode);
-  if (measured === undefined) return true;
-  if (measured === null) return false;
-  const needle = finderNeedle(src, positionNode, seen);
-  return needle === undefined || needle === measured;
+function sameLandmark(src, positionNode, offsetNode) {
+  const needle = finderNeedleSource(src, positionNode);
+  return needle !== null && needle === measuredSource(src, offsetNode);
 }
 
-/** The text whose `.length` an offset takes: its value when readable,
- *  `null` when it is a measurement that cannot be read, `undefined` when
- *  the offset is not a measurement at all. */
-function measuredText(node) {
-  if (!node || node.type !== 'MemberExpression') return undefined;
-  if (propertyName(node) !== 'length') return undefined;
-  const t = node.object;
-  if (t?.type === 'Literal' && typeof t.value === 'string') return t.value;
-  if (t?.type === 'TemplateLiteral') {
-    return t.expressions.length === 0 ? t.quasis.map((q) => q.value.cooked).join('') : null;
-  }
-  return undefined;
-}
-
-/** The statically readable needle a finder call searched for, or
- *  `undefined` when the position did not come from a readable search. */
-function finderNeedle(src, node, seen) {
-  if (!node || node.type !== 'CallExpression') return undefined;
+/** The SOURCE of the text a finder searched for, or null when the
+ *  position is not a direct finder call. Source text rather than a
+ *  value, so `'x'` and a name both compare — the one composite bound
+ *  these suites write measures a NAME:
+ *  `block.indexOf(haveControl) + haveControl.length`. */
+function finderNeedleSource(src, node) {
+  if (!node || node.type !== 'CallExpression') return null;
+  const callee = node.callee;
+  if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return null;
   const arg = node.arguments[0];
-  if (arg?.type === 'Literal' && typeof arg.value === 'string') return arg.value;
-  if (arg?.type === 'TemplateLiteral' && arg.expressions.length === 0) {
-    return arg.quasis.map((q) => q.value.cooked).join('');
-  }
-  return undefined;
+  return arg ? src.slice(arg.start, arg.end) : null;
 }
+
+/** The SOURCE of the text an offset measures, or null when the offset
+ *  is not a `<text>.length` measurement. */
+function measuredSource(src, node) {
+  if (!node || node.type !== 'MemberExpression') return null;
+  if (propertyName(node) !== 'length') return null;
+  return src.slice(node.object.start, node.object.end);
+}
+
 
 /**
  * A member's property name, read through a computed spelling where that
