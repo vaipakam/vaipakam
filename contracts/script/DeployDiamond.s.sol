@@ -82,6 +82,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -778,7 +779,11 @@ contract DeployDiamond is Script {
         //     neither counter (`max(0, 0)`; the received side is rewritten
         //     only on `Canonical`).
         address rewardCustodyHolder = RewardCustodyFacet(diamond).bindRewardCustodyHolder();
-        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0);
+        // A fresh deploy has nothing to import; the epoch is the constructor's
+        // manual pause, still in force (Codex #2158 r27 P1).
+        (,,, uint64 pauseEpoch) =
+            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0, pauseEpoch);
         console.log("Reward custody holder bound:", rewardCustodyHolder);
         console.log("Slice 4: fresh deployment marked rebased (0).");
 

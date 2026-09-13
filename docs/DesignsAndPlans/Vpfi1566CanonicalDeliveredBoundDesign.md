@@ -5906,7 +5906,11 @@ fund the holder yet (an unsolicited ERC-20 transfer to its public address
 remains possible and shows only as the unattributed remainder — review r5).**
 
 > **LANDED — PR #2158.** `RewardCustodyHolder` (non-upgradeable, immutable
-> `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (the Diamond
+> `DIAMOND`, four Diamond-gated releases — `release` for an ERC-20,
+> `releaseNative`, `releaseERC721` and `releaseERC1155` for what can be
+> forced or delivered into the address; no receiver hook, so safe NFT
+> transfers into a constructed holder are refused by the token — review
+> r13/r16/r27), `RewardCustodyFacet` (the Diamond
 > CONSTRUCTS its own holders — one-shot bind; a paused replacement that
 > creates the successor, moves the whole balance and flips the pointer in
 > one transaction, verifying BOTH ends of the move — the successor grew and
@@ -5985,7 +5989,13 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > pause — read directly from the pause library's slot, so a manual pause
 > beside a watcher window counts — and is pinned to a pause epoch the refresh
 > re-verifies before its first transaction; the native sweep verifies the
-> holder's debit like every other release (review r26). Simulations neither create nor erase
+> holder's debit like every other release (review r26). The pause epoch is
+> the pause library's strictly monotonic transition count (a lift-and-reapply
+> inside one block moves it where a timestamp would not), the OPERATOR states
+> the epoch the answer was established at, and the rebase refuses a stale
+> epoch ON CHAIN (`rebaseArmedFreshPaid(total, pauseEpoch)`); the pre-flight
+> also checks the signer's ADMIN_ROLE wherever [4b] will bind, and a chain
+> left paused is reported as such, never as ordinary completion (review r27). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

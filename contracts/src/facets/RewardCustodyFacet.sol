@@ -610,15 +610,30 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         above the interaction pool's lifetime cap, which the call
      *         refuses: nothing honest can have paid out more than can ever
      *         be rewarded, and a mistyped figure would be irreversible.
-     * @param  total The reconstructed absolute paid total.
+     * @param  total      The reconstructed absolute paid total.
+     * @param  pauseEpoch The pause epoch — the pause library's transition
+     *                    count — at which the caller established `total`
+     *                    under the manual pause. The call refuses unless it
+     *                    is still the live epoch (Codex #2158 r26/r27 P1): a
+     *                    figure reconstructed from a live chain, or under a
+     *                    pause that was lifted and re-applied since, may omit
+     *                    a payout the old counter never charged, and this
+     *                    one-shot would seal it. The contract holds the rule
+     *                    so no tooling can pair a stale answer with a fresh
+     *                    pause.
      */
     function rebaseArmedFreshPaid(
-        uint256 total
+        uint256 total,
+        uint64 pauseEpoch
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidRebased) {
             revert IVaipakamErrors.ArmedFreshPaidAlreadyRebased();
+        }
+        uint64 liveEpoch = LibPausable.pauseTransitions();
+        if (pauseEpoch != liveEpoch) {
+            revert IVaipakamErrors.ArmedFreshRebaseStalePauseEpoch(pauseEpoch, liveEpoch);
         }
         // Bounded to what can ever be rewarded (Codex #2158 r11 P1): the
         // call is one-shot and a floor, so a mistyped total above the pool

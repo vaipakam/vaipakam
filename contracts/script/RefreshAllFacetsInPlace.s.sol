@@ -272,23 +272,28 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // And when a MIGRATION IS DUE — the P1-b seed or the slice-4 rebase
         // has not run on this Diamond — the pause must already be in force,
         // manually, and CONTINUOUSLY since the answer was established (Codex
-        // #2158 r26 P1 ×2): the pre-flight read the pause epoch
-        // (`lastPauseBoundaryAt`) under the manual pause and exported it as
-        // ARMED_FRESH_PAUSE_EPOCH; a different epoch here means the pause was
-        // lifted or re-applied since, and a payout in that gap never reaches
-        // the counter the one-shot guard is about to seal — so this run
-        // refuses before its first transaction rather than "repairing" the
-        // pause and consuming a stale answer. A no-history declaration is
-        // pinned the same way: a payout in the gap would falsify it. Both are
+        // #2158 r26 P1 ×2, r27 P1 ×2): the OPERATOR states the pause epoch
+        // (the pause library's strictly monotonic transition count) at which
+        // they established the seed / total / no-history answer under the
+        // manual pause, as ARMED_FRESH_PAUSE_EPOCH; this run refuses before
+        // its first transaction unless that is still the live epoch. A lift
+        // and re-apply in between — even inside one block, which a timestamp
+        // could not tell apart — moves the count, and a payout in that gap
+        // never reaches the counter the one-shot guard is about to seal; the
+        // answer is therefore bound to the pause it was taken under, never
+        // paired with whatever pause happens to be in force. The rebase
+        // enforces the same epoch ON CHAIN. A no-history declaration is bound
+        // the same way: a payout in the gap would falsify it. The state is
         // read from the pause library's one slot (`vm.load`), which a
         // pre-refresh Diamond exposes before any newer getter is routed.
         // Forge's pre-send simulation re-runs this check immediately before
         // each broadcast, so it holds at that moment too.
+        uint64 pauseEpoch;
         {
             bool seeded = _probeBool(diamond, IArmedFreshPaidSeed.armedFreshPaidSeeded.selector);
             bool rebased = _probeBool(diamond, RewardCustodyFacet.armedFreshPaidRebased.selector);
             if (!seeded || !rebased) {
-                (bool manual,, uint64 epochNow) =
+                (bool manual,,, uint64 epochNow) =
                     LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
                 require(
                     manual,
@@ -300,20 +305,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
                 require(
                     epoch != type(uint256).max,
-                    "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch "
-                    "(AdminFacet lastPauseBoundaryAt, or the pause library slot) observed when the "
-                    "seed / total / no-history answer was established under the manual pause; the "
-                    "orchestrator exports it from its pre-flight. Refusing to consume an answer "
-                    "whose pause cannot be shown continuous."
+                    "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch (the "
+                    "pause library's transition count, bytes 17..24 of its storage slot) at which "
+                    "YOU established the seed / total / no-history answer under the manual pause. "
+                    "Refusing to pair an answer with a pause it was not taken under."
                 );
                 require(
                     epoch == uint256(epochNow),
-                    "RefreshAllFacetsInPlace: the pause state changed since the answer was established "
-                    "(the pause was lifted or re-applied) - a payout in between never reaches the "
-                    "counter this migration seals. Re-establish the answer under a pause that then "
-                    "stays in force, and re-run the pre-flight"
+                    "RefreshAllFacetsInPlace: the stated pause epoch is not the live one - the pause "
+                    "was lifted or re-applied since the answer was established, and a payout in "
+                    "between never reaches the counter this migration seals. Re-establish the "
+                    "answer under the current pause and state its epoch"
                 );
-                console.log("paid-side migration due: manual pause continuous since epoch", epoch);
+                pauseEpoch = uint64(epoch);
+                console.log("paid-side migration due: manual pause continuous at the stated epoch", epoch);
             }
         }
         // Codex #992 — pause the diamond across the batched cuts so no
@@ -335,7 +340,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // (idempotent) and is then LEFT paused for a fresh Unpauser decision
         // — this script restores service only where it found the Diamond
         // live.
-        (bool manuallyPaused,,) =
+        (bool manuallyPaused,,,) =
             LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
         if (!manuallyPaused) AdminFacet(diamond).pause();
 
@@ -1100,7 +1105,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     total
                 );
             } else {
-                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total);
+                // The contract re-checks the epoch itself (r27 P1).
+                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total, pauseEpoch);
                 console.log("slice-4: rebased armed-fresh paid side to total:", total);
             }
         }

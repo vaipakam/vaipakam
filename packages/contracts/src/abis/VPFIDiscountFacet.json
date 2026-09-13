@@ -686,6 +686,22 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshRebaseStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ArmedFreshRebaseTotalExceedsCap",
     "inputs": [
       {

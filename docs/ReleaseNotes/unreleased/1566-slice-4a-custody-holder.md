@@ -84,16 +84,23 @@ Diamond is still paused, after the reward-role backfill and before service
 resumes, and refuses to default the figure: the operator states the
 reconstructed total or declares there is none. Every answer to a due
 migration — the older seed, this total, or a declaration that there is no
-history — is accepted only from a chain that could not move while it was
-established and that has not moved since: the pre-flight refuses to proceed
-for a chain with a migration due unless the platform is already under its
-manual pause (read directly, so a manual pause beside a watcher's automatic
-window counts), it pins that chain's pause epoch, and the refresh refuses the
-migration unless the chain is still manually paused at that very epoch,
-re-checked immediately before each broadcast, so a pause lifted or re-applied
-at any point in between refuses with nothing sent. The refresh itself pauses
-as its very first transaction, before any implementation is deployed, and
-never pauses on the operator's behalf over a due migration. The
+history — is bound to the pause it was established under: the platform now
+counts every pause-state transition (a count a lift-and-reapply moves even
+inside one block, where a timestamp could not tell the two apart), the
+operator states the count at which the answer was established under the
+manual pause, and the rebase itself refuses a stated count that is no longer
+the live one, so no tooling can pair a stale answer with whatever pause
+happens to be in force. The multi-chain pre-flight refuses to proceed for a
+chain with a migration due unless the platform is already under its manual
+pause (read directly, so a manual pause beside a watcher's automatic window
+counts) at the stated count, the refresh refuses again before its first
+transaction and immediately before each broadcast, and it never pauses on
+the operator's behalf over a due migration. The refresh itself pauses as its
+very first transaction, before any implementation is deployed; a chain it
+found paused is left paused and reported as such — user operations stay
+disabled until a fresh unpause decision — never as ordinary completion. The
+pre-flight also checks, before any broadcast, that the signer can perform the
+post-refresh holder binding wherever one will be needed. The
 refresh also decides a deferral from what it reads rather than by calling
 into a refusal, so a deferred rebase on a detached chain never puts a failing
 transaction on the broadcast — and the multi-chain

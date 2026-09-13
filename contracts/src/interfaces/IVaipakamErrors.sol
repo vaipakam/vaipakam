@@ -320,6 +320,13 @@ interface IVaipakamErrors {
     /// @param unattributed The remainder no row describes (held minus
     ///                     attributed) at the time of the call.
     error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
+    ///         with a pause epoch that is not the live one: the figure was
+    ///         established under a different pause (or none), and a payout in
+    ///         between may be missing from it.
+    /// @param stated The pause epoch the caller established the figure at.
+    /// @param live   The pause library's current transition count.
+    error ArmedFreshRebaseStalePauseEpoch(uint64 stated, uint64 live);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

@@ -134,16 +134,24 @@
 #
 #   EVERY answer to a due migration — a stated seed or total, or a
 #   NO_HISTORY declaration — must have been established from a chain that
-#   could not move: the pre-flight refuses to proceed for a chain with a
-#   migration due unless the Diamond is already under the MANUAL pause (read
-#   directly from the pause library's storage slot, so a manual pause beside
-#   a watcher window counts), it pins that chain's pause EPOCH
-#   (ARMED_FRESH_PAUSE_EPOCH_<PREFIX>, exported per chain like the answers),
-#   and the refresh refuses the migration unless the chain is still manually
-#   paused at that very epoch — forge re-checks it immediately before each
-#   broadcast, so a pause lifted or re-applied at any point after the
-#   pre-flight refuses with nothing sent. The refresh itself also pauses as
-#   its first transaction, before the implementation deploys.
+#   could not move, and be BOUND to that pause: pause the Diamond manually,
+#   establish the answer from the paused chain, and state the pause EPOCH
+#   you established it at:
+#
+#     ARMED_FRESH_PAUSE_EPOCH_<PREFIX>       the pause library's transition count at
+#                                            that moment (bytes 17..24 of its storage
+#                                            slot; the pre-flight reports the live one)
+#
+#   The pre-flight refuses a chain with a migration due unless it is under
+#   the MANUAL pause (read directly from the pause slot, so a manual pause
+#   beside a watcher window counts) AND the stated epoch is the live one;
+#   the refresh refuses again before its first transaction (forge re-checks
+#   immediately before each broadcast); and the rebase refuses ON CHAIN. A
+#   lift-and-reapply moves the count even inside one block, so a stale
+#   answer can never be paired with a fresh pause. The refresh itself also
+#   pauses as its first transaction, before the implementation deploys, and
+#   leaves a chain it found paused PAUSED — reported as such, not as
+#   ordinary completion.
 #
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
@@ -432,9 +440,9 @@ for slug in $CHAINS; do
   # a role divergence (rotation / revocation) would otherwise fail only AFTER
   # the cuts already landed — a partial redeploy. Verifying here fails before
   # any broadcast. Needs cast; skipped (with a warning) if absent.
+  admin_addr="$(cast wallet address --private-key "$ADMIN_PRIVATE_KEY" 2>/dev/null)" \
+    || fail "could not derive admin address from ADMIN_PRIVATE_KEY"
   if [ "$SKIP_VAULT" -eq 0 ] && command -v cast >/dev/null 2>&1; then
-    admin_addr="$(cast wallet address --private-key "$ADMIN_PRIVATE_KEY" 2>/dev/null)" \
-      || fail "could not derive admin address from ADMIN_PRIVATE_KEY"
     role="$(cast keccak 'VAULT_ADMIN_ROLE')"
     dfile="deployments/$slug/addresses.json"
     diamond="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
@@ -521,22 +529,27 @@ for slug in $CHAINS; do
   fi
   # An ANSWER to a one-shot migration — a stated seed, a stated total, OR a
   # no-history declaration — is only as good as the moment it was
-  # established (Codex #2158 r25 P1, r26 P1 ×2): a payout between then and
-  # the refresh's pause is charged to the old counter under the old rules,
-  # never reaches the seeded or rebased figure, and falsifies "no history"
-  # just as surely. The refresh pauses as its FIRST transaction, closing the
-  # window inside the run; the window before it is closed here: every chain
-  # on which a migration is still DUE (not yet seeded, or not yet rebased)
-  # must already be under the MANUAL pause when this pre-flight runs, and
-  # its pause EPOCH is exported so the refresh can refuse if the pause was
-  # lifted or re-applied at any point after this read — forge re-runs that
-  # check immediately before each broadcast. Both facts come from the pause
-  # library's ONE storage slot (LibPausable.PAUSABLE_STORAGE_POSITION:
-  # `paused` at byte 0, the auto-pause deadline in the next 8 bytes, the
-  # last pause-boundary timestamp in the 8 after that), read raw because a
-  # pre-refresh Diamond routes no newer getter; the manual flag is read
-  # DIRECTLY, so a manual pause that coexists with a watcher window counts
-  # (r26 P2). The decode mirrors LibPausable.decodePausableSlot.
+  # established (Codex #2158 r25 P1, r26 P1 ×2, r27 P1 ×2): a payout between
+  # then and the refresh's pause is charged to the old counter under the old
+  # rules, never reaches the seeded or rebased figure, and falsifies "no
+  # history" just as surely. The refresh pauses as its FIRST transaction,
+  # closing the window inside the run; the window before it is closed here:
+  # every chain on which a migration is still DUE (not yet seeded, or not yet
+  # rebased) must already be under the MANUAL pause when this pre-flight
+  # runs, and the OPERATOR states the pause EPOCH at which the answer was
+  # established — the pause library's strictly monotonic transition count,
+  # which a lift-and-reapply moves even inside one block — which must equal
+  # the live epoch here, again in the refresh before its first transaction
+  # (forge re-runs that immediately before each broadcast), and once more ON
+  # CHAIN in the rebase itself. An answer is thereby bound to the pause it
+  # was taken under, never paired with whatever pause is in force. The state
+  # comes from the pause library's ONE storage slot
+  # (LibPausable.PAUSABLE_STORAGE_POSITION: `paused` at byte 0, the
+  # auto-pause deadline in the next 8 bytes, the last boundary timestamp in
+  # the 8 after that, the transition count in the 8 after those), read raw
+  # because a pre-refresh Diamond routes no newer getter; the manual flag is
+  # read DIRECTLY, so a manual pause that coexists with a watcher window
+  # counts (r26 P2). The decode mirrors LibPausable.decodePausableSlot.
   pause_slot="0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400"
   manual_paused=""; pause_epoch=""
   if [ -n "${diamond2:-}" ]; then
@@ -547,17 +560,21 @@ for slug in $CHAINS; do
           hex="${raw#0x}"
           # Big-endian word: byte 0 (`paused`) is the LAST two hex digits;
           # bytes 1..8 (the auto-pause deadline) the 16 before them; bytes
-          # 9..16 (`lastPauseBoundaryAt`) the 16 before those — hex[30:46].
+          # 9..16 (`lastPauseBoundaryAt`) the 16 before those; bytes 17..24
+          # (`pauseTransitions`, the epoch) the 16 before those — hex[14:30].
           [ "${hex:62:2}" != "00" ] && manual_paused=true
-          pause_epoch="$(cast to-dec "0x${hex:30:16}")"
+          pause_epoch="$(cast to-dec "0x${hex:14:16}")"
         fi ;;
     esac
   fi
   if [ "$already_seeded" != "true" ] || [ "$already_rebased" != "true" ]; then
-    [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, then re-run. Nothing has been sent"
+    [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, note the pause epoch this pre-flight then reports, and re-run. Nothing has been sent"
     [ -n "$pause_epoch" ] || fail "chain '$slug': the pause epoch could not be read from the pause slot -- refusing to consume a migration answer whose pause cannot be pinned"
-    export "ARMED_FRESH_PAUSE_EPOCH_${pfx}=$pause_epoch"
-    info "$slug: manually paused ✓ (pause epoch $pause_epoch, pinned for the refresh)"
+    epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"; epoch_val="${!epoch_var:-}"
+    [ -n "$epoch_val" ] || fail "chain '$slug': a paid-side migration is DUE -- set \$$epoch_var to the pause EPOCH at which you established the seed / total / no-history answer under the manual pause (the live epoch right now is $pause_epoch; it is the pause library's transition count, bytes 17..24 of its storage slot). Refusing to pair an answer with a pause it was not taken under. Nothing has been sent"
+    case "$epoch_val" in ''|*[!0-9]*) fail "chain '$slug': \$$epoch_var='${epoch_val}' is not a non-negative integer" ;; esac
+    [ "$(dec_norm "$epoch_val")" = "$(dec_norm "$pause_epoch")" ] || fail "chain '$slug': \$$epoch_var=$epoch_val but the live pause epoch is $pause_epoch -- the pause was lifted or re-applied since the answer was established, so the answer may omit a payout; re-establish it under the current pause and state that epoch. Nothing has been sent"
+    info "$slug: manually paused ✓ at the stated pause epoch $epoch_val (the refresh and the rebase re-check it)"
   fi
   if [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
@@ -652,6 +669,18 @@ for slug in $CHAINS; do
       unbound)   info "$slug: reward custody holder unbound; [4b] binds it after the refresh" ;;
       unexecuted) fail "chain '$slug': no reward custody holder is bound but a bind ceremony record exists at deployments/$slug/reward-custody-bind.json -- a staged or direct bind that never executed. DeployRewardCustodyHolder refuses to bind over it, so [4b] would fail after this chain's refresh had already broadcast; execute the staged bind and run record(), or remove the record deliberately, BEFORE any broadcast; nothing has been sent" ;;
       unrouted)  info "$slug: the loupe reports the reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;
+    esac
+    # [4b] will BIND on an unrouted or unbound chain through
+    # DeployRewardCustodyHolder.run(), which refuses unless the signer holds
+    # ADMIN_ROLE — a refusal that would otherwise land only after this
+    # chain's refresh and migrations had broadcast (Codex #2158 r27 P2).
+    # Check it here; a handed-over Diamond takes the staged path instead.
+    case "$holder_st" in
+      unrouted|unbound)
+        admin_role="$(cast keccak 'ADMIN_ROLE')"
+        has_admin="$(cast call "$diamond2" 'hasRole(bytes32,address)(bool)' "$admin_role" "$admin_addr" --rpc-url "$val" 2>/dev/null || echo '')"
+        [ "$has_admin" = "true" ] || fail "chain '$slug': the post-refresh bind ([4b]) runs DeployRewardCustodyHolder.run(), which requires ADMIN_ROLE on the signer $admin_addr, and this Diamond reports hasRole=${has_admin:-unreadable} -- it would refuse AFTER this chain's refresh had broadcast. Grant the role, or bind this chain through the staged path (--sig \"stage()\" then \"record()\") and select it out of this run. Nothing has been sent"
+        info "$slug: signer holds ADMIN_ROLE for the post-refresh bind ✓" ;;
     esac
   fi
 done
@@ -808,6 +837,9 @@ EOF
     echo "  #   (#1566 role backfill, ALWAYS: prefix with REWARD_ROLE_EXPECTED=\$REWARD_ROLE_EXPECTED_${pfx})"
     echo "  #   (#1566 slice-4 rebase, if not yet rebased: prefix with"
     echo "  #    ARMED_FRESH_PAID_TOTAL=\$ARMED_FRESH_PAID_TOTAL_${pfx}  or  ARMED_FRESH_REBASE_NO_HISTORY=true)"
+    echo "  #   (#1566 slice-4, while a seed or rebase is still due: the Diamond must ALREADY be under the MANUAL pause, and the"
+    echo "  #    answer's pause epoch must be stated -- prefix with ARMED_FRESH_PAUSE_EPOCH=\$ARMED_FRESH_PAUSE_EPOCH_${pfx}; the"
+    echo "  #    refresh refuses the migration unless that is still the live epoch)"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
     echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\";"
     echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
@@ -931,7 +963,18 @@ for slug in $CHAINS; do
   else
     info "[5] $slug — vault upgrade skipped (--skip-vault)"
   fi
-  info "$slug: in-place redeploy complete."
+  # The refresh restores service only where it found the Diamond live; a
+  # chain that had to be paused for a due migration (the normal first
+  # rollout) is LEFT PAUSED for a fresh Unpauser decision, and that is not
+  # ordinary completion (Codex #2158 r27 P2): say so, here and at the end.
+  raw_after="$(cast storage "$diamond3" "$pause_slot" --rpc-url "$rpc" 2>/dev/null || echo '')"
+  hex_after="${raw_after#0x}"
+  if [ "${#hex_after}" -eq 64 ] && [ "${hex_after:62:2}" != "00" ]; then
+    info "$slug: in-place redeploy complete -- the Diamond REMAINS PAUSED (manual): user operations stay disabled until a fresh Unpauser decision (AdminFacet.unpause()) once the migrations are verified; this run does not unpause"
+    paused_chains="${paused_chains:+$paused_chains }$slug"
+  else
+    info "$slug: in-place redeploy complete (service restored: the Diamond was live when the refresh began)."
+  fi
   done_chains="${done_chains:+$done_chains }$slug"
 done
 
@@ -978,4 +1021,7 @@ cat <<EOF
     figure.
 EOF
 
+if [ -n "${paused_chains:-}" ]; then
+  info "PAUSED after this run: [$paused_chains] -- each stays under the manual pause it was refreshed under; resume by a fresh Unpauser decision (AdminFacet.unpause()) once its migrations are verified. Not ordinary completion."
+fi
 banner "DONE"

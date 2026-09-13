@@ -511,7 +511,7 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _custody().replaceRewardCustodyHolder();
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
-        _custody().rebaseArmedFreshPaid(1);
+        _custody().rebaseArmedFreshPaid(1, _epoch());
         _pause(); // the manual pause
         _custody().replaceRewardCustodyHolder();
     }
@@ -532,6 +532,7 @@ contract RewardCustodyFacetTest is SetupTest {
         (bool manual, uint64 until, uint64 boundary) = _decodeLive();
         assertFalse(manual); assertEq(until, 0);
         uint64 setupBoundary = boundary;
+        uint64 t0 = _epoch();
 
         vm.warp(block.timestamp + 100);
         vm.prank(watcher);
@@ -539,28 +540,61 @@ contract RewardCustodyFacetTest is SetupTest {
         (manual, until, boundary) = _decodeLive();
         assertFalse(manual, "auto-pause is not the manual flag");
         assertEq(until, admin.pausedUntil()); assertEq(boundary, block.timestamp);
-        assertGt(boundary, setupBoundary, "the epoch moved with the auto-pause");
+        assertGt(boundary, setupBoundary, "the boundary moved with the auto-pause");
+        assertEq(_epoch(), t0 + 1, "one transition");
 
-        vm.warp(block.timestamp + 10);
-        admin.pause(); // manual pause BESIDE the still-active window
+        admin.pause(); // manual pause BESIDE the still-active window, SAME timestamp
         (manual, until, boundary) = _decodeLive();
         assertTrue(manual, "manual flag read directly");
         assertGt(until, 0, "the window is left intact by pause()");
-        assertEq(boundary, block.timestamp, "the epoch moved with the manual pause");
+        assertEq(boundary, block.timestamp, "same-second boundary: a timestamp cannot tell the two apart");
+        assertEq(_epoch(), t0 + 2, "the transition count can");
 
         admin.unpause();
         (manual, until,) = _decodeLive();
         assertFalse(manual); assertEq(until, 0);
+        assertEq(_epoch(), t0 + 3);
+        admin.unpause(); // a no-op unpause is not a transition
+        assertEq(_epoch(), t0 + 3);
     }
 
-    function _decodeLive() internal view returns (bool, uint64, uint64) {
-        return LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
+    function _decodeLive() internal view returns (bool manual, uint64 until, uint64 boundary) {
+        (manual, until, boundary,) =
+            LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
+    }
+
+    /// @dev The live pause epoch — the transition count — as the tooling
+    ///      reads it: from the pause library's slot.
+    function _epoch() internal view returns (uint64 transitions) {
+        (,,, transitions) =
+            LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
+    }
+
+    /// @dev Codex #2158 r27 P1 — the rebase is bound to the pause epoch the
+    ///      figure was established at: lifting and re-applying the pause
+    ///      moves the transition count, and the stale epoch is refused ON
+    ///      CHAIN, whatever tooling paired it with the fresh pause.
+    function test_Rebase_RefusesAStalePauseEpoch() public {
+        _becomeCanonical();
+        _pause();
+        uint64 established = _epoch();
+        AdminFacet(address(diamond)).unpause(); // a payout could happen here
+        _pause();
+        uint64 live = _epoch();
+        assertEq(live, established + 2, "two transitions");
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshRebaseStalePauseEpoch.selector, established, live)
+        );
+        _custody().rebaseArmedFreshPaid(1_000 ether, established);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard still open");
+        _custody().rebaseArmedFreshPaid(1_000 ether, live);
+        assertTrue(_custody().armedFreshPaidRebased());
     }
 
     function test_Rebase_RequiresPause() public {
         _becomeCanonical();
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
-        _custody().rebaseArmedFreshPaid(1);
+        _custody().rebaseArmedFreshPaid(1, _epoch());
     }
 
     function test_Rebase_IsAdminOnly() public {
@@ -568,7 +602,7 @@ contract RewardCustodyFacetTest is SetupTest {
         _pause();
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
-        _custody().rebaseArmedFreshPaid(1);
+        _custody().rebaseArmedFreshPaid(1, _epoch());
     }
 
     function test_Rebase_Canonical_SetsPaidAndReceivedToTheTotal() public {
@@ -581,7 +615,7 @@ contract RewardCustodyFacetTest is SetupTest {
             uint8(LibVaipakam.RewardRole.Canonical),
             700 ether, 400 ether, 700 ether, 1_000 ether, 700 ether
         );
-        _custody().rebaseArmedFreshPaid(700 ether);
+        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
 
         (uint256 paid,) = _lens().getDeliveredFreshBound();
         assertEq(paid, 700 ether, "paid set to the total");
@@ -596,7 +630,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
         // 60 of payouts followed by a retirement at 400: importing 100 must
         // keep 400, and received follows the RESULT, not the request.
-        _custody().rebaseArmedFreshPaid(100 ether);
+        _custody().rebaseArmedFreshPaid(100 ether, _epoch());
 
         (uint256 paid,) = _lens().getDeliveredFreshBound();
         assertEq(paid, 400 ether, "existing counter is the floor");
@@ -613,7 +647,7 @@ contract RewardCustodyFacetTest is SetupTest {
             uint8(LibVaipakam.RewardRole.Mirror),
             700 ether, 400 ether, 700 ether, 1_000 ether, 1_000 ether
         );
-        _custody().rebaseArmedFreshPaid(700 ether);
+        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
 
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
         assertEq(paid, 700 ether, "paid set to the total");
@@ -625,7 +659,7 @@ contract RewardCustodyFacetTest is SetupTest {
         _becomeMirror();
         _mut().setArmedFreshLedgerRaw(500 ether, 0);
         _pause();
-        _custody().rebaseArmedFreshPaid(800 ether);
+        _custody().rebaseArmedFreshPaid(800 ether, _epoch());
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
         assertEq(paid, 800 ether);
         assertEq(remaining, 0, "over-paid mirror has no headroom, not an underflow");
@@ -643,12 +677,12 @@ contract RewardCustodyFacetTest is SetupTest {
                 IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
             )
         );
-        _custody().rebaseArmedFreshPaid(cap + 1);
+        _custody().rebaseArmedFreshPaid(cap + 1, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard untouched");
         assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
 
         // Exactly the cap is the largest honest figure and is accepted.
-        _custody().rebaseArmedFreshPaid(cap);
+        _custody().rebaseArmedFreshPaid(cap, _epoch());
         (uint256 received, uint256 paid) = _custody().armedFreshLedger();
         assertEq(paid, cap);
         assertEq(received, cap);
@@ -668,7 +702,7 @@ contract RewardCustodyFacetTest is SetupTest {
                 IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
             )
         );
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard left open for correction");
     }
 
@@ -687,9 +721,9 @@ contract RewardCustodyFacetTest is SetupTest {
     function test_Rebase_IsOneShot() public {
         _becomeCanonical();
         _pause();
-        _custody().rebaseArmedFreshPaid(10 ether);
+        _custody().rebaseArmedFreshPaid(10 ether, _epoch());
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector);
-        _custody().rebaseArmedFreshPaid(20 ether);
+        _custody().rebaseArmedFreshPaid(20 ether, _epoch());
         (uint256 paid,) = _lens().getDeliveredFreshBound();
         assertEq(paid, 10 ether, "a refused re-run changes nothing");
     }
@@ -699,7 +733,7 @@ contract RewardCustodyFacetTest is SetupTest {
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
         assertFalse(_rep().armedFreshPaidSeeded(), "seeder never ran");
         _pause();
-        _custody().rebaseArmedFreshPaid(300 ether);
+        _custody().rebaseArmedFreshPaid(300 ether, _epoch());
         assertTrue(_rep().armedFreshPaidSeeded(), "rebase consumed the seed guard");
 
         // The stale additive path can no longer double-count on top.
@@ -716,7 +750,7 @@ contract RewardCustodyFacetTest is SetupTest {
         assertTrue(_rep().armedFreshPaidSeeded());
         _pause();
         // Closure 2 widened the paid history: the reconciled total is 650.
-        _custody().rebaseArmedFreshPaid(650 ether);
+        _custody().rebaseArmedFreshPaid(650 ether, _epoch());
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
         assertEq(paid, 650 ether, "set, not added: 400 + 650 would be wrong");
         assertEq(remaining, 350 ether);
@@ -730,7 +764,7 @@ contract RewardCustodyFacetTest is SetupTest {
         emit ArmedFreshPaidRebased(
             uint8(LibVaipakam.RewardRole.Unconfigured), 0, 0, 0, 0, 0
         );
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertTrue(_custody().armedFreshPaidRebased());
         assertTrue(_rep().armedFreshPaidSeeded());
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
@@ -753,7 +787,7 @@ contract RewardCustodyFacetTest is SetupTest {
                 0
             )
         );
-        _custody().rebaseArmedFreshPaid(5 ether);
+        _custody().rebaseArmedFreshPaid(5 ether, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
         assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
     }
@@ -772,14 +806,14 @@ contract RewardCustodyFacetTest is SetupTest {
                 0
             )
         );
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
     }
 
     function test_Rebase_Detached_HistoryFreeChainConsumesGuards() public {
         _becomeDetached();
         _pause();
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertTrue(_custody().armedFreshPaidRebased());
         assertTrue(_rep().armedFreshPaidSeeded());
     }
@@ -799,12 +833,12 @@ contract RewardCustodyFacetTest is SetupTest {
                 0
             )
         );
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard stays open for re-attachment");
 
         // Re-attached as a mirror, the same call now runs.
         _becomeMirror();
-        _custody().rebaseArmedFreshPaid(700 ether);
+        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
         (, uint256 paid) = _custody().armedFreshLedger();
         assertEq(paid, 700 ether);
         assertTrue(_custody().armedFreshPaidRebased());
@@ -828,7 +862,7 @@ contract RewardCustodyFacetTest is SetupTest {
                 800 ether
             )
         );
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
 
         // Promoted DIRECTLY to Canonical (never through Mirror, so no
@@ -840,7 +874,7 @@ contract RewardCustodyFacetTest is SetupTest {
         (uint256 receivedBefore, uint256 paidBefore) = _custody().armedFreshLedger();
         assertEq(receivedBefore, 800 ether, "direct promotion left the stale received side in place");
         assertEq(paidBefore, 0);
-        _custody().rebaseArmedFreshPaid(0);
+        _custody().rebaseArmedFreshPaid(0, _epoch());
         (uint256 received, uint256 paid) = _custody().armedFreshLedger();
         assertEq(paid, 0);
         assertEq(received, 0, "canonical: received levelled to paid, the stale headroom is gone");

@@ -45,6 +45,15 @@ library LibPausable {
         // gated action would have reverted, so it must not count as
         // executable time. Zero ⇒ the pause state has never changed.
         uint64 lastPauseBoundaryAt;
+        // #1566 slice 4 PR A (Codex #2158 r27 P1) — a strictly monotonic count
+        // of pause-state transitions: every `pause()`, every `unpause()` that
+        // clears an active pause, every `autoPause()` that sets a window.
+        // The pause EPOCH a one-shot migration is bound to: an answer
+        // established under the manual pause at epoch N is only consumed
+        // while the epoch is still N, so a lift-and-reapply in between —
+        // even within one block, which a second-resolution timestamp cannot
+        // tell apart — refuses it. Packs into this same slot (bytes 17..24).
+        uint64 pauseTransitions;
     }
 
     /// @custom:event-category informational/admin
@@ -100,22 +109,29 @@ library LibPausable {
         return _storage().paused;
     }
 
-    /// @dev Decode the raw first slot of {PausableStorage} — the three fields
+    /// @dev The pause epoch: the strictly monotonic transition count.
+    function pauseTransitions() internal view returns (uint64) {
+        return _storage().pauseTransitions;
+    }
+
+    /// @dev Decode the raw first slot of {PausableStorage} — the four fields
     ///      pack into it: `paused` at byte 0, `pausedUntilTimestamp` in the
-    ///      next 8 bytes, `lastPauseBoundaryAt` in the 8 after that. The ONE
-    ///      implementation of that layout for every reader that must see the
-    ///      pause state before a refresh has routed the getters (the in-place
-    ///      refresh script via `vm.load`); the orchestrator's shell mirror of
-    ///      it is pinned to this function by test.
+    ///      next 8 bytes, `lastPauseBoundaryAt` in the 8 after that, and
+    ///      `pauseTransitions` in the 8 after those. The ONE implementation
+    ///      of that layout for every reader that must see the pause state
+    ///      before a refresh has routed the getters (the deploy scripts via
+    ///      `vm.load`); the orchestrator's shell mirror of it is pinned to
+    ///      this function by test.
     function decodePausableSlot(bytes32 raw)
         internal
         pure
-        returns (bool manual, uint64 pausedUntilTimestamp, uint64 lastBoundaryAt)
+        returns (bool manual, uint64 pausedUntilTimestamp, uint64 lastBoundaryAt, uint64 transitions)
     {
         uint256 word = uint256(raw);
         manual = uint8(word) != 0;
         pausedUntilTimestamp = uint64(word >> 8);
         lastBoundaryAt = uint64(word >> 72);
+        transitions = uint64(word >> 136);
     }
 
     /// @dev The MANUAL pause only — an auto-pause window does not qualify.
@@ -133,6 +149,7 @@ library LibPausable {
         PausableStorage storage ps = _storage();
         ps.paused = true;
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        ++ps.pauseTransitions;
         emit Paused(msg.sender);
     }
 
@@ -152,6 +169,7 @@ library LibPausable {
         ps.pausedUntilTimestamp = 0;
         if (wasPaused) {
             ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+            ++ps.pauseTransitions;
         }
         emit Unpaused(msg.sender);
     }
@@ -177,6 +195,7 @@ library LibPausable {
         // an auto-pause; a later observation whose prior sample predates it
         // still discards the interval that straddled the (now-elapsed) window.
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        ++ps.pauseTransitions;
         emit AutoPaused(msg.sender, reason, until);
     }
 
