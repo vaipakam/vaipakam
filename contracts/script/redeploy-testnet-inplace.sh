@@ -137,7 +137,10 @@
 #   skipped): every refusal the forge script can raise on chain lands there,
 #   with nothing sent, and a dry run writes no artifact. The bound-holder /
 #   artifact relation is classified in the pre-flight too, by the same rule
-#   [4b] applies after the refresh: a divergence refuses before any broadcast.
+#   [4b] applies after the refresh: a divergence refuses before any broadcast,
+#   and a pending bind record is validated by the ceremony script's own
+#   check() (what record() will require) before it is accepted as the
+#   explanation.
 #
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
@@ -229,7 +232,11 @@ dec_add() {
 #             proven live by the chain-id check, so a failed read is a revert)
 #   unbound   routed and zero: the one-shot bind is owed
 #   recorded  bound, and the artifact names the same holder
-#   pending   bound, artifact differs, a bind ceremony record awaits record()
+#   pending   bound, artifact differs, a bind ceremony record file exists —
+#             the pre-flight then VALIDATES it through the ceremony script's
+#             own check() (the same _readRecord record() runs: parseable,
+#             names this Diamond) before accepting it as the explanation
+#             (Codex #2158 r17 P2); a file alone explains nothing
 #   diverged  bound, artifact differs, and no record explains it
 #   malformed the getter answered something that is not an address
 holder_state() {
@@ -528,7 +535,15 @@ for slug in $CHAINS; do
     case "$holder_st" in
       diverged)  fail "chain '$slug': the Diamond reports reward custody holder $holder_addr but the artifact records a different (or no) address and no bind ceremony record is pending -- reconcile deployments/$slug/addresses.json (.rewardCustodyHolder) by hand BEFORE any broadcast; nothing has been sent" ;;
       malformed) fail "chain '$slug': rewardCustodyHolder() returned a malformed answer '$holder_addr' -- refusing to proceed" ;;
-      pending)   info "$slug: reward custody holder $holder_addr is bound and its bind ceremony record is pending; [4b] reconciles the artifact after the refresh" ;;
+      pending)
+        # The record explains the divergence only if record() will accept it
+        # (Codex #2158 r17 P2): validated NOW, by the ceremony script's own
+        # check() — the one _readRecord that record() runs — never by a shell
+        # re-reading of the JSON. A stale or foreign record refuses here,
+        # with nothing sent, instead of at record() after the refresh.
+        "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "check()" --rpc-url "$val" \
+          || fail "chain '$slug': the Diamond reports reward custody holder $holder_addr, the artifact does not, and the pending bind ceremony record deployments/$slug/reward-custody-bind.json does NOT validate (malformed, or names a different Diamond) -- record() would refuse it after the refresh; fix or remove the record deliberately BEFORE any broadcast; nothing has been sent"
+        info "$slug: reward custody holder $holder_addr is bound and a VALID bind ceremony record is pending; [4b] reconciles the artifact after the refresh" ;;
       recorded)  info "$slug: reward custody holder $holder_addr bound and recorded ✓" ;;
       unbound)   info "$slug: reward custody holder unbound; [4b] binds it after the refresh" ;;
       unrouted)  info "$slug: reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;

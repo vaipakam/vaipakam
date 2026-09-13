@@ -89,6 +89,18 @@ contract RevertingBalanceToken {
     }
 }
 
+/// @dev An ERC-721 whose safe transfer returns without moving ownership — a
+///      proxy upgraded into a broken implementation. The sweep must refuse.
+contract NoopERC721 {
+    mapping(uint256 => address) public ownerOf;
+
+    function mint(address to, uint256 id) external {
+        ownerOf[id] = to;
+    }
+
+    function safeTransferFrom(address, address, uint256) external {}
+}
+
 /**
  * @title RewardCustodyFacetTest — #1566 slice 4 PR A
  * @notice The holder's Diamond gate, the one-shot Diamond-constructed
@@ -960,6 +972,23 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
         _custody().sweepERC1155FromRewardCustody(holder, address(units), 7, 1);
+    }
+
+    /// @dev Codex #2158 r17 P2 — the sweep reads ownership back: a token
+    ///      whose transfer returns without moving anything is refused, so no
+    ///      "recovered" event can stand over an NFT still in the holder.
+    function test_Sweep_RefusesAnERC721ThatDidNotMove() public {
+        address holder = _bind();
+        _treasury();
+        NoopERC721 broken = new NoopERC721();
+        broken.mint(holder, 9);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodyErc721NotDelivered.selector, address(broken), 9, holder
+            )
+        );
+        _custody().sweepERC721FromRewardCustody(holder, address(broken), 9);
+        assertEq(broken.ownerOf(9), holder, "nothing moved, nothing reported");
     }
 
     function test_SweepNative_IsAdminOnly() public {

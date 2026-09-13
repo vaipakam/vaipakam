@@ -84,8 +84,23 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         string memory obj = "ceremony";
         vm.serializeAddress(obj, "diamond", diamond);
         vm.serializeString(obj, "mode", "direct");
-        string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
+        // The fork head this run was PREPARED against — Forge evaluates the
+        // script, cheatcodes included, before it submits the transaction, so
+        // no inclusion block is knowable here and none is claimed (Codex
+        // #2158 r17 P2). Inclusion is proven by record(), from live state.
+        string memory json = vm.serializeUint(obj, "preparedAtBlock", block.number);
         _writeRecord(KIND, json, true);
+    }
+
+    /// @notice Validate the pending ceremony record and write nothing: it
+    ///         must exist, parse, and name this Diamond — exactly what
+    ///         record() requires. The orchestrator's all-chain pre-flight
+    ///         runs this for a chain whose Diamond reports a holder the
+    ///         artifact does not, so a stale or foreign record refuses BEFORE
+    ///         any broadcast rather than at record() after the refresh
+    ///         (Codex #2158 r17 P2).
+    function check() external view {
+        _checkRecord(KIND);
     }
 
     function stage() external {

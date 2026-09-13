@@ -3901,6 +3901,27 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyErc721NotDelivered",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyHolderAlreadyBound",
     "inputs": []
   },

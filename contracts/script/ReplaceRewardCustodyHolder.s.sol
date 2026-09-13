@@ -101,9 +101,17 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         vm.serializeAddress(obj, "diamond", diamond);
         vm.serializeAddress(obj, "previousHolder", previous);
         vm.serializeString(obj, "mode", "direct");
-        string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
+        // The fork head this run was PREPARED against, not an inclusion
+        // block — see DeployRewardCustodyHolder.run() (Codex #2158 r17 P2).
+        string memory json = vm.serializeUint(obj, "preparedAtBlock", block.number);
         _writeRecord(KIND, json, true);
         console.log("The Diamond is left PAUSED. Resume service by a fresh Unpauser decision once record() has confirmed the ceremony and nothing else holds the pause.");
+    }
+
+    /// @notice Validate the pending replacement record and write nothing —
+    ///         what record() will require (Codex #2158 r17 P2).
+    function check() external view {
+        _checkRecord(KIND);
     }
 
     function stage() external {

@@ -5952,7 +5952,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > the post-refresh bind step applies (review r16). An NFT that reached a holder
 > — a non-safe ERC-721 transfer, or delivery to the predicted address before
 > construction; a constructed holder refuses safe transfers — is recoverable
-> to the treasury from any registered holder (review r16). Simulations neither create nor erase
+> to the treasury from any registered holder (review r16), a single-token
+> recovery reported only once the treasury reads as the owner (review r17); a
+> pending record is accepted by the pre-flight only after the ceremony script's
+> own validation, and a direct run's record names the block it was PREPARED
+> against, never an inclusion block (review r17). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

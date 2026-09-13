@@ -23,7 +23,9 @@ treasury the same way, and so is an NFT that reached a holder: a constructed
 holder refuses a safe transfer of one, but a non-safe transfer, or delivery to
 the holder's predicted address before it exists, still lands there and nothing
 else could ever move it, so an administrator can recover a single-token NFT or
-multi-token units from any platform-constructed holder to the treasury only.
+multi-token units from any platform-constructed holder to the treasury only —
+and a single-token recovery is reported only after the token reads as owned by
+the treasury, so a token that did not move is refused rather than reported.
 The sweeps act only on holders the platform itself
 constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
@@ -81,7 +83,12 @@ with nothing sent, and a simulation writes nothing to the deployment record.
 The relation between a chain's bound holder and its deployment record is
 classified before any broadcast by the same rule the post-refresh step
 applies, so a record that names a different holder than the chain, with no
-ceremony record to explain it, refuses the run before anything is sent. On a chain whose reward role is
+ceremony record to explain it, refuses the run before anything is sent; a
+pending ceremony record is accepted as the explanation only after the ceremony
+script itself validates it, the same way the record step will. A direct
+ceremony's pending record names only what its run can know — the deployment,
+the mode and the block it was prepared against — never an inclusion block,
+which is proven by the record step from live chain state. On a chain whose reward role is
 inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
@@ -360,9 +361,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         nothing else could ever move it (Codex #2158 r16 P2). Outside
      *         the attribution ledger and the VPFI snapshot like every foreign
      *         asset; delivers to the configured treasury and to nowhere else,
-     *         and only from a holder in the constructed registry. A
-     *         conforming ERC-721 reverts unless the transfer happened, so
-     *         there is no separate receipt to measure.
+     *         and only from a holder in the constructed registry. Ownership
+     *         is read back after the release and the sweep refuses unless the
+     *         treasury owns the token (Codex #2158 r17 P2): a non-conforming
+     *         token, or a proxy upgraded into an implementation whose
+     *         transfer returns without moving anything, must not leave the
+     *         NFT stranded behind a "recovered" event.
      * @param  holder  A holder this Diamond constructed (bound or previous).
      * @param  token   The ERC-721 contract.
      * @param  tokenId The token to recover.
@@ -378,6 +382,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
         RewardCustodyHolder(holder).releaseERC721(token, treasury, tokenId);
+        address owner = IERC721(token).ownerOf(tokenId);
+        if (owner != treasury) {
+            revert IVaipakamErrors.RewardCustodyErc721NotDelivered(token, tokenId, owner);
+        }
         emit RewardCustodyERC721Swept(holder, token, treasury, tokenId);
     }
 

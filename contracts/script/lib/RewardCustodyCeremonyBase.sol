@@ -131,6 +131,17 @@ abstract contract RewardCustodyCeremonyBase is Script {
         );
     }
 
+    /// @dev The validation `record()` applies to a pending record, on its
+    ///      own and writing nothing: existence, parseable JSON, and the
+    ///      Diamond identity. One implementation — a caller that wants to
+    ///      know whether `record()` will accept the record runs this rather
+    ///      than re-reading the JSON itself (Codex #2158 r17 P2).
+    function _checkRecord(string memory kind) internal view {
+        string memory json = _readRecord(kind);
+        console.log("Ceremony record is valid for this Diamond:", _recordPath(kind));
+        console.log("mode:", vm.parseJsonString(json, ".mode"));
+    }
+
     /// @dev Remove the record only when the artifact was actually written —
     ///      `record()` is non-broadcasting, so its own rule applies.
     function _removeRecord(string memory kind) internal {

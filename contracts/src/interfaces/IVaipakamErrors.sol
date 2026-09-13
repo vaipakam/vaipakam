@@ -302,6 +302,16 @@ interface IVaipakamErrors {
     /// @param debited  What the source's balance actually fell by (zero when
     ///                 it did not fall).
     error RewardCustodySourceNotDebited(address source, uint256 expected, uint256 debited);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r17 P2) — after the ERC-721
+    ///         release the treasury does not own the token. A non-conforming
+    ///         token, or a proxy upgraded into an implementation whose
+    ///         transfer returns without moving anything, would otherwise
+    ///         leave the NFT stranded in the holder behind a "recovered"
+    ///         event.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token that did not move.
+    /// @param owner   Who the token reports as its owner after the release.
+    error RewardCustodyErc721NotDelivered(address token, uint256 tokenId, address owner);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and
