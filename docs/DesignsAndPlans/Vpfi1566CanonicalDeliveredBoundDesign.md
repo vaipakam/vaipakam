@@ -6093,9 +6093,13 @@ PR C.**
   the recorded gap, touching no `received` counter) or an atomic write-down
   of the imported ledger figures to what the holder backs — so no Mirror
   binds the holder with ghost headroom or with previously funded claims
-  refused → verify the PR-A baseline the same way (or run the deferred rebase
-  under the now-active role) → switch custody reads to the holder PR A bound
-  → unpause. No deployed Mirror carries a non-zero ledger
+  refused → verify ROLE-BRANCHED (review r8): a Mirror does NOT require
+  `received == paid` — its remaining `received − paid` is expected and must
+  reconcile to the holder position just credited or written down (a
+  custody-only credit changes no `received` counter) — while
+  `armedFreshPaidRebased()` must be true, the deferred rebase having run
+  under the now-active role if the refresh deferred it → switch custody
+  reads to the holder PR A bound → unpause. No deployed Mirror carries a non-zero ledger
   today, so each ceremony is expected to record a verified zero; the rule is
   stated so the ceremony cannot be skipped on that expectation.
 - Tests: a canonical claim is refused with nothing funded and pays once

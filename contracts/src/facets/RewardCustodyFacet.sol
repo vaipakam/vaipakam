@@ -43,9 +43,13 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  * deploy therefore changes no behaviour, and the rows all read zero because
  * nothing can credit them. The holder's address is public, so an UNSOLICITED
  * ERC-20 transfer to it is possible at any time (Codex #2158 r5 P2): such
- * value is not custody the ledger describes — it is visible only as the
- * snapshot's unattributed remainder, has no attribution or withdrawal path in
- * PR A, and must not be read as "the dark holder is empty".
+ * value is not custody the ledger describes and must not be read as "the
+ * dark holder is empty". In the CONFIGURED VPFI token it is visible as the
+ * snapshot's unattributed remainder and moves with the balance at a
+ * replacement; in ANY OTHER token (including a former VPFI after a token
+ * rotation) it is invisible to the snapshot, stays behind at a replaced
+ * holder, and is recoverable only through {sweepForeignTokenFromRewardCustody}
+ * (Codex #2158 r8 P2).
  *
  * @dev Why a separate facet rather than a corner of `RewardReporterFacet`
  *      (which hosts the older one-shot seeder): the reporter is a cross-chain
@@ -84,6 +88,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address indexed token,
         uint256 balanceMoved,
         uint256 successorPreBalance
+    );
+
+    /// @notice A token that is not the configured VPFI was recovered from a
+    ///         holder to the treasury.
+    /// @param holder   The holder swept (bound or previous).
+    /// @param token    The ERC-20 moved.
+    /// @param treasury Where it went.
+    /// @param amount   How much.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyForeignTokenSwept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
+        uint256 amount
     );
 
     /// @notice The delivered-fresh ledger's paid side was rebased to an
@@ -190,6 +208,39 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
         s.rewardCustodyHolder = successor;
         emit RewardCustodyHolderReplaced(previous, successor, token, moving, before);
+    }
+
+    /**
+     * @notice Recover an ERC-20 that is NOT the configured VPFI token from a
+     *         holder this Diamond constructed — the bound one or a previous
+     *         one — to the treasury.
+     * @dev    ADMIN. The attribution ledger and {rewardCustodySnapshot} cover
+     *         only `s.vpfiToken`; any other token that lands in a holder
+     *         (an unsolicited transfer, or the former VPFI after a token
+     *         rotation) is outside them and would otherwise be stranded —
+     *         a replacement moves only the configured token, so such value
+     *         stays at the previous holder. The sweep refuses the configured
+     *         VPFI itself (that IS the custody, and leaves only through the
+     *         reward outflows), delivers to the configured treasury and to
+     *         nowhere else, and accepts only a holder whose `DIAMOND()` is
+     *         this Diamond. Event-logged so the recovery is auditable.
+     * @param  holder A holder this Diamond constructed (bound or previous).
+     * @param  token  The ERC-20 to recover; never the configured VPFI.
+     * @param  amount The amount to move to the treasury.
+     */
+    function sweepForeignTokenFromRewardCustody(
+        address holder,
+        address token,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
+        if (token == s.vpfiToken) revert IVaipakamErrors.RewardCustodySweepIsVpfi();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        _requireOurHolder(holder);
+        RewardCustodyHolder(holder).release(token, treasury, amount);
+        emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────
@@ -352,7 +403,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         preserves is `attributed <= held` whenever `balanceKnown`, and
      *         `held - attributed` is the unattributed remainder (value sent
      *         to the holder outside any registered ingress, such as dust at
-     *         a predicted successor address).
+     *         a predicted successor address). All of this is about the
+     *         CONFIGURED VPFI token only: any other ERC-20 in a holder is
+     *         outside the snapshot and the ledger, and is recovered through
+     *         {sweepForeignTokenFromRewardCustody}.
      * @return holder       The bound holder (zero while unbound).
      * @return token        The VPFI token the Diamond recognises (zero while
      *                      unset).
@@ -379,6 +433,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     // ─── Internals ──────────────────────────────────────────────────────────
+
+    /// @dev A holder this Diamond constructed answers `DIAMOND() == this`.
+    ///      Only the foreign-token sweep takes a holder address at all (to
+    ///      reach a PREVIOUS holder after a replacement); binding and
+    ///      replacement construct their own. A codeless address or one
+    ///      answering another Diamond is refused by name.
+    function _requireOurHolder(address holder) private view {
+        if (holder.code.length == 0) {
+            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
+        }
+        try RewardCustodyHolder(holder).DIAMOND() returns (address d) {
+            if (d != address(this)) revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
+        } catch {
+            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
+        }
+    }
 
     /// @dev A balance read that cannot revert the snapshot: unbound holder,
     ///      unset or codeless token, a failed call, or a malformed answer all

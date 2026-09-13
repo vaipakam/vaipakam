@@ -349,6 +349,15 @@ for slug in $CHAINS; do
     case "$total_val" in
       ''|*[!0-9]*) fail "chain '$slug': \$$total_var='${total_val}' is not a non-negative integer (wei)" ;;
     esac
+    # Must fit uint256 (Codex #2158 r8 P2): a digit-only value past the
+    # maximum passes the shape check but cannot be decoded by the forge
+    # script, and in a multi-chain run that abort would land AFTER earlier
+    # chains had already completed their irreversible refreshes.
+    total_norm="$(printf '%s' "$total_val" | sed 's/^0*//')"; [ -z "$total_norm" ] && total_norm="0"
+    uint_max="115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    if [ "${#total_norm}" -gt 78 ] || { [ "${#total_norm}" -eq 78 ] && [ "$total_norm" \> "$uint_max" ]; }; then
+      fail "chain '$slug': \$$total_var='${total_val}' exceeds uint256 -- the forge script could not decode it, after earlier chains had already broadcast"
+    fi
     info "$slug: slice-4 rebase total = \$$total_var ($total_val)"
   elif [ "$rnohist_val" = "true" ]; then
     info "$slug: slice-4 rebase total = 0 (\$$rnohist_var declares nothing to import)"

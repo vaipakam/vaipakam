@@ -259,6 +259,20 @@ interface IVaipakamErrors {
     /// @param expected The old holder's whole balance.
     /// @param delta    What the successor's balance actually grew by.
     error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
+    ///         sweep was asked to move the configured VPFI token. VPFI in a
+    ///         holder IS the custody the attribution ledger describes and
+    ///         leaves only through the reward outflows; the sweep is for
+    ///         everything else.
+    error RewardCustodySweepIsVpfi();
+    /// @notice #1566 slice 4 PR A — the address offered to the foreign-token
+    ///         sweep is not a holder this Diamond constructed (its `DIAMOND()`
+    ///         is another address, or it has no code).
+    /// @param holder The address offered.
+    error RewardCustodyHolderNotOurs(address holder);
+    /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
+    ///         to deliver to and none is configured.
+    error RewardCustodyTreasuryUnset();
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that

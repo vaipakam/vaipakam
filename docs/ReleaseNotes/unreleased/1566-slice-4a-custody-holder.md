@@ -8,10 +8,15 @@ spend by accident. This first of three slice-4 changes puts that address and
 its lifecycle in place without moving any value: no payout, gate or funding
 path reads it yet, and no protocol writer can fund it yet. Its address is
 public, so an unsolicited token transfer into it is possible at any time;
-such value is not custody the ledger describes, shows only as the
-unattributed remainder in the read surface, and has no attribution or
-withdrawal path in this change, so operators must not read the dark holder
-as necessarily empty. A fresh deployment
+such value is not custody the ledger describes and operators must not read
+the dark holder as necessarily empty. In the configured reward token it shows
+as the unattributed remainder in the read surface and moves along at a
+replacement, with no attribution path in this change; in any other token,
+including a former reward token after a rotation, it is invisible to the read
+surface and would stay behind at a replaced holder, so an administrator can
+recover such a token from any holder the platform constructed to the
+treasury, and only to the treasury, through an audited sweep that refuses the
+configured reward token itself. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or

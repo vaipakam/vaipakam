@@ -40,6 +40,21 @@ contract FeeSkimmingERC20 {
     }
 }
 
+/// @dev A plain minimal ERC-20 — the "foreign" token someone sends to a holder.
+contract PlainERC20 {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
 /// @dev A "token" whose balanceOf reverts — a proxy upgraded into a broken
 ///      implementation. The snapshot must report the balance as unknown.
 contract RevertingBalanceToken {
@@ -79,6 +94,12 @@ contract RewardCustodyFacetTest is SetupTest {
     event RewardCustodyReleased(
         address indexed token,
         address indexed to,
+        uint256 amount
+    );
+    event RewardCustodyForeignTokenSwept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
         uint256 amount
     );
 
@@ -591,6 +612,73 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(paid, 0);
         assertEq(received, 0, "canonical: received levelled to paid, the stale headroom is gone");
         assertTrue(_custody().armedFreshPaidRebased());
+    }
+
+    // ─── 4b. Foreign-token sweep ────────────────────────────────────────────
+
+    function _treasury() internal returns (address t) {
+        t = makeAddr("treasury");
+        AdminFacet(address(diamond)).setTreasury(t);
+    }
+
+    function test_Sweep_IsAdminOnly() public {
+        address holder = _bind();
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(1), 1);
+    }
+
+    function test_Sweep_RefusesTheConfiguredVpfi() public {
+        address holder = _bind();
+        _treasury();
+        vpfi.mint(holder, 5 ether);
+        vm.expectRevert(IVaipakamErrors.RewardCustodySweepIsVpfi.selector);
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(vpfi), 1 ether);
+        assertEq(vpfi.balanceOf(holder), 5 ether, "custody untouched");
+    }
+
+    function test_Sweep_RefusesAHolderThatIsNotOurs() public {
+        _bind();
+        _treasury();
+        PlainERC20 foreign = new PlainERC20();
+        RewardCustodyHolder other = new RewardCustodyHolder(makeAddr("otherDiamond"));
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotOurs.selector, address(other))
+        );
+        _custody().sweepForeignTokenFromRewardCustody(address(other), address(foreign), 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotOurs.selector, nonAdmin)
+        );
+        _custody().sweepForeignTokenFromRewardCustody(nonAdmin, address(foreign), 1);
+    }
+
+    /// @dev Codex #2158 r8 P2 — a token that is not the configured VPFI is
+    ///      invisible to the snapshot and would stay behind at a replaced
+    ///      holder; the sweep recovers it from the bound holder AND from a
+    ///      previous one, to the treasury only.
+    function test_Sweep_RecoversAForeignTokenFromBoundAndPreviousHolders() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        PlainERC20 foreign = new PlainERC20();
+        foreign.mint(holder, 70);
+
+        // Invisible to the snapshot (which covers the configured VPFI only).
+        (,, bool known, uint256 held,) = _custody().rewardCustodySnapshot();
+        assertTrue(known); assertEq(held, 0, "snapshot sees no VPFI; the foreign token is outside it");
+
+        _pause();
+        address successor = _custody().replaceRewardCustodyHolder();
+        assertEq(foreign.balanceOf(holder), 70, "replacement moved only the configured VPFI; the foreign token stayed behind");
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RewardCustodyForeignTokenSwept(holder, address(foreign), treasury, 70);
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(foreign), 70);
+        assertEq(foreign.balanceOf(treasury), 70, "recovered to the treasury");
+        assertEq(foreign.balanceOf(holder), 0);
+
+        foreign.mint(successor, 5);
+        _custody().sweepForeignTokenFromRewardCustody(successor, address(foreign), 5);
+        assertEq(foreign.balanceOf(treasury), 75, "also from the bound holder");
     }
 
     // ─── 5. Read surface ────────────────────────────────────────────────────

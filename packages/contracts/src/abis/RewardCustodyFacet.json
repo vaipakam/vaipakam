@@ -135,6 +135,29 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "sweepForeignTokenFromRewardCustody",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "ArmedFreshPaidRebased",
     "inputs": [
@@ -170,6 +193,37 @@
       },
       {
         "name": "receivedAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyForeignTokenSwept",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -281,6 +335,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyHolderAlreadyBound",
     "inputs": []
   },
@@ -288,6 +347,17 @@
     "type": "error",
     "name": "RewardCustodyHolderNotBound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyHolderNotOurs",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -307,7 +377,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodySweepIsVpfi",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyTreasuryUnset",
     "inputs": []
   }
 ]

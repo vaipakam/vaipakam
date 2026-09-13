@@ -3153,6 +3153,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyHolderNotOurs",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyMoveUnverified",
     "inputs": [
       {
@@ -3169,7 +3180,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodySweepIsVpfi",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyTreasuryUnset",
     "inputs": []
   },
   {
