@@ -169,22 +169,46 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       }
     });
 
-    it('requires the key in each named environment, not only at the top', () => {
-      // Whether `keep_vars` inherits into an `env.<name>` block is not
-      // something this check can verify, and `--env staging` merges that
-      // block. It is required there rather than assumed to carry down.
+    it('does NOT require the key inside a named environment', () => {
+      // The previous revision did require it, reasoning that inheritance could
+      // not be verified here. `keep_vars` is a TOP-LEVEL-ONLY field: wrangler
+      // rejects it inside an environment ("Unexpected fields found in
+      // env.<name> field: keep_vars") and reads the top-level value after
+      // environment selection, so the requirement demanded an unsupported
+      // field and a validation warning on every deploy (#2171 r3, P2).
       withSeeded(
         'apps/agent/wrangler.envs.jsonc',
-        `{"name": "vaipakam-agent", "keep_vars": true, "env": {"staging": {"name": "vaipakam-agent"}}}\n`,
-        (r) => {
-          expect(r.ok, 'an env block without keep_vars was accepted').toBe(false);
-          expect(r.out).toContain('staging');
-        },
+        `{"name": "vaipakam-agent", "keep_vars": true, "env": {"staging": {"name": "vaipakam-agent-staging"}}}\n`,
+        (r) => expect(r.ok, 'an env block was wrongly required to declare keep_vars').toBe(true),
       );
+    });
+
+    it('exempts a Pages config, which cannot declare the key at all', () => {
+      // Wrangler refuses a Pages config that sets `keep_vars`
+      // ("Configuration file for Pages projects does not support keep_vars"),
+      // so an unconditional requirement would leave no version of the file
+      // that satisfies both CI and the tool (#2171 r3, P2). Pages mode is
+      // selected structurally, on `pages_build_output_dir`.
       withSeeded(
-        'apps/agent/wrangler.envs.jsonc',
-        `{"name": "vaipakam-agent", "keep_vars": true, "env": {"staging": {"keep_vars": true}}}\n`,
-        (r) => expect(r.ok, r.out).toBe(true),
+        'apps/site/wrangler.jsonc',
+        `{"name": "vaipakam-site", "pages_build_output_dir": "./dist"}\n`,
+        (r) => expect(r.ok, 'a Pages config was required to declare keep_vars').toBe(true),
+      );
+    });
+
+    it('walks a directory whose NAME matches a vendored one elsewhere', () => {
+      // `contracts/lib` is vendored submodules; `packages/lib` is ours. A skip
+      // list keyed on the basename hid the second (#2171 r3, P1), so the
+      // ambiguous names are skipped by exact path instead.
+      withSeeded('packages/lib/wrangler.agent.jsonc', `{"name": "vaipakam-agent"}\n`, (r) => {
+        expect(r.ok, 'a config under packages/lib was skipped').toBe(false);
+        expect(r.out).toContain('packages/lib/wrangler.agent.jsonc');
+      });
+    });
+
+    it('bounds guard: genuinely vendored trees stay skipped', () => {
+      withSeeded('contracts/lib/dep/wrangler.jsonc', `{"name": "someone-elses"}\n`, (r) =>
+        expect(r.ok, 'a vendored submodule config was treated as ours').toBe(true),
       );
     });
 

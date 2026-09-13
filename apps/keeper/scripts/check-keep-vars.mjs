@@ -48,8 +48,8 @@
  * or `versions upload` pointed by `--config` at a different configuration
  * file, since the canonical config's declaration is then not the one wrangler
  * loads. That coverage is real, and is preserved below as an assertion over
- * FILES rather than over commands — see the long note above `SKIP_DIRS`, which
- * is where the rule and the reasoning for its shape live.
+ * FILES rather than over commands — see the long note above `SKIP_BASENAMES`,
+ * which is where the rule and the reasoning for its shape live.
  *
  * WHAT IT STILL ACCEPTS, stated rather than implied, because a defence that
  * has shrunk should say what it no longer covers:
@@ -60,11 +60,16 @@
  *     scanner did not look for it either — it searched for a MISSING flag, and
  *     went quiet entirely once a Worker declared `keep_vars`. So this is an
  *     exposure the retirement inherits, not one it creates.
- *   - A configuration that does not exist in the tree when this runs, because
- *     it is generated at deploy time. A file scan cannot see a file that is
- *     not there, and no amount of command reading would have made this
- *     checkable either: the retired scanner read the SELECTED config's
- *     checked-in bytes, so it missed a generated one for the same reason.
+ * - A configuration GENERATED OR REWRITTEN at deploy time. This is coverage
+ *     the retirement REMOVES, not an inherited gap, and an earlier revision of
+ *     this header said the opposite. Review disproved it by naming three of
+ *     the deleted scanner's own fixtures (#2171 r3, P1): `a config ABSENT from
+ *     the checkout falls back to the directory`, `a config REWRITTEN before the
+ *     deploy is not read from the checkout`, and `an explicit selector does not
+ *     borrow the package config`. The scanner did not read a generated file
+ *     either — it FELL BACK to judging the command on its own terms and
+ *     reported, which is a defence a file scan structurally cannot offer. So
+ *     this one wants the owner's acceptance rather than a note.
  *   - A checked-in wrangler config named outside the `wrangler*` convention.
  *     See THE ONE MISS in the note below for why recognising it would cost
  *     false reports.
@@ -99,7 +104,7 @@ const REPO_ROOT = (
  *
  * THIS LIST NO LONGER GATES THE `keep_vars` REQUIREMENT — every wrangler
  * config declares it, `apps/app` and `apps/www` included, for the reasons in
- * the note above `SKIP_DIRS`. What the list still does is narrower and worth
+ * the note above `SKIP_BASENAMES`. What the list still does is narrower and worth
  * keeping: it names the Workers that have something to LOSE, which is what
  * the per-Worker mutation fixtures exercise and what the `vars`-block
  * staleness assertion below is about. A Worker absent from it is still
@@ -235,22 +240,37 @@ for (const rel of discoverWorkerConfigs()) {
  * a wrangler config is named `wrangler*.jsonc`.
  */
 
-/** Directories whose contents are vendored, generated, or not ours. */
-const SKIP_DIRS = new Set([
+/**
+ * Directories skipped by BASENAME — each unambiguously vendored or generated,
+ * anywhere it appears.
+ *
+ * `lib` was in this list and had to come out (#2171 r3, P1). It is a real
+ * directory name in this repo twice: `contracts/lib` is vendored submodules,
+ * but `packages/lib` is OUR code — so skipping the basename hid
+ * `packages/lib/wrangler.*.jsonc` from a check whose whole claim is "any depth,
+ * any directory". A skip list keyed on a name that a source directory can also
+ * have is not a skip list, it is a hole.
+ */
+const SKIP_BASENAMES = new Set([
   'node_modules',
-  'dist',
-  'build',
-  'coverage',
   '.git',
   '.wrangler',
   '.turbo',
   '.next',
+  'coverage',
   'test-results',
   'playwright-report',
-  'lib',
-  'out',
-  'cache',
+  'dist',
+  'build',
 ]);
+
+/**
+ * Directories skipped by EXACT PATH, because their names are ambiguous.
+ *
+ * These hold vendored submodules and build artifacts; each is named in full so
+ * a same-named directory of ours elsewhere stays in scope.
+ */
+const SKIP_PATHS = new Set(['contracts/lib', 'contracts/out', 'contracts/cache']);
 
 /** Wrangler's own config filename convention — a total test on the name. */
 const CONFIG_NAME = /^wrangler[^/]*\.(jsonc|json|toml)$/;
@@ -265,7 +285,7 @@ function walkConfigs(rel, out) {
   for (const e of entries) {
     const child = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name)) walkConfigs(child, out);
+      if (!SKIP_BASENAMES.has(e.name) && !SKIP_PATHS.has(child)) walkConfigs(child, out);
     } else if (CONFIG_NAME.test(e.name)) {
       out.push(child);
     }
@@ -311,6 +331,14 @@ for (const rel of configs) {
     problems.push(`${rel} is not a JSON object, so it cannot declare \`keep_vars\`.`);
     continue;
   }
+  // PAGES CONFIGS ARE EXEMPT, and the exemption is structural rather than a
+  // name list: wrangler selects Pages mode on `pages_build_output_dir`, and a
+  // Pages config that declares `keep_vars` is REJECTED outright
+  // ("Configuration file for Pages projects does not support keep_vars").
+  // Requiring it there would make CI and wrangler demand opposite things, with
+  // no version of the file that satisfies both (#2171 r3, P2). Pages does not
+  // use the Worker deploy behaviour this guard exists for.
+  if (typeof cfg.pages_build_output_dir === 'string') continue;
   if (cfg.keep_vars !== true) {
     problems.push(
       `${rel} does not declare \`"keep_vars": true\`.\n    EVERY wrangler ` +
@@ -320,22 +348,17 @@ for (const rel of configs) {
         `is "the" one is not decidable from here.`,
     );
   }
-  // Named environments, asserted rather than assumed to inherit.
-  const envs = cfg.env;
-  if (envs !== null && typeof envs === 'object' && !Array.isArray(envs)) {
-    for (const name of Object.keys(envs).sort()) {
-      const e = envs[name];
-      if (e === null || typeof e !== 'object' || Array.isArray(e)) continue;
-      if (e.keep_vars !== true) {
-        problems.push(
-          `${rel} environment \`${name}\` does not declare ` +
-            `\`"keep_vars": true\`.\n    Whether the top-level key carries ` +
-            `down into a named environment is not something this\n    check ` +
-            `can verify, so it is required there too rather than assumed.`,
-        );
-      }
-    }
-  }
+  // NAMED ENVIRONMENTS ARE NOT ASSERTED, and the previous revision was wrong
+  // to assert them. It required `env.<name>.keep_vars` on the reasoning that
+  // inheritance "could not be verified here" — but `keep_vars` is a
+  // TOP-LEVEL-ONLY field, and wrangler rejects it inside an environment
+  // ("Unexpected fields found in env.<name> field: keep_vars"). Deployment
+  // reads the top-level value after environment selection, so the top-level
+  // requirement above already covers `--env` (#2171 r3, P2). Being unable to
+  // verify something is a reason to go and find out, not a licence to demand
+  // the conservative-looking thing — here the conservative-looking thing was
+  // an unsupported field that would have emitted a validation warning on
+  // every deploy.
 }
 
 for (const dir of VAR_CARRYING_WORKERS) {

@@ -645,9 +645,12 @@ JSON. **Do not reintroduce a scoping predicate here.** A config is identified
 by wrangler's own filename convention (`wrangler*.json`/`.jsonc`/`.toml`),
 which is a test on a string; named environments are asserted rather than
 assumed to inherit; a TOML config is refused with an instruction rather than
-parsed. The one accepted miss — a config checked in under a non-`wrangler*`
-name — is stated in the script's header. Do not rebuild the command scanner
-either.
+parsed. Two things it does not cover are stated in the script's
+header: a config checked in under a non-`wrangler*` name, and — the one real
+REDUCTION rather than an inherited gap — a config **generated or rewritten at
+deploy time**, which the retired scanner refused by falling back to judging the
+command when it could not read the selected file. Do not rebuild the command
+scanner; if that gap ever has to close, it needs an owner decision first.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.

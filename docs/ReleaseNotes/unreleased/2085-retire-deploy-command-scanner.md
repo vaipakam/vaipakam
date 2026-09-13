@@ -72,12 +72,19 @@ lives, rather than left to be inferred — a deployment that explicitly
 overrides the declaration on the command line, a configuration that does not
 exist in the tree when the check runs because it is generated, and a
 configuration checked in under a name that does not follow the tool's
-convention. The first two were never covered by the retired scanner either: it
-read the selected configuration's checked-in bytes, so a generated one was
-always invisible to it for the same reason it is invisible to a file scan.
-Those are exposures inherited, not created. The third is the price of not
-classifying files by their contents, which is what produced the false reports
-in the first place — one accepted miss, named, in place of six edges.
+convention.
+
+Only the first of those is inherited. **The generated-configuration case is
+coverage this change removes**, and an earlier draft of these notes said the
+opposite — review disproved it by naming three of the retired check's own
+fixtures. It did not read a generated file either; it fell back to judging the
+command on its own terms and refused it, which is a defence a file scan
+structurally cannot offer. That is a real reduction, it is the one thing here
+that genuinely needs the owner's acceptance rather than a note, and saying so
+is the point of writing these down at all. The third — a configuration named
+outside the tool's convention — is the price of not classifying files by their
+contents, which is what produced the false reports in the first place: one
+accepted miss, named, in place of six edges.
 
 This is the third and fourth instance of one pattern, and it is recorded as
 such in the contributor handbook alongside the others: when successive review
