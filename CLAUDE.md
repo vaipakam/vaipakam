@@ -1297,7 +1297,8 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   "after the last diff push" wording). Re-trigger after every fix
   push. **Hard cap: 30 rounds in total** (user directive 2026-09-12,
   reaffirmed 2026-09-13: "if its code related, then don't go beyond 30
-  rounds") — a PR past 30 rounds with no major findings may be merged.
+  rounds") — once round 30 is triaged, a PR with no major findings may
+  be merged, and no round 31 is triggered.
   **When rounds keep producing edges of the previous round's fix, that
   is not a nearly-finished PR; it is a heuristic with an unbounded edge
   list. Step back and fix it at the root — delete the predicate and
@@ -1329,10 +1330,10 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
 - Merge gate: **coding PRs** only after a converged round AND green CI
-  (or past the 30-round hard cap with no major findings); **docs-only
-  PRs** after a converged round, or at the 10-round cap with no open P1,
-  AND green CI. All review conversations must be resolved before merge
-  (repo rule) in both cases.
+  (or once round 30 is triaged, with no major findings); **docs-only
+  PRs** after a converged round, or once round 10 is triaged with no
+  open P1, AND green CI. All review conversations must be resolved
+  before merge (repo rule) in both cases.
 
 ## Release notes — per-PR fragments
 

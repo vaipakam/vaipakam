@@ -425,13 +425,14 @@ For every finding:
 - **Every accepted P1/P2 finding on a coding PR is FIXED in the PR —
   never spun into a follow-up to reach a merge.** The three-way triage
   gate still applies to every finding (accept-and-fix / refute with
-  evidence / defer to a follow-up issue), and per `CLAUDE.md` a P3-only
-  round counts as converged, with P3s fixed or deferred at the agent's
-  judgment. A coding PR iterates until a round returns zero P1/P2; escalate
-  to the owner rather than continuing past **ten** rounds after the last
-  substantive surface change — the backstop `CLAUDE.md` sets (an earlier
-  revision here said twelve, from a stale agent note). Docs-only PRs
-  merge after two rounds, converged or not.
+  evidence / defer to a follow-up issue), and a coding PR iterates until
+  a round returns zero P1/P2. **The round caps and the merge gate are
+  stated once, in `CLAUDE.md`'s "Codex PR-review policy" section, and are
+  deliberately not restated here** — this handbook carried its own copy
+  of them until 2026-09-13 and it was two directives stale (twelve rounds
+  from an older agent note, then "docs-only merge after two rounds" after
+  the cap moved to ten), which is the drift a second copy always
+  produces. Read the caps there.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's
