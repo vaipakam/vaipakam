@@ -641,6 +641,44 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // ROUND 13.
+  it('refuses the round-13 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a receiver initialised as a function',
+        'const fake = () => {};\nfake.indexOf = () => start + 320;\nconst r = s.slice(start, fake.indexOf());',
+      ],
+      [
+        "a named function expression's own name",
+        "const end = s.indexOf('e');\nconst f2 = function end() { return s.slice(start, end); };",
+      ],
+      [
+        'a write BEFORE the use',
+        "let e = s.indexOf('e');\ne = start + 320;\nconst r = s.slice(start, e);",
+      ],
+      [
+        'a write inside a helper, wherever it sits',
+        "let e = s.indexOf('e');\nconst r = s.slice(start, e);\nfunction later() { e = start + 320; }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 13's false positive, which my own round-11 simplification
+  // introduced: dropping position-awareness entirely made a write below
+  // the slice reject it. Straight-line code IS ordered; only a function
+  // or a loop body cannot be, and those still count wherever they sit.
+  it('accepts a bound written to only AFTER the region was taken', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nlet e = s.indexOf('e');\nconst r = s.slice(start, e);\ne = start + 320;";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
   // The other side of the same rules, so they cannot be satisfied by
   // refusing everything.
   it('still accepts the landmark shapes this suite writes', () => {

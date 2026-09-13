@@ -494,7 +494,7 @@ export function bindingAt(src, name, at) {
     found: true,
     init: found.init,
     decl: found.decl,
-    reassigned: assignsTo(src, name, found),
+    reassigned: assignsTo(src, name, found, at),
   };
 }
 
@@ -549,7 +549,7 @@ function resolveBinding(src, name, at) {
  * something that can run more than once — a loop or a function body —
  * where "after" in the text can still be "before" in time.
  */
-function assignsTo(src, name, found) {
+function assignsTo(src, name, found, useAt) {
   const { nodes, parents } = astOf(src, 'assignsTo');
   return nodes.some((n) => {
     // A later `var` DECLARATOR with an initializer writes the same
@@ -564,6 +564,7 @@ function assignsTo(src, name, found) {
         n.init !== null &&
         writtenNames(n.id).has(name) &&
         inScopeOf(n) &&
+        reaches(n) &&
         sameBinding(n)
       );
     }
@@ -579,8 +580,28 @@ function assignsTo(src, name, found) {
     // Destructuring is a write too — `[end] = […]` and `({ end } = …)`
     // reach the same binding as `end = …` (round 8).
     if (!writtenNames(target).has(name)) return false;
-    return inScopeOf(n) && sameBinding(n);
+    return inScopeOf(n) && reaches(n) && sameBinding(n);
   });
+
+  /**
+   * Whether a write could execute before the use.
+   *
+   * Straight-line code is ordered by position: a write BELOW the slice
+   * cannot affect it, and reporting one demanded a marker claiming a
+   * character count that was not happening (round 13).
+   *
+   * A write inside a FUNCTION or a LOOP counts wherever it sits, because
+   * neither can be ordered against the use without a call graph — round
+   * 11 showed a helper declared before the use but never called being
+   * treated as already run, and one declared after but called earlier
+   * being missed. Unknown order is treated as "it might", which refuses
+   * rather than certifies.
+   */
+  function reaches(n) {
+    if (n.start < useAt) return true;
+    for (let p = n; p; p = parents.get(p)) if (DEFERRABLE.has(p.type)) return true;
+    return false;
+  }
 
   function inScopeOf(n) {
     for (let p = n; p; p = parents.get(p)) if (p === found.scope) return true;
@@ -595,6 +616,20 @@ function assignsTo(src, name, found) {
     return here !== null && here.decl === found.decl;
   }
 }
+
+// Constructs whose body may run at a time position cannot express — a
+// loop repeats, a function runs whenever it is called. A write inside one
+// is treated as reaching any use, which refuses rather than certifies.
+const DEFERRABLE = new Set([
+  'ForStatement',
+  'ForOfStatement',
+  'ForInStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+]);
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
@@ -881,6 +916,14 @@ function helperKind(src, callee, seen) {
  * parameter, a call result — is still accepted, which is the stated
  * interprocedural limit and not a new one.
  */
+const NOT_TEXT = new Set([
+  'ObjectExpression',
+  'ArrayExpression',
+  'ArrowFunctionExpression',
+  'FunctionExpression',
+  'ClassExpression',
+]);
+
 function suspectReceiver(src, node, seen) {
   if (!node || node.type !== 'Identifier') return false;
   const key = `recv:${node.name}@${node.start}`;
@@ -891,7 +934,10 @@ function suspectReceiver(src, node, seen) {
   if (bound.reassigned) return true;
   if (!bound.init) return false;
   const t = bound.init.type;
-  if (t === 'ObjectExpression' || t === 'ArrayExpression') return true;
+  // A function or a class is not text either, and a property can be
+  // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
+  // read as a search until round 13.
+  if (NOT_TEXT.has(t)) return true;
   return t === 'Identifier' ? suspectReceiver(src, bound.init, seen) : false;
 }
 
@@ -958,6 +1004,11 @@ function declarationsDirectlyIn(scope) {
   // A DEFAULTED parameter is an AssignmentPattern, and its right-hand
   // side is a binding like any other — `function f(WINDOW = 320)` was
   // invisible until round 5.
+  // A NAMED function expression binds its own name INSIDE itself, and it
+  // refers to the function (round 13): `const f = function end() { … }`
+  // has an `end` in scope that is the function, not whatever `end` means
+  // outside. Bound with no value, so it shadows and is not a landmark.
+  if (scope.type === 'FunctionExpression' && scope.id) add(scope.id, null, scope);
   // A PARAMETER's value comes from the caller, so it is never a landmark
   // — including one with a landmark-shaped DEFAULT, which a caller may
   // simply not use (round 8). Recorded by name with nothing known.
