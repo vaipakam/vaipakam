@@ -283,6 +283,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "sweepUnattributedVpfiFromRewardCustody",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "ArmedFreshPaidRebased",
     "inputs": [
@@ -543,6 +556,37 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "RewardCustodyUnattributedVpfiSwept",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "unattributedBefore",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -633,6 +677,22 @@
         "name": "owner",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyExceedsUnattributed",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unattributed",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

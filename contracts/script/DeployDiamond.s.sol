@@ -3022,7 +3022,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3038,6 +3038,7 @@ contract DeployDiamond is Script {
         s[12] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
         s[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
         s[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
+        s[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

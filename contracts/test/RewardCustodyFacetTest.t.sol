@@ -181,6 +181,12 @@ contract RewardCustodyFacetTest is SetupTest {
         uint256 requested,
         uint256 received
     );
+    event RewardCustodyUnattributedVpfiSwept(
+        address indexed holder,
+        address indexed treasury,
+        uint256 amount,
+        uint256 unattributedBefore
+    );
 
     uint32 internal constant CHAIN_BASE = 8453;
     uint32 internal constant CHAIN_ARB = 42161;
@@ -1049,6 +1055,38 @@ contract RewardCustodyFacetTest is SetupTest {
         );
         _custody().sweepERC1155FromRewardCustody(holder, address(units), 7, 3);
         assertEq(units.balanceOf(holder, 7), 3, "still at the holder, nothing reported");
+    }
+
+    /// @dev Codex #2158 r23 P2 — configured VPFI sent straight to the BOUND
+    ///      holder has a disposition: the unattributed remainder (what no
+    ///      ledger row describes) can be moved to the treasury, ADMIN, under
+    ///      the manual pause, never beyond that remainder. With no row writer
+    ///      in PR A every row is zero, so the remainder is the whole balance;
+    ///      the bound is exercised by asking for more than is held.
+    function test_SweepUnattributed_DrainsOnlyWhatNoRowDescribes() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        vpfi.mint(holder, 100 ether); // unsolicited, no writer credited it
+        (,, bool known, uint256 held, uint256 attributed) = _custody().rewardCustodySnapshot();
+        assertTrue(known); assertEq(held - attributed, 100 ether, "all of it is unattributed");
+
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
+        _custody().sweepUnattributedVpfiFromRewardCustody(60 ether);
+        _pause();
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().sweepUnattributedVpfiFromRewardCustody(60 ether);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardCustodyUnattributedVpfiSwept(holder, treasury, 60 ether, 100 ether);
+        _custody().sweepUnattributedVpfiFromRewardCustody(60 ether);
+        assertEq(vpfi.balanceOf(treasury), 60 ether, "to the treasury");
+        assertEq(vpfi.balanceOf(holder), 40 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyExceedsUnattributed.selector, 50 ether, 40 ether)
+        );
+        _custody().sweepUnattributedVpfiFromRewardCustody(50 ether);
     }
 
     function test_SweepNative_IsAdminOnly() public {

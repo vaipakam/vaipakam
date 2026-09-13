@@ -140,11 +140,15 @@
 #   pass cannot cover is state that changes between the simulation and a
 #   later chain's broadcast — an ownership handover, a role, a holder, a
 #   proxy generation. Forge re-simulates each chain immediately before
-#   sending on it, so such a change refuses BEFORE that chain sends anything;
-#   but chains broadcast earlier in the same run are complete by then, and
-#   the run then names them and prints the `--chains` rerun for the rest.
-#   It is a per-chain validation at a point in time, not a cross-chain
-#   guarantee. The bound-holder /
+#   sending on it, so a change caught THERE refuses before that chain sends
+#   anything; but a failure DURING a broadcast — a transient RPC error, a
+#   state change between two of the sequential `--slow` transactions — can
+#   leave earlier transactions mined and that chain PARTIALLY refreshed and
+#   paused (Codex #2158 r23 P2). The [4] failure therefore never claims that
+#   nothing was sent: it names the broadcast journal to inspect, the chains
+#   already complete, and the `--chains` rerun for the rest. It is a
+#   per-chain validation at a point in time, not a cross-chain guarantee.
+#   The bound-holder /
 #   artifact relation is classified in the pre-flight too, by the same rule
 #   [4b] applies after the refresh: a divergence refuses before any broadcast,
 #   a pending bind record is validated by the ceremony script's own check()
@@ -644,9 +648,11 @@ fi
 # changes between this pass and a later chain's broadcast — an ownership
 # handover, a role, a holder, a proxy generation — can still refuse that
 # chain. Forge re-simulates each chain immediately before sending on it, so
-# such a change refuses before THAT chain sends anything; the chains already
-# broadcast in this run are complete by then, and the [4] failure names them
-# and the `--chains` rerun for the remaining ones.
+# a change caught there refuses before THAT chain sends anything — while a
+# failure DURING the broadcast can leave that chain partially refreshed (the
+# [4] message says which to check). The chains already broadcast in this run
+# are complete by then, and the [4] failure names them and the `--chains`
+# rerun for the remaining ones.
 banner "[3b] simulate RefreshAllFacetsInPlace on every selected chain (no broadcast)"
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
@@ -767,15 +773,18 @@ for slug in $CHAINS; do
   # forge script reads; scoped per chain inside the loop.
   export_chain_answers "$slug"
   # The chains from this one onward, for the rerun hint below (Codex #2158
-  # r19 P2): a refusal HERE can only mean state changed since [3b] (forge
-  # re-simulates immediately before sending, so this chain sent nothing),
-  # and the chains before it in this run are complete.
+  # r19 P2, r23 P2). A failure here is one of two things, and the message
+  # does not guess which: forge's pre-send simulation refused (state changed
+  # since [3b]; nothing was sent on this chain), or the broadcast itself
+  # failed part-way (`--slow` sends the recorded transactions one by one, so
+  # the earlier ones are MINED and this chain is partially refreshed and
+  # still paused). The broadcast journal and the live loupe tell them apart.
   remaining=""; hit=0
   for c in $CHAINS; do [ "$c" = "$slug" ] && hit=1; [ "$hit" -eq 1 ] && remaining="${remaining:+$remaining }$c"; done
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \
-    || fail "$slug: RefreshAllFacetsInPlace refused or failed on this chain. Forge re-simulated it immediately before sending, so if its state changed since [3b] (ownership, a role, a holder, a proxy generation) nothing was sent HERE; chains already complete in this run: [${done_chains:-none}]. Rerun for the rest with: --chains \"$remaining\""
+    || fail "$slug: RefreshAllFacetsInPlace failed on this chain. EITHER forge's pre-send simulation refused it (the trace above ends before any transaction is sent; state changed since [3b] -- ownership, a role, a holder, a proxy generation) and nothing was sent here, OR the broadcast failed part-way and the transactions already mined are listed in broadcast/RefreshAllFacetsInPlace.s.sol/$(chainid_for "$slug")/run-latest.json -- this chain may then be PARTIALLY refreshed and still PAUSED. Inspect that journal and the live loupe (facetAddresses()) before anything else; resume this chain with 'forge script ... --resume' or a fresh refresh once the cause is fixed. Chains already complete in this run: [${done_chains:-none}]. Rerun for the remaining chains with: --chains \"$remaining\""
 
   # #1448 r14 — printed HERE, not once at the end. The cut has already
   # landed: this chain's live Diamond now carries the new selector over a

@@ -312,6 +312,14 @@ interface IVaipakamErrors {
     /// @param tokenId The token that did not move.
     /// @param owner   Who the token reports as its owner after the release.
     error RewardCustodyErc721NotDelivered(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r23 P2) — the unattributed
+    ///         sweep asked for more configured VPFI than the bound holder
+    ///         holds beyond what the ledger rows describe. Attributed custody
+    ///         is never reachable this way.
+    /// @param requested    The amount asked for.
+    /// @param unattributed The remainder no row describes (held minus
+    ///                     attributed) at the time of the call.
+    error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

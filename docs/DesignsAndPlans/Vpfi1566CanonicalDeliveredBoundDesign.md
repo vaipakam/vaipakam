@@ -5972,7 +5972,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > foreign assets included, verifies the holder's debit; a replacement record
 > must name the artifact's current holder as its predecessor; and only a
 > Detached refusal of the rebase is a deferral — an Unconfigured chain with
-> history aborts paused (review r22). Simulations neither create nor erase
+> history aborts paused (review r22). The bound holder's unattributed
+> remainder has a disposition — an ADMIN sweep to the treasury under the
+> manual pause, bounded by `held - attributed` so no row's custody is ever
+> reachable — and a mid-broadcast failure is reported as a possibly partial
+> refresh, never as "nothing sent" (review r23). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

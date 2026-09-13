@@ -34,7 +34,12 @@ constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
 retired predecessor after its replacement is brought back into the bound
 holder, where it shows as the unattributed remainder, rather than left
-trapped — and that move is verified at both ends exactly as a replacement is:
+trapped; and the bound holder's own unattributed remainder — configured reward
+token that reached its public address outside any writer, which nothing
+describes and which would otherwise roll forward through every replacement —
+can be moved to the treasury by an administrator under the manual pause, never
+beyond what no ledger row describes, so attributed custody is never reachable
+that way and the token-rotation runbook's drain-to-zero step stays possible — and that move is verified at both ends exactly as a replacement is:
 the bound holder must grow, and the retired holder must be debited, by
 precisely the amount moved, so a token that credits without debiting can
 neither strand value at a replacement nor report a recovery that moved
@@ -85,10 +90,12 @@ broadcast on any chain, so each refusal the refresh can raise on chain is
 exercised at that chain's state at simulation time, with nothing sent — a
 per-chain validation at a point in time, not a cross-chain guarantee: state
 that changes between the simulation and a later chain's broadcast can still
-refuse that chain, and because each chain is re-simulated immediately before
-anything is sent on it, such a change refuses before that chain sends while the
-chains already refreshed in the run stay complete, which the run then states
-together with the command to resume for the remaining chains. A simulation
+refuse that chain; a change caught by the re-simulation immediately before
+sending refuses before that chain sends anything, while a failure during the
+broadcast itself can leave that chain partially refreshed and paused, and the
+run says so rather than claiming nothing was sent, naming the broadcast journal
+to inspect, the chains already complete, and the command to resume for the
+remaining chains. A simulation
 writes nothing to the deployment record, enforced at the single place every
 record write goes through rather than script by script; the one deliberate
 exception is the ceremony record step's single reconciliation write, made

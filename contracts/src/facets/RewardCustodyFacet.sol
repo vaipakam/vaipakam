@@ -160,6 +160,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 received
     );
 
+    /// @notice Configured VPFI that no ledger row describes was moved from
+    ///         the BOUND holder to the treasury.
+    /// @param holder             The bound holder.
+    /// @param treasury           The configured treasury it went to.
+    /// @param amount             How much moved — verified at both ends.
+    /// @param unattributedBefore The unattributed remainder (held minus
+    ///                           attributed) before the move — the bound the
+    ///                           amount was checked against.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyUnattributedVpfiSwept(
+        address indexed holder,
+        address indexed treasury,
+        uint256 amount,
+        uint256 unattributedBefore
+    );
+
     /// @notice Native currency forced into a holder was recovered to the
     ///         treasury.
     /// @param holder    The holder swept (bound or previous).
@@ -447,7 +463,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         the bound holder, never to the treasury or anywhere else — where
      *         it shows in {rewardCustodySnapshot} as the unattributed
      *         remainder. Refuses the bound holder itself (what it holds IS
-     *         the custody) and any address this Diamond did not construct.
+     *         the custody — its own unattributed remainder has its own
+     *         route, {sweepUnattributedVpfiFromRewardCustody}) and any
+     *         address this Diamond did not construct.
      *         Both ends of the move are verified before the event is emitted
      *         (Codex #2158 r15 P2), through the same measured move the
      *         replacement uses: the bound holder grew by exactly `amount`
@@ -473,6 +491,48 @@ contract RewardCustodyFacet is DiamondAccessControl {
         _requireConstructedHere(s, predecessor);
         _releaseMeasured(token, predecessor, bound, amount);
         emit RewardCustodyPredecessorVpfiRecovered(predecessor, bound, amount);
+    }
+
+    /**
+     * @notice Move configured VPFI that NO ledger row describes — the
+     *         unattributed remainder of the bound holder — to the treasury.
+     * @dev    ADMIN, under the MANUAL pause. Anyone can transfer the
+     *         configured VPFI straight to the bound holder's public address;
+     *         no writer credits it, so it shows in {rewardCustodySnapshot} as
+     *         `held - attributed` and would otherwise roll forward through
+     *         every replacement with no supported disposition (Codex #2158
+     *         r23 P2) — and the token-rotation runbook requires every
+     *         old-token custody to be drained before a rotation, which an
+     *         undrainable remainder would make impossible. This is that
+     *         disposition, bounded by the substantiated excess: the amount
+     *         may never exceed `held - attributed`, so attributed custody
+     *         cannot be touched whatever the rows say, and the rows are not
+     *         changed. Both ends of the move are verified (the treasury grew
+     *         and the holder was debited by exactly the amount). Delivers to
+     *         the configured treasury and to nowhere else. The manual pause
+     *         is required so no protocol flow that credits the holder can be
+     *         racing an operator's reading of the remainder.
+     * @param  amount How much of the unattributed remainder to move.
+     */
+    function sweepUnattributedVpfiFromRewardCustody(
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibPausable.requireManuallyPaused();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address token = s.vpfiToken;
+        if (token == address(0)) revert IVaipakamErrors.RewardCustodyTokenUnset();
+        address bound = s.rewardCustodyHolder;
+        if (bound == address(0)) revert IVaipakamErrors.RewardCustodyHolderNotBound();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        uint256 held = IERC20(token).balanceOf(bound);
+        uint256 attributed = _attributedTotal(s);
+        uint256 unattributed = held > attributed ? held - attributed : 0;
+        if (amount > unattributed) {
+            revert IVaipakamErrors.RewardCustodyExceedsUnattributed(amount, unattributed);
+        }
+        _releaseMeasured(token, bound, treasury, amount);
+        emit RewardCustodyUnattributedVpfiSwept(bound, treasury, amount, unattributed);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────
