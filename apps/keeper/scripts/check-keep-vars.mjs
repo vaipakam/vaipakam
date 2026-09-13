@@ -83,7 +83,7 @@
  * node builtins only, so the job needs no install step.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -127,62 +127,24 @@ function readJsonc(relPath) {
 const problems = [];
 
 /**
- * Every Wrangler config in the tree, DISCOVERED rather than listed.
+ * THE PRELIMINARY VALIDATION PASS THAT USED TO SIT HERE IS GONE (#2171 r5).
  *
- * The list above is a floor, not the inventory: a sixth Worker added with a
- * `vars` block and no `keep_vars` was never examined, and the paired test
- * compared the list against another copy of the same list — so the two agreed
- * with each other while both missed the new Worker (#1995 r23). The spec says
- * this check covers every Worker holding operator-managed values, and it now
- * does.
+ * It walked `apps/*` and `ops/*` one level down for a canonical
+ * `wrangler.json(c)` and required `keep_vars` on any that declared `vars`.
+ * Once the whole-tree walk below became unconditional, every assertion it made
+ * was a duplicate — and duplicates do not stay in step: the Pages exemption
+ * was added to the walk and NOT to this pass, so a valid Pages project
+ * declaring `vars` (a field wrangler does support for Pages) was rejected for
+ * lacking a field wrangler refuses to accept from Pages. No version of that
+ * file could pass, which is the same impossible state the exemption exists to
+ * prevent, reintroduced by the copy.
  *
- * Bounded to `apps/` and `ops/`, one level down, which is where every Worker
- * in this repo lives; node builtins only, so the unconditional CI job still
- * needs no install step.
+ * Its one non-duplicate contribution — telling you to add a newly
+ * var-carrying Worker to `VAR_CARRYING_WORKERS` so the mutation fixtures cover
+ * it — now lives in the single pass below, where it cannot drift from the rule
+ * it accompanies. Two passes over the same question is how the first bug got
+ * in; one pass is the fix.
  */
-function discoverWorkerConfigs() {
-  const found = [];
-  for (const root of ['apps', 'ops']) {
-    let entries;
-    try {
-      entries = readdirSync(join(REPO_ROOT, root), { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      for (const name of ['wrangler.jsonc', 'wrangler.json']) {
-        if (existsSync(join(REPO_ROOT, root, e.name, name))) {
-          found.push(`${root}/${e.name}/${name}`);
-          break;
-        }
-      }
-    }
-  }
-  return found.sort();
-}
-
-for (const rel of discoverWorkerConfigs()) {
-  const dir = rel.replace(/\/wrangler\.jsonc?$/, '');
-  if (VAR_CARRYING_WORKERS.includes(dir)) continue; // asserted in full below
-  let cfg;
-  try {
-    cfg = readJsonc(rel);
-  } catch (err) {
-    problems.push(`${rel} could not be read or parsed: ${err.message}`);
-    continue;
-  }
-  const hasVars = typeof cfg.vars === 'object' && cfg.vars !== null;
-  if (hasVars && cfg.keep_vars !== true) {
-    problems.push(
-      `${rel} declares \`vars\` but not \`"keep_vars": true\`, and is not in ` +
-        `VAR_CARRYING_WORKERS.\n    A deploy of this Worker would DELETE every ` +
-        `dashboard-managed var. Add the key, then add\n    "${dir}" to the ` +
-        `list so the per-Worker mutation tests cover it too.`,
-    );
-  }
-}
-
 /**
  * EVERY config in the tree that NAMES a var-carrying Worker, not only the
  * canonical one in that Worker's own directory.
@@ -353,6 +315,22 @@ for (const rel of configs) {
   // no version of the file that satisfies both (#2171 r3, P2). Pages does not
   // use the Worker deploy behaviour this guard exists for.
   if (typeof cfg.pages_build_output_dir === 'string') continue;
+  // The list's only remaining job, carried here so it cannot drift from the
+  // rule beside it: a Worker that has values to lose should be in
+  // VAR_CARRYING_WORKERS, or its per-Worker mutation fixture never runs.
+  const dir = rel.replace(/\/[^/]+$/, '');
+  if (
+    typeof cfg.vars === 'object' &&
+    cfg.vars !== null &&
+    !VAR_CARRYING_WORKERS.includes(dir)
+  ) {
+    problems.push(
+      `${rel} declares \`vars\` but \`${dir}\` is not in ` +
+        `VAR_CARRYING_WORKERS.\n    The preservation rule already covers it; ` +
+        `what is missing is the per-Worker mutation\n    fixture that proves ` +
+        `the check fails when this config loses the key. Add the directory.`,
+    );
+  }
   if (cfg.keep_vars !== true) {
     problems.push(
       `${rel} does not declare \`"keep_vars": true\`.\n    EVERY wrangler ` +

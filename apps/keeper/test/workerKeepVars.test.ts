@@ -183,6 +183,19 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
+    it('exempts a Pages config that declares vars — the field Pages DOES support', () => {
+      // The r3 exemption lived in one pass and not the other, so the earlier
+      // pass rejected a valid Pages project for lacking a field wrangler
+      // refuses to accept from Pages — no version of the file could pass
+      // (#2171 r5). `vars` IS in wrangler's supported Pages fields, so this is
+      // the shape a real Pages project takes.
+      withSeeded(
+        'apps/site/wrangler.jsonc',
+        `{"name": "vaipakam-site", "pages_build_output_dir": "./dist", "vars": {"A": "1"}}\n`,
+        (r) => expect(r.ok, 'a valid Pages config with vars was rejected').toBe(true),
+      );
+    });
+
     it('exempts a Pages config, which cannot declare the key at all', () => {
       // Wrangler refuses a Pages config that sets `keep_vars`
       // ("Configuration file for Pages projects does not support keep_vars"),

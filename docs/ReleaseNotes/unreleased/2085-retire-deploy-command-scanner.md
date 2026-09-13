@@ -23,11 +23,21 @@ spelled in a different case, a helper saved with an upper-case extension, a
 semicolon after an assignment. Four of those were false reports — they redden a
 tree that is correct — and none of the fourteen named a real file in this
 repository. The check, its fixtures and its CI job come to about 23,800 lines,
-and deleting them costs one real guarantee, which is kept rather than
-surrendered. Review caught the first draft claiming it cost none: a deployment
-can be pointed at a different configuration file, and the canonical config's
-declaration is then not the one loaded — the one case the scanner demonstrably
-handled.
+and deleting them costs **two** guarantees, of which **one is kept and one is
+not**. Both are named here rather than only in the detail below, because this
+paragraph is what an approver reads.
+
+*Kept:* a deployment can be pointed at a different checked-in configuration
+file, and the canonical one's declaration is then not what gets loaded. Review
+caught the first draft claiming the retirement cost nothing at all; that case
+is real, it is the one the retired check demonstrably handled, and it is
+preserved — see below for the two attempts it took.
+
+*Lost:* a configuration **generated or rewritten at deploy time**. The retired
+check refused those, not by reading them — it could not — but by falling back
+to judging the command when it could not trust the file it named. A check that
+looks only at files has no such fallback. This is the reduction that wants a
+deliberate acceptance, and it is set out in full further down.
 
 Keeping it took two attempts, and the second is the more useful lesson. The
 first kept it by deciding which configurations mattered — those naming a
@@ -43,7 +53,14 @@ to retire, moved from shell text into configuration files.
 So the classification is gone. **Every deployment configuration in the tree
 declares preservation**, whatever it names and wherever it sits, identified by
 the tool's own filename convention rather than by anything about its contents.
-A named environment is deliberately NOT required to declare it separately —
+
+Two exceptions qualify that, and both come from the deployment tool's own rules
+rather than from any judgement the check makes about a file. A **static-site
+project** — a different product mode of the same tool, recognised by that
+mode's own marker — is exempt, because the tool *refuses* the declaration
+there: requiring it would leave no version of such a file that satisfies both
+the tool and the check. And a named environment is deliberately NOT required to
+declare it separately —
 an intermediate draft did require that, reasoning that inheritance could not be
 established from here, and review pointed out the setting is top-level-only:
 the tool rejects it inside an environment and reads the top-level value after
