@@ -1296,6 +1296,21 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   tweaks do NOT (amended 2026-07-05, superseding the earlier
   "after the last diff push" wording). Re-trigger after every fix
   push.
+- **Round caps (user directive 2026-09-13, verbatim intent):** "if the PR
+  is docs only don't go beyond 10 rounds, merge them after 10 rounds if
+  there are no P1 findings; if its code related, then don't go beyond 30
+  rounds, take a step back and see if you can fix the issue at the root
+  rather than patching them in every path." So: a **docs-only** PR loops
+  to convergence but never past round 10, and at round 10 merges if no P1
+  stands (this supersedes the 2026-08-07 two-round rule as the ceiling;
+  merging earlier on a converged round is still right). A **coding** PR
+  never passes round 30 (superseding the 10-rounds-after-last-change
+  backstop below as the outer bound), and when successive rounds keep
+  finding the same seam — the same helper, the same class of input — the
+  next step is a ROOT fix (one shared rule, one tokeniser, one module
+  boundary) rather than another per-path patch. Record the root fix in the
+  PR as such. A loop that has patched the same seam three rounds running
+  is the signal, whatever the round number.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without

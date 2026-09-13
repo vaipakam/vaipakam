@@ -1,14 +1,19 @@
 # Release Notes — 2026-09-13
 
-One entry, about the check that watches the lender's forced close-out
-card on the deployed build. The check reads only copy a sighted lender
-can see, and one of its rules was too quick to reject text sitting above
-the page's top edge: it did not know that a scrolling region inside the
-page could bring such text back. Sixteen review rounds later the rule
-credits exactly what a scrolling region can do and no more, measures
-every browser fact it relies on rather than assuming it, states the
-layouts it quantifies, and admits rather than guesses outside them. No
-product surface changed; the check still reads the live card as readable.
+Three entries. Two are about the check that watches the lender's forced
+close-out card on the deployed build, which reads only copy a sighted
+lender can see. One of its rules was too quick to reject text sitting
+above the page's top edge, not knowing that a scrolling region inside the
+page could bring such text back; another refused any figure it could not
+account for, but knew the words for durations only in English, so a
+grace-window sentence written with a figure in one of five shipped
+non-Latin languages would have been reported as an invented amount. Both
+rules now measure every browser fact they rely on rather than assuming it,
+state the cases they can quantify, and admit rather than guess outside
+them. The third entry is about the protocol's own books: the ledger that
+records delivered funding now measures what actually moves. Neither check
+change touches a product surface, and both still read the live card as
+readable.
 
 ## Thread — Live-drive visibility rule credits an inner scroll container (PR #2157)
 
@@ -177,3 +182,129 @@ as the release-notes fold already does.
 
 Closes #2138. No product surface changes.
 <!-- assembled-fragment: 2138-inner-scroll-origin.md sha256=4a275dd14ce3fde9b3e6b5d563606fd3c940f5646e4268883e52fedaf7280ed4 -->
+
+## #1566 closure 2 — the delivered-funding ledger measures what moves (PR #2151)
+
+The reward-funding ledger on a mirror chain used to count by vintage: the paid
+side was charged only for coordinated-mode days, inside the claim walk, and the
+received side counted only deliveries whose every day was at or after the
+chain's switch into coordinated mode. The balance that ledger protects is not
+vintage-aware — a legacy payout and a coordinated payout spend the same VPFI —
+so an ordinary-schedule claim could draw on delivered backing the bound had
+already counted as available, and the bound reported itself satisfied. The
+#1566 design calls this closure 2, "the ledger measures the wrong noun".
+
+This change moves the charge to the two places reward value actually leaves,
+and makes each of them a bound rather than a record. A claim hands its
+genuinely-new component to the delivery step, which refuses the whole claim
+before any transfer if that component exceeds what has been delivered and not
+yet paid, and otherwise charges the ledger by exactly that amount. Within one
+claim the coordinated-mode days are priced against what is left after the
+ordinary-schedule slice, so a funding shortfall still defers those days rather
+than refusing the whole claim, and the read-only preview quotes what the claim
+will actually pay under the same order. The test that decides whether an
+unclaimed reward's expiry clock runs measures the same total, so a claimant
+whose claim would be refused for want of delivered funding is never counted as
+able to claim, and a forfeiture or expiry that the delivered funding cannot yet
+cover is deferred rather than failing the whole batch. Forfeited
+and expired reward value enters the recycle bucket only through a reward
+operation that refuses, charges and credits in one act. The generic
+"credit the bucket with this label" entry is gone: each of the three proven
+non-reward inflows (the notification tariff, the Full tariff, a spend-gated
+perk purchase) has its own operation that verifies the tokens arrived before
+crediting, and any other source has no door. On the received side the
+authenticated new portion of a delivery is counted whatever days it funds;
+compensation credits count at ingress and confirmation promotes nothing, so a
+later demotion reverses exactly what the credit added. The two administrative
+writers (the role-transition retirement and the one-shot paid seed) are kept.
+
+The charge is taken only where the ledger is live, the mirror role; the
+canonical column arrives with slice 4. No deployed chain has an armed mirror or
+a non-zero ledger, so no live figure changes. The cutover apparatus the design
+specifies for a chain that does — a migration mode, an open legacy
+reconciliation epoch with ingress-stamped packet identities, the bounded
+reclassification and restitution rules — is the second closure-2 PR and is
+deliberately not approximated here. Refs #1566, #1956, #1349.
+<!-- assembled-fragment: 1566-closure-2-chokepoints.md sha256=d92d59d1c71aa7887968a7805886d8833cde310ebe652cb658ddb43ff2dce0f3 -->
+
+## Thread — Forced-close amount scanner learns each language's duration words (PR #2164)
+
+The check that watches the lender's forced close-out card on the deployed
+build refuses any figure the card cannot substantiate, and exempts the few
+kinds of number the card is allowed to show: a duration such as the grace
+window, a proportion, an identifier. Those exemptions knew only English
+words. A grace-window sentence written with a figure in Japanese, Hindi,
+Tamil, Korean or Chinese, five of the shipped languages, would therefore
+have been reported as an invented amount on copy the specification
+explicitly permits. Nothing was failing, because no shipped translation
+currently writes the window with a figure, but that was luck rather than a
+guard, and the first translator to add one would have turned the live
+check red on correct copy.
+
+The scanner now has to be told which language the text is rendered in,
+and takes that language's duration words from the same standard locale
+data the browser itself formats with, in every grammatical number and in
+long, short and abbreviated forms, so the list cannot drift from what a
+reader is shown and a language added later needs no edit. The live drive
+passes the language it pins its browser to; the test that puts every
+shipped translation through the scanner passes each bundle's own. Two
+edges are stated rather than guessed at. In languages that write no space
+between a number's counter and the word after it, the unit is recognised
+only where the text continues in a different script, so a counter
+followed by a particle is a duration while the word for yen is still an
+amount. And a one-letter unit in an alphabetic script is treated as an
+abbreviation that might mean a magnitude, in every language, so it is
+reported unless something around it establishes a wait; a single Chinese,
+Japanese or Korean character is a whole word and is not. A caller that
+does not name the language gets the English words alone, and a
+non-Latin duration is then reported, which is the loud direction rather
+than the silent one. Asset glyphs and tickers are unaffected: the sourced
+words are duration words, never a licence for any non-Latin token.
+
+Review tightened the derivation in five places: a language that writes
+the unit before the number is read from the word in front; abbreviations
+the locale data writes with punctuation are stored in the same shape the
+scanner reads; the sample numbers used to collect every grammatical form
+are taken from each language's own plural rules rather than a fixed list;
+a counter followed directly by a ticker or asset glyph is not a duration;
+and a one-letter symbol classifies the same whether its accent is stored
+composed or decomposed. A second round kept a multi-word unit as one
+phrase, so a linking word inside it is never a unit on its own; judged the
+first word after a counter even when a particle follows it, so a
+denomination there is still an amount; matched units regardless of
+sentence capitalisation, in the language's own casing rules; and made the
+per-language cache immune to a malformed language tag masquerading as a
+list of tags. A third round taught the scanner the forms a unit takes in
+a sentence rather than standing alone, such as the German dative after
+"in", by reading the same locale data's relative-time phrases; narrowed
+the unspaced-script rule so that only Japanese grammatical script after a
+counter reads as a particle, since the script used for loanwords is also
+where asset names are written; and let a duration written before the
+number stand when an asset is merely mentioned later in the sentence, as
+one written after the number already did. A fourth round read which side
+of the number a unit sits on from each phrase rather than assuming it,
+treated a money sign glued to a counter as the amount it is, applied the
+existing quantity guards to a unit written before the number, let a
+language's own words for "in" and "ago" establish that a one-letter unit
+means time, and counted a letter written with a combining mark as the
+single letter it is. A fifth round moved the language vocabulary and its
+matching rules into their own module, leaving the scanner as their
+consumer; read the words on either side of a whole number, so a decimal
+could not misfile a context word as a unit; preferred a language's own
+longest phrase to an English abbreviation; learned both "in" and "ago"
+forms for languages with a single grammatical number; kept a malformed
+language tag in a fallback list from raising an error at match time; and
+matched phrases whose words carry abbreviation marks. A sixth round let
+phrase words be separated by any punctuation short of a line break,
+remembered on which side of a number each word was seen so a word only
+ever seen after a figure is not accepted in front of one, and treated a
+unit word written entirely in capitals as the ticker it might be rather
+than the duration it might be, in every language including English. A
+seventh round allowed only punctuation, never a symbol such as a currency
+sign, between the words of a phrase, and applied the capitals rule to each
+part of a hyphenated unit. An eighth round extended that rule to
+single-letter parts of such a unit and stopped a unit on the next rendered
+line from being attached to a number on this one.
+
+Closes #2125. No product surface changes.
+<!-- assembled-fragment: 2125-non-latin-durations.md sha256=fd76b744c1215dd88270d865092d38b157010856aa7e929680210f7e8017e1a7 -->
