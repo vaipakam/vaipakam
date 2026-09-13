@@ -7996,3 +7996,25 @@ describe('#2125 round 7 — symbols are never phrase separators, ticker-shaped h
     expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
   });
 });
+
+describe('#2125 round 8 — single-letter runs in split units, line breaks around a unit', () => {
+  // Polish's narrow singular month is `m-c`: two single letters. In
+  // capitals each reads as a ticker; a standalone `M` keeps its context
+  // exception.
+  it('treats single-letter runs of a split unit as ticker evidence', () => {
+    expect(durationUnitsFor('pl').has('m c')).toBe(true);
+    expect(monetaryAmountsIn('You receive 3 M-C', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m-c', { locale: 'pl' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+  });
+
+  // A line break is a rendered-element boundary on both sides of the
+  // figure, as it already was between a phrase's words.
+  it('does not attach a unit across a line break', () => {
+    expect(monetaryAmountsIn('You receive 3\nTage', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku\n3', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 Tage', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('dentro de\n3 h', { locale: 'es' })).toHaveLength(1);
+  });
+});

@@ -545,10 +545,19 @@ const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
  * unit or a magnitude word is evidence of an amount, and the run is then
  * not a unit at all.
  */
-/** Any letter run of two or more letters in `span`, as written, that reads as a ticker. */
+/**
+ * Does `span`, as written, carry a run that reads as a ticker? A run of two
+ * or more letters is judged by `isTicker`; a SINGLE upper-case letter is one
+ * too — but only when the span has several runs (#2125 round 8): Polish's
+ * narrow singular month is `m-c`, and `M-C` is two ticker-shaped letters,
+ * while a standalone `M` (German for Monat) is the ambiguous path's
+ * business and keeps its contextual exception.
+ */
 function tickerShapedSpan(span) {
-  for (const m of span.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
-    if ([...m[0].replace(/\p{M}/gu, '')].length > 1 && isTicker(m[0])) return true;
+  const runs = [...span.matchAll(/[\p{L}\p{M}\p{N}]+/gu)].map((m) => m[0]);
+  for (const run of runs) {
+    const letters = [...run.replace(/\p{M}/gu, '')].length;
+    if ((letters > 1 || runs.length > 1) && isTicker(run)) return true;
   }
   return false;
 }

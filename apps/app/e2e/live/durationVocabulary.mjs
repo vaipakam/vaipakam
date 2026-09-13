@@ -232,8 +232,13 @@ export function durationVocabularyFor(locale) {
 export const CONTEXT_SEP = /^[\s(\[{:,;«»"'‘’“”)\]}–—-]*/u;
 // The lead-in a unit phrase may have after the figure: whitespace, hyphens
 // (a compound duration, `3-day`) and opening brackets (Tagalog's
-// `sa 1 (na) araw`, round 6).
-const PHRASE_LEAD = /^[\s‐-―(\[{«"'‘“-]*/u;
+// `sa 1 (na) araw`, round 6) — but NOT a line break (round 8): `innerText`
+// puts one between rendered elements, and a unit on the next row does not
+// belong to a bare figure on this one. Same rule between a unit and the
+// figure it precedes, and around the context phrases.
+const PHRASE_LEAD = /^(?:[^\S\n]|[‐-―(\[{«"'‘“-])*/u;
+const UNIT_TO_FIGURE = `(?:[^\\S\\n]|[(\\[{«"'‘“])*`;
+const WORD_SEP = /^(?:[^\S\n]|[(\[{:,;«»"'‘’“”)\]}–—-])*/u;
 // Between the words of a phrase: whitespace and PUNCTUATION, not a line
 // break and not a symbol (rounds 6–7). CLDR writes `(na) araw`, `గం.లో`
 // and `m-ce`, all punctuation, and the vocabulary was built by dropping
@@ -250,7 +255,7 @@ const BETWEEN_WORDS = '(?:[^\\S\\n]|\\p{P})+';
  * `dentro de 3 h` — at a word boundary, folded with the locale?
  */
 export function localeLeadEnds(before, vocabulary) {
-  const b = foldUnit(before, vocabulary.tags).replace(/[\s(\[{«"'‘“]*$/u, '');
+  const b = foldUnit(before, vocabulary.tags).replace(/(?:[^\S\n]|[(\[{«"'‘“])*$/u, '');
   for (const lead of vocabulary.leads) {
     if (!b.endsWith(lead)) continue;
     const at = b.length - lead.length;
@@ -264,7 +269,7 @@ export function localeLeadEnds(before, vocabulary) {
  * at a word boundary, folded with the locale?
  */
 export function localeTrailStarts(afterUnit, vocabulary) {
-  const a = foldUnit(afterUnit, vocabulary.tags).replace(CONTEXT_SEP, '');
+  const a = foldUnit(afterUnit, vocabulary.tags).replace(WORD_SEP, '');
   for (const trail of vocabulary.trails) {
     if (!a.startsWith(trail)) continue;
     if (a.length === trail.length || !/[\p{L}\p{M}\p{N}]/u.test(a[trail.length])) return true;
@@ -389,7 +394,7 @@ export function unitBefore(before, vocabulary) {
     const m = before.match(
       new RegExp(
         `((?:[\\p{L}\\p{M}\\p{N}]+${BETWEEN_WORDS}){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)` +
-          `${ABBREVIATION_MARKS}*[\\s(\\[{«"'‘“]*$`,
+          `${ABBREVIATION_MARKS}*${UNIT_TO_FIGURE}$`,
         'u',
       ),
     );
