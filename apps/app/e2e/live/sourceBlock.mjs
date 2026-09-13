@@ -555,11 +555,14 @@ function assignsTo(src, name, found) {
     // A later `var` DECLARATOR with an initializer writes the same
     // function-scoped binding (round 9).
     if (n.type === 'VariableDeclarator') {
+      // Through a PATTERN as well (round 12): `var { end } = obj` in a
+      // branch re-initialises the same function-scoped `end` as a plain
+      // `var end = …` does, and checking only an identifier-shaped `id`
+      // left the first initializer's classification standing.
       return (
         n !== found.decl &&
         n.init !== null &&
-        n.id.type === 'Identifier' &&
-        n.id.name === name &&
+        writtenNames(n.id).has(name) &&
         inScopeOf(n) &&
         sameBinding(n)
       );
@@ -922,11 +925,19 @@ function propertyName(member) {
   return null;
 }
 
-/** An identifier, or a dotted chain of them — `src`, `page.body`. */
+/**
+ * A BARE name — `src`, `block`, `mod`.
+ *
+ * A dotted chain is refused (round 12). `isPlainName` used to admit one,
+ * and `fake.nested['indexOf']()` then read as a search because the
+ * receiver check only resolves an identifier and waved a member
+ * expression through. Proving what `fake.nested` holds means following
+ * property writes, which is the analysis declined everywhere else here.
+ * Every receiver this suite actually searches is a bare name, so refusing
+ * a chain costs nothing and the alternative could not be made sound.
+ */
 function isPlainName(node) {
-  if (!node) return false;
-  if (node.type === 'Identifier' || node.type === 'ThisExpression') return true;
-  return node.type === 'MemberExpression' && !node.computed && isPlainName(node.object);
+  return Boolean(node) && node.type === 'Identifier';
 }
 
 function declarationsDirectlyIn(scope) {
@@ -972,7 +983,11 @@ function declarationsDirectlyIn(scope) {
     // unseen (round 9).
     if (s.type === 'VariableDeclaration' && s.kind !== 'var') {
       for (const d of s.declarations) add(d.id, d.init, d);
-    } else if (s.type === 'FunctionDeclaration') {
+    } else if (s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') {
+      // A CLASS binds its name too (round 12). Missing it let
+      // `{ class end {}; s.slice(start, end); }` resolve outward to an
+      // outer landmark while the real value is the constructor. Bound
+      // with no value: it shadows, and it is not a landmark.
       add(s.id, null, s);
     }
   }
