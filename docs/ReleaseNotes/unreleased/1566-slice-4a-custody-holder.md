@@ -21,7 +21,10 @@ received beside what was requested. Native currency forced into a holder,
 which accepts none by itself, is likewise reported and recoverable to the
 treasury the same way. The sweeps act only on holders the platform itself
 constructed, kept in a registry that includes every predecessor, never on an
-address that merely claims to be one. A fresh deployment
+address that merely claims to be one. The configured reward token sent to a
+retired predecessor after its replacement is brought back into the bound
+holder, where it shows as the unattributed remainder, rather than left
+trapped. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or

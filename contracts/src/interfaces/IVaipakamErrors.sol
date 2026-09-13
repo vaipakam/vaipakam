@@ -300,6 +300,13 @@ interface IVaipakamErrors {
     ///         leaves only through the reward outflows; the sweep is for
     ///         everything else.
     error RewardCustodySweepIsVpfi();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r14 P2) — the VPFI recovery
+    ///         from a predecessor was pointed at the CURRENTLY bound holder.
+    ///         What the bound holder holds IS the custody; only a retired
+    ///         predecessor (proven empty when its pointer was retired) can
+    ///         carry unattributed VPFI to bring back.
+    /// @param holder The address offered, which is the bound holder.
+    error RewardCustodyRecoverTargetsBoundHolder(address holder);
     /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
     ///         to deliver to and none is configured.
     error RewardCustodyTreasuryUnset();

@@ -330,6 +330,17 @@ for slug in $CHAINS; do
   elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
     fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
   elif [ -n "$seed_val" ]; then
+    # Same shape and cap checks as the slice-4 total below (Codex #2158 r14
+    # P2): the seed is now capped on chain too, and that refusal must land
+    # here, before any chain has broadcast.
+    case "$seed_val" in
+      ''|*[!0-9]*) fail "chain '$slug': \$$seed_var='${seed_val}' is not a non-negative integer (wei)" ;;
+    esac
+    seed_norm="$(printf '%s' "$seed_val" | sed 's/^0*//')"; [ -z "$seed_norm" ] && seed_norm="0"
+    seed_cap="69000000000000000000000000"   # LibVaipakam.VPFI_INTERACTION_POOL_CAP
+    if [ "${#seed_norm}" -gt "${#seed_cap}" ] || { [ "${#seed_norm}" -eq "${#seed_cap}" ] && [ "$seed_norm" \> "$seed_cap" ]; }; then
+      fail "chain '$slug': \$$seed_var='${seed_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${seed_cap} wei) -- seedArmedFreshPaid would refuse it on chain; correct the figure"
+    fi
     info "$slug: P1-b seed = \$$seed_var ($seed_val)"
   elif [ "$nohist_val" = "true" ]; then
     info "$slug: P1-b seed = 0 (\$$nohist_var declares no pre-P1-b history)"

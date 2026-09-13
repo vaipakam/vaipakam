@@ -133,6 +133,12 @@ contract RewardCustodyFacetTest is SetupTest {
         uint256 requested,
         uint256 received
     );
+    event RewardCustodyPredecessorVpfiRecovered(
+        address indexed predecessor,
+        address indexed bound,
+        uint256 requested,
+        uint256 received
+    );
 
     uint32 internal constant CHAIN_BASE = 8453;
     uint32 internal constant CHAIN_ARB = 42161;
@@ -792,6 +798,40 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.deal(successor, 0.5 ether);
         _custody().sweepNativeFromRewardCustody(successor, 0.5 ether);
         assertEq(treasury.balance, 1.5 ether, "also from the bound holder");
+    }
+
+    /// @dev Codex #2158 r14 P2 — configured VPFI sent to a RETIRED predecessor
+    ///      after its replacement is brought back into the bound holder as
+    ///      unattributed remainder; the bound holder itself and outsiders are
+    ///      refused, and the foreign-token sweep still refuses VPFI.
+    function test_RecoverVpfi_FromAPredecessorIntoTheBoundHolder() public {
+        address holder = _bind();
+        vpfi.mint(holder, 1_000 ether);
+        _pause();
+        address successor = _custody().replaceRewardCustodyHolder();
+        assertEq(vpfi.balanceOf(holder), 0, "predecessor proven empty at retirement");
+
+        vpfi.mint(holder, 7 ether); // unsolicited VPFI at the retired predecessor
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardCustodyPredecessorVpfiRecovered(holder, successor, 7 ether, 7 ether);
+        _custody().recoverVpfiFromPredecessor(holder, 7 ether);
+        assertEq(vpfi.balanceOf(holder), 0);
+        assertEq(vpfi.balanceOf(successor), 1_007 ether, "back in custody");
+        (,, bool known, uint256 held, uint256 attributed) = _custody().rewardCustodySnapshot();
+        assertTrue(known); assertEq(held - attributed, 1_007 ether, "visible as the unattributed remainder");
+
+        // The bound holder is not a predecessor; outsiders are not ours.
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyRecoverTargetsBoundHolder.selector, successor));
+        _custody().recoverVpfiFromPredecessor(successor, 1);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotConstructedHere.selector, nonAdmin));
+        _custody().recoverVpfiFromPredecessor(nonAdmin, 1);
+    }
+
+    function test_RecoverVpfi_IsAdminOnly() public {
+        address holder = _bind();
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().recoverVpfiFromPredecessor(holder, 1);
     }
 
     function test_SweepNative_IsAdminOnly() public {

@@ -52,7 +52,10 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  * (Codex #2158 r8 P2). Native currency forced into a holder (it has no
  * `receive`) is likewise outside the ledger and the snapshot, reported by
  * {rewardCustodyNativeHeld} and recoverable only through
- * {sweepNativeFromRewardCustody} (Codex #2158 r13 P2).
+ * {sweepNativeFromRewardCustody} (Codex #2158 r13 P2). Configured VPFI that
+ * lands at a RETIRED predecessor after its replacement is brought back into
+ * the bound holder through {recoverVpfiFromPredecessor} (Codex #2158 r14
+ * P2), where it shows as the unattributed remainder.
  *
  * @dev Why a separate facet rather than a corner of `RewardReporterFacet`
  *      (which hosts the older one-shot seeder): the reporter is a cross-chain
@@ -107,6 +110,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address indexed holder,
         address indexed token,
         address indexed treasury,
+        uint256 requested,
+        uint256 received
+    );
+
+    /// @notice Configured VPFI that landed at a retired predecessor was
+    ///         brought back into the bound holder as unattributed remainder.
+    /// @param predecessor The retired holder it was found at.
+    /// @param bound       The bound holder it went to.
+    /// @param requested   How much was released from the predecessor.
+    /// @param received    How much the bound holder's balance actually grew by.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyPredecessorVpfiRecovered(
+        address indexed predecessor,
+        address indexed bound,
         uint256 requested,
         uint256 received
     );
@@ -307,6 +324,43 @@ contract RewardCustodyFacet is DiamondAccessControl {
         RewardCustodyHolder(holder).releaseNative(treasury, amount);
         uint256 received = treasury.balance - before;
         emit RewardCustodyNativeSwept(holder, treasury, amount, received);
+    }
+
+    /**
+     * @notice Bring configured VPFI that landed at a PREDECESSOR holder after
+     *         its replacement back into the bound holder, as unattributed
+     *         remainder.
+     * @dev    ADMIN. A replacement proves the predecessor empty in the
+     *         configured VPFI before its pointer is retired, so any VPFI
+     *         found there later is an unsolicited deposit (Codex #2158 r14
+     *         P2): nothing else drains a predecessor, the snapshot reads only
+     *         the bound holder, and the foreign-token sweep refuses the
+     *         configured VPFI by design. This is the one route for it — into
+     *         the bound holder, never to the treasury or anywhere else — where
+     *         it shows in {rewardCustodySnapshot} as the unattributed
+     *         remainder. Refuses the bound holder itself (what it holds IS
+     *         the custody) and any address this Diamond did not construct.
+     *         The event carries the bound holder's measured receipt.
+     * @param  predecessor A retired holder this Diamond constructed.
+     * @param  amount      How much configured VPFI to bring back.
+     */
+    function recoverVpfiFromPredecessor(
+        address predecessor,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address token = s.vpfiToken;
+        if (token == address(0)) revert IVaipakamErrors.RewardCustodyTokenUnset();
+        address bound = s.rewardCustodyHolder;
+        if (bound == address(0)) revert IVaipakamErrors.RewardCustodyHolderNotBound();
+        if (predecessor == bound) {
+            revert IVaipakamErrors.RewardCustodyRecoverTargetsBoundHolder(predecessor);
+        }
+        _requireConstructedHere(s, predecessor);
+        uint256 before = IERC20(token).balanceOf(bound);
+        RewardCustodyHolder(predecessor).release(token, bound, amount);
+        uint256 received = IERC20(token).balanceOf(bound) - before;
+        emit RewardCustodyPredecessorVpfiRecovered(predecessor, bound, amount, received);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────

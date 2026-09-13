@@ -58,6 +58,24 @@
   },
   {
     "type": "function",
+    "name": "recoverVpfiFromPredecessor",
+    "inputs": [
+      {
+        "name": "predecessor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "replaceRewardCustodyHolder",
     "inputs": [],
     "outputs": [
@@ -375,6 +393,37 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "RewardCustodyPredecessorVpfiRecovered",
+    "inputs": [
+      {
+        "name": "predecessor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "bound",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -497,6 +546,17 @@
         "name": "remaining",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRecoverTargetsBoundHolder",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

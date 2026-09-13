@@ -2362,6 +2362,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyRecoverTargetsBoundHolder",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodySweepIsVpfi",
     "inputs": []
   },
