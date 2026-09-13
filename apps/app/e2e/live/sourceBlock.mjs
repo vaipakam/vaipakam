@@ -571,7 +571,24 @@ function resolveAlias(src, node, seen = new Set()) {
   const bound = bindingOf(src, node);
   if (!bound.found || !bound.init) return null;
   if (writeReaches(src, bound.writes, node.start)) return null;
+  // A DESTRUCTURED name is not an alias for the whole initializer
+  // (round 27): `const { slice: cut } = String.prototype` binds `cut` to
+  // the selected property, while the declarator's init is
+  // `String.prototype`. Following that read `prototype` as a known
+  // non-truncator and DROPPED the call — the permissive answer again.
+  // Unprojected means unresolved, which refuses.
+  if (!simplyBound(src, node)) return null;
   return resolveAlias(src, bound.init, seen);
+}
+
+/** Whether every definition of the name binds it DIRECTLY — `const x =
+ *  …` rather than a destructuring pattern, whose initializer belongs to
+ *  the pattern and not to this name. */
+function simplyBound(src, node) {
+  const { variableOf } = astOf(src, 'simplyBound');
+  const variable = variableOf.get(node);
+  if (!variable) return false;
+  return variable.defs.every((d) => d.node?.id?.type === 'Identifier');
 }
 
 /** An optional member is wrapped in a `ChainExpression` (round 26):
@@ -731,7 +748,15 @@ function alwaysRunsBefore(src, decl, use) {
   // end at all. Textual order proves nothing there. `const`/`let` are
   // exempt because reaching the use before the declaration would throw,
   // so any run that gets there has already run it.
-  if (isHoistedVar(src, decl) && crossesDeferredBoundary(parents, decl, use)) return false;
+  if (crossesDeferredBoundary(parents, decl, use)) {
+    // A `var` hoists, so a call before its initializer sees `undefined`.
+    // A `const`/`let` is in its temporal dead zone, so such a call
+    // THROWS — and therefore any run that reaches the use has already
+    // run the declaration, whichever side of the function text it sits
+    // on (round 27). Position is the wrong question here in both
+    // directions: it over-accepted the `var` and under-accepted this.
+    return !isHoistedVar(src, decl);
+  }
   for (let c = decl, p = parents.get(c); p; c = p, p = parents.get(p)) {
     const slot = guardedSlot(SKIPPABLE, p, c);
     // The use must share the SAME guarded slot, not merely sit somewhere
@@ -1038,6 +1063,11 @@ function writeReaches(src, writes, useAt) {
       writeHost === useHost &&
       !LOOPS.has(useHost.type) &&
       declaredWithin(src, w, useHost);
+    // An assignment evaluates its RIGHT side before it writes (round
+    // 27): in `end = s.slice(start, end).length` the bound use sits
+    // inside the value being computed, so this write cannot have
+    // happened yet however the identifiers are positioned.
+    if (writesAfterUse(parents, w, useAt)) return false;
     if (shared) return w.start < useAt;
     if (useHost !== null) return true;
     return w.start < useAt || writeHost !== null;
@@ -1052,6 +1082,17 @@ function declaredWithin(src, write, host) {
   return variable.defs.every(
     (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
   );
+}
+
+/** Whether the use sits inside the VALUE an assignment is computing, so
+ *  the write necessarily happens after it. */
+function writesAfterUse(parents, write, useAt) {
+  for (let c = write, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (p.type === 'AssignmentExpression' && p.left === c) {
+      return p.right.start <= useAt && p.right.end >= useAt;
+    }
+  }
+  return false;
 }
 
 const LOOPS = new Set([
@@ -1107,10 +1148,15 @@ function enclosingStaticBlock(parents, n) {
  *  `match` names, or null. */
 function enclosingClassPart(parents, n, match) {
   for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
-    if (p.type === 'PropertyDefinition' && match(p, c)) return parents.get(p) ?? null;
+    // A computed METHOD key is evaluated in the same phase as a computed
+    // field key (round 27) — both before any static initializer — so the
+    // member form must not decide which keys count.
+    if (CLASS_MEMBERS.has(p.type) && match(p, c)) return parents.get(p) ?? null;
   }
   return null;
 }
+
+const CLASS_MEMBERS = new Set(['PropertyDefinition', 'MethodDefinition']);
 
 
 /** Every identifier a write reaches, through patterns and defaults. */

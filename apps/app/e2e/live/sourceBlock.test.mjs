@@ -1304,6 +1304,45 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
+  // ROUND 27 — four distinct; two refusing, two accepting.
+  it('refuses the round-27 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a truncator bound by destructuring, whose initializer is not its value',
+        'const { slice: cut } = String.prototype;\nconst r = cut.call(s, start, start + 320);',
+      ],
+      [
+        'a later computed METHOD key reaching a slice in a static block',
+        "let e = s.indexOf('e');\nclass C { static { s.slice(start, e); } static [(e = start + 320, 'k')]() {} }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('does not refuse the round-27 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a lexical landmark declared after the function that uses it',
+        "function region() { return s.slice(start, end); }\nconst end = s.indexOf('e');\nregion();",
+      ],
+      [
+        "a write whose own right-hand side takes the region",
+        "let end = s.indexOf('e');\nend = s.slice(start, end).length;",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.
