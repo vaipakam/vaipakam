@@ -5917,8 +5917,11 @@ into the holder yet.**
 > — or any import over a nonzero paid counter — on an INACTIVE role, so a
 > detached chain with history keeps its guard open for the re-attachment
 > ceremony rather than closing the door on a deficit. Replacement is run
-> through `ReplaceRewardCustodyHolder.s.sol`, which rewrites the artifact's
-> holder key in the same run. The row invariants are NOT pinned yet: with
+> through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
+> the roles, or staged after governance handover (successor deployed, the
+> Pauser Safe's `pause` and the Timelock's `replace` + `unpause` calldata
+> written to a ceremony record, then `record()` reconciles the artifact only
+> once the chain reports the successor bound). The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 
 - The holder contract, its ledger and its lifecycle as above, plus its

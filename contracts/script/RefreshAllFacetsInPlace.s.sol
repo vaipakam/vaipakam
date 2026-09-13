@@ -976,9 +976,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // The facet refuses a nonzero import — or any import over a nonzero
         // paid counter — on an INACTIVE role (Unconfigured / Detached), so a
         // detached chain with history keeps its guard open for the
-        // re-attachment ceremony; that refusal is reported and the refresh
-        // continues, because nothing spends on a detached chain. Every
-        // other failure aborts while still paused.
+        // re-attachment ceremony. That named refusal is a DEFERRAL here
+        // whatever total the operator stated (Codex #2158 r2 P1): the
+        // truthful reconstruction is logged and carried to the
+        // re-attachment ceremony, the guard stays open, and the refresh
+        // continues, because nothing spends on a detached chain. Asking the
+        // operator to restate a zero instead would invite a false
+        // no-history declaration that consumes the guard over unrecorded
+        // history. Every other failure aborts while still paused.
         if (RewardCustodyFacet(diamond).armedFreshPaidRebased()) {
             console.log("slice-4: armed-fresh paid side already rebased - skipped");
         } else {
@@ -1000,15 +1005,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 if (sel == IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector) {
                     console.log("slice-4: armed-fresh paid side already rebased - skipped");
                 } else if (sel == IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector) {
-                    require(
-                        total == 0,
-                        "slice-4: a nonzero ARMED_FRESH_PAID_TOTAL was given for a chain whose "
-                        "reward role is inactive (Unconfigured/Detached) - correct the "
-                        "declaration; the rebase runs under the active role"
-                    );
                     console.log(
-                        "slice-4: inactive reward role with paid history - rebase DEFERRED; "
-                        "the guard stays open for the re-attachment ceremony"
+                        "slice-4: inactive reward role (Unconfigured/Detached) with paid history "
+                        "or a stated total - rebase DEFERRED, guard left OPEN; carry this total "
+                        "to the re-attachment ceremony:",
+                        total
                     );
                 } else {
                     revert(

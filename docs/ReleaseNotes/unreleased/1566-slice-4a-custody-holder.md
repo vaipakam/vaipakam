@@ -41,4 +41,8 @@ carrying paid history keeps its guard open until it is re-attached, so the
 baseline is never installed under the wrong role. Replacing a holder is run
 through its own script, which rewrites the deployment record's holder address
 in the same run so no later tool reads the emptied previous address as
-custody. Refs #1566, #1349, #1956.
+custody. Before governance handover the script runs the ceremony directly;
+after handover, where pausing and administration sit with different signers,
+it stages the successor and the three calls for those signers, and a final
+record step reconciles the deployment record only once the platform reports
+the successor as bound. Refs #1566, #1349, #1956.
