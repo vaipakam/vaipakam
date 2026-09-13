@@ -48,18 +48,39 @@ or a copied number leaves behind text that nothing checks.
 
 All of these run in `release-notes-drift.yml`.
 
-**One file here is not a prose gate**, and is listed apart so the count above
-stays honest: `board-reconcile-list-step.selftest.sh` holds fixtures for the
-`List board items` step of `project-board-reconcile.yml`. It extracts that step
-from the workflow — never a copy, so the fixtures cannot pass while the real
-step drifts — and runs it against a stubbed `gh`, asserting what the step
-prints when the listing is refused, succeeds, fails partway through a
-paginated read, returns a trace in a format it does not recognise, or comes
-back truncated.
+**The board-reconcile files here are not prose gates**, and are listed apart
+so the count above stays honest:
 
-It runs in its OWN workflow, `board-reconcile-fixtures.yml`, not with the
-gates above. Convenience would have put it in theirs; it is an operational
-check on the board automation, and filing it under documentation would make a
+- `board-reconcile-list-step.selftest.sh` holds fixtures for the `List board
+  items` step of `project-board-reconcile.yml`. It extracts that step from the
+  workflow — never a copy, so the fixtures cannot pass while the real step
+  drifts — and runs it against a stubbed `gh` (and a stubbed `sleep`),
+  asserting what the step prints and does when the listing is refused,
+  succeeds, fails partway through a paginated read, returns a trace in a
+  format it does not recognise, comes back truncated, is rate limited and then
+  refilled, is rate limited with a reset further away than the step is willing
+  to wait, or is rate limited again after waiting.
+- `gh-trace-ratelimit-wait.sh` is what that step calls to decide whether to
+  wait: it reads a `GH_DEBUG=api` trace and reports whether the LAST response
+  matched a rate-limit shape it supports, and how long to wait. It exists
+  because `/rate_limit` does not report the bucket a GraphQL request is
+  metered against (#2129) — the failed response itself, its status, headers
+  and body, is the only trustworthy evidence of the limit. **The rule — the
+  one shape it recognises, how the wait is derived and bounded, and the
+  misses it accepts by name (a secondary limit among them) — is stated once,
+  in the `THE ONE SHAPE` comment block inside the script's `analyse`
+  function, directly above the code that applies it, and is not repeated
+  here.** Three
+  review rounds on #2149 found every paraphrase of it, in this file and the
+  handbook, drifting from the code; one statement, where the self-test can
+  hold it to account, is the fix. `--selftest` runs those fixtures, and the
+  step fixtures above run the script as-is, from a copy of the real file,
+  never a stub — under a stubbed clock, so no assertion depends on how long
+  the runner took between two reads of `date`.
+
+They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
+gates above. Convenience would have put them in theirs; they are an operational
+check on the board automation, and filing them under documentation would make a
 board regression present as a docs failure.
 
 It exists because that step's failure branch is a diagnostic, and a diagnostic
@@ -70,6 +91,7 @@ limit" from "fix the secret" — two causes needing opposite responses (#2129).
 Nobody notices a diagnostic that has stopped diagnosing until they need it.
 
 ```bash
+bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
 bash .github/scripts/board-reconcile-list-step.selftest.sh
 ```
 

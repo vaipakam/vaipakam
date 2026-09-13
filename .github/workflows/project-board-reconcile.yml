@@ -28,6 +28,13 @@ name: Reconcile @vaipakam-labs board
 # — adding an item already on the board returns the existing item — so a
 # spurious add costs a request and changes nothing. That asymmetry is why
 # the guards below fail toward re-adding rather than toward skipping.
+#
+# The sweep's own board LISTING draws on the same bucket, and for a while
+# it failed the same way, at the top of the job, before adding anything.
+# Its diagnostic (#2129) settled that the bucket refills minutes after
+# each failure, so when the failed response is a recognised rate limit the
+# listing now waits the delay the parser derives from that response and
+# tries ONCE more — see the note on that step.
 
 on:
   schedule:
@@ -84,7 +91,27 @@ jobs:
       # workflow guards against — a lookup that fails quietly and leaves a
       # green run behind.
       WORKFLOW_REF: ${{ github.workflow_ref }}
+      # How long the board listing is willing to stand still for a rate
+      # limit before trying ONCE more. The bucket the listing is metered
+      # against refilled 6–12.5 minutes after each measured failure (the
+      # 04:42:58Z and 10:55:55Z runs of 2026-09-12 — #2129, #2134), so a
+      # quarter of an hour covers every sample with margin. A wait beyond this is
+      # reported and NOT taken: a sweep is six-hourly, and a run parked for
+      # an hour would be a cheaper way of hiding the same problem.
+      RETRY_WAIT_CAP_SECONDS: '900'
+      # Slack added to whatever wait the parser returned, so a retry timed
+      # to a reset does not land on the boundary second and lose the coin
+      # toss.
+      RETRY_MARGIN_SECONDS: '5'
     steps:
+      # Only for the trace parser the listing step runs — a sparse checkout
+      # of one directory, no credentials persisted. Everything else in this
+      # job talks to the API and needs no working tree.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - name: List issues the board should hold
         env:
           # GITHUB_TOKEN, NOT THE PAT — a DIFFERENT IDENTITY, and that is
@@ -242,13 +269,104 @@ jobs:
           # `GH_DEBUG=api` is how gh surfaces those headers, so the call is
           # made under it with the trace kept in a file. On success the file
           # is discarded UNREAD — the board listing never reaches the log.
+          list_board() {
+            GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+              --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          }
           set +e
-          GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
-            --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          list_board
           rc=$?
           set -e
+
+          # ONE RETRY, KEYED ON THE FAILED REQUEST'S OWN RESET. The diagnostic
+          # above settled what the failures were (#2129 → #2134): the bucket
+          # is not drained for hours, it is exhausted at the instant the sweep
+          # runs and refills minutes later — every measured reset fell 6–12.5
+          # minutes after the failure. A sweep that gave up at that instant
+          # and reported the board incomplete until the next six-hourly run
+          # was choosing the expensive outcome over a short wait.
+          #
+          # The wait comes from the trace, not from `/rate_limit` — the whole
+          # point of the diagnostic is that the endpoint does not report the
+          # bucket the request is metered against. The parser is
+          # `.github/scripts/gh-trace-ratelimit-wait.sh`: it says whether the
+          # LAST response matched a rate-limit shape it supports, and how
+          # long to wait. What counts as a limit — and which misses are
+          # accepted by name — is defined in the "THE ONE SHAPE" block inside
+          # that script's `analyse` function, pinned by its self-test, and
+          # NOT restated here. Only a recognised limit is retried;
+          # anything else — bad credentials, a project the token cannot see,
+          # a 503 — goes straight to the diagnostic below, which says what it
+          # was. That is a statement about what this step retries, not a
+          # claim that a retry could not have helped.
+          #
+          # ONCE, not until it works: looping is how a six-hourly sweep
+          # becomes a runner parked for an hour. If the retry fails too, its
+          # trace is classified the same way and the diagnostic says whether
+          # that second failure was itself a recognised limit — the step
+          # reports what the second response says and infers nothing about
+          # why. Bounded by RETRY_WAIT_CAP_SECONDS as well: a wait longer
+          # than that is reported and not taken.
+          first_attempt_note=''
+          if [ "$rc" -ne 0 ]; then
+            set +e
+            verdict=$(bash .github/scripts/gh-trace-ratelimit-wait.sh list-trace.txt)
+            verdict_rc=$?
+            set -e
+            if [ "$verdict_rc" -eq 0 ]; then
+              reason=${verdict#*	}
+              # The cap bounds the whole stand-still, margin included — a
+              # reset four seconds inside it is not a wait inside it.
+              wait_s=$(( ${verdict%%	*} + RETRY_MARGIN_SECONDS ))
+              if [ "$wait_s" -le "$RETRY_WAIT_CAP_SECONDS" ]; then
+                # The reason string carries the reset the response named and
+                # says whether the parser's own bound clamped it; this line
+                # adds only the margin-inclusive total.
+                echo "::warning::board listing was rate limited ($reason); waiting ${wait_s}s before trying once more"
+                first_attempt_note="first attempt was rate limited ($reason); this is the retry after a ${wait_s}s wait"
+                sleep "$wait_s"
+                set +e
+                list_board
+                rc=$?
+                set -e
+                if [ "$rc" -eq 0 ]; then
+                  echo "board listing succeeded on the retry"
+                else
+                  # Classify the retry's own trace before anything is said
+                  # about it: "limited again" and "failed for some other
+                  # reason" are different findings, and only the second
+                  # response can tell them apart.
+                  set +e
+                  retry_verdict=$(bash .github/scripts/gh-trace-ratelimit-wait.sh list-trace.txt)
+                  retry_rc=$?
+                  set -e
+                  if [ "$retry_rc" -eq 0 ]; then
+                    first_attempt_note="$first_attempt_note; the retry was rate limited again (${retry_verdict#*	})"
+                  elif [ "$retry_rc" -eq 2 ]; then
+                    # Same distinction as for the first attempt: "could not
+                    # read" is not "no".
+                    first_attempt_note="$first_attempt_note; the parser could not read a response from the retry's trace — whether the retry was rate limited is UNKNOWN, not 'no'"
+                  else
+                    first_attempt_note="$first_attempt_note; the retry failed with no recognised limit"
+                  fi
+                fi
+              else
+                first_attempt_note="rate limited ($reason) — the wait would be ${wait_s}s, over RETRY_WAIT_CAP_SECONDS=${RETRY_WAIT_CAP_SECONDS}, so NOT retried"
+                echo "::error::$first_attempt_note"
+              fi
+            elif [ "$verdict_rc" -eq 2 ]; then
+              # The parser found no response it could read. That is a
+              # different finding from "not a limit", and it must survive
+              # into the diagnostic on its own: the evidence filter below
+              # may still recognise a stray message line, and a group with
+              # something in it would otherwise read as a diagnosis.
+              first_attempt_note="the parser could not read a response from the trace — whether this was a rate limit is UNKNOWN, not 'no'"
+            fi
+          fi
+
           if [ "$rc" -ne 0 ]; then
             echo "::group::gh project item-list — status, rate-limit headers, error message"
+            [ -z "$first_attempt_note" ] || echo "($first_attempt_note)"
             # AN ALLOW-LIST, NOT A BOUND ON HOW MUCH TO PRINT. Three review
             # rounds went into tuning that bound — prefix, then tail, then its
             # size — and the question has no answer, because the trace carries
