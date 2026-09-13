@@ -52,6 +52,25 @@ describe('blockFrom', () => {
     expect(body).not.toContain('two();');
   });
 
+  // ROUND 14 — and a header quoted in a STRING is the same hazard by a
+  // different door. `blockFrom` and `statementFrom` anchor on CODE, so a
+  // string holding the header is not one. `callContaining` and `between`
+  // deliberately still match inside strings: the first anchors on a
+  // string INSIDE the call it wants, and one of the second's landmarks is
+  // a message the drive prints.
+  it('does not take its header from a string', () => {
+    const src = [
+      'const note = "if (target) {";',
+      'const unrelated = {};',
+      'if (target) {',
+      '  work();',
+      '}',
+    ].join('\n');
+    const body = blockFrom(src, 'if (target) {');
+    expect(body).toContain('work();');
+    expect(body).not.toContain('unrelated');
+  });
+
   // ROUND 8 — these suites quote code in prose constantly, and a header
   // matched inside a COMMENT sent the search through to the first
   // unrelated braced node after it. The parser made that worse rather
@@ -677,6 +696,34 @@ describe('#2144 — no source region is bounded by a character count', () => {
     const code =
       "const s = f();\nconst start = s.indexOf('a');\nlet e = s.indexOf('e');\nconst r = s.slice(start, e);\ne = start + 320;";
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  // ROUND 14.
+  it('refuses the round-14 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a DEFERRED use with a write below it',
+        "let e = s.indexOf('e');\nfunction region() { return s.slice(start, e); }\ne = start + 320;\nregion();",
+      ],
+      [
+        'a receiver DECLARED as a class',
+        'class Fake {}\nFake.indexOf = () => start + 320;\nconst r = s.slice(start, Fake.indexOf());',
+      ],
+      [
+        'a receiver DECLARED as a function',
+        'function Fake2() {}\nFake2.indexOf = () => start + 320;\nconst r = s.slice(start, Fake2.indexOf());',
+      ],
+      [
+        "a named class expression's own name",
+        "const end = s.indexOf('e');\nconst C = class end { f() { return s.slice(start, end); } };",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
   });
 
   // The other side of the same rules, so they cannot be satisfied by

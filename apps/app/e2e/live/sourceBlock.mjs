@@ -104,7 +104,7 @@ function walk(node, visit, parent = null) {
   }
 }
 
-function anchorAt(src, anchor, label) {
+function anchorAt(src, anchor, label, { skipStrings = false } = {}) {
   if (typeof anchor !== 'string' || anchor === '') {
     throw new Error(`${label} needs a non-empty anchor`);
   }
@@ -115,7 +115,21 @@ function anchorAt(src, anchor, label) {
   // parser makes that worse rather than better — the old brace counter
   // would usually run off the end and throw, where this returns a
   // plausible, complete, wrong block.
-  const at = anchorIn(src, anchor, 0);
+  // Comments are always skipped. STRINGS are skipped only where the
+  // caller says its anchor is CODE (round 14), and the three callers
+  // differ on purpose:
+  //
+  //   - `blockFrom` / `statementFrom` anchor on a HEADER or a
+  //     declaration. `const note = "if (target) {"` made `blockFrom`
+  //     return text ending at whatever braced node followed the string.
+  //   - `callContaining` anchors on a string INSIDE the call it wants —
+  //     that is its whole design, since `console.log(` appears dozens of
+  //     times and nothing about the opening identifies which one.
+  //   - `between` anchors on a LANDMARK, and one of its landmarks is a
+  //     message the drive actually prints.
+  //
+  // Same search, three different questions.
+  const at = anchorIn(src, anchor, 0, { skipStrings });
   if (at === -1) throw new Error(`${anchor} was renamed or removed`);
   return at;
 }
@@ -150,7 +164,7 @@ const STATEMENT = /(?:Statement|Declaration)$/;
  * what the character-counting version got wrong four times running.
  */
 export function blockFrom(src, header) {
-  const start = anchorAt(src, header, 'blockFrom');
+  const start = anchorAt(src, header, 'blockFrom', { skipStrings: true });
   const { nodes } = astOf(src, 'blockFrom');
   const brace = nodes.find((n) => BRACED.has(n.type) && n.start >= start);
   if (!brace) throw new Error(`${header} opens no block`);
@@ -180,7 +194,7 @@ export function blockFrom(src, header) {
  * end. The hand-written version was wrong about the last two.
  */
 export function statementFrom(src, header) {
-  const start = anchorAt(src, header, 'statementFrom');
+  const start = anchorAt(src, header, 'statementFrom', { skipStrings: true });
   const { nodes } = astOf(src, 'statementFrom');
   const stmt = nodes.find((n) => STATEMENT.test(n.type) && n.start === start);
   if (!stmt) {
@@ -239,10 +253,21 @@ export function between(src, from, to) {
  * Only spans the PARSER identifies are skipped, so this cannot disagree
  * with the language about what a comment is.
  */
-function anchorIn(src, anchor, at) {
-  const { comments } = astOf(src, 'anchorIn');
+function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
+  const { comments, nodes } = astOf(src, 'anchorIn');
+  const skipped = [...comments.map((c) => [c.start, c.end])];
+  if (skipStrings) {
+    for (const n of nodes) {
+      if (
+        (n.type === 'Literal' && typeof n.value === 'string') ||
+        n.type === 'TemplateLiteral'
+      ) {
+        skipped.push([n.start, n.end]);
+      }
+    }
+  }
   for (let i = src.indexOf(anchor, at); i !== -1; i = src.indexOf(anchor, i + 1)) {
-    if (!comments.some((c) => i >= c.start && i < c.end)) return i;
+    if (!skipped.some(([a, b]) => i >= a && i < b)) return i;
   }
   return -1;
 }
@@ -383,6 +408,9 @@ const SCOPES = new Set([
   'ForOfStatement',
   'ForInStatement',
   'CatchClause',
+  // A named CLASS expression binds its own name throughout its body
+  // (round 14), the same way a named function expression does.
+  'ClassExpression',
   // A `switch` body is ONE block in the grammar, and a `const` written
   // directly in a case belongs to it (round 5).
   'SwitchStatement',
@@ -489,11 +517,12 @@ export function markedStatement(src, stmt, marker) {
  */
 export function bindingAt(src, name, at) {
   const found = resolveBinding(src, name, at);
-  if (!found) return { found: false, init: null, decl: null, reassigned: false };
+  if (!found) return { found: false, init: null, decl: null, notText: false, reassigned: false };
   return {
     found: true,
     init: found.init,
     decl: found.decl,
+    notText: Boolean(found.notText),
     reassigned: assignsTo(src, name, found, at),
   };
 }
@@ -598,9 +627,24 @@ function assignsTo(src, name, found, useAt) {
    * rather than certifies.
    */
   function reaches(n) {
+    // A DEFERRED USE cannot be ordered against anything either (round
+    // 14): `function region() { return s.slice(start, end); }` runs
+    // whenever it is called, so a write below it may well execute first.
+    // Position only means something when BOTH sit in straight-line code.
+    if (deferred(useNode())) return true;
     if (n.start < useAt) return true;
+    return deferred(n);
+  }
+
+  function deferred(n) {
     for (let p = n; p; p = parents.get(p)) if (DEFERRABLE.has(p.type)) return true;
     return false;
+  }
+
+  function useNode() {
+    let node = null;
+    for (const n of nodes) if (n.start <= useAt && n.end >= useAt) node = n;
+    return node;
   }
 
   function inScopeOf(n) {
@@ -931,7 +975,7 @@ function suspectReceiver(src, node, seen) {
   seen.add(key);
   const bound = bindingAt(src, node.name, node.start);
   if (!bound.found) return false;
-  if (bound.reassigned) return true;
+  if (bound.reassigned || bound.notText) return true;
   if (!bound.init) return false;
   const t = bound.init.type;
   // A function or a class is not text either, and a property can be
@@ -988,10 +1032,10 @@ function isPlainName(node) {
 
 function declarationsDirectlyIn(scope) {
   const out = [];
-  const add = (id, init, decl) => {
+  const add = (id, init, decl, notText = false) => {
     if (!id) return;
     if (id.type === 'Identifier') {
-      out.push({ name: id.name, init: init ?? null, decl });
+      out.push({ name: id.name, init: init ?? null, decl, notText });
       return;
     }
     // A name bound inside a PATTERN still shadows (round 10): without
@@ -1008,7 +1052,9 @@ function declarationsDirectlyIn(scope) {
   // refers to the function (round 13): `const f = function end() { … }`
   // has an `end` in scope that is the function, not whatever `end` means
   // outside. Bound with no value, so it shadows and is not a landmark.
-  if (scope.type === 'FunctionExpression' && scope.id) add(scope.id, null, scope);
+  if ((scope.type === 'FunctionExpression' || scope.type === 'ClassExpression') && scope.id) {
+    add(scope.id, null, scope, true);
+  }
   // A PARAMETER's value comes from the caller, so it is never a landmark
   // — including one with a landmark-shaped DEFAULT, which a caller may
   // simply not use (round 8). Recorded by name with nothing known.
@@ -1035,11 +1081,14 @@ function declarationsDirectlyIn(scope) {
     if (s.type === 'VariableDeclaration' && s.kind !== 'var') {
       for (const d of s.declarations) add(d.id, d.init, d);
     } else if (s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') {
+      // Recorded as NOT TEXT (round 14): a declaration carries no `init`,
+      // so a receiver introduced by `class Fake {}` looked like it might
+      // hold source text. It cannot.
       // A CLASS binds its name too (round 12). Missing it let
       // `{ class end {}; s.slice(start, end); }` resolve outward to an
       // outer landmark while the real value is the constructor. Bound
       // with no value: it shadows, and it is not a landmark.
-      add(s.id, null, s);
+      add(s.id, null, s, true);
     }
   }
   return out;
