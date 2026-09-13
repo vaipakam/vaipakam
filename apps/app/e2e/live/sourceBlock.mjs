@@ -289,6 +289,9 @@ export function callContaining(src, needle, callee = 'console.log(') {
  * hand in order to forbid narrowing source by hand.
  */
 const TRUNCATORS = new Set(['slice', 'substring', 'substr']);
+// A computed method name this cannot read. Inspected rather than
+// skipped: silently dropping a call is how `src[`slice`](…)` escaped.
+const UNREADABLE = Symbol('unreadable method name');
 
 export function sliceCallsIn(src) {
   const { nodes } = astOf(src, 'sliceCallsIn');
@@ -297,14 +300,21 @@ export function sliceCallsIn(src) {
     if (n.type !== 'CallExpression') continue;
     const c = n.callee;
     if (!c || c.type !== 'MemberExpression') continue;
-    const name = c.computed
-      ? c.property.type === 'Literal'
+    // A computed name may be a string, a no-substitution template, or
+    // something this cannot read. The first two resolve; the third is
+    // INSPECTED ANYWAY rather than skipped (round 7) — `src[`slice`](…)`
+    // was dropping out of enforcement entirely, and a call nobody can
+    // name is not a reason to stop looking at it.
+    const name = !c.computed
+      ? c.property.name
+      : c.property.type === 'Literal'
         ? c.property.value
-        : null
-      : c.property.name;
+        : c.property.type === 'TemplateLiteral' && c.property.expressions.length === 0
+          ? c.property.quasis.map((q) => q.value.cooked).join('')
+          : UNREADABLE;
     // `substring` and `substr` truncate identically; the invariant is
     // about source REGIONS, not one spelling of the String API (round 5).
-    if (!TRUNCATORS.has(name)) continue;
+    if (name !== UNREADABLE && !TRUNCATORS.has(name)) continue;
     out.push({
       method: name,
       line: lineOf(src, n.start),
@@ -351,28 +361,35 @@ const FUNCTIONS = new Set([
 ]);
 
 /**
- * The DECLARATIONS `node` sits inside, innermost first — the units a
- * marker may be attached to.
+ * The DECLARATORS `node` sits inside, innermost first — the units a
+ * marker may be attached to, paired with the statement a marker would
+ * sit above.
  *
- * Declarations only, and round 6 is why. Accepting any enclosing
- * statement meant a marker written above an `it(...)` — explaining one
- * legitimate truncation inside it — excused every other bound in that
- * whole test, since the `it(...)` call is itself a statement containing
- * them all. A marker is a note on a DECLARATION, which is what makes
- * "one marker covers the helper" true without it covering the
- * neighbourhood: `const label = (t) => t.slice(0, 40);` is a
- * declaration whose purpose IS the count, where `it('…', () => {…})` is
- * a hundred lines of unrelated code.
+ * Declarators rather than declarations, because one statement can
+ * declare several names: with a marker above
+ * `const label = t.slice(0, 40), region = src.slice(start, start + 320);`
+ * both calls shared a `VariableDeclaration`, so one reason excused the
+ * other binding (round 7). A marker excuses the declarator it names, and
+ * a marked statement declaring more than one name excuses NONE of them —
+ * the reason cannot say which it is about.
  *
- * Still a chain rather than the nearest one, which was round 5's
- * correction: a block-bodied helper puts the call inside a `return`, and
- * the declaration above it is the thing actually marked.
+ * Declarations rather than any statement, because an `it(...)` is a
+ * statement containing every bound in its callback, so a marker above one
+ * excused the lot (round 6). And the whole chain rather than the nearest,
+ * because a block-bodied helper puts the call inside a `return` while the
+ * marker sits on the declaration above it (round 5).
  */
 export function markableStatementsOf(src, node) {
   const { parents } = astOf(src, 'markableStatementsOf');
   const out = [];
   for (let n = node; n; n = parents.get(n)) {
-    if (n.type === 'VariableDeclaration' || n.type === 'FunctionDeclaration') out.push(n);
+    if (n.type === 'FunctionDeclaration') out.push(n);
+    if (n.type !== 'VariableDeclarator') continue;
+    const stmt = parents.get(n);
+    // One name per marked statement, or the reason is ambiguous.
+    if (stmt && stmt.type === 'VariableDeclaration' && stmt.declarations.length === 1) {
+      out.push(stmt);
+    }
   }
   return out;
 }
@@ -389,10 +406,26 @@ export function markableStatementsOf(src, node) {
  * whitespace between it and whatever follows, so it was attaching to the
  * next declaration and excusing a window it says nothing about.
  */
+/**
+ * Whether a comment's text IS the marker directive — the token at the
+ * start, a colon, and a non-empty reason after it.
+ *
+ * A substring match accepted `// not-a-source-region` with nothing said,
+ * and `// never add not-a-source-region here`, which means the opposite
+ * (round 7). The marker asserts "this really does count characters, and
+ * here is what it counts"; a mention of the token is not that assertion,
+ * and an assertion with no reason is not one either.
+ */
+function isDirective(text, marker) {
+  const t = text.trim();
+  if (!t.startsWith(`${marker}:`)) return false;
+  return t.slice(marker.length + 1).trim() !== '';
+}
+
 export function markedStatement(src, stmt, marker) {
   const { comments } = astOf(src, 'markedStatement');
   return comments.some((c) => {
-    if (c.end > stmt.start || !c.value.includes(marker)) return false;
+    if (c.end > stmt.start || !isDirective(c.value, marker)) return false;
     if (src.slice(c.end, stmt.start).trim() !== '') return false;
     const lineStart = src.lastIndexOf('\n', c.start - 1) + 1;
     return src.slice(lineStart, c.start).trim() === '';
@@ -420,138 +453,289 @@ export function bindingAt(src, name, at) {
   for (let scope = node; scope; scope = parents.get(scope)) {
     if (!SCOPES.has(scope.type)) continue;
     for (const decl of declarationsDirectlyIn(scope)) {
-      if (decl.name === name) return { found: true, init: decl.init };
+      if (decl.name === name) {
+        return { found: true, init: decl.init, reassigned: assignsTo(src, scope, name) };
+      }
     }
     if (FUNCTIONS.has(scope.type)) {
       for (const decl of hoistedVarsIn(scope)) {
-        if (decl.name === name) return { found: true, init: decl.init };
+        if (decl.name === name) {
+          return { found: true, init: decl.init, reassigned: assignsTo(src, scope, name) };
+        }
       }
     }
   }
-  return { found: false, init: null };
+  return { found: false, init: null, reassigned: false };
+}
+
+/**
+ * Whether `name` is WRITTEN TO anywhere inside `scope` — assigned, or
+ * stepped by `++`/`--`.
+ *
+ * A declaration's initializer only says what a name held at the start.
+ * Round 7: `let end = s.indexOf('next'); end = start + 320;` had the
+ * window inheriting a classification the name no longer deserved.
+ * Deciding WHICH write reaches a given use is reaching-definitions
+ * analysis, whose every gap is another round of this — so any write at
+ * all makes the name unusable as a landmark, and the fix in code is a
+ * `const` holding the landmark rather than a marker.
+ */
+function assignsTo(src, scope, name) {
+  const { nodes, parents } = astOf(src, 'assignsTo');
+  return nodes.some((n) => {
+    const target =
+      n.type === 'AssignmentExpression'
+        ? n.left
+        : n.type === 'UpdateExpression'
+          ? n.argument
+          : null;
+    if (!target || target.type !== 'Identifier' || target.name !== name) return false;
+    for (let p = n; p; p = parents.get(p)) if (p === scope) return true;
+    return false;
+  });
 }
 
 // The calls that FIND something in text. A bound produced by one of
-// these is a landmark: it moves with the code, which is the entire
-// property #2144 is about.
+// these is a POSITION: it moves with the code, which is the property
+// #2144 is about.
 const FINDERS = new Set(['indexOf', 'lastIndexOf', 'search']);
 
 /**
- * Whether `node` is an ANCHOR — a bound derived from the text rather
- * than counted in characters.
+ * What a bound expression DENOTES, or `null` when nothing recognisable:
  *
- * WHY THIS IS THE WAY ROUND IT IS, and it is the round-6 lesson rather
- * than a preference. The first classifier asked the opposite question,
- * "can a number be reached in here?", and every review round answered it
- * with another expression form it had not thought of: a quoted number, a
- * named constant, an alias, arithmetic, a defaulted parameter, a
- * switch-case binding, a no-substitution template, an immediately-invoked
- * function, a name assigned after its declaration, a default nested in a
- * destructuring pattern. That list has no end, because "every way to
+ *   - `'position'` — a place in the text. The only thing a region bound
+ *     may be.
+ *   - `'offset'` — a DISTANCE. Valid inside a bound and never as one.
+ *   - `'positions'` — a collection of places, valid only as the thing a
+ *     selection reads from.
+ *
+ * WHY THE DISTINCTION EXISTS (round 7). An earlier version called any
+ * sum or difference of two landmarks a landmark, and
+ * `src.indexOf('end') - src.indexOf('begin')` is not one — it is the
+ * WIDTH between two places, and using a width as an end is the fixed
+ * window again with the number computed instead of typed. The same
+ * confusion let a bare `.length` stand as a bound, which measures
+ * something and points at nothing.
+ *
+ * So positions and distances are kept apart, and the arithmetic says
+ * which combinations mean anything:
+ *
+ *   position + offset → position     "just past the landmark"
+ *   position − offset → position     "just before it"
+ *   position − position → offset     a width; NOT a bound
+ *   offset ± offset → offset
+ *   position + position → nothing    two places do not add
+ *
+ * WHY THE WHOLE RULE IS THIS WAY ROUND (round 6). The classifier before
+ * it asked "can a number be reached in this bound?", and every review
+ * answered with another way to write one: a quoted number, a named
+ * constant, an alias, arithmetic, a defaulted parameter, a switch-case
+ * binding, a template, an immediately-invoked function, a late
+ * assignment, a default nested in a destructuring pattern. "Every way to
  * write a number in JavaScript" is an open set, and a guard whose
- * correctness depends on having enumerated an open set is a guard that is
- * wrong and does not know it.
+ * correctness depends on having enumerated an open set is wrong and does
+ * not know it. What a LANDMARK looks like is closed and small — it is
+ * what this suite actually writes — so that is what is enumerated, and
+ * everything unrecognised is a character count that must say what it
+ * counts. A new evasion cannot be invented, because unrecognised is
+ * refused.
  *
- * So the open set is moved to the REJECTING side. What an anchor may look
- * like is a closed, small list — and it is small because the real ones in
- * this suite are: `indexOf`, a helper wrapping `indexOf`, a name holding
- * one, and a landmark plus the LENGTH of the landmark. Anything this
- * does not recognise is a character count and must say what it counts.
- * A new evasion cannot be invented, because there is nothing to evade:
- * unrecognised is refused.
- *
- * The cost is over-flagging an anchor written in some way not listed
- * here, and the answer to that is to ADD THE SHAPE rather than to mark
- * the code — a marker means "this really does count characters", and
- * putting one on a correct anchor would be a lie that the next reader
- * inherits.
+ * Over-flagging is the cost to watch, and is treated as seriously as a
+ * gap: the answer to a legitimate shape this does not know is to ADD THE
+ * SHAPE, never to mark the code. A marker asserts "this really does
+ * count characters", and putting one on a correct landmark is a lie the
+ * next reader inherits.
  */
-export function isAnchored(src, node, seen = new Set()) {
-  if (!node || typeof node.type !== 'string') return false;
+export function kindOf(src, node, seen = new Set()) {
+  if (!node || typeof node.type !== 'string') return null;
   switch (node.type) {
-    // `s.indexOf('x')` — the landmark itself. Its ARGUMENTS are not
-    // inspected: a number inside one selects or offsets the search, and
-    // the result is still wherever the text was found (round 5).
     case 'CallExpression':
-      return (
-        (node.callee.type === 'MemberExpression' &&
-          !node.callee.computed &&
-          FINDERS.has(node.callee.property.name)) ||
-        returnsAnchor(src, node.callee, seen)
-      );
+      return callKind(src, node, seen);
 
-    // A name holding one, resolved in scope.
     case 'Identifier': {
       const key = `${node.name}@${node.start}`;
-      if (seen.has(key)) return false;
+      if (seen.has(key)) return null;
       seen.add(key);
       const bound = bindingAt(src, node.name, node.start);
-      return bound.found && bound.init ? isAnchored(src, bound.init, seen) : false;
+      if (!bound.found || !bound.init) return null;
+      // A name that is WRITTEN TO after it is declared cannot be trusted
+      // to still hold what it was declared with (round 7):
+      // `let end = s.indexOf('x'); end = start + 320;` had the window
+      // inheriting the declaration's classification.
+      if (bound.reassigned) return null;
+      return kindOf(src, bound.init, seen);
     }
 
-    // `needle.length` — a MEASURED length, not a counted one. This is
-    // what makes `s.indexOf(x) + x.length` ("just past the landmark")
-    // an anchor while `s.indexOf(x) + 320` is not.
-    case 'MemberExpression':
-      if (!node.computed && node.property.name === 'length') return true;
-      // `anchors[0]` / `anchors.first` — selecting from a collection of
-      // anchors. The KEY is not part of the value (round 6), so a
-      // numeric index does not make the bound a count.
-      return isAnchored(src, node.object, seen);
+    case 'MemberExpression': {
+      // A MEASURED length — `needle.length` — which is why
+      // `s.indexOf(x) + x.length` is a position while `+ 320` is not.
+      // Only off a plain NAME: `({ length: start + 320 }).length` is a
+      // number wearing the spelling (round 7).
+      if (!node.computed && node.property.name === 'length') {
+        return measurable(node.object) ? 'offset' : null;
+      }
+      // Selecting from a collection of landmarks. The KEY is never
+      // inspected — it selects rather than contributes — so a numeric
+      // index does not make the bound a count.
+      return kindOf(src, node.object, seen) === 'positions' ? 'position' : null;
+    }
 
-    // Landmark ± landmark, which includes ± a measured length. A literal
-    // on either side is not an anchor, so `+ 320` fails here.
-    case 'BinaryExpression':
-      return (
-        (node.operator === '+' || node.operator === '-') &&
-        isAnchored(src, node.left, seen) &&
-        isAnchored(src, node.right, seen)
-      );
+    case 'BinaryExpression': {
+      if (node.operator !== '+' && node.operator !== '-') return null;
+      const l = kindOf(src, node.left, seen);
+      const r = kindOf(src, node.right, seen);
+      if (l === 'position' && r === 'offset') return 'position';
+      if (node.operator === '+' && l === 'offset' && r === 'position') return 'position';
+      if (node.operator === '-' && l === 'position' && r === 'position') return 'offset';
+      if (l === 'offset' && r === 'offset') return 'offset';
+      return null;
+    }
 
-    case 'ConditionalExpression':
-      return isAnchored(src, node.consequent, seen) && isAnchored(src, node.alternate, seen);
+    case 'ConditionalExpression': {
+      const a = kindOf(src, node.consequent, seen);
+      return a !== null && a === kindOf(src, node.alternate, seen) ? a : null;
+    }
 
-    case 'LogicalExpression':
-      return isAnchored(src, node.left, seen) && isAnchored(src, node.right, seen);
+    case 'LogicalExpression': {
+      const a = kindOf(src, node.left, seen);
+      return a !== null && a === kindOf(src, node.right, seen) ? a : null;
+    }
 
+    // A collection is NOT a bound — `s.slice(start, [a, b])` coerces to
+    // a comma-joined string and then to NaN (round 7). It is only ever
+    // the thing a selection reads from.
     case 'ArrayExpression':
-      return node.elements.length > 0 && node.elements.every((e) => isAnchored(src, e, seen));
+      return node.elements.length > 0 &&
+        node.elements.every((e) => kindOf(src, e, seen) === 'position')
+        ? 'positions'
+        : null;
 
     case 'ParenthesizedExpression':
-      return isAnchored(src, node.expression, seen);
+      return kindOf(src, node.expression, seen);
 
     default:
-      return false;
+      return null;
   }
 }
 
-/** Whether every value a locally-declared function returns is an anchor. */
-function returnsAnchor(src, callee, seen) {
-  if (callee.type !== 'Identifier') return false;
-  const key = `fn:${callee.name}@${callee.start}`;
+/**
+ * Whether `node` is text that is ALREADY a bounded region — a call to one
+ * of the structural helpers here, or a name holding one.
+ *
+ * This is what makes a one-argument slice honest. `s.slice(at(x))` on raw
+ * file text runs to the end of the file, and a rule over it can be
+ * satisfied by matching text anywhere later — the too-long half of the
+ * defect (round 7). But `block.slice(…)` where `block` came from
+ * `blockFrom` ends at the end of `block`, which was bounded by meaning
+ * when it was taken. Same spelling, different region.
+ */
+export function isBoundedRegion(src, node, seen = new Set()) {
+  if (!node || typeof node.type !== 'string') return false;
+  if (node.type === 'CallExpression') {
+    if (node.callee.type === 'Identifier' && REGION_HELPERS.has(node.callee.name)) return true;
+    // A local helper that returns one — `const branch = () => blockFrom(…)`
+    // in `confirmTrial`. Expression bodies only, for the reason
+    // `helperKind` gives: a block body needs to prove every path returns,
+    // and a path that returns nothing hands back the whole file.
+    if (node.callee.type !== 'Identifier') return false;
+    const key = `regionFn:${node.callee.name}@${node.callee.start}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const fn = bindingAt(src, node.callee.name, node.callee.start);
+    return fn.found &&
+      !fn.reassigned &&
+      fn.init &&
+      fn.init.type === 'ArrowFunctionExpression' &&
+      fn.init.body.type !== 'BlockStatement'
+      ? isBoundedRegion(src, fn.init.body, seen)
+      : false;
+  }
+  if (node.type !== 'Identifier') return false;
+  const key = `region:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingAt(src, callee.name, callee.start);
-  const fn = bound.init;
-  if (!fn) return false;
-  if (fn.type === 'ArrowFunctionExpression' && fn.body.type !== 'BlockStatement') {
-    return isAnchored(src, fn.body, seen);
+  const bound = bindingAt(src, node.name, node.start);
+  return bound.found && !bound.reassigned && bound.init
+    ? isBoundedRegion(src, bound.init, seen)
+    : false;
+}
+
+const REGION_HELPERS = new Set(['blockFrom', 'between', 'statementFrom', 'callContaining']);
+
+/** Whether `node` is a bound that may end a source region. */
+export function isAnchored(src, node, seen = new Set()) {
+  return kindOf(src, node, seen) === 'position';
+}
+
+function callKind(src, node, seen) {
+  const callee = node.callee;
+  // `s.indexOf('x')`. Its ARGUMENTS are not inspected: a number in one
+  // selects or offsets the search, and the result is still wherever the
+  // text was found.
+  //
+  // The RECEIVER is checked, because the property name alone proves
+  // nothing — `({ indexOf: () => start + 320 }).indexOf()` is a fixed
+  // window spelled like a search (round 7). A plain name is required.
+  // The honest limit: a name holding an ARRAY has an `indexOf` too, and
+  // this does not tell the two apart.
+  if (
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    FINDERS.has(callee.property.name) &&
+    isPlainName(callee.object)
+  ) {
+    return 'position';
   }
-  if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
-  const returns = [];
-  const collect = (n, top) => {
-    if (!n || typeof n !== 'object') return;
-    if (Array.isArray(n)) return n.forEach((c) => collect(c, top));
-    if (typeof n.type !== 'string') return;
-    if (!top && (n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression')) return;
-    if (n.type === 'ReturnStatement') returns.push(n.argument);
-    for (const k of Object.keys(n)) {
-      if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
-      collect(n[k], false);
-    }
-  };
-  collect(fn.body, true);
-  return returns.length > 0 && returns.every((r) => isAnchored(src, r, seen));
+  return helperKind(src, callee, seen);
+}
+
+/**
+ * The kind a locally-declared helper returns — EXPRESSION-BODIED arrows
+ * only, which is a deliberate refusal rather than an omission.
+ *
+ * A block body needs "does every reachable path return a landmark?",
+ * which is control-flow analysis, and round 7 showed the shallow version
+ * failing on `() => { if (enabled) return s.indexOf('next'); }`: the one
+ * explicit return is a landmark, the other path returns `undefined`, and
+ * the region runs to the end of the file — the too-long half of the
+ * defect, restored by the guard meant to refuse it. An expression body
+ * has exactly one result and needs no analysis at all.
+ *
+ * This is what `at(needle)` and `trialCall()` in this suite already are.
+ * A helper written with a block is reported, and the fix is to make it an
+ * expression or to bound the region with one of the structural helpers —
+ * never to mark it.
+ */
+function helperKind(src, callee, seen) {
+  if (callee.type !== 'Identifier') return null;
+  const key = `fn:${callee.name}@${callee.start}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const bound = bindingAt(src, callee.name, callee.start);
+  if (!bound.found || bound.reassigned) return null;
+  const fn = bound.init;
+  if (!fn || fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
+  return kindOf(src, fn.body, seen);
+}
+
+/**
+ * Something whose `.length` is a real measurement: a name, or a string
+ * written out. `'x'.length` is the width of the landmark `'x'`, which is
+ * how "just past it" is written. `({ length: start + 320 }).length` is a
+ * number wearing the spelling and is refused (round 7).
+ */
+function measurable(node) {
+  if (!node) return false;
+  if (node.type === 'Literal' && typeof node.value === 'string') return true;
+  if (node.type === 'TemplateLiteral') return true;
+  return isPlainName(node);
+}
+
+/** An identifier, or a dotted chain of them — `src`, `page.body`. */
+function isPlainName(node) {
+  if (!node) return false;
+  if (node.type === 'Identifier' || node.type === 'ThisExpression') return true;
+  return node.type === 'MemberExpression' && !node.computed && isPlainName(node.object);
 }
 
 function declarationsDirectlyIn(scope) {

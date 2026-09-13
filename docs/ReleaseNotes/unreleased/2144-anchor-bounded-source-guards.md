@@ -118,7 +118,44 @@ apologetic note to correct code. A note asserts that something really
 does count characters, and putting one on correct work is a falsehood the
 next reader inherits.
 
-Putting a removed window back, in any of the twenty disguises review has
+A seventh round is worth recording because the findings changed
+character. They stopped being "here is another way to write a number the
+check has not met" and became "the things you call landmarks include
+several that are not" — which is a question about a short list I control
+rather than about an open-ended one I cannot finish. That is the evidence
+the change of phrasing did what it was meant to.
+
+The substantial one is that a place and a distance had been treated as
+the same thing. The gap BETWEEN two landmarks is a width, and using a
+width to say where a region ends is the fixed length again, arrived at by
+subtraction instead of typed out. So the check now keeps places and
+distances apart, and knows which combinations mean anything: a place plus
+or minus a distance is a place, one place minus another is a distance,
+and two places do not add. A measured width on its own measures something
+and points at nothing, so it can no longer end a region.
+
+The rest were things that merely looked like landmarks: an object with a
+search-shaped method that returns a fixed number, an object with a
+length-shaped field that does the same, a name that holds a landmark when
+it is declared and is overwritten afterwards, a helper that returns a
+landmark on one path and nothing on the other, and a collection of
+landmarks handed over where one was expected.
+
+Two of these were live rather than hypothetical. One check bounded a
+region with no end at all, so its rule about the order of two things could
+have been satisfied by matching text anywhere further down the file; it is
+re-bounded on the block it is actually about. And a check whose region
+legitimately runs to the end of an already-bounded piece of text is
+recognised as such, rather than being asked to invent an ending it does
+not need.
+
+The notes that excuse a genuine count were tightened twice more. One note
+above a line declaring two names was excusing both, though it can only be
+about one, so a line declaring more than one name is no longer excusable.
+And a note now has to be a stated reason rather than a mention: the words
+alone, or a sentence saying never to use them, no longer count.
+
+Putting a removed window back, in any of the thirty disguises review has
 demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth

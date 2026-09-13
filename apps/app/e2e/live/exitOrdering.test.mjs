@@ -299,7 +299,10 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(fn).toContain('if (soldNow === true)');
     // And the loop: a skip `continue`s BEFORE the counter moves, so the
     // budget is spent on visits that observed something.
-    const loop = src.slice(src.indexOf('for (const l of readyFirst) {'));
+    // The loop's own body, not everything after it: sliced to the end of
+    // the file, this ordering rule could be satisfied by a `continue;`
+    // and an increment sitting anywhere later in the drive (#2144 round 7).
+    const loop = blockFrom(src, 'for (const l of readyFirst) {');
     const skip = loop.indexOf('continue;');
     const spend = loop.indexOf('observedDetails += 1;');
     expect(skip, 'the skip was not found').toBeGreaterThan(-1);

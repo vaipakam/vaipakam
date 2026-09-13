@@ -17,6 +17,7 @@ import {
   blockFrom,
   callContaining,
   isAnchored,
+  isBoundedRegion,
   markableStatementsOf,
   markedStatement,
   sliceCallsIn,
@@ -319,8 +320,26 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // produced — `s.substr(start, s.indexOf('end'))` truncates by however
   // many characters that landmark happens to sit at, which is a fixed
   // window wearing an anchor's clothes.
-  const countsCharacters = (src, call) =>
-    call.args.some((a, i) => (call.method === 'substr' && i === 1) || !isAnchored(src, a));
+  const countsCharacters = (src, call) => {
+    // A MISSING end is not an anchored end (round 7). `s.slice(at(x))`
+    // runs to the end of the file, so a rule over it can be satisfied by
+    // matching text anywhere later — the too-long half of the defect,
+    // and it was live in `exitOrdering`. `substr` is exempt from this:
+    // its one-argument form takes the rest of the string by design and
+    // its second argument is a LENGTH, not an end.
+    // …unless the receiver is ALREADY a bounded region, in which case
+    // the end is that region's end, bounded by meaning when it was taken.
+    if (
+      call.method !== 'substr' &&
+      call.args.length < 2 &&
+      !isBoundedRegion(src, call.node.callee.object)
+    ) {
+      return true;
+    }
+    return call.args.some(
+      (a, i) => (call.method === 'substr' && i === 1) || !isAnchored(src, a),
+    );
+  };
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
   // Proximity alone excused a neighbour (round 4). Two further corrections
@@ -382,6 +401,67 @@ describe('#2144 — no source region is bounded by a character count', () => {
       const call = sliceCallsIn(code).at(-1);
       expect(call, why).toBeDefined();
       expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 7 — the findings moved from "another way to write a number" to
+  // "your landmark list admits things that are not landmarks", which is a
+  // closed set and the reason the inversion was worth making. Each of
+  // these WAS accepted as anchored by the first version of that list.
+  it('refuses a bound that is not really a place in the text', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    const cases = [
+      ['a reassigned name', "let e = s.indexOf('next');\ne = start + 320;\nconst r = s.slice(start, e);"],
+      [
+        'a helper that returns on only one path',
+        "const e = () => { if (x) return s.indexOf('next'); };\nconst r = s.slice(start, e());",
+      ],
+      [
+        'a finder that searches nothing',
+        'const r = s.slice(start, ({ indexOf: () => start + 320 }).indexOf());',
+      ],
+      ['a length of something invented', 'const r = s.slice(start, ({ length: start + 320 }).length);'],
+      [
+        'a WIDTH between two places used as an end',
+        "const r = s.slice(start, s.indexOf('end') - s.indexOf('begin'));",
+      ],
+      ['a bare measured length', "const r = s.slice(start, 'x'.length);"],
+      ['two places added together', "const r = s.slice(start, start + s.indexOf('end'));"],
+      [
+        'a collection used as the bound itself',
+        "const ends = [s.indexOf('a'), s.indexOf('b')];\nconst r = s.slice(start, ends);",
+      ],
+      ['a truncator named by a template', 'const r = s[`slice`](start, start + 320);'],
+      ['no end at all', 'const r = s.slice(start);'],
+    ];
+    for (const [why, tail] of cases) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // The other side of the same rules, so they cannot be satisfied by
+  // refusing everything.
+  it('still accepts the landmark shapes this suite writes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['just past a landmark', "const r = s.slice(start, s.indexOf('x') + 'x'.length);"],
+      ['just before one', "const r = s.slice(start, s.indexOf('x') - 'x'.length);"],
+      ['a helper with an expression body', "const at = (n) => s.indexOf(n);\nconst r = s.slice(start, at('x'));"],
+      [
+        'selection from a collection of landmarks',
+        "const ends = [s.indexOf('a')];\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'no end, on an already-bounded region',
+        "const b = blockFrom(s, 'if (x) {');\nconst r = b.slice(b.indexOf('y'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(countsCharacters(code, call), why).toBe(false);
     }
   });
 
@@ -520,6 +600,29 @@ describe('#2144 — no source region is bounded by a character count', () => {
       'const r = s.slice(start, start + 320);',
     ].join('\n');
     expect(excused(src, sliceCallsIn(src)[0])).toBe(false);
+  });
+
+  // ROUND 7 — one statement, two names, one reason. The marker cannot
+  // say which binding it is about, so it excuses neither.
+  it('does not let a marker cover a sibling declarator', () => {
+    const src = [
+      `// ${MARKER}: assertion label`,
+      'const label = text.slice(0, 40), region = src.slice(start, start + 320);',
+    ].join('\n');
+    for (const call of sliceCallsIn(src)) expect(excused(src, call)).toBe(false);
+  });
+
+  // ROUND 7 — a mention of the token is not an assertion, and an
+  // assertion with no reason does not name what is counted.
+  it('requires the marker to be a directive with a reason', () => {
+    const bare = [`// ${MARKER}`, 'const a = x.slice(2);'].join('\n');
+    expect(excused(bare, sliceCallsIn(bare)[0])).toBe(false);
+    const denial = [`// never add ${MARKER} here`, 'const a = x.slice(2);'].join('\n');
+    expect(excused(denial, sliceCallsIn(denial)[0])).toBe(false);
+    const empty = [`// ${MARKER}:   `, 'const a = x.slice(2);'].join('\n');
+    expect(excused(empty, sliceCallsIn(empty)[0])).toBe(false);
+    const good = [`// ${MARKER}: drops the 0x prefix`, 'const a = x.slice(2);'].join('\n');
+    expect(excused(good, sliceCallsIn(good)[0])).toBe(true);
   });
 
   // ROUND 5 — the marker has to BE a comment. Testing the raw line text
