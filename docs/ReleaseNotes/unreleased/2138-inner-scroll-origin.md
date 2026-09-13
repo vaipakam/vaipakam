@@ -119,7 +119,19 @@ the page has scrolled; and the clipping rule measures a scrolling region
 by its opening rather than its border, so a wrapper showing the whole
 opening of a heavily bordered region is no longer read as showing a
 sliver of it. One more boundary was declared: a mirrored region, like a
-rotated one, is admitted rather than measured.
+rotated one, is admitted rather than measured. An eleventh round made
+the question of which ancestors carry a row one shared answer for the
+clipping rule, the origin rule and the page-scroll test, asked at every
+step of the way up rather than once of the row itself: a row inside an
+absolutely positioned wrapper is no longer credited with the movement of
+a scrolling region that does not carry the wrapper, and a card fixed to
+the viewport inside another fixed card is still recognised as not moving
+with the page. The clipping rule also honours the margin a clipping
+region may extend past its edge, measured in the check's own browser so
+that copy painted in that margin is read as shown, and the half-shown
+rule for a nested region is now asked at the position chosen for each
+line, so a line reachable only through a mostly hidden region is
+rejected as it should be.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

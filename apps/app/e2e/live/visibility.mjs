@@ -158,7 +158,49 @@ export function visibilityHelpers() {
     const top = r.top + n.clientTop * ky;
     const width = n.clientWidth * kx;
     const height = n.clientHeight * ky;
-    return { left, top, right: left + width, bottom: top + height, width, height };
+    return { left, top, right: left + width, bottom: top + height, width, height, scaleX: kx, scaleY: ky };
+  };
+
+  /**
+   * The box `n`'s `overflow` clips at, in VIEWPORT pixels: its client area,
+   * widened by `overflow-clip-margin` where that applies; `null` where
+   * `clientAreaOf` is.
+   *
+   * #2157 round 11. `overflow: clip` may push the clipping edge out past the
+   * padding box by `overflow-clip-margin`, and glyphs painted in that
+   * margin are on screen while the client area alone would read them as
+   * clipped away — a false FAIL. MEASURED in the drive's Chromium (141)
+   * rather than taken from the specification: the margin applies only
+   * when overflow is `clip` on BOTH axes (with `clip` on one axis and
+   * `visible` on the other the content is cut at the padding edge), it is
+   * measured from the padding box, and a value carrying a `<visual-box>`
+   * keyword (`content-box 20px`) is ignored entirely — the clip stays at
+   * the padding edge. `hidden` / `scroll` / `auto` never apply it. Each of
+   * those is what this computes, and the fixture pins the measurement, so
+   * a Chromium that starts honouring the keyword fails the premise rather
+   * than the verdict.
+   */
+  const clipMarginOf = (cs) => {
+    if (cs.overflowX !== 'clip' || cs.overflowY !== 'clip') return 0;
+    const m = /^(\d+(?:\.\d+)?)px$/.exec(String(cs.overflowClipMargin ?? '').trim());
+    return m ? Number.parseFloat(m[1]) : 0;
+  };
+  const clipBoxOf = (n, cs) => {
+    const area = clientAreaOf(n);
+    if (area === null) return null;
+    const margin = clipMarginOf(cs);
+    if (margin === 0) return area;
+    const mx = margin * area.scaleX;
+    const my = margin * area.scaleY;
+    return {
+      ...area,
+      left: area.left - mx,
+      right: area.right + mx,
+      top: area.top - my,
+      bottom: area.bottom + my,
+      width: area.width + 2 * mx,
+      height: area.height + 2 * my,
+    };
   };
 
   /**
@@ -338,27 +380,66 @@ export function visibilityHelpers() {
    * row inside a fixed card on a scrolled page — admitting a row parked
    * behind an overlay that no scroll position uncovers.
    */
+  /**
+   * WHICH ancestors carry `node` — scroll it, clip it — walking upward.
+   *
+   * An in-flow box is carried by every ancestor. An OUT-OF-FLOW box is
+   * carried only from its containing block upward: for `absolute`, the
+   * nearest ancestor that is positioned or establishes a containing block
+   * (`establishesCB`); for `fixed`, only the latter — a merely positioned
+   * ancestor does not capture a fixed box. Ancestors between the box and
+   * that block neither scroll nor clip it. `sticky` and `relative` are in
+   * flow for this question: they ride their scroller.
+   *
+   * #2157 round 11: the question is asked of EVERY step, not once of the
+   * node. Both walks used to read only the node's own `position`, so a
+   * static row inside an absolutely positioned wrapper whose containing
+   * block sat ABOVE an intermediate scroller was credited with that
+   * scroller's range — which does not move the wrapper — and a row parked
+   * before the origin was "rescued" by scroll extent that never reaches it.
+   * Once a carrying ancestor is found, ITS position decides what carries it
+   * in turn, so a fixed box captured by a transformed ancestor that is
+   * itself fixed is still not moved by the page (`ridesThePage`). One
+   * object, consumed step by step by the clip walk, the origin walk and
+   * `ridesThePage`, so the three cannot disagree about who carries whom.
+   *
+   * `carries(n, cs)` is called for each ancestor strictly above the node,
+   * innermost first, and answers whether `n` carries the node; `pending()`
+   * is the kind of out-of-flow box still awaiting its containing block
+   * (`'fixed'`, `'absolute'`, or `null`) once the walk has run out.
+   */
+  const outOfFlowKind = (position) =>
+    position === 'fixed' || position === 'absolute' ? position : null;
+  const carrierWalk = (node) => {
+    let awaiting = outOfFlowKind(getComputedStyle(node).position);
+    return {
+      carries(n, cs) {
+        if (awaiting !== null) {
+          const isCB =
+            awaiting === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs);
+          if (!isCB) return false;
+        }
+        awaiting = outOfFlowKind(cs.position);
+        return true;
+      },
+      pending: () => awaiting,
+    };
+  };
+
   const ridesThePage = (node) => {
-    for (let a = node; a; a = a.parentElement) {
-      if (getComputedStyle(a).position !== 'fixed') continue;
-      for (let b = a.parentElement; b; b = b.parentElement) {
-        if (establishesCB(getComputedStyle(b))) return true;
-      }
-      return false;
-    }
-    return true;
+    const walk = carrierWalk(node);
+    for (let n = node.parentElement; n; n = n.parentElement) walk.carries(n, getComputedStyle(n));
+    return walk.pending() !== 'fixed';
   };
 
   const unreachableBeforeOrigin = (node, box, { ownScroll = false } = {}) => {
-    const flow = getComputedStyle(node).position;
     const captured = ridesThePage(node);
     const pageX = captured ? window.scrollX : 0;
     const pageY = captured ? window.scrollY : 0;
     const beforeX = box.right + pageX <= 0;
     const beforeY = box.bottom + pageY <= 0;
     if (!beforeX && !beforeY) return false;
-    // `sticky` is in flow for THIS question: it rides its scroller.
-    let reachedCB = flow === 'static' || flow === 'relative' || flow === 'sticky';
+    const walk = carrierWalk(node);
     const pageScroller = document.scrollingElement || document.documentElement;
     // The favourable end of every carrying scroller's range, summed: how
     // far the content can be moved toward +x / +y.
@@ -366,13 +447,7 @@ export function visibilityHelpers() {
     let hiY = 0;
     for (let n = ownScroll ? node : node.parentElement; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
-      if (n !== node && !reachedCB) {
-        if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {
-          reachedCB = true;
-        } else {
-          continue;
-        }
-      }
+      if (n !== node && !walk.carries(n, cs)) continue;
       if (n === pageScroller || n === document.documentElement) continue;
       const range = scrollShiftRange(n, cs);
       if (range === null) continue;
@@ -452,8 +527,6 @@ export function visibilityHelpers() {
     // the lender can see. The collapsed-clipper rule still applies to
     // them. Nothing on this card is out of flow; this is here so the
     // predicate stays honest if something ever is.
-    const flow = getComputedStyle(node).position;
-    const inFlow = flow === 'static' || flow === 'relative';
     // ROUND 65 P2 — WHICH ancestors clip an out-of-flow box, rather than
     // none of them.
     //
@@ -480,8 +553,11 @@ export function visibilityHelpers() {
     // fixed box. Anything this cannot decide leaves the ancestor skipped,
     // so the residual stays a missed defect rather than an invented one.
     // `establishesCB` is hoisted to the top of the family (#2138): the
-    // scroll-credit walk asks the same containing-block question.
-    let reachedCB = inFlow;
+    // scroll-credit walk asks the same containing-block question — and
+    // since #2157 round 11 both ask it through one `carrierWalk`, step by
+    // step, so an out-of-flow WRAPPER between the node and a clipper is
+    // honoured as well as the node's own position.
+    const walk = carrierWalk(node);
     const r = node.getBoundingClientRect();
     // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
     // it is not "fixed" later as a false positive. `text-overflow:
@@ -653,13 +729,7 @@ export function visibilityHelpers() {
       // ROUND 65 P2 — skip only UP TO the containing block, then apply the
       // rule. `n !== node` keeps round 45's correction: an element always
       // clips its OWN text, whatever its `position`.
-      if (!reachedCB && n !== node) {{
-        if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {{
-          reachedCB = true;
-        }} else {{
-          continue;
-        }}
-      }}
+      if (n !== node && !walk.carries(n, cs)) continue;
       const clipsY = cs.overflowY !== 'visible';
       const clipsX = cs.overflowX !== 'visible';
       if (!clipsY && !clipsX) continue;
@@ -689,10 +759,11 @@ export function visibilityHelpers() {
       // Overflow clips at the PADDING edge (#2157 round 10): the box the
       // content is judged against — and the slit seeded from it below — is
       // the client area, so a scroller's own border is not counted as part
-      // of its opening. Where that cannot be measured (a rotation, a
-      // reflection, an inline box) the border box stands in as before,
-      // which admits.
-      const clip = actsAsViewport ? box : (clientAreaOf(n) ?? box);
+      // of its opening; widened by `overflow-clip-margin` where Chromium
+      // applies it (round 11, `clipBoxOf`). Where that cannot be measured
+      // (a rotation, a reflection, an inline box) the border box stands in
+      // as before, which admits.
+      const clip = actsAsViewport ? box : (clipBoxOf(n, cs) ?? box);
       if (clipsY && clip.height === 0) return false;
       if (clipsX && clip.width === 0) return false;
       const range = scrollShiftRange(
@@ -895,30 +966,34 @@ export function visibilityHelpers() {
             };
             return { shown, want };
           };
-          const envelope = placeFor(bandOf(boxes));
-          const S = envelope.shown;
           // The SLIT has to be shown through this box: any positive extent
           // on an axis this box scrolls, the half rule on one it merely
           // clips — a scrollport mostly hidden shows at most a sliver of
           // anything scrolled into it, and one wholly outside shows nothing.
-          if (clipsY) {
-            const seen = S.bottom - S.top;
-            if (seen <= 0 || (!scrollsY && seen / slitExtent.h < 0.5)) return false;
-            // A nested SCROLLER is the new limiting viewport (round 8): the
-            // half rule above it measures against what this scroller shows,
-            // not against the inner scrollport it has already narrowed.
-            if (scrollsY) slitExtent = { ...slitExtent, h: seen };
-          }
-          if (clipsX) {
-            const seen = S.right - S.left;
-            if (seen <= 0 || (!scrollsX && seen / slitExtent.w < 0.5)) return false;
-            if (scrollsX) slitExtent = { ...slitExtent, w: seen };
-          }
+          // Asked of the envelope's offset AND of each line's own (round
+          // 11): a line reachable only at an offset that leaves the slit
+          // mostly hidden is read through a mostly hidden slit, and the
+          // per-line aiming of round 10 must not lift the half rule off it.
+          const slitShown = (shown) => {
+            if (clipsY) {
+              const seen = shown.bottom - shown.top;
+              if (seen <= 0 || (!scrollsY && seen / slitExtent.h < 0.5)) return false;
+            }
+            if (clipsX) {
+              const seen = shown.right - shown.left;
+              if (seen <= 0 || (!scrollsX && seen / slitExtent.w < 0.5)) return false;
+            }
+            return true;
+          };
+          const envelope = placeFor(bandOf(boxes));
+          const S = envelope.shown;
+          if (!slitShown(S)) return false;
           // And each LINE has to reach the part of the slit that is shown at
           // the offset chosen for that line, moving relative to the slit by
-          // the scrollers at or below it.
+          // the scrollers at or below it — with the slit still shown there.
           for (const q of boxes) {
-            const { want } = placeFor(bandOf([q]));
+            const { shown, want } = placeFor(bandOf([q]));
+            if (!slitShown(shown)) return false;
             if (
               clipsY &&
               q.height > 0 &&
@@ -934,6 +1009,11 @@ export function visibilityHelpers() {
               return false;
             }
           }
+          // A nested SCROLLER is the new limiting viewport (round 8): the
+          // half rule above it measures against what this scroller shows,
+          // not against the inner scrollport it has already narrowed.
+          if (clipsY && scrollsY) slitExtent = { ...slitExtent, h: S.bottom - S.top };
+          if (clipsX && scrollsX) slitExtent = { ...slitExtent, w: S.right - S.left };
           // Everything seen from here up is seen through this box too, and
           // ONE scroll position has to serve every box (round 4): the slit's
           // carrying range is narrowed to the offsets that keep it
@@ -1451,7 +1531,7 @@ export function visibilityHelpers() {
           if (a === document.documentElement || a === document.body) continue;
           const acs = getComputedStyle(a);
           if (acs.overflowY === 'visible' && acs.overflowX === 'visible') continue;
-          const aa = clientAreaOf(a);
+          const aa = clipBoxOf(a, acs);
           if (aa === null) continue;
           if (acs.overflowY !== 'visible') {
             slit.top = Math.max(slit.top, aa.top);

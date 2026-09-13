@@ -2542,3 +2542,129 @@ test('carried covers, per-line aiming, fixed chains and client-area slits', asyn
   expect(result.fixedInnerRowBottom).toBe(-580);
   expect(result.fixedInnerRow, 'a covered scroller inside a fixed card on a scrolled page').toBe(false);
 });
+
+// #2157 round 11 — four corrections inside the stated scope:
+//
+//   - a fixed box captured by a transformed ancestor that is ITSELF fixed
+//     still does not ride the page (the fixed chain is followed upward);
+//   - an out-of-flow WRAPPER between the row and a scroller is honoured:
+//     the scroller neither carries nor clips a subtree whose containing
+//     block lies above it, so its range is no credit;
+//   - `overflow-clip-margin` widens an `overflow: clip` box's clip edge,
+//     as Chromium applies it: both axes `clip`, bare length, padding box;
+//   - the half rule on an inherited slit is asked at each line's own outer
+//     offset, not only at the envelope's.
+test('nested fixed chains, out-of-flow wrappers, clip margins, per-line slit visibility', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0; height: 3000px } p { margin: 0 }</style>
+    <!-- 0..40: a static row inside an absolute wrapper whose containing
+         block is the relative box ABOVE the scroller -->
+    <div style="position:relative; width:300px; height:40px">
+      <div id="midScroller" style="height:40px; overflow:auto">
+        <div style="position:absolute; top:-600px; left:0">
+          <p id="absWrappedRow" style="height:20px">static inside an absolute wrapper</p>
+        </div>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- 40..80: a 40px hidden wrapper over a 200px scroller over an 80px
+         scroller holding two 10px lines at the slit's two ends -->
+    <div id="endsWrap" style="width:300px; height:40px; overflow:hidden">
+      <div id="endsMid" style="height:200px; overflow:auto">
+        <div id="endsInner" style="height:80px; overflow:auto">
+          <div id="twoEnds" style="line-height:10px; font-size:8px">top line<div style="height:60px"></div>bottom line<div style="height:20px"></div></div>
+        </div>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- clip margins, measured: both axes clip → the margin shows the row;
+         one axis clip → cut at the padding edge -->
+    <div id="clipBoth" style="position:absolute; top:0; left:400px; width:300px; height:40px; overflow:clip; overflow-clip-margin:20px">
+      <p id="clipBothRow" style="position:relative; top:45px; height:20px">painted in the clip margin</p>
+    </div>
+    <div id="clipY" style="position:absolute; top:200px; left:400px; width:300px; height:40px; overflow-y:clip; overflow-x:visible; overflow-clip-margin:20px">
+      <p id="clipYRow" style="position:relative; top:45px; height:20px">cut at the padding edge</p>
+    </div>
+    <!-- a fixed card inside a transformed fixed card, holding a row parked
+         above the viewport with nothing to scroll -->
+    <div id="fixedOuter" style="position:fixed; top:0; left:800px; width:300px; height:100px; transform:translate(0)">
+      <div style="position:fixed; top:0; left:0; width:300px; height:100px">
+        <p id="nestedFixedRow" style="position:relative; top:-600px; height:20px">nested fixed, before the origin</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('midScroller').scrollTop = 600;
+    const hitId = (x: number, y: number) => document.elementFromPoint(x, y)?.id ?? '';
+    const lineTops = (() => {
+      const r = document.createRange();
+      r.selectNodeContents(byId('twoEnds'));
+      return Array.from(r.getClientRects())
+        .filter((q) => q.height > 0 && q.height <= 10)
+        .map((q) => q.top);
+    })();
+    const before = {
+      absWrappedRowBottom: byId('absWrappedRow').getBoundingClientRect().bottom,
+      midSpan: byId('midScroller').scrollHeight - byId('midScroller').clientHeight,
+      absWrappedRow: visible(byId('absWrappedRow')),
+      endsInnerSpan: byId('endsInner').scrollHeight - byId('endsInner').clientHeight,
+      endsMidSpan: byId('endsMid').scrollHeight - byId('endsMid').clientHeight,
+      endsWrapTop: byId('endsWrap').getBoundingClientRect().top,
+      lineTops,
+      twoEnds: visible(byId('twoEnds')),
+      clipBothComputed: getComputedStyle(byId('clipBoth')).overflowClipMargin,
+      clipBothHitInMargin: hitId(405, 50),
+      clipBothHitPastMargin: hitId(405, 62),
+      clipBothRow: visible(byId('clipBothRow')),
+      clipYOverflow: getComputedStyle(byId('clipY')).overflow,
+      clipYHitInMargin: hitId(405, 250),
+      clipYRow: visible(byId('clipYRow')),
+    };
+    window.scrollTo(0, 1000);
+    return {
+      ...before,
+      scrollY: window.scrollY,
+      fixedOuterTransform: getComputedStyle(byId('fixedOuter')).transform,
+      nestedFixedRowBottom: byId('nestedFixedRow').getBoundingClientRect().bottom,
+      nestedFixedRow: visible(byId('nestedFixedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The wrapper is positioned against the relative box above the scroller,
+  // so the scroller's 600px of credit never moves it: parked, condemned.
+  expect(result.absWrappedRowBottom).toBe(-580);
+  expect(result.midSpan).toBe(960);
+  expect(result.absWrappedRow, 'a static row inside an absolute wrapper the scroller does not carry').toBe(false);
+  // Two lines at the slit's ends (glyph rects inside 10px line boxes 70px
+  // apart). The envelope's offset shows half the 80px slit through the
+  // 40px wrapper; bringing the bottom line in shows 35px of it, under half.
+  expect(result.endsInnerSpan).toBe(20);
+  expect(result.endsMidSpan).toBe(880);
+  expect(result.lineTops).toHaveLength(2);
+  expect(result.lineTops[0]).toBeGreaterThanOrEqual(result.endsWrapTop);
+  expect(result.lineTops[0]).toBeLessThan(result.endsWrapTop + 5);
+  expect(result.lineTops[1] - result.lineTops[0]).toBe(70);
+  expect(result.twoEnds, 'a line reachable only through a mostly hidden slit').toBe(false);
+  // Measured: with `clip` on both axes the 20px margin paints the row
+  // between the padding edge (40) and 60; past it nothing.
+  expect(result.clipBothComputed).toBe('20px');
+  expect(result.clipBothHitInMargin).toBe('clipBothRow');
+  expect(result.clipBothHitPastMargin).not.toBe('clipBothRow');
+  expect(result.clipBothRow, 'a row painted in an overflow-clip-margin').toBe(true);
+  // Measured: with `clip` on one axis only the margin does not apply and
+  // the row is cut at the padding edge.
+  expect(result.clipYOverflow).toBe('visible clip');
+  expect(result.clipYHitInMargin).not.toBe('clipYRow');
+  expect(result.clipYRow, 'a row past the padding edge of a one-axis clip').toBe(false);
+  // The inner fixed card is captured by the transformed outer card, which
+  // is itself fixed: the page scroll of 1000 moves neither, so the row is
+  // before the origin with nothing to credit.
+  expect(result.scrollY).toBe(1000);
+  expect(result.fixedOuterTransform).toBe('matrix(1, 0, 0, 1, 0, 0)');
+  expect(result.nestedFixedRowBottom).toBe(-580);
+  expect(result.nestedFixedRow, 'a row inside a fixed card captured by a fixed transformed card').toBe(false);
+});
