@@ -105,7 +105,21 @@ reject readable copy is still fixed in place. The list of properties that make a
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out
-on that evidence.
+on that evidence. A tenth round fixed four more cases inside that scope,
+each of which would have rejected readable copy: an opaque block that
+sits inside the scrolling region and fills its slit is carried away by
+the very scroll being credited, so it is no longer read as a cover; two
+lines of one value that a shallow inner region can only bring to separate
+parts of its slit are each brought into view on their own by the outer
+region rather than judged at the gap between them; the question of
+whether the page's own scroll moves a row at all is now asked in one
+place for both the origin rule and the cover check, so a covered row
+inside a card fixed to the viewport is checked and rejected however far
+the page has scrolled; and the clipping rule measures a scrolling region
+by its opening rather than its border, so a wrapper showing the whole
+opening of a heavily bordered region is no longer read as showing a
+sliver of it. One more boundary was declared: a mirrored region, like a
+rotated one, is admitted rather than measured.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

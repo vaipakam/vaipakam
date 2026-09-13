@@ -2202,6 +2202,11 @@ test('content-visibility containing block, and the nested slit resets the half-r
       </div>
     </div>
   `);
+  // `content-visibility: auto` decides whether a subtree is relevant at a
+  // rendering update; one local run in twelve read the row as not visible
+  // straight after `setContent`, with its layout already in place, so the
+  // fixture waits for a rendering update before it reads anything.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const result = await page.evaluate((helpersSrc) => {
     const family = new Function(`return (${helpersSrc})();`)();
     const visible = family.visible as (n: Element | null) => boolean;
@@ -2404,4 +2409,136 @@ test('declared boundaries: a rotated scroller is not probed, wrap-reverse is unq
   // unquantifiable, admitted.
   expect(result.wrapRevMinScroll).toBeLessThan(0);
   expect(result.wrapRevRow, 'wrap-reverse admits').toBe(true);
+});
+
+// #2157 round 10 — four corrections inside the stated scope, one boundary:
+//
+//   - a cover INSIDE the credited scroller is carried by the scroll being
+//     credited, so an in-flow opaque sibling filling the slit is not one;
+//   - two lines whose reachable bands sit apart in a tall inner scrollport
+//     are each aimed at on their own by the outer scroller;
+//   - the "page cannot help" gate on the slit probe asks whether the page
+//     scroll moves the row at all, so a row inside a fixed card is probed;
+//   - the clip walk's slit is seeded from the scroller's CLIENT area, so a
+//     bordered scroller's opening is what a wrapper has to show;
+//   - and a REFLECTED scroller's probe declines (admits), a declared
+//     boundary alongside rotation.
+test('carried covers, per-line aiming, fixed chains and client-area slits', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0; height: 3000px } p { margin: 0 }</style>
+    <!-- 0..40: an in-flow opaque block fills the slit at scrollTop 600 -->
+    <div id="carried" style="width:300px; height:40px; overflow:auto">
+      <p id="carriedRow" style="height:20px">behind a sibling the scroll carries away</p>
+      <p style="height:580px">filler</p>
+      <div id="carriedCover" style="height:40px; background:#000"></div>
+      <p style="height:1000px">filler</p>
+    </div>
+    <!-- 40..80: a 40px outer scroller over a 300px inner one whose 20px span
+         leaves two lines' reachable bands 230px apart -->
+    <div id="twoLineOuter" style="width:300px; height:40px; overflow:auto">
+      <div id="twoLineInner" style="height:300px; overflow:auto">
+        <div id="twoLine" style="line-height:20px">first line<div style="height:250px"></div>second line<div style="height:30px"></div></div>
+      </div>
+    </div>
+    <!-- 80..120: a 40px wrapper exposing exactly the 40px client area of a
+         scroller with 100px top and bottom borders -->
+    <div id="borderWrap" style="width:300px; height:40px; overflow:hidden">
+      <div id="bordered" style="position:relative; top:-100px; height:40px; overflow:auto; border:100px solid #888; border-left:0; border-right:0; box-sizing:content-box">
+        <p id="borderedRow" style="height:20px">seen through the opening, not the border</p>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- a mirrored scroller, wholly covered: the probe declines -->
+    <div style="position:absolute; top:200px; left:0; width:200px; transform:scaleX(-1); transform-origin:100px 0">
+      <div id="mirror" style="width:200px; height:40px; overflow:auto; border-left:50px solid #888">
+        <p id="mirrorRow" style="height:20px">mirrored, off-screen</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; top:0; left:0; width:200px; height:40px; background:#000"></div>
+    </div>
+    <!-- a viewport-fixed card with an inner scroller under an overlay -->
+    <div style="position:fixed; top:0; left:400px; width:300px; height:100px">
+      <div id="fixedInner" style="height:40px; overflow:auto">
+        <p id="fixedInnerRow" style="height:20px">covered inside a fixed card</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; top:0; left:0; width:300px; height:40px; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('carried').scrollTop = 600;
+    byId('bordered').scrollTop = 600;
+    byId('mirror').scrollTop = 600;
+    byId('fixedInner').scrollTop = 600;
+    const lineRects = (() => {
+      const r = document.createRange();
+      r.selectNodeContents(byId('twoLine'));
+      return Array.from(r.getClientRects())
+        .filter((q) => q.height > 0 && q.height <= 20)
+        .map((q) => q.top);
+    })();
+    const bordered = byId('bordered');
+    const before = {
+      carriedCoverTop: byId('carriedCover').getBoundingClientRect().top,
+      carriedRowBottom: byId('carriedRow').getBoundingClientRect().bottom,
+      carriedRow: visible(byId('carriedRow')),
+      innerSpan: byId('twoLineInner').scrollHeight - byId('twoLineInner').clientHeight,
+      lineTops: lineRects,
+      twoLine: visible(byId('twoLine')),
+      borderedBoxHeight: bordered.getBoundingClientRect().height,
+      borderedClientHeight: bordered.clientHeight,
+      borderedOpeningTop: bordered.getBoundingClientRect().top + bordered.clientTop,
+      borderWrapTop: byId('borderWrap').getBoundingClientRect().top,
+      borderedRowBottom: byId('borderedRow').getBoundingClientRect().bottom,
+      borderedRow: visible(byId('borderedRow')),
+      mirrorMatrix: getComputedStyle(byId('mirror').parentElement!).transform,
+      mirrorRowBottom: byId('mirrorRow').getBoundingClientRect().bottom,
+      mirrorRow: visible(byId('mirrorRow')),
+    };
+    window.scrollTo(0, 1000);
+    return {
+      ...before,
+      scrollY: window.scrollY,
+      fixedInnerRowBottom: byId('fixedInnerRow').getBoundingClientRect().bottom,
+      fixedInnerRow: visible(byId('fixedInnerRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The opaque sibling sits exactly in the slit and is carried by the same
+  // scroll that brings the row back: not a cover.
+  expect(result.carriedCoverTop).toBe(0);
+  expect(result.carriedRowBottom).toBe(-580);
+  expect(result.carriedRow, 'a cover the credited scroller carries away').toBe(true);
+  // Two lines 270px apart (the glyph rects sit a pixel inside their 20px
+  // line boxes at 40 and 310) in a 300px inner scrollport with a 20px
+  // span: line 1 reaches slit rows 0..20 of it, line 2 rows 250..290, and
+  // the envelope's middle lies in the 230px gap between them.
+  expect(result.innerSpan).toBe(20);
+  expect(result.lineTops).toHaveLength(2);
+  expect(result.lineTops[0]).toBeGreaterThanOrEqual(40);
+  expect(result.lineTops[0]).toBeLessThan(50);
+  expect(result.lineTops[1] - result.lineTops[0]).toBe(270);
+  expect(result.twoLine, 'two lines aimed at separately by the outer scroller').toBe(true);
+  // A 240px border box whose 40px opening the 40px wrapper shows entirely.
+  expect(result.borderedBoxHeight).toBe(240);
+  expect(result.borderedClientHeight).toBe(40);
+  expect(result.borderedOpeningTop).toBe(result.borderWrapTop);
+  expect(result.borderedRowBottom).toBeLessThan(0);
+  expect(result.borderedRow, 'a wrapper showing a bordered scroller’s whole opening').toBe(true);
+  // The premise for the boundary: a reflection, computed as a negative
+  // x-scale. The probe declines rather than mirroring the insets; the row
+  // is admitted on scroll credit although the scroller is covered.
+  expect(result.mirrorMatrix).toBe('matrix(-1, 0, 0, 1, 0, 0)');
+  expect(result.mirrorRowBottom).toBeLessThan(0);
+  expect(result.mirrorRow, 'a mirrored scroller: reachable, probe declined').toBe(true);
+  // Inside a fixed card the page scroll of 1000 moves nothing, so the row
+  // at -580 is before the origin whatever `scrollY` says, and the probe
+  // finds the overlay.
+  expect(result.scrollY).toBe(1000);
+  expect(result.fixedInnerRowBottom).toBe(-580);
+  expect(result.fixedInnerRow, 'a covered scroller inside a fixed card on a scrolled page').toBe(false);
 });
