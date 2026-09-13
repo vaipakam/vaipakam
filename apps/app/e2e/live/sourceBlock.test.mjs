@@ -1133,6 +1133,20 @@ describe('#2144 — no source region is bounded by a character count', () => {
     );
   });
 
+  // ROUND 22 — two, both on round 21's fixes.
+  it('refuses a shared needle that is not text', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nconst needle = 320;\n" +
+      'const r = s.slice(start, s.indexOf(needle) + needle.length);';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // The contains case, at the literal's very first character. An anchor
+  // may BEGIN with a complete literal and carry on into code.
+  it('accepts an anchor beginning at a literal it contains whole', () => {
+    expect(blockFrom("'x' && (() => { work(); })();\n", "'x' && (() => {")).toContain('work()');
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

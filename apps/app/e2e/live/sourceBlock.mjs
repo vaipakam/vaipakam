@@ -314,8 +314,12 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
   // crossed a boundary it should not have.
   for (let i = src.indexOf(anchor, at); i !== -1; i = src.indexOf(anchor, i + 1)) {
     const end = i + anchor.length;
+    // Overlap that is NOT containment. Round 22: testing the start with
+    // `i >= a` rejected an anchor beginning exactly at a literal's first
+    // character — `'x' && (() => {` contains the whole literal and
+    // continues into code, which is the contains case, not the straddle.
     const straddles = skipped.some(
-      ([a, b]) => (i >= a && i < b) || (end > a && end < b),
+      ([a, b]) => i < b && end > a && !(i <= a && end >= b),
     );
     if (!straddles) return i;
   }
@@ -1376,7 +1380,39 @@ function measurable(node) {
  */
 function sameLandmark(src, positionNode, offsetNode) {
   const needle = finderNeedleSource(src, positionNode);
-  return needle !== null && needle === measuredSource(src, offsetNode);
+  if (needle === null || needle !== measuredSource(src, offsetNode)) return false;
+  // Spelling the same name on both sides does not make it TEXT (round
+  // 22). `const needle = 320; s.indexOf(needle) + needle.length` passes
+  // source equality, and `needle.length` is `undefined` — the end
+  // coerces to zero and the region is empty, which is the too-short
+  // failure this module exists to refuse.
+  return isTextNeedle(src, needleNode(positionNode));
+}
+
+/** The finder's first argument, or null. */
+function needleNode(node) {
+  return node?.arguments?.[0] ?? null;
+}
+
+/**
+ * Whether a needle can hold TEXT. Written out, it is text. A NAME is
+ * trusted unless its binding is provably something else — the one
+ * composite bound these suites write measures a name holding a bounded
+ * REGION (`const haveControl = blockFrom(...)`), so requiring a literal
+ * initializer here would refuse the very case the rule is for.
+ */
+function isTextNeedle(src, node) {
+  if (!node) return false;
+  if (node.type === 'Literal') return typeof node.value === 'string';
+  if (node.type === 'TemplateLiteral') return true;
+  if (node.type !== 'Identifier') return false;
+  const bound = bindingOf(src, node);
+  if (!bound.found) return true;
+  if (bound.notText) return false;
+  const init = bound.init;
+  if (!init) return true;
+  if (init.type === 'Literal') return typeof init.value === 'string';
+  return !NOT_TEXT.has(init.type);
 }
 
 /** The SOURCE of the text a finder searched for, or null when the
