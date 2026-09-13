@@ -36,11 +36,23 @@ formatting was enough to slip past it.
 Each fix was correct and the next gap was already waiting, because
 "where does this piece of code end" is a question the language's own
 grammar answers, and a reader assembled by hand is a worse answer to it
-every time. So these checks no longer read the file as text. They parse
-it, the way the language itself does, and every region is a piece of the
-parse rather than a stretch of characters. Quotes, comments, patterns and
-the punctuation that means two different things stop being special cases
-to remember.
+every time. So the boundaries are no longer found by reading characters.
+The file is parsed, the way the language itself does, and a region that
+is a piece of the grammar — a statement, a block, a call — is taken as
+that piece. Quotes, comments, patterns and the punctuation that means two
+different things stop being special cases to remember.
+
+One kind of region is deliberately still located by text, and saying
+otherwise would have been the overclaim this note is about. Some regions
+are not a piece of the grammar at all — a declaration and the few lines
+that belong with it — so there is no piece to ask for, and they are
+bounded by naming a landmark in the code instead. Those landmarks are
+matched against the file's text, with one protection: a landmark is
+never matched inside a comment, because these files quote code in prose
+constantly and a mention in a comment was moving a boundary. A landmark
+that appears inside a string is still matched, and that is on purpose —
+a string in the code under test is code, and one of these landmarks is a
+message the program actually prints.
 
 That also fixed a fault the hand-written reader had been shipping: a
 declaration containing a search pattern was cut in half, and one
@@ -216,6 +228,32 @@ as clean and began merging. It was not: the findings were on the second
 page of a paginated list and my check read only the first. Nothing
 merged, but only because a rule about resolving conversations stopped it,
 not because my own check caught the mistake.
+
+An eleventh round produced the decision this note should end on: one
+capability was **removed** rather than fixed again.
+
+The check had learned, early on, to recognise a landmark picked out of a
+list. That was added to avoid complaining about a shape review raised in
+passing — and that shape appears nowhere in this work. Keeping it honest
+then took three rounds: the position in the list had to be proved real,
+the list proved unchanged, a change proved able to reach the use, the
+ways of spelling a change all recognised, and the list followed through
+second names for it. What was still open after all that needed the kind
+of whole-program reasoning this work has four times declined to attempt,
+on the grounds that a half-version of it states confident conclusions it
+has not earned.
+
+A capability with no user, whose correctness bill has no ceiling, is not
+worth the surface it presents. So it is gone, and a bound of that shape
+is simply reported like anything else the check does not recognise. If a
+real one ever appears, it can be recognised then, deliberately, with its
+own reasoning written down. Removing it also retired a second rule that
+existed only to serve it, and that the same round showed could not be
+made sound either.
+
+That is the opposite of the reflex this whole effort has been fighting.
+The easy move was a sixth patch to a feature nobody uses; the honest one
+was to stop carrying it.
 
 Putting a removed window back, in any of the disguises review has
 demonstrated, turns the suite red — each one written down as its own

@@ -323,9 +323,15 @@ describe('statementFrom', () => {
 // because saying it once per reason is also how you notice a fourth.
 describe('#2144 — no source region is bounded by a character count', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
+  // RECURSIVELY, because Vitest discovers `e2e/live/**/*.test.mjs`
+  // (round 11). A non-recursive read checked only the top level, so a
+  // suite in a nested directory would run with every fixed window in it
+  // absent from this guard — and the file-count assertion below would
+  // stay green while it happened.
   const files = fs
-    .readdirSync(dir)
-    .filter((n) => n.endsWith('.test.mjs'))
+    .readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.test.mjs'))
+    .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
     .sort();
 
   const MARKER = 'not-a-source-region';
@@ -494,18 +500,141 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
-  // READING a collection or a region does not change it. Counting every
-  // call as a write made every region name look mutated and rejected the
-  // regions this suite actually takes.
-  it('does not treat a read as a write', () => {
+  it('finds the suites to check', () => {
+    expect(files.length).toBeGreaterThan(10);
+    expect(files).toContain('headSampling.test.mjs');
+  });
+
+  it.each(files)('%s bounds every source region by meaning', (file) => {
+    const src = fs.readFileSync(path.join(dir, file), 'utf8');
+    const counted = sliceCallsIn(src)
+      .filter((c) => countsCharacters(src, c))
+      .filter((c) => !excused(src, c))
+      .map((c) => `${file}:${c.line} — ${c.text.replace(/\s+/g, ' ')}`);
+    expect(
+      counted,
+      'a source region bounded by a number: use blockFrom / between / statementFrom / callContaining, ' +
+        `or mark a genuine character count with a ${MARKER} comment naming what it counts`,
+    ).toEqual([]);
+  });
+
+  // The guard's own premises. Each was an evasion Codex demonstrated on
+  // the version before this one, and a guard that cannot fail on them is
+  // the thing it replaced.
+  // EVERY DISGUISE REVIEW HAS DEMONSTRATED, in one place.
+  //
+  // Rounds 3 to 6 each produced a new way to write a fixed length that
+  // the then-current classifier did not know about. They are listed
+  // together because the list is the argument for the rule being the way
+  // round it now is: none of these needed a rule of its own. A bound is
+  // a count unless it is recognisably a landmark, so a form nobody has
+  // thought of yet lands on the reported side by default.
+  it('reports a fixed length however it is written', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    const cases = [
+      ['plain arithmetic', 'const r = s.slice(start, start + 320);'],
+      ['a comment in the way', "const r = s.slice(start, // don't truncate\n  start + 320);"],
+      ['a coerced string', "const r = s.slice(start, '320');"],
+      ['a no-substitution template', 'const r = s.slice(start, `320`);'],
+      ['a named constant', 'const W = 320;\nconst r = s.slice(start, start + W);'],
+      ['an alias of one', 'const B = 320;\nconst W = B;\nconst r = s.slice(start, start + W);'],
+      ['arithmetic in the initializer', 'const W = 160 * 2;\nconst r = s.slice(start, start + W);'],
+      ['a member of a literal', 'const W = { n: 320 }.n;\nconst r = s.slice(start, start + W);'],
+      ['a unary minus', 'const r = s.slice(start, start - -320);'],
+      ['an immediately-invoked function', 'const r = s.slice(start, (() => 320)());'],
+      ['an assignment after declaration', 'let e;\ne = start + 320;\nconst r = s.slice(start, e);'],
+      ['substring', 'const r = s.substring(start, start + 320);'],
+      ['substr', 'const r = s.substr(start, 320);'],
+    ];
+    for (const [why, tail] of cases) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 7 — the findings moved from "another way to write a number" to
+  // "your landmark list admits things that are not landmarks", which is a
+  // closed set and the reason the inversion was worth making. Each of
+  // these WAS accepted as anchored by the first version of that list.
+  it('refuses a bound that is not really a place in the text', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    const cases = [
+      ['a reassigned name', "let e = s.indexOf('next');\ne = start + 320;\nconst r = s.slice(start, e);"],
+      [
+        'a helper that returns on only one path',
+        "const e = () => { if (x) return s.indexOf('next'); };\nconst r = s.slice(start, e());",
+      ],
+      [
+        'a finder that searches nothing',
+        'const r = s.slice(start, ({ indexOf: () => start + 320 }).indexOf());',
+      ],
+      ['a length of something invented', 'const r = s.slice(start, ({ length: start + 320 }).length);'],
+      [
+        'a WIDTH between two places used as an end',
+        "const r = s.slice(start, s.indexOf('end') - s.indexOf('begin'));",
+      ],
+      ['a bare measured length', "const r = s.slice(start, 'x'.length);"],
+      ['two places added together', "const r = s.slice(start, start + s.indexOf('end'));"],
+      [
+        'a collection used as the bound itself',
+        "const ends = [s.indexOf('a'), s.indexOf('b')];\nconst r = s.slice(start, ends);",
+      ],
+      ['a truncator named by a template', 'const r = s[`slice`](start, start + 320);'],
+      ['no end at all', 'const r = s.slice(start);'],
+    ];
+    for (const [why, tail] of cases) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 9 — three findings, all on the collection rule and on `var`.
+  it('refuses the round-9 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['a key that is not an index', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[-1]);"],
+      ['a fractional key', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[1.5]);"],
+      ['a key that is not a number', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[true]);"],
+      [
+        'an element overwritten after the collection was built',
+        "const ends = [s.indexOf('e')];\nends[0] = start + 320;\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a collection grown after it was built',
+        "const ends = [s.indexOf('e')];\nends.push(start + 320);\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a var re-initialised in a branch',
+        "function g(t, at, on) { var e = t.indexOf('e'); if (on) { var e = at + 320; } return t.slice(at, e); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // THE COLLECTION RULE IS GONE (round 11), and this case records the
+  // retreat rather than the capability. Selecting a landmark out of a
+  // list was added in round 6 to avoid over-flagging `anchors[0]` — a
+  // shape that appears NOWHERE in this suite. Keeping it honest cost
+  // rounds 9, 10 and 11, and the holes still open needed escape analysis
+  // and a call graph, which this module has four times refused to build.
+  // A capability with no user and an unbounded correctness bill is not
+  // worth the surface. Unrecognised is refused, as everywhere else.
+  it('reports a bound selected out of a collection, and says why', () => {
     const code = [
-      "const s = f();",
+      'const s = f();',
       "const start = s.indexOf('a');",
       "const ends = [s.indexOf('e')];",
-      "ends.indexOf('x');",
       'const r = s.slice(start, ends[0]);',
     ].join('\n');
-    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
   // ROUND 10 — six findings, two of them the guard objecting to correct
@@ -566,13 +695,44 @@ describe('#2144 — no source region is bounded by a character count', () => {
         'a var declared directly in the body, before the use',
         "function g(t) { const a = t.indexOf('a'); var e = t.indexOf('e'); return t.slice(a, e); }",
       ],
-      [
-        'a mutation that happens AFTER the use',
-        "const s = f();\nconst start = s.indexOf('a');\nconst ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[0]);\nends.push(start + 320);",
-      ],
     ]) {
       const call = sliceCallsIn(code).at(-1);
       expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // ROUND 11 — what survived the collection removal.
+  it('refuses the round-11 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a receiver reassigned after its declaration',
+        'let recv = s;\nrecv = { indexOf: () => start + 320 };\nconst r = s.slice(start, recv.indexOf());',
+      ],
+      [
+        'a var PATTERN shadowing an outer landmark',
+        "function g(t, obj) { var { end } = obj; return t.slice(t.indexOf('a'), end); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 11's false positive: a search spelled through a subscript is
+  // the same call, and refusing it asked for a marker claiming a count
+  // that was not happening. `sliceCallsIn` already read truncator names
+  // this way; finder names had been left on the dotted form only.
+  it('reads a finder spelled as a subscript', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const tail of [
+      "const r = s.slice(start, s['indexOf']('e'));",
+      'const r = s.slice(start, s[`indexOf`]("e"));',
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), tail).toBe(false);
     }
   });
 
@@ -584,10 +744,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
       ['just past a landmark', "const r = s.slice(start, s.indexOf('x') + 'x'.length);"],
       ['just before one', "const r = s.slice(start, s.indexOf('x') - 'x'.length);"],
       ['a helper with an expression body', "const at = (n) => s.indexOf(n);\nconst r = s.slice(start, at('x'));"],
-      [
-        'selection from a collection of landmarks',
-        "const ends = [s.indexOf('a')];\nconst r = s.slice(start, ends[0]);",
-      ],
       [
         'no end, on an already-bounded region',
         "const b = blockFrom(s, 'if (x) {');\nconst r = b.slice(b.indexOf('y'));",
@@ -697,7 +853,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
     for (const tail of [
       "const r = s.slice(start, s.indexOf('320'));",
       "const r = s.slice(start, s.indexOf('end', start + 1));",
-      "const anchors = [s.indexOf('end')];\nconst r = s.slice(start, anchors[0]);",
       "const r = s.slice(start, s.indexOf('x') + 'x'.length);",
     ]) {
       const code = lead + tail;

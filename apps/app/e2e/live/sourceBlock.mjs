@@ -494,7 +494,7 @@ export function bindingAt(src, name, at) {
     found: true,
     init: found.init,
     decl: found.decl,
-    reassigned: assignsTo(src, name, found, at),
+    reassigned: assignsTo(src, name, found),
   };
 }
 
@@ -549,9 +549,21 @@ function resolveBinding(src, name, at) {
  * something that can run more than once — a loop or a function body —
  * where "after" in the text can still be "before" in time.
  */
-function assignsTo(src, name, found, useAt) {
+function assignsTo(src, name, found) {
   const { nodes, parents } = astOf(src, 'assignsTo');
   return nodes.some((n) => {
+    // A later `var` DECLARATOR with an initializer writes the same
+    // function-scoped binding (round 9).
+    if (n.type === 'VariableDeclarator') {
+      return (
+        n !== found.decl &&
+        n.init !== null &&
+        n.id.type === 'Identifier' &&
+        n.id.name === name &&
+        inScopeOf(n) &&
+        sameBinding(n)
+      );
+    }
     const target =
       n.type === 'AssignmentExpression'
         ? n.left
@@ -560,109 +572,26 @@ function assignsTo(src, name, found, useAt) {
           : n.type === 'ForOfStatement' || n.type === 'ForInStatement'
             ? n.left
             : null;
-    // A later `var` DECLARATOR with an initializer writes the same
-    // function-scoped binding (round 9): `var end = s.indexOf('e'); if (on)
-    // { var end = start + 320; }` re-initialises it rather than declaring
-    // a second one.
-    if (n.type === 'VariableDeclarator') {
-      if (n.kind === undefined && n !== found.decl && n.init && n.id.type === 'Identifier') {
-        if (n.id.name === name && inScopeOf(n) && reaches(n) && sameBinding(n)) return true;
-      }
-      return false;
-    }
-    // A collection is only as trustworthy as its elements. Writing one,
-    // or calling a method that could, makes what a selection reads
-    // unknown (round 9) — `ends[0] = start + 320` and `ends.push(…)`
-    // both leave the earlier classification stale.
-    if (
-      (n.type === 'AssignmentExpression' || n.type === 'UpdateExpression') &&
-      (n.type === 'UpdateExpression' ? n.argument : n.left).type === 'MemberExpression'
-    ) {
-      const t = n.type === 'UpdateExpression' ? n.argument : n.left;
-      return rootName(t) === name && inScopeOf(n) && reaches(n) && sameBinding(n);
-    }
-    if (n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression') {
-      const root = rootName(n.left);
-      return root === name && inScopeOf(n) && reaches(n) && sameBinding(n);
-    }
-    if (
-      n.type === 'CallExpression' &&
-      n.callee.type === 'MemberExpression' &&
-      !n.callee.computed &&
-      MUTATORS.has(n.callee.property.name)
-    ) {
-      return rootName(n.callee) === name && inScopeOf(n) && reaches(n) && sameBinding(n);
-    }
     if (!target) return false;
-    // Destructuring is a write too — `[end] = [start + 320]` and
-    // `({ end } = …)` reach the same binding as `end = …` (round 8).
-    const written = writtenNames(target);
-    if (!written.has(name)) return false;
-    return inScopeOf(n) && reaches(n) && sameBinding(n);
+    // Destructuring is a write too — `[end] = […]` and `({ end } = …)`
+    // reach the same binding as `end = …` (round 8).
+    if (!writtenNames(target).has(name)) return false;
+    return inScopeOf(n) && sameBinding(n);
   });
-
-  /** Whether a write at `n` could execute before the use. */
-  function reaches(n) {
-    if (n.start < useAt) return true;
-    // A later write still reaches an earlier use when both sit inside
-    // something that repeats.
-    for (let p = n; p; p = parents.get(p)) {
-      if (!REPEATABLE.has(p.type)) continue;
-      if (p.start <= useAt && p.end >= useAt) return true;
-    }
-    return false;
-  }
 
   function inScopeOf(n) {
     for (let p = n; p; p = parents.get(p)) if (p === found.scope) return true;
     return false;
   }
 
-  /** The name a member chain is rooted at — `ends` in `ends[0].x`. */
-  function rootName(node) {
-    let n = node;
-    while (n && n.type === 'MemberExpression') n = n.object;
-    return n && n.type === 'Identifier' ? n.name : null;
-  }
-
   // A write only disqualifies OUR binding. An unrelated nested scope
   // reusing the name writes to its own, and treating that as a write to
-  // ours rejected a perfectly immutable landmark (round 8) — the kind of
-  // false positive that gets a guard switched off rather than obeyed.
+  // ours rejected a perfectly immutable landmark (round 8).
   function sameBinding(write) {
     const here = resolveBinding(src, name, write.start);
     return here !== null && here.decl === found.decl;
   }
 }
-
-// Methods that CHANGE a collection. Reading one — `indexOf`, `slice`,
-// `length` — leaves it exactly as it was, and counting every call as a
-// write made every region name look mutated, which rejected the regions
-// this suite actually takes.
-// Constructs that can run more than once, so a write written AFTER a use
-// may still execute before it.
-const REPEATABLE = new Set([
-  'ForStatement',
-  'ForOfStatement',
-  'ForInStatement',
-  'WhileStatement',
-  'DoWhileStatement',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
-
-const MUTATORS = new Set([
-  'push',
-  'pop',
-  'shift',
-  'unshift',
-  'splice',
-  'sort',
-  'reverse',
-  'fill',
-  'copyWithin',
-]);
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
@@ -706,8 +635,6 @@ const FINDERS = new Set(['indexOf', 'lastIndexOf', 'search']);
  *   - `'position'` — a place in the text. The only thing a region bound
  *     may be.
  *   - `'offset'` — a DISTANCE. Valid inside a bound and never as one.
- *   - `'positions'` — a collection of places, valid only as the thing a
- *     selection reads from.
  *
  * WHY THE DISTINCTION EXISTS (round 7). An earlier version called any
  * sum or difference of two landmarks a landmark, and
@@ -774,21 +701,25 @@ export function kindOf(src, node, seen = new Set()) {
       if (!node.computed && node.property.name === 'length') {
         return measurable(node.object) ? 'offset' : null;
       }
-      // Selecting an ELEMENT from a collection of landmarks. The key's
-      // VALUE is still never inspected — it selects rather than
-      // contributes, so a numeric index does not make the bound a count —
-      // but it must be an index rather than a named property: round 8
-      // found `ends['length']`, whose value is the count of landmarks
-      // rather than one of them.
-      // The element must EXIST. `ends[1]` on a one-element array is
-      // `undefined` at runtime and the region runs to the end of the text
-      // (round 10), and `ends['01']` is not the key `'0'` either. So the
-      // collection is resolved and the index checked against it.
-      const index = indexOf(node);
-      if (index === null) return null;
-      const elements = collectionElements(src, node.object, seen);
-      if (elements === null || index >= elements.length) return null;
-      return kindOf(src, elements[index], seen) === 'position' ? 'position' : null;
+      // SELECTING A LANDMARK OUT OF A COLLECTION IS NO LONGER RECOGNISED,
+      // and that is a deliberate retreat rather than an omission. It was
+      // added in round 6 to avoid over-flagging `anchors[0]` — a shape
+      // that appears NOWHERE in this suite. Keeping it honest then cost
+      // rounds 9, 10 and 11: the index had to be proved canonical and in
+      // range, the collection unmutated, the mutation reachable, the
+      // mutator name resolved through computed spellings, and the
+      // collection followed through aliases. The holes left after all
+      // that need escape analysis and a call graph — precisely the
+      // analyses this module has four times refused to build, for being
+      // unbounded and for certifying confidently from partial
+      // information.
+      //
+      // A capability with no user, whose correctness needs machinery that
+      // has been declined on principle, is not worth the surface it
+      // presents. Unrecognised is refused, as everywhere else. If a real
+      // selection appears one day, recognise it THEN, with its own case
+      // and its own reasoning — and never by marking the code.
+      return null;
     }
 
     case 'BinaryExpression': {
@@ -811,15 +742,6 @@ export function kindOf(src, node, seen = new Set()) {
       const a = kindOf(src, node.left, seen);
       return a !== null && a === kindOf(src, node.right, seen) ? a : null;
     }
-
-    // A collection is NOT a bound — `s.slice(start, [a, b])` coerces to
-    // a comma-joined string and then to NaN (round 7). It is only ever
-    // the thing a selection reads from.
-    case 'ArrayExpression':
-      return node.elements.length > 0 &&
-        node.elements.every((e) => kindOf(src, e, seen) === 'position')
-        ? 'positions'
-        : null;
 
     case 'ParenthesizedExpression':
       return kindOf(src, node.expression, seen);
@@ -901,10 +823,9 @@ function callKind(src, node, seen) {
   // this does not tell the two apart.
   if (
     callee.type === 'MemberExpression' &&
-    !callee.computed &&
-    FINDERS.has(callee.property.name) &&
+    FINDERS.has(propertyName(callee)) &&
     isPlainName(callee.object) &&
-    !resolvesToCollection(src, callee.object, seen)
+    !suspectReceiver(src, callee.object, seen)
   ) {
     return 'position';
   }
@@ -941,46 +862,14 @@ function helperKind(src, callee, seen) {
 }
 
 /**
- * Whether a member access reads an ELEMENT out of a collection rather
- * than one of its named properties.
+ * Whether `node` is a receiver whose `indexOf` cannot be trusted to
+ * search source text — one that resolves to an object or array written
+ * out in this file, or one that is REASSIGNED.
  *
- * Computed only, and a computed STRING is refused unless it spells an
- * index: `ends['length']` is written as a subscript and is not one
- * (round 8). `ends.at(0)` is a call and is handled as a helper, not here.
- */
-function indexOf(node) {
-  if (!node.computed) return null;
-  const key = node.property;
-  const text =
-    key.type === 'Literal' && (typeof key.value === 'number' || typeof key.value === 'string')
-      ? String(key.value)
-      : key.type === 'TemplateLiteral' && key.expressions.length === 0
-        ? key.quasis[0].value.cooked
-        : null;
-  // Canonical only: `'01'` is not the key `'0'`, and `-1` / `1.5` / a
-  // non-numeric key are all `undefined` at runtime. An expression key
-  // cannot be proved and is refused for the same reason.
-  if (text === null || !/^(0|[1-9]\d*)$/.test(text)) return null;
-  return Number(text);
-}
-
-/** The elements of the array `node` resolves to, or `null`. */
-function collectionElements(src, node, seen) {
-  if (!node) return null;
-  if (node.type === 'ArrayExpression') return node.elements;
-  if (node.type !== 'Identifier') return null;
-  const key = `arr:${node.name}@${node.start}`;
-  if (seen.has(key)) return null;
-  seen.add(key);
-  const bound = bindingAt(src, node.name, node.start);
-  return bound.found && !bound.reassigned && bound.init
-    ? collectionElements(src, bound.init, seen)
-    : null;
-}
-
-/**
- * Whether `node` resolves to an object or array written out in this
- * file — a receiver whose `indexOf` cannot be a search of source text.
+ * Round 11 on the second half: following only the initial value let
+ * `let receiver = source; receiver = { indexOf: () => start + 320 };`
+ * certify a fixed number as a position. A name that is written to holds
+ * something unknown, which is the same rule bounds already follow.
  *
  * Round 10: `const fake = { indexOf: () => start + 320 }; s.slice(start,
  * fake.indexOf())` passed because `fake` is a plain name. Requiring a
@@ -989,16 +878,18 @@ function collectionElements(src, node, seen) {
  * parameter, a call result — is still accepted, which is the stated
  * interprocedural limit and not a new one.
  */
-function resolvesToCollection(src, node, seen) {
+function suspectReceiver(src, node, seen) {
   if (!node || node.type !== 'Identifier') return false;
   const key = `recv:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
   const bound = bindingAt(src, node.name, node.start);
-  if (!bound.found || !bound.init) return false;
+  if (!bound.found) return false;
+  if (bound.reassigned) return true;
+  if (!bound.init) return false;
   const t = bound.init.type;
   if (t === 'ObjectExpression' || t === 'ArrayExpression') return true;
-  return t === 'Identifier' ? resolvesToCollection(src, bound.init, seen) : false;
+  return t === 'Identifier' ? suspectReceiver(src, bound.init, seen) : false;
 }
 
 /**
@@ -1012,6 +903,23 @@ function measurable(node) {
   if (node.type === 'Literal' && typeof node.value === 'string') return true;
   if (node.type === 'TemplateLiteral') return true;
   return isPlainName(node);
+}
+
+/**
+ * A member's property name, read through a computed spelling where that
+ * is possible: `s['indexOf']` and ``s[`indexOf`]`` are the same call as
+ * `s.indexOf`, and refusing them reported a correctly anchored region
+ * and asked for a marker claiming a count that was not happening
+ * (round 11). `sliceCallsIn` already read truncator names this way.
+ */
+function propertyName(member) {
+  if (!member.computed) return member.property.name;
+  const k = member.property;
+  if (k.type === 'Literal' && typeof k.value === 'string') return k.value;
+  if (k.type === 'TemplateLiteral' && k.expressions.length === 0) {
+    return k.quasis[0].value.cooked;
+  }
+  return null;
 }
 
 /** An identifier, or a dotted chain of them — `src`, `page.body`. */
@@ -1094,13 +1002,24 @@ function hoistedVarsIn(fn) {
     if (!top && FUNCTIONS.has(n.type)) return;
     if (n.type === 'VariableDeclaration' && n.kind === 'var') {
       for (const d of n.declarations) {
-        if (d.id && d.id.type === 'Identifier') {
+        if (!d.id) continue;
+        if (d.id.type === 'Identifier') {
           out.push({
             name: d.id.name,
             init: d.init ?? null,
             decl: d,
             direct: directDecls.has(n),
           });
+          continue;
+        }
+        // A `var` PATTERN hoists every name it binds (round 11). Without
+        // this, `var { end } = obj` left the function scope with no
+        // `end`, so resolution fell through to an outer landmark and
+        // accepted a caller-controlled bound. What a pattern binds is
+        // unknown, so it hoists with no value: it shadows, and it is not
+        // a landmark.
+        for (const nm of writtenNames(d.id)) {
+          out.push({ name: nm, init: null, decl: d, direct: false });
         }
       }
     }
