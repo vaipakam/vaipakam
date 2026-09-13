@@ -428,8 +428,13 @@ const UNREADABLE = Symbol('unreadable method name');
 function taggedTruncator(src, tag) {
   if (!tag) return null;
   if (tag.type === 'MemberExpression') {
-    const method = memberName(tag);
-    if (method !== UNREADABLE && !TRUNCATORS.has(method)) return null;
+    // Through the VALUE-AWARE reader, not the property name (round 36).
+    // `box.cut = String.prototype.slice; box.cut`320`` installs a real
+    // narrowing behind a name that says nothing, and reading the name
+    // alone dropped it — the same mistake the borrowed-call path had
+    // made and had already been corrected for. Same reader, both paths.
+    const method = memberTruncator(src, tag);
+    if (!method) return null;
     return { method, receiverNode: tag.object };
   }
   const held = tag.type === 'Identifier' ? resolveAlias(src, tag) : tag;
@@ -704,6 +709,11 @@ function definiteNonTruncator(node) {
   return node != null && SELF_EVIDENT.has(node.type);
 }
 
+// The hosts whose prototypes carry the built-in text operations. Named
+// so the `.prototype` shortcut below checks an INTRINSIC rather than a
+// word anyone can use as a property key.
+const INTRINSIC_TEXT_HOSTS = ['String', 'Array'];
+
 /**
  * The truncator a MEMBER denotes — `String.prototype.slice`, or
  * `box.cut` where `box` is written out and `cut` holds one.
@@ -721,10 +731,34 @@ function memberTruncator(src, member) {
   const method = memberName(member);
   if (method === UNREADABLE) return UNREADABLE;
   if (TRUNCATORS.has(method)) return method;
-  const object = resolveAlias(src, unwrapChain(member.object));
-  // `String.prototype.replace` — an intrinsic's prototype describes
-  // itself, so a non-truncator name there is a definite negative.
-  if (object && object.type === 'MemberExpression' && memberName(object) === 'prototype') {
+  // The UNRESOLVED node is kept as well, because a global does not
+  // resolve: `resolveAlias` finds no binding for `String` and returns
+  // nothing, which is the right answer to "what was this assigned" and
+  // the wrong one to "is this the intrinsic". `isIntrinsic` asks the
+  // second question, and it needs the name itself to ask it of.
+  const named = unwrapChain(member.object);
+  const object = resolveAlias(src, named) ?? named;
+  // `String.prototype.replace` — an INTRINSIC's prototype describes
+  // itself, so a non-truncator name there is a definite negative. The
+  // intrinsic has to be checked and not merely the spelling (round 36):
+  // `{ prototype: { cut: String.prototype.slice } }` is an ordinary
+  // object with a property called `prototype`, and trusting the word
+  // alone dropped a real narrowing. A shortcut that keys on a name
+  // anyone can choose is not a shortcut, it is a hole.
+  if (
+    object &&
+    object.type === 'MemberExpression' &&
+    memberName(object) === 'prototype' &&
+    INTRINSIC_TEXT_HOSTS.some((name) => isIntrinsic(src, unwrapChain(object.object), name))
+  ) {
+    return null;
+  }
+  // An unshadowed INTRINSIC describes itself too: `String.raw` is a
+  // known property of a known global, and a tag is a member like any
+  // other, so without this every `String.raw\`…\`` in a test fixture
+  // read as an unreadable narrowing (round 36). The check is on the
+  // binding, not the spelling — a local `String` is somebody else's.
+  if (object && INTRINSIC_TEXT_HOSTS.some((name) => isIntrinsic(src, object, name))) {
     return null;
   }
   // An object written out can be read: find the property and ask again.
@@ -1038,9 +1072,17 @@ function unbracedBody(node, at = -1) {
   // plausible, wrong region, produced by the very check written to
   // refuse those. Round 28 added the check; it only ever looked at the
   // consequent.
+  // Which arm the anchor names is settled by the TREE, not by counting
+  // characters (round 36 — and counting characters to decide where a
+  // region begins is the exact habit this whole module exists to
+  // replace, so doing it here was worse than a bug). An anchor at or
+  // past the end of the consequent is in the alternate's half of the
+  // statement, whatever sits between them: `else /* why */ consume(…)`
+  // put the anchor more than five characters from the alternate and the
+  // count picked the wrong arm.
   const body =
     node.type === 'IfStatement'
-      ? at >= 0 && node.alternate && at >= node.alternate.start - 'else '.length
+      ? at >= 0 && node.alternate && at >= node.consequent.end
         ? node.alternate
         : node.consequent
       : node.body;
@@ -1597,7 +1639,16 @@ export function kindOf(src, node, seen = new Set()) {
       // composite is not that shape and is refused — which is what the
       // one composite bound these suites actually write looks like:
       // `block.indexOf(haveControl) + haveControl.length`.
+      // STEPPING PAST a landmark, never back before it (round 36).
+      // `s.indexOf('x') - 'x'.length` is negative whenever the landmark
+      // is at the start of the text, and a negative end is measured
+      // from the END of the source — so that bound returns very nearly
+      // the whole thing while reading as an anchored position. Proving
+      // non-negativity means knowing where the landmark is, which is a
+      // runtime fact; "just past the landmark" is the shape these
+      // suites write and the only one this admits.
       if (l === 'position' && r === 'offset') {
+        if (node.operator !== '+') return null;
         return sameLandmark(src, node.left, node.right) ? 'position' : null;
       }
       if (node.operator === '+' && l === 'offset' && r === 'position') {

@@ -568,6 +568,34 @@ is not bookkeeping — half of these had been raised hours earlier and
 described live defects, and the reason they sat unanswered is that the
 tool reading them had been looking at one page of a list with several.
 
+The round after the sweep corrected three of the sweep's own fixes, and
+that is worth recording plainly rather than folding in quietly.
+
+The first is the sharpest thing this review produced. Deciding which arm
+of a branching statement a name refers to had been done by counting the
+characters between them — inside the fix for a check whose entire purpose
+is to stop regions being decided by character counts. A comment between
+the word and the arm was enough to pick the wrong one. It is settled from
+the structure now, which is what should have been done the first time and
+what the rest of this work exists to argue for.
+
+The second and third are the same shape twice: a shortcut that trusted a
+word instead of checking a thing. A reader was told to trust an object
+whose property was spelled like a built-in's, and any object may have a
+property spelled that way; and the reader that knows how to look past a
+misleading name was not used on one of the two places a narrowing can
+appear. Both now check what is actually there.
+
+One earlier decision is reversed outright. Stepping BACK from a landmark
+by its own width had been accepted for several rounds. It is not safe:
+when the landmark is at the very start of the text the result is
+negative, and a negative end is measured from the end of the source, so
+the region becomes nearly the whole thing while reading as properly
+anchored. Whether it underflows depends on where the landmark is, which
+is only known when the code runs. Stepping PAST a landmark is the shape
+these checks actually write, and nothing in them steps back, so refusing
+it costs nothing.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the

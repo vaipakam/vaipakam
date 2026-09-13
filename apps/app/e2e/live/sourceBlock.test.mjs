@@ -799,7 +799,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
     const lead = "const s = f();\nconst start = s.indexOf('a');\n";
     for (const [why, tail] of [
       ['just past a landmark', "const r = s.slice(start, s.indexOf('x') + 'x'.length);"],
-      ['just before one', "const r = s.slice(start, s.indexOf('x') - 'x'.length);"],
       ['a helper with an expression body', "const at = (n) => s.indexOf(n);\nconst r = s.slice(start, at('x'));"],
       [
         'no end, on an already-bounded region',
@@ -1821,6 +1820,29 @@ describe('#2144 — no source region is bounded by a character count', () => {
       expect(call, why).toBeDefined();
       expect(countsCharacters(code, call), why).toBe(true);
     }
+  });
+
+  // Round 36 REVERSES an earlier accepting case. "Just BEFORE a
+  // landmark" was pinned as accepted for several rounds, and it is not
+  // safe: when the landmark sits at the very start of the text the
+  // subtraction is negative, and a negative end is measured from the END
+  // of the source — so the bound returns very nearly the whole thing
+  // while reading as an anchored position. Non-negativity cannot be
+  // established without knowing where the landmark is, which is a
+  // runtime fact. "Just past" is the shape these suites write; no live
+  // suite writes "just before" at all, so refusing it costs nothing.
+  it('refuses a position stepped BACK by a landmark width', () => {
+    const code = "const s = f();\nconst r = s.slice(0, s.indexOf('x') - 'x'.length);";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // A tagged template is a member like any other, so the reader that
+  // decides what a member holds has to know an unshadowed intrinsic
+  // from a local — otherwise every `String.raw` in a fixture reads as an
+  // unreadable narrowing.
+  it('does not read String.raw as a truncation', () => {
+    const code = 'const t = String.raw`const p = 1;`;\n';
+    expect(sliceCallsIn(code)).toEqual([]);
   });
 
   // The fifth is `blockFrom` itself handing back a wrong region, which is
