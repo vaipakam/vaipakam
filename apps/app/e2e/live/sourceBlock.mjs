@@ -306,6 +306,7 @@ export function sliceCallsIn(src) {
     // about source REGIONS, not one spelling of the String API (round 5).
     if (!TRUNCATORS.has(name)) continue;
     out.push({
+      method: name,
       line: lineOf(src, n.start),
       receiver: src.slice(c.object.start, c.object.end),
       args: n.arguments,
@@ -350,39 +351,52 @@ const FUNCTIONS = new Set([
 ]);
 
 /**
- * The statements `node` sits inside, innermost first — every unit a
- * marker could be attached to.
+ * The DECLARATIONS `node` sits inside, innermost first — the units a
+ * marker may be attached to.
  *
- * Round 5 corrected the singular version of this. A marker above
- * `const label = (t) => { return t.slice(0, 40); };` was being compared
- * against the inner `return`, so the declaration it actually marked never
- * came up and the legitimate count was reported. A marker on ANY
- * enclosing statement excuses the call, which is what "one marker covers
- * the helper" was supposed to mean.
+ * Declarations only, and round 6 is why. Accepting any enclosing
+ * statement meant a marker written above an `it(...)` — explaining one
+ * legitimate truncation inside it — excused every other bound in that
+ * whole test, since the `it(...)` call is itself a statement containing
+ * them all. A marker is a note on a DECLARATION, which is what makes
+ * "one marker covers the helper" true without it covering the
+ * neighbourhood: `const label = (t) => t.slice(0, 40);` is a
+ * declaration whose purpose IS the count, where `it('…', () => {…})` is
+ * a hundred lines of unrelated code.
+ *
+ * Still a chain rather than the nearest one, which was round 5's
+ * correction: a block-bodied helper puts the call inside a `return`, and
+ * the declaration above it is the thing actually marked.
  */
-export function enclosingStatementsOf(src, node) {
-  const { parents } = astOf(src, 'enclosingStatementsOf');
+export function markableStatementsOf(src, node) {
+  const { parents } = astOf(src, 'markableStatementsOf');
   const out = [];
-  for (let n = node; n; n = parents.get(n)) if (STATEMENT.test(n.type)) out.push(n);
+  for (let n = node; n; n = parents.get(n)) {
+    if (n.type === 'VariableDeclaration' || n.type === 'FunctionDeclaration') out.push(n);
+  }
   return out;
 }
 
 /**
- * Whether a COMMENT carrying `marker` is attached to `stmt` — directly
- * above it, or on its own line before it, with no code in between.
+ * Whether a COMMENT carrying `marker` is attached to `stmt` — on its own
+ * line above it, with no code in between.
  *
- * Round 5: the previous version tested the raw line text, so
+ * Two corrections live here. The marker must BE a comment the parser
+ * identifies (round 5), since testing raw line text let
  * `const reason = 'not-a-source-region', bad = src.slice(start, start + 320);`
- * excused itself with a string. A marker has to BE a comment, and only
- * the parser can say what is one. Contiguity is the other half — "no code
- * between the comment and the statement" is what makes it a note ON this
- * declaration rather than a token loose in the file.
+ * excuse itself with a string. And nothing may precede it ON ITS OWN LINE
+ * (round 6): a trailing comment on an unrelated statement has only
+ * whitespace between it and whatever follows, so it was attaching to the
+ * next declaration and excusing a window it says nothing about.
  */
 export function markedStatement(src, stmt, marker) {
   const { comments } = astOf(src, 'markedStatement');
-  return comments.some(
-    (c) => c.end <= stmt.start && c.value.includes(marker) && src.slice(c.end, stmt.start).trim() === '',
-  );
+  return comments.some((c) => {
+    if (c.end > stmt.start || !c.value.includes(marker)) return false;
+    if (src.slice(c.end, stmt.start).trim() !== '') return false;
+    const lineStart = src.lastIndexOf('\n', c.start - 1) + 1;
+    return src.slice(lineStart, c.start).trim() === '';
+  });
 }
 
 /**
@@ -417,61 +431,127 @@ export function bindingAt(src, name, at) {
   return { found: false, init: null };
 }
 
-/**
- * Whether a NUMBER is reachable from `node` — written as one, coerced
- * from a string, negated, combined by arithmetic, or bound to a name
- * whose own initializer reaches one.
- *
- * Round 4's first finding: `const BASE = 320; const WINDOW = BASE;` and
- * `const WINDOW = 160 * 2;` each hid a fixed window, because the
- * classifier looked at an initializer's ROOT rather than into it. One
- * function now answers the question for a slice bound and for a binding's
- * initializer alike — they were always the same question, and having had
- * two answers is why one of them was weaker.
- *
- * `seen` breaks the cycle a pair of mutually-referring declarations would
- * otherwise make. Unresolvable is NOT a number: an `indexOf`, a call, or
- * a name bound to either, is an anchor.
- */
-const OPAQUE = new Set(['CallExpression', 'NewExpression', 'TaggedTemplateExpression']);
+// The calls that FIND something in text. A bound produced by one of
+// these is a landmark: it moves with the code, which is the entire
+// property #2144 is about.
+const FINDERS = new Set(['indexOf', 'lastIndexOf', 'search']);
 
-export function reachesNumber(src, node, seen = new Set()) {
-  let found = false;
-  const visit = (n) => {
-    if (found || n === null || typeof n !== 'object') return;
-    if (Array.isArray(n)) {
-      n.forEach(visit);
-      return;
+/**
+ * Whether `node` is an ANCHOR — a bound derived from the text rather
+ * than counted in characters.
+ *
+ * WHY THIS IS THE WAY ROUND IT IS, and it is the round-6 lesson rather
+ * than a preference. The first classifier asked the opposite question,
+ * "can a number be reached in here?", and every review round answered it
+ * with another expression form it had not thought of: a quoted number, a
+ * named constant, an alias, arithmetic, a defaulted parameter, a
+ * switch-case binding, a no-substitution template, an immediately-invoked
+ * function, a name assigned after its declaration, a default nested in a
+ * destructuring pattern. That list has no end, because "every way to
+ * write a number in JavaScript" is an open set, and a guard whose
+ * correctness depends on having enumerated an open set is a guard that is
+ * wrong and does not know it.
+ *
+ * So the open set is moved to the REJECTING side. What an anchor may look
+ * like is a closed, small list — and it is small because the real ones in
+ * this suite are: `indexOf`, a helper wrapping `indexOf`, a name holding
+ * one, and a landmark plus the LENGTH of the landmark. Anything this
+ * does not recognise is a character count and must say what it counts.
+ * A new evasion cannot be invented, because there is nothing to evade:
+ * unrecognised is refused.
+ *
+ * The cost is over-flagging an anchor written in some way not listed
+ * here, and the answer to that is to ADD THE SHAPE rather than to mark
+ * the code — a marker means "this really does count characters", and
+ * putting one on a correct anchor would be a lie that the next reader
+ * inherits.
+ */
+export function isAnchored(src, node, seen = new Set()) {
+  if (!node || typeof node.type !== 'string') return false;
+  switch (node.type) {
+    // `s.indexOf('x')` — the landmark itself. Its ARGUMENTS are not
+    // inspected: a number inside one selects or offsets the search, and
+    // the result is still wherever the text was found (round 5).
+    case 'CallExpression':
+      return (
+        (node.callee.type === 'MemberExpression' &&
+          !node.callee.computed &&
+          FINDERS.has(node.callee.property.name)) ||
+        returnsAnchor(src, node.callee, seen)
+      );
+
+    // A name holding one, resolved in scope.
+    case 'Identifier': {
+      const key = `${node.name}@${node.start}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      const bound = bindingAt(src, node.name, node.start);
+      return bound.found && bound.init ? isAnchored(src, bound.init, seen) : false;
     }
+
+    // `needle.length` — a MEASURED length, not a counted one. This is
+    // what makes `s.indexOf(x) + x.length` ("just past the landmark")
+    // an anchor while `s.indexOf(x) + 320` is not.
+    case 'MemberExpression':
+      if (!node.computed && node.property.name === 'length') return true;
+      // `anchors[0]` / `anchors.first` — selecting from a collection of
+      // anchors. The KEY is not part of the value (round 6), so a
+      // numeric index does not make the bound a count.
+      return isAnchored(src, node.object, seen);
+
+    // Landmark ± landmark, which includes ± a measured length. A literal
+    // on either side is not an anchor, so `+ 320` fails here.
+    case 'BinaryExpression':
+      return (
+        (node.operator === '+' || node.operator === '-') &&
+        isAnchored(src, node.left, seen) &&
+        isAnchored(src, node.right, seen)
+      );
+
+    case 'ConditionalExpression':
+      return isAnchored(src, node.consequent, seen) && isAnchored(src, node.alternate, seen);
+
+    case 'LogicalExpression':
+      return isAnchored(src, node.left, seen) && isAnchored(src, node.right, seen);
+
+    case 'ArrayExpression':
+      return node.elements.length > 0 && node.elements.every((e) => isAnchored(src, e, seen));
+
+    case 'ParenthesizedExpression':
+      return isAnchored(src, node.expression, seen);
+
+    default:
+      return false;
+  }
+}
+
+/** Whether every value a locally-declared function returns is an anchor. */
+function returnsAnchor(src, callee, seen) {
+  if (callee.type !== 'Identifier') return false;
+  const key = `fn:${callee.name}@${callee.start}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
+  const bound = bindingAt(src, callee.name, callee.start);
+  const fn = bound.init;
+  if (!fn) return false;
+  if (fn.type === 'ArrowFunctionExpression' && fn.body.type !== 'BlockStatement') {
+    return isAnchored(src, fn.body, seen);
+  }
+  if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
+  const returns = [];
+  const collect = (n, top) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach((c) => collect(c, top));
     if (typeof n.type !== 'string') return;
-    if (numericValueOf(n) !== null) {
-      found = true;
-      return;
-    }
-    // A CALL is opaque, and its arguments are not the bound — the bound
-    // is what it returns. Round 5: `src.indexOf('320')` and
-    // `src.indexOf('end', start + 1)` were being read as counts because a
-    // number appeared somewhere inside them, which is the over-flagging
-    // that makes a guard get silenced rather than obeyed.
-    if (OPAQUE.has(n.type)) return;
-    if (n.type === 'Identifier') {
-      const key = `${n.name}@${n.start}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        const bound = bindingAt(src, n.name, n.start);
-        if (bound.found && bound.init && reachesNumber(src, bound.init, seen)) {
-          found = true;
-          return;
-        }
-      }
-    }
+    if (!top && (n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression')) return;
+    if (n.type === 'ReturnStatement') returns.push(n.argument);
     for (const k of Object.keys(n)) {
       if (k === 'type' || k === 'start' || k === 'end' || k === 'range') continue;
-      visit(n[k]);
+      collect(n[k], false);
     }
   };
-  visit(node);
-  return found;
+  collect(fn.body, true);
+  return returns.length > 0 && returns.every((r) => isAnchored(src, r, seen));
 }
 
 function declarationsDirectlyIn(scope) {
@@ -530,33 +610,6 @@ function hoistedVarsIn(fn) {
   };
   descend(fn, true);
   return out;
-}
-
-/**
- * The number this node denotes, or `null` if it does not denote one.
- *
- * A character count need not be written as a number. `'320'` coerces,
- * `-320` is a unary expression rather than a literal, and `320 + 1` is
- * arithmetic over two of them — all of which a scan for digit characters
- * in the source text either misses or cannot interpret (#2144 round 3).
- */
-export function numericValueOf(node) {
-  if (!node) return null;
-  if (node.type === 'Literal') {
-    if (typeof node.value === 'number') return node.value;
-    // `'320'` is a 320-character bound after coercion, and erasing string
-    // literals before looking for digits is exactly how it hid.
-    if (typeof node.value === 'string' && node.value.trim() !== '') {
-      const n = Number(node.value);
-      return Number.isFinite(n) ? n : null;
-    }
-    return null;
-  }
-  if (node.type === 'UnaryExpression' && (node.operator === '-' || node.operator === '+')) {
-    const inner = numericValueOf(node.argument);
-    return inner === null ? null : node.operator === '-' ? -inner : inner;
-  }
-  return null;
 }
 
 function lineOf(src, index) {

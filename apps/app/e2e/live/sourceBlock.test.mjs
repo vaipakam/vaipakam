@@ -16,9 +16,9 @@ import {
   between,
   blockFrom,
   callContaining,
-  enclosingStatementsOf,
+  isAnchored,
+  markableStatementsOf,
   markedStatement,
-  reachesNumber,
   sliceCallsIn,
   statementFrom,
   stripLineComments,
@@ -308,12 +308,19 @@ describe('#2144 — no source region is bounded by a character count', () => {
 
   const MARKER = 'not-a-source-region';
 
-  // A bound is a CHARACTER COUNT when a number is reachable inside it —
-  // the module answers that, for a bound and for a binding's initializer
-  // with one function, because they are one question. Round 4 caught them
-  // being two, with the weaker one letting `const WINDOW = BASE` and
-  // `const WINDOW = 160 * 2` through.
-  const countsCharacters = (src, arg) => reachesNumber(src, arg);
+  // A bound is a CHARACTER COUNT unless it is recognisably an ANCHOR.
+  // That way round is round 6's correction and the reason this stopped
+  // needing a new fix every round: "every way to write a number" is an
+  // open set and the classifier kept being caught not knowing one of
+  // them, where "what an anchor looks like" is closed, small, and
+  // matches what this suite actually writes.
+  //
+  // `substr`'s SECOND argument is a LENGTH by definition, however it is
+  // produced — `s.substr(start, s.indexOf('end'))` truncates by however
+  // many characters that landmark happens to sit at, which is a fixed
+  // window wearing an anchor's clothes.
+  const countsCharacters = (src, call) =>
+    call.args.some((a, i) => (call.method === 'substr' && i === 1) || !isAnchored(src, a));
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
   // Proximity alone excused a neighbour (round 4). Two further corrections
@@ -322,7 +329,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // since a block-bodied helper put the call inside a `return` while the
   // marker sat on the declaration.
   const excused = (src, call) =>
-    enclosingStatementsOf(src, call.node).some((stmt) => markedStatement(src, stmt, MARKER));
+      markableStatementsOf(src, call.node).some((stmt) => markedStatement(src, stmt, MARKER));
 
   it('finds the suites to check', () => {
     expect(files.length).toBeGreaterThan(10);
@@ -332,7 +339,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
   it.each(files)('%s bounds every source region by meaning', (file) => {
     const src = fs.readFileSync(path.join(dir, file), 'utf8');
     const counted = sliceCallsIn(src)
-      .filter((c) => c.args.some((a) => countsCharacters(src, a)))
+      .filter((c) => countsCharacters(src, c))
       .filter((c) => !excused(src, c))
       .map((c) => `${file}:${c.line} — ${c.text.replace(/\s+/g, ' ')}`);
     expect(
@@ -345,38 +352,68 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // The guard's own premises. Each was an evasion Codex demonstrated on
   // the version before this one, and a guard that cannot fail on them is
   // the thing it replaced.
-  it('sees a count a text search would miss', () => {
+  // EVERY DISGUISE REVIEW HAS DEMONSTRATED, in one place.
+  //
+  // Rounds 3 to 6 each produced a new way to write a fixed length that
+  // the then-current classifier did not know about. They are listed
+  // together because the list is the argument for the rule being the way
+  // round it now is: none of these needed a rule of its own. A bound is
+  // a count unless it is recognisably a landmark, so a form nobody has
+  // thought of yet lands on the reported side by default.
+  it('reports a fixed length however it is written', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
     const cases = [
-      ["const s = f();\nconst r = s.slice(start, start + 320);", 'plain arithmetic'],
-      ["const s = f();\nconst r = s.slice(start, // don't truncate\n  start + 320);", 'a comment'],
-      ["const s = f();\nconst r = s.slice(start, '320');", 'a coerced string'],
-      ['const W = 320;\nconst s = f();\nconst r = s.slice(start, start + W);', 'a named constant'],
-      ["const s = f();\nconst r = s.slice(start, start - -320);", 'a unary minus'],
-      // ROUND 4 — an initializer is not just its root.
-      ['const BASE = 320;\nconst W = BASE;\nconst s = f();\nconst r = s.slice(start, start + W);', 'an alias'],
-      ['const W = 160 * 2;\nconst s = f();\nconst r = s.slice(start, start + W);', 'arithmetic'],
-      ['const W = { n: 320 }.n;\nconst s = f();\nconst r = s.slice(start, start + W);', 'a member of a literal'],
-      // ROUND 5 — a defaulted parameter is a binding like any other.
-      [
-        'function region(src, start, W = 320) { return src.slice(start, start + W); }',
-        'a default parameter',
-      ],
-      // ROUND 5 — a `const` written straight into a case belongs to the
-      // switch's own block, which was not modelled as a scope at all.
-      [
-        'function f(src, start, k) { switch (k) { case 1: const W = 320; return src.slice(start, start + W); } }',
-        'a switch-case binding',
-      ],
-      // ROUND 5 — the invariant is about source REGIONS, not about one
-      // spelling of the String API.
-      ['const s = f();\nconst r = s.substring(start, start + 320);', 'substring'],
-      ['const s = f();\nconst r = s.substr(start, 320);', 'substr'],
+      ['plain arithmetic', 'const r = s.slice(start, start + 320);'],
+      ['a comment in the way', "const r = s.slice(start, // don't truncate\n  start + 320);"],
+      ['a coerced string', "const r = s.slice(start, '320');"],
+      ['a no-substitution template', 'const r = s.slice(start, `320`);'],
+      ['a named constant', 'const W = 320;\nconst r = s.slice(start, start + W);'],
+      ['an alias of one', 'const B = 320;\nconst W = B;\nconst r = s.slice(start, start + W);'],
+      ['arithmetic in the initializer', 'const W = 160 * 2;\nconst r = s.slice(start, start + W);'],
+      ['a member of a literal', 'const W = { n: 320 }.n;\nconst r = s.slice(start, start + W);'],
+      ['a unary minus', 'const r = s.slice(start, start - -320);'],
+      ['an immediately-invoked function', 'const r = s.slice(start, (() => 320)());'],
+      ['an assignment after declaration', 'let e;\ne = start + 320;\nconst r = s.slice(start, e);'],
+      ['substring', 'const r = s.substring(start, start + 320);'],
+      ['substr', 'const r = s.substr(start, 320);'],
     ];
-    for (const [code, why] of cases) {
-      const calls = sliceCallsIn(code);
-      expect(calls, why).toHaveLength(1);
-      expect(calls[0].args.some((a) => countsCharacters(code, a)), why).toBe(true);
+    for (const [why, tail] of cases) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
     }
+  });
+
+  // Parameter shapes, which need their own fixtures because the count is
+  // in a signature rather than a body.
+  it('reports a fixed length supplied through a parameter', () => {
+    for (const [why, code] of [
+      [
+        'a default parameter',
+        "function region(s, start, W = 320) { return s.slice(start, start + W); }",
+      ],
+      [
+        'a default nested in a destructuring pattern',
+        "function region(s, start, { W = 320 }) { return s.slice(start, start + W); }",
+      ],
+      [
+        'a switch-case binding',
+        "function f(s, start, k) { switch (k) { case 1: const W = 320; return s.slice(start, start + W); } }",
+      ],
+    ]) {
+      const call = sliceCallsIn(code).at(-1);
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // `substr`'s SECOND argument is a length by definition, so an anchor
+  // in that position is a fixed window wearing an anchor's clothes: the
+  // region ends however many characters along the landmark happens to
+  // sit. The first argument is still an offset and may be anchored.
+  it("reports substr's length even when it is produced by a landmark", () => {
+    const code = "const s = f();\nconst start = s.indexOf('a');\nconst r = s.substr(start, s.indexOf('end'));";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
   // ROUND 5, and the direction that matters most: a CALL is opaque, and
@@ -384,13 +421,16 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // were being flagged because a number appeared somewhere inside them,
   // which would have forced false exemption markers onto correct code.
   it('does not read a number inside an anchor call as a count', () => {
-    for (const code of [
-      "const s = f();\nconst r = s.slice(start, s.indexOf('320'));",
-      "const s = f();\nconst r = s.slice(start, s.indexOf('end', start + 1));",
-      'const s = f();\nconst r = s.slice(start, atOffset(320));',
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const tail of [
+      "const r = s.slice(start, s.indexOf('320'));",
+      "const r = s.slice(start, s.indexOf('end', start + 1));",
+      "const anchors = [s.indexOf('end')];\nconst r = s.slice(start, anchors[0]);",
+      "const r = s.slice(start, s.indexOf('x') + 'x'.length);",
     ]) {
-      const [call] = sliceCallsIn(code);
-      expect(call.args.some((a) => countsCharacters(code, a)), code).toBe(false);
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(countsCharacters(code, call), tail).toBe(false);
     }
   });
 
@@ -402,7 +442,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
       'const r = s.slice(at, to);',
     ].join('\n');
     const [call] = sliceCallsIn(code);
-    expect(call.args.some((a) => countsCharacters(code, a))).toBe(false);
+    expect(countsCharacters(code, call)).toBe(false);
   });
 
   // The false positive that scope-awareness exists to prevent: the same
@@ -419,7 +459,7 @@ describe('#2144 — no source region is bounded by a character count', () => {
       '}',
     ].join('\n');
     const [call] = sliceCallsIn(code);
-    expect(call.args.some((a) => countsCharacters(code, a))).toBe(false);
+    expect(countsCharacters(code, call)).toBe(false);
   });
 
   // ROUND 4's second finding, and my own fixture had codified the bug: a
@@ -456,6 +496,32 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(excused(interrupted, sliceCallsIn(interrupted)[0])).toBe(false);
   });
 
+  // ROUND 6 — a marker is a note on a DECLARATION. Above an `it(...)`
+  // it would otherwise excuse every bound in the whole test, since that
+  // registration is a statement containing them all.
+  it('does not let a marker above a test registration excuse its body', () => {
+    const src = [
+      `// ${MARKER}: assertion label`,
+      "it('x', () => {",
+      '  const s = f();',
+      "  const start = s.indexOf('a');",
+      '  const r = s.slice(start, start + 320);',
+      '});',
+    ].join('\n');
+    expect(excused(src, sliceCallsIn(src)[0])).toBe(false);
+  });
+
+  // ROUND 6 — a marker trailing unrelated code has only whitespace
+  // between it and whatever follows, so it was attaching to the next
+  // declaration and excusing a window it says nothing about.
+  it('does not accept a marker trailing an unrelated statement', () => {
+    const src = [
+      `const other = 1; // ${MARKER}: about the line above`,
+      'const r = s.slice(start, start + 320);',
+    ].join('\n');
+    expect(excused(src, sliceCallsIn(src)[0])).toBe(false);
+  });
+
   // ROUND 5 — the marker has to BE a comment. Testing the raw line text
   // let a string holding the token excuse the very window beside it.
   it('does not accept the marker from a string or from other code', () => {
@@ -483,38 +549,38 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(excused(src, sliceCallsIn(src)[0])).toBe(true);
   });
 
-  // ROUND 4's third finding: `var` hoists to the function, so a numeric
-  // one declared in an inner block is in scope after that block. A
-  // resolver that only looks at the block let this window through.
+  // ROUND 4's third finding: `var` hoists to the function, so one
+  // declared in an inner block is in scope after it. Resolution still
+  // matters under the inverted rule — it is how a name is recognised as
+  // holding a landmark rather than something unknown.
   it('resolves a hoisted var declared in an inner block', () => {
     const src = [
-      'function f(src, start, enabled) {',
-      '  if (enabled) { var WINDOW = 320; }',
-      '  return src.slice(start, start + WINDOW);',
+      'function f(s, start, enabled) {',
+      "  if (enabled) { var END = s.indexOf('end'); }",
+      '  return s.slice(start, END);',
       '}',
     ].join('\n');
-    const [call] = sliceCallsIn(src);
-    expect(call.args.some((a) => countsCharacters(src, a))).toBe(true);
+    expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(true);
   });
 
   // And the hoist stops at a function boundary, or every `var` anywhere
-  // would poison every name.
+  // would answer for every name.
   it('does not hoist a var out of a nested function', () => {
     const src = [
-      'function outer(src, start) {',
-      '  function inner() { var WINDOW = 320; return WINDOW; }',
-      "  const WINDOW = src.indexOf('x');",
-      '  return src.slice(start, WINDOW);',
+      'function outer(s, start) {',
+      "  function inner() { var END = s.indexOf('end'); return END; }",
+      '  return s.slice(start, END);',
       '}',
     ].join('\n');
-    const [call] = sliceCallsIn(src);
-    expect(call.args.some((a) => countsCharacters(src, a))).toBe(false);
+    expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(false);
   });
 
-  // A pair of names defined in terms of each other must not spin.
+  // A pair of names defined in terms of each other must not spin. It
+  // resolves to nothing, so the bound is not recognised as a landmark
+  // and is reported — the safe direction.
   it('terminates on a cyclic binding rather than recursing forever', () => {
-    const src = 'const a = b;\nconst b = a;\nconst s = f();\nconst r = s.slice(start, a);';
-    const [call] = sliceCallsIn(src);
-    expect(call.args.some((c) => countsCharacters(src, c))).toBe(false);
+    const src = "const a = b;\nconst b = a;\nconst s = f();\nconst start = s.indexOf('x');\nconst r = s.slice(start, a);";
+    const call = sliceCallsIn(src).at(-1);
+    expect(countsCharacters(src, call)).toBe(true);
   });
 });

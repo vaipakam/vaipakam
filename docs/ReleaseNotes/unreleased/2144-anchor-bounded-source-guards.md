@@ -88,8 +88,38 @@ than at the code it meant to stop before. A landmark is now required to
 be code, and that check is re-anchored. Notes in the margin that mention
 a landmark no longer move it.
 
-Putting a removed window back, in any of the thirteen disguises review
-has demonstrated, turns the suite red.
+A sixth round settled how the check should be phrased, and that is the
+part worth recording. Every round so far had answered the same question —
+"could this length be a fixed number?" — and every round had found
+another way of writing one that the check did not know about: spelled as
+text, given a name, handed on through a second name, worked out by
+arithmetic, supplied as a default, declared inside a branch, produced by
+a function defined and called on the spot, assigned after the fact, or
+buried in a pattern that unpacks an argument. There is no end to that
+list. Every way of writing a number is an open-ended thing, and a check
+whose correctness depends on having listed all of them is wrong without
+knowing it.
+
+So the question is asked the other way round now. Rather than trying to
+recognise a length, the check recognises a LANDMARK — a search for text,
+a small helper that performs one, a name holding the result, the measured
+length of the thing searched for, and simple combinations of those. That
+list is short and closed, because it is what these checks actually write.
+Anything else is treated as a length and has to say what it counts. A new
+way of hiding a number cannot be invented, because there is nothing left
+to evade: unrecognised is refused.
+
+Measured before adopting it: phrased this way the check objects to
+exactly the three places that genuinely do count characters, and to
+nothing else. Its remaining cost is written down rather than glossed — a
+landmark handed into a helper as an argument is unknown to it, and the
+answer to a case like that is to teach it the shape, never to attach an
+apologetic note to correct code. A note asserts that something really
+does count characters, and putting one on correct work is a falsehood the
+next reader inherits.
+
+Putting a removed window back, in any of the twenty disguises review has
+demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
