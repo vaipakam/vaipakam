@@ -396,8 +396,13 @@ describe('#2144 — no source region is bounded by a character count', () => {
     if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
     return call.args.some((a, i) => {
       // `substr`'s second argument is a LENGTH by definition, however it
-      // is produced.
-      if (call.method === 'substr' && i === 1) return true;
+      // is produced — and a method name this cannot READ may be
+      // `substr` (round 24): `const m = 'substr'; s[m](start, at('end'))`
+      // was recorded as UNREADABLE and then had both arguments accepted
+      // as positions. Unreadable means it might be, which is the same
+      // reason the collector inspects such calls instead of skipping
+      // them.
+      if ((call.method === 'substr' || typeof call.method === 'symbol') && i === 1) return true;
       // A START may be the literal 0 — the stable beginning of the text,
       // a position and not a count (round 8). Marking it would claim a
       // character count that is not happening. Every END, and every other
@@ -1177,6 +1182,43 @@ describe('#2144 — no source region is bounded by a character count', () => {
       "const s = f();\nconst start = s.indexOf('a');\nlet end = s.indexOf('e');\n" +
       'for (const x of xs) {\n  const r = s.slice(start, end);\n  end = start + 320;\n}';
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // ROUND 24 — six, most of them on rounds 22-23's fixes.
+  it('refuses the round-24 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a needle reassigned to a number before the use',
+        "let needle = 'x';\nneedle = 320;\nconst r = s.slice(start, s.indexOf(needle) + needle.length);",
+      ],
+      [
+        'a binding that outlives the function it is written in',
+        "let end = s.indexOf('e');\nfunction region() { const r = s.slice(start, end); end = start + 320; return r; }\nregion();",
+      ],
+      [
+        'an unreadable method that may be substr, whose second bound is a length',
+        "const m = 'substr';\nconst r = s[m](start, s.indexOf('end'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('accepts a computed spelling of the needle length', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nconst needle = 'x';\n" +
+      "const r = s.slice(start, s.indexOf(needle) + needle['length']);";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  it('refuses an anchor that is whitespace plus a comment', () => {
+    expect(() =>
+      blockFrom(' // if (target) {\nif (ready) { work(); }\n', ' // if (target) {'),
+    ).toThrow(/renamed or removed/);
   });
 
   // ROUND 8 — the list kept shrinking in kind: these are the remaining

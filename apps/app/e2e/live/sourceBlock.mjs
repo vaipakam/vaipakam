@@ -326,8 +326,13 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
     // {` — which walked `blockFrom` on to an unrelated later block, the
     // very behaviour `anchorAt` says is always skipped. Containing a
     // skipped span is fine; consisting of one is not.
+    // WHITESPACE IS NOT CODE (round 24). A leading space lies outside
+    // acorn's comment span, so ` // if (target) {` satisfied a
+    // "contains some unskipped character" test and took the unrelated
+    // later block — the same wrong region, one space further on.
     const hasCode = [...Array(end - i).keys()].some(
-      (k) => !skipped.some(([a, b]) => i + k >= a && i + k < b),
+      (k) =>
+        !/\s/.test(src[i + k]) && !skipped.some(([a, b]) => i + k >= a && i + k < b),
     );
     if (!straddles && hasCode) return i;
   }
@@ -948,12 +953,31 @@ function writeReaches(src, writes, useAt) {
     const writeHost = host(w);
     // A LOOP repeats, so even one body gives no order; only a shared
     // FUNCTION host restores it.
+    // …and only when the BINDING itself lives in that activation (round
+    // 24). `let end = at('e'); function region() { …slice…; end = …; }
+    // region(); region();` shares the function node but not the
+    // lifetime: the second call sees the first call's write. A binding
+    // declared OUTSIDE the host outlives the invocation, so sharing the
+    // node proves nothing.
     const shared =
-      useHost !== null && writeHost === useHost && !LOOPS.has(useHost.type);
+      useHost !== null &&
+      writeHost === useHost &&
+      !LOOPS.has(useHost.type) &&
+      declaredWithin(src, w, useHost);
     if (shared) return w.start < useAt;
     if (useHost !== null) return true;
     return w.start < useAt || writeHost !== null;
   });
+}
+
+/** Whether the binding the write targets is DECLARED inside `host`. */
+function declaredWithin(src, write, host) {
+  const { variableOf } = astOf(src, 'declaredWithin');
+  const variable = variableOf.get(write);
+  if (!variable) return false;
+  return variable.defs.every(
+    (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
+  );
 }
 
 const LOOPS = new Set([
@@ -1105,7 +1129,12 @@ export function kindOf(src, node, seen = new Set()) {
       // `s.indexOf(x) + x.length` is a position while `+ 320` is not.
       // Only off a plain NAME: `({ length: start + 320 }).length` is a
       // number wearing the spelling (round 7).
-      if (!node.computed && node.property.name === 'length') {
+      // `propertyName` reads a computed spelling too (round 24):
+      // `needle['length']` is the same measurement as `needle.length`,
+      // and rejecting it reported a genuine anchor as a window. This
+      // module already had one reader for the question; this branch was
+      // simply not using it.
+      if (propertyName(node) === 'length') {
         return measurable(node.object) ? 'offset' : null;
       }
       // SELECTING A LANDMARK OUT OF A COLLECTION IS NO LONGER RECOGNISED,
@@ -1448,6 +1477,12 @@ function isTextNeedle(src, node, seen = new Set()) {
   const bound = bindingOf(src, node);
   if (!bound.found) return true;
   if (bound.notText) return false;
+  // A needle REASSIGNED before the use is not what it was declared as
+  // (round 24) — `let needle = 'x'; needle = 320;` leaves `.length`
+  // undefined and the end coerces to zero. Same rule the bound and the
+  // receiver have followed since round 7; this check simply had not
+  // adopted it.
+  if (writeReaches(src, bound.writes, node.start)) return false;
   const init = bound.init;
   if (!init) return true;
   if (init.type === 'Literal') return typeof init.value === 'string';
