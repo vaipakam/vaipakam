@@ -9,15 +9,13 @@ import {
   cardSettled,
   confirmationReady,
   declaredStateConsistent,
-  durationSamplesFor,
-  durationUnitsFor,
-  durationVocabularyFor,
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
   reconcileEligibility,
   saysCheckRunning,
 } from './forcedCloseCard.mjs';
+import { durationSamplesFor, durationUnitsFor, durationVocabularyFor } from './durationVocabulary.mjs';
 
 const FORCED_CLOSE = enBundle.copy.forcedClose;
 
@@ -7889,5 +7887,48 @@ describe('#2125 round 4 — per-phrase unit side, money after a counter, magnitu
     expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
     expect(monetaryAmountsIn('3 घंटे', { locale: 'hi' })).toEqual([]);
     expect(monetaryAmountsIn('3 घंटे में', { locale: 'hi' })).toEqual([]);
+  });
+});
+
+describe('#2125 round 5 — numeric span, locale phrase first, both directions, safe folding, marked phrases', () => {
+  // The literal on either side of the WHOLE number: a fractional sample
+  // must not push the context word into the units.
+  it('never stores a context word as a unit', () => {
+    expect(durationUnitsFor('cs').has('za')).toBe(false);
+    expect(durationVocabularyFor('cs').leads.has('za')).toBe(true);
+    expect(monetaryAmountsIn('You receive 3 ZA', { locale: 'cs' })).toHaveLength(1);
+    expect(monetaryAmountsIn('za 3 dny', { locale: 'cs' })).toEqual([]);
+  });
+
+  // The locale's longest phrase wins over the English one-letter list.
+  it('prefers the longest locale phrase over an English abbreviation', () => {
+    expect(durationUnitsFor('it').has('h fa')).toBe(true);
+    expect(monetaryAmountsIn('3 h fa', { locale: 'it' })).toEqual([]);
+    expect(monetaryAmountsIn('Ricevi 3 h', { locale: 'it' })).toHaveLength(1);
+  });
+
+  // A single-category locale still learns both relative-time directions.
+  it('samples a nonzero representative so past forms are learned', () => {
+    expect(durationSamplesFor('ja').samples.every((n) => n !== 0)).toBe(true);
+    expect(durationUnitsFor('ja').has('日前')).toBe(true);
+    expect(monetaryAmountsIn('3 日前', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3日前', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Folding uses the validated tags, so a malformed entry in a fallback
+  // list cannot throw at match time.
+  it('folds with the validated tag list, never the raw locale', () => {
+    expect(durationVocabularyFor(['bad_tag', 'ja']).tags).toEqual(['ja']);
+    expect(() => monetaryAmountsIn('3日', { locale: ['bad_tag', 'ja'] })).not.toThrow();
+    expect(monetaryAmountsIn('3日', { locale: ['bad_tag', 'ja'] })).toEqual([]);
+  });
+
+  // A phrase's words may be separated by CLDR's abbreviation marks.
+  it('matches a phrase whose words carry abbreviation marks', () => {
+    expect(new Intl.RelativeTimeFormat('hi', { numeric: 'always', style: 'short' }).format(3, 'hour')).toBe(
+      '3 घं॰ में',
+    );
+    expect(monetaryAmountsIn('3 घं॰ में', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
   });
 });

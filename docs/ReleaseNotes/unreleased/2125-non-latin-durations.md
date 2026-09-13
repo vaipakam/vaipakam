@@ -58,6 +58,13 @@ treated a money sign glued to a counter as the amount it is, applied the
 existing quantity guards to a unit written before the number, let a
 language's own words for "in" and "ago" establish that a one-letter unit
 means time, and counted a letter written with a combining mark as the
-single letter it is.
+single letter it is. A fifth round moved the language vocabulary and its
+matching rules into their own module, leaving the scanner as their
+consumer; read the words on either side of a whole number, so a decimal
+could not misfile a context word as a unit; preferred a language's own
+longest phrase to an English abbreviation; learned both "in" and "ago"
+forms for languages with a single grammatical number; kept a malformed
+language tag in a fallback list from raising an error at match time; and
+matched phrases whose words carry abbreviation marks.
 
 Closes #2125. No product surface changes.

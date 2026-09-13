@@ -1,3 +1,14 @@
+import {
+  CONTEXT_SEP,
+  EMPTY_VOCABULARY,
+  durationVocabularyFor,
+  isAmbiguousUnit,
+  leadingScriptRun,
+  localeLeadEnds,
+  localeTrailStarts,
+  unitAfter,
+  unitBefore,
+} from './durationVocabulary.mjs';
 /**
  * Does the DEPLOYED forced-close card keep the two promises its spec
  * makes about what it may say?
@@ -478,21 +489,6 @@ const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
 /**
- * Single-letter units are AMBIGUOUS and the rest are not.
- *
- * `m` is minutes or millions, `h` is hours or nothing, `s` is seconds or
- * a plural. `mins`, `hours` and `days` carry no such reading. Round 3
- * closed `1m USDC` by consulting the trailing ticker, but the absolute
- * contract says a BARE figure fails too — and `You receive 1m` has no
- * ticker to cancel the exemption, so the scanner read a promise of a
- * million as a promise of a minute (round 21 P2).
- *
- * So an ambiguous unit is exempt only when something in front of the
- * number actually reads as a duration. `unlocks in 30m` is a wait;
- * `You receive 1m` is an amount.
- */
-const AMBIGUOUS_UNIT = /^[hms]$/i;
-/**
  * Context that ESTABLISHES TIME, not merely context that precedes a
  * number (round 22 P2).
  *
@@ -539,250 +535,6 @@ const DURATION_LEAD = /\b(in|within|after|wait|waits|waiting|takes|lasts|expires
 const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
 
 /**
- * The duration words of a LOCALE, taken from the runtime's own CLDR data
- * rather than hand-listed (#2125).
- *
- * `NON_MONETARY_UNIT` above is English. Every other exemption in this
- * scanner was too: a non-Latin unit word could not reach it, so a
- * grace-window sentence in ja / hi / ta / ko / zh — `猶予期間は 3 日です`
- * — fell through to the absolute bare-figure arm and was reported as an
- * invented amount. That is the false-FAIL direction, on the one thing
- * the spec explicitly permits this card to say, in five shipped locales.
- * Latent only because no shipped translation currently writes the
- * window with a figure — luck, not a guard.
- *
- * The obvious generalisation, "any non-ASCII word after a figure is a
- * unit", is worse than the bug: it would also exempt a non-ASCII ASSET
- * glyph, which `ASSET_GLYPH` has just made reportable. So the vocabulary
- * is SOURCED, not guessed: `Intl.NumberFormat` with `style: 'unit'` is
- * asked, for the locale, how it writes each duration unit in its long,
- * short and narrow forms across every plural category, and the unit
- * parts of those renderings are the words. The same CLDR data the app's
- * own formatting runs on, so the list cannot drift from what a reader is
- * shown, and a locale added later needs no edit here.
- *
- * Empty for a locale the runtime does not know (stated; the all-locale
- * calibration asserts every shipped bundle IS known), and empty when no
- * locale is given — a caller that does not say which language the text
- * is in gets the English list alone and, for other scripts, a loud false
- * hit rather than a silent miss.
- *
- * Each rendered unit is stored in the SHAPE THE SCANNER READS (#2125
- * round 1): the leading letter-run of every whitespace-separated word,
- * `[\p{L}\p{M}\p{N}]+`, which is what `trailing` and `leading` capture.
- * CLDR writes some abbreviations with punctuation inside or after them —
- * `Std.`, `घं॰`, Hebrew `ימ׳`, Polish `m-ce` — and a vocabulary keeping the
- * punctuation could never match a token that stops at it. One tokeniser
- * for storing and for matching, so they cannot disagree.
- *
- * The PLURAL SAMPLES are drawn from the locale's own categories: the
- * candidates below are put through `Intl.PluralRules` and one is kept per
- * category the locale actually has — a fixed language-independent list
- * had missed Tagalog's `other` (which `4` selects while `1`, `2`, `3` and
- * `5` all select `one`) and the fractional categories of Czech, Polish
- * and Ukrainian. `durationSamplesFor` is exported so the calibration can
- * assert that every category of every shipped locale is reached.
- */
-const DURATION_UNITS = ['day', 'hour', 'minute', 'second', 'week', 'month', 'year'];
-const UNIT_DISPLAYS = ['long', 'short', 'narrow'];
-// Spanish and French put only the exact millions in `many`, hence the two
-// large candidates; the fractions reach the fractional categories.
-const PLURAL_CANDIDATES = [
-  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 19, 20, 21, 22, 25, 100, 101, 102, 1000,
-  1000000, 2000000, 0.1, 0.5, 1.1, 1.5, 2.5, 10.5,
-];
-const TOKEN_RUN = /[\p{L}\p{M}\p{N}]+/u;
-const tokenOf = (word) => word.normalize('NFC').match(TOKEN_RUN)?.[0] ?? '';
-// Folded for comparison (#2125 round 2): CLDR writes `siku`, a sentence
-// writes `Siku`, and German capitalises its nouns; the English list is
-// already case-insensitive. Folded with the LOCALE, since case is not
-// language-neutral.
-const foldUnit = (s, locale) => s.normalize('NFC').toLocaleLowerCase(locale ?? undefined);
-// A unit phrase is stored WHOLE (#2125 round 2): Tagalog's `4 na araw`
-// is one unit part, and splitting it into words made the linker `na` a
-// unit on its own, exempting `4 na USDC`. Up to this many tokens.
-const MAX_PHRASE_TOKENS = 3;
-export function durationSamplesFor(tag) {
-  const pr = new Intl.PluralRules(tag);
-  const byCategory = new Map();
-  for (const n of PLURAL_CANDIDATES) {
-    const c = pr.select(n);
-    if (!byCategory.has(c)) byCategory.set(c, n);
-  }
-  return {
-    categories: pr.resolvedOptions().pluralCategories,
-    samples: [...byCategory.values()],
-    reached: [...byCategory.keys()],
-  };
-}
-const unitVocabulary = new Map();
-const EMPTY_VOCABULARY = Object.freeze({ units: new Set(), leads: new Set(), trails: new Set() });
-/** The unit words alone — see `durationVocabularyFor` for the whole. */
-export function durationUnitsFor(locale) {
-  return durationVocabularyFor(locale).units;
-}
-/**
- * `units`: the locale's duration words and phrases. `leads` / `trails`:
- * the locale's TEMPORAL CONTEXT around a duration (#2125 round 4) — the
- * literal on the other side of the number in a relative-time phrase,
- * `dentro de`, `il y a`, `za`, `خلال` — which is what lets a one-letter
- * unit be read as a duration where `DURATION_LEAD`'s English cannot:
- * `dentro de 3 h` is a wait in Spanish exactly as `in 3 h` is in English.
- */
-export function durationVocabularyFor(locale) {
-  const tags = (Array.isArray(locale) ? locale : [locale]).filter(
-    (t) => typeof t === 'string' && t !== '',
-  );
-  // Encoded without delimiter ambiguity (#2125 round 2): joining on `|`
-  // let the malformed scalar `'en|ja'` share a cache slot with the valid
-  // array `['en', 'ja']`, so whichever was asked first decided the other's
-  // vocabulary.
-  const key = JSON.stringify(tags);
-  if (unitVocabulary.has(key)) return unitVocabulary.get(key);
-  const words = new Set();
-  const leads = new Set();
-  const trails = new Set();
-  for (const tag of tags) {
-    let supported = false;
-    try {
-      supported = Intl.NumberFormat.supportedLocalesOf([tag]).length > 0;
-    } catch {
-      supported = false;
-    }
-    if (!supported) continue;
-    const { samples } = durationSamplesFor(tag);
-    let unitFirst = false;
-    for (const unit of DURATION_UNITS) {
-      for (const unitDisplay of UNIT_DISPLAYS) {
-        const nf = new Intl.NumberFormat(tag, { style: 'unit', unit, unitDisplay });
-        for (const n of samples) {
-          const parts = nf.formatToParts(n);
-          const at = (type) => parts.findIndex((p) => p.type === type);
-          if (at('unit') >= 0 && at('integer') >= 0 && at('unit') < at('integer')) unitFirst = true;
-          for (const part of parts) {
-            if (part.type !== 'unit') continue;
-            const phrase = part.value.split(/\s+/).map(tokenOf).filter(Boolean).join(' ');
-            if (phrase !== '') words.add(foldUnit(phrase, tag));
-          }
-        }
-      }
-    }
-    // CONTEXTUAL forms (#2125 round 3): unit formatting gives the
-    // standalone word, and a language that inflects by case writes `in 3
-    // Tagen` where the standalone is `Tage`. Relative-time formatting is
-    // the same CLDR data in sentence position, so the literal on the
-    // unit's side of the number — after it, or before it where the
-    // language writes units first — is taken as a phrase of up to three
-    // tokens: `Tagen`, `days ago`, `日後`, `दिन में`, `baada ya siku`. The
-    // phrase is stored whole and only whole, so a linker inside it is
-    // never a unit alone; the preposition on the OTHER side (`in`,
-    // `vor`, `dans`) is not a unit — it is CONTEXT, and is kept as such.
-    // The unit's side is read from EACH phrase (round 4): Hebrew's unit
-    // formatter writes the number first, but its relative-time singular
-    // is `בעוד יום (1)`, unit before a bracketed number, so the side the
-    // unit formatter suggests is used only when it carries a word at all,
-    // and the other side is taken otherwise.
-    for (const unit of DURATION_UNITS) {
-      for (const style of UNIT_DISPLAYS) {
-        let rtf;
-        try {
-          rtf = new Intl.RelativeTimeFormat(tag, { numeric: 'always', style });
-        } catch {
-          continue;
-        }
-        for (const n of samples.flatMap((s) => (s === 0 ? [0] : [s, -s]))) {
-          const parts = rtf.formatToParts(n, unit);
-          const i = parts.findIndex((p) => p.type === 'integer');
-          if (i < 0) continue;
-          const tokensOf = (part) =>
-            part && part.type === 'literal' ? part.value.split(/\s+/).map(tokenOf).filter(Boolean) : [];
-          const left = tokensOf(parts[i - 1]);
-          const right = tokensOf(parts[i + 1]);
-          let unitOnLeft = unitFirst;
-          if (unitOnLeft && left.length === 0 && right.length > 0) unitOnLeft = false;
-          if (!unitOnLeft && right.length === 0 && left.length > 0) unitOnLeft = true;
-          const unitToks = unitOnLeft ? left.slice(-MAX_PHRASE_TOKENS) : right.slice(0, MAX_PHRASE_TOKENS);
-          if (unitToks.length > 0) words.add(foldUnit(unitToks.join(' '), tag));
-          const contextToks = unitOnLeft ? right.slice(0, MAX_PHRASE_TOKENS) : left.slice(-MAX_PHRASE_TOKENS);
-          if (contextToks.length > 0) {
-            (unitOnLeft ? trails : leads).add(foldUnit(contextToks.join(' '), tag));
-          }
-        }
-      }
-    }
-  }
-  const vocabulary = Object.freeze({ units: words, leads, trails });
-  unitVocabulary.set(key, vocabulary);
-  return vocabulary;
-}
-
-/**
- * Does the locale's own temporal wording surround the figure? A lead
- * phrase ending `before` (`dentro de 3 h`), or a trail phrase starting
- * what follows the unit — at a word boundary, folded with the locale.
- */
-const CONTEXT_SEP = /^[\s(\[{:,;«»"'‘’“”)\]}–—-]*/u;
-function localeLeadEnds(before, vocabulary, locale) {
-  const b = foldUnit(before, locale).replace(/[\s(\[{«"'‘“]*$/u, '');
-  for (const lead of vocabulary.leads) {
-    if (!b.endsWith(lead)) continue;
-    const at = b.length - lead.length;
-    if (at === 0 || !/[\p{L}\p{M}\p{N}]/u.test(b[at - 1])) return true;
-  }
-  return false;
-}
-function localeTrailStarts(afterUnit, vocabulary, locale) {
-  const a = foldUnit(afterUnit, locale).replace(CONTEXT_SEP, '');
-  for (const trail of vocabulary.trails) {
-    if (!a.startsWith(trail)) continue;
-    if (a.length === trail.length || !/[\p{L}\p{M}\p{N}]/u.test(a[trail.length])) return true;
-  }
-  return false;
-}
-
-/**
- * Which locale word, if any, is the unit the figure is written with?
- *
- * Exact match first. Then the case the shipped scripts actually produce:
- * Japanese and Chinese put no space between a counter and what follows,
- * so the letter run after `3` in `3 日です` is `日です`, not `日`. The unit
- * is accepted as a PREFIX of the run only where the run continues in a
- * DIFFERENT script — the counter `日` (Han) followed by the particle `で`
- * (Hiragana). Where it continues in the same script the run is one word
- * and no exemption applies: `日本円` is yen, and `3 日本円` is an amount.
- * A character whose script this does not know is treated as the same,
- * so an unknown pairing is reported rather than exempted.
- */
-const SCRIPT_TESTS = [
-  'Han',
-  'Hiragana',
-  'Katakana',
-  'Hangul',
-  'Latin',
-  'Greek',
-  'Cyrillic',
-  'Arabic',
-  'Hebrew',
-  'Devanagari',
-  'Bengali',
-  'Tamil',
-  'Telugu',
-  'Thai',
-].map((s) => new RegExp(`^\\p{Script=${s}}$`, 'u'));
-const scriptOf = (ch) => SCRIPT_TESTS.findIndex((re) => re.test(ch));
-const sameScript = (a, b) => {
-  const sa = scriptOf(a);
-  const sb = scriptOf(b);
-  return sa === -1 || sb === -1 || sa === sb;
-};
-// The only continuation read as a PARTICLE (#2125 round 3): Hiragana
-// after a Han counter — `3日で`, `3か月です`. Hiragana is where Japanese
-// writes its grammar; Katakana is where it writes loanwords, and an
-// asset name is a loanword (`3日ビットコイン`), so "any other script" was a
-// hole. Index pairs into `SCRIPT_TESTS`: Han is 0, Hiragana 1.
-const PARTICLE_TRANSITIONS = new Set(['0>1']);
-const particleFollows = (last, next) => PARTICLE_TRANSITIONS.has(`${scriptOf(last)}>${scriptOf(next)}`);
-/**
  * The continuation after a prefix-matched counter has to read as a
  * PARTICLE, not as a denomination (#2125 rounds 1–2): `3日USDC`, `3日Ξ`
  * and `3日ethです` all continue in a different script, and accepting `日`
@@ -793,11 +545,6 @@ const particleFollows = (last, next) => PARTICLE_TRANSITIONS.has(`${scriptOf(las
  * unit or a magnitude word is evidence of an amount, and the run is then
  * not a unit at all.
  */
-function leadingScriptRun(s) {
-  let i = 1;
-  while (i < s.length && sameScript(s[0], s[i])) i += 1;
-  return s.slice(0, i);
-}
 function denominationLeads(suffix) {
   const head = leadingScriptRun(suffix);
   return (
@@ -806,92 +553,6 @@ function denominationLeads(suffix) {
     LOWERCASE_ASSET_UNIT.test(head) ||
     MAGNITUDE_WORD.test(head)
   );
-}
-
-/**
- * The locale unit that starts `after` — the text following the figure —
- * and where it ends, or `null`. Whole phrases first, longest first, so
- * `na araw` is matched as one unit and never as `na`; then the prefix
- * rule on the first token alone, for a counter written without a space
- * before its particle. The lead-in may be the same separators `trailing`
- * allows: whitespace and hyphens.
- */
-const PHRASE_LEAD = /^[\s‐-―-]*/u;
-function unitAfter(after, units, locale) {
-  if (units.size === 0) return null;
-  const lead = after.match(PHRASE_LEAD)[0].length;
-  const rest = after.slice(lead);
-  const tokens = [...rest.matchAll(/[\p{L}\p{M}\p{N}]+/gu)].slice(0, MAX_PHRASE_TOKENS);
-  if (tokens.length === 0 || tokens[0].index !== 0) return null;
-  for (let k = tokens.length; k >= 1; k -= 1) {
-    const last = tokens[k - 1];
-    const span = rest.slice(0, last.index + last[0].length);
-    // A phrase is tokens separated by whitespace alone — never across
-    // punctuation, which ends the phrase as it ends a clause.
-    if (k > 1 && !/^[\p{L}\p{M}\p{N}]+(\s+[\p{L}\p{M}\p{N}]+)+$/u.test(span)) continue;
-    const phrase = foldUnit(tokens.slice(0, k).map((t) => t[0]).join(' '), locale);
-    if (units.has(phrase)) return { unit: phrase, end: lead + span.length };
-  }
-  const raw = tokens[0][0].normalize('NFC');
-  const run = foldUnit(raw, locale);
-  // The prefix rule needs the folded and the raw run to line up, so the
-  // suffix judged for a denomination is the text as written (folding
-  // would lower-case a ticker out of recognition). Where folding changes
-  // the length the rule declines, which reports — the loud direction.
-  if (run.length !== raw.length) return null;
-  for (const u of units) {
-    if (u.includes(' ')) continue;
-    if (run.length > u.length && run.startsWith(u) && particleFollows(u[u.length - 1], run[u.length])) {
-      if (denominationLeads(raw.slice(u.length))) return null;
-      return { unit: u, end: lead + u.length };
-    }
-  }
-  return null;
-}
-
-/**
- * The locale unit that ENDS `before` — a language writing the unit in
- * front of the figure, Swahili's `siku 3` (#2125 round 1) — or `null`.
- * Whole phrases, longest first, folded with the locale (round 2: `Siku 3`
- * at the start of a sentence). Exact match only: the prefix rule is about
- * a counter and the particle after it.
- */
-function unitBefore(before, units, locale) {
-  if (units.size === 0) return null;
-  for (let k = MAX_PHRASE_TOKENS; k >= 1; k -= 1) {
-    // Whitespace or an OPENING bracket may sit between the unit and the
-    // figure (round 4): Hebrew writes its singular as `בעוד יום (1)`.
-    const m = before.match(
-      new RegExp(`((?:[\\p{L}\\p{M}\\p{N}]+\\s+){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)[\\s(\\[{«"'‘“]*$`, 'u'),
-    );
-    if (!m) continue;
-    const phrase = foldUnit(m[1].split(/\s+/).join(' '), locale);
-    // `start` is where the phrase begins in `before`, so the duration
-    // context can be read from the text in front of it.
-    if (units.has(phrase)) return { unit: phrase, start: m.index };
-  }
-  return null;
-}
-
-/**
- * `AMBIGUOUS_UNIT` generalised to every locale (#2125): a ONE-CHARACTER
- * unit in an alphabetic script is an abbreviation — `m`, `j`, `M`, `ي` —
- * and might as easily be a magnitude, so it needs duration context, and
- * that context vocabulary is English. A single CJK ideograph or Hangul
- * syllable is the whole word (`日`, `天`, `일`) and is not ambiguous. So a
- * bare `3 M` in German is reported: a loud false hit on copy that does
- * not exist, which the all-locale calibration is what proves, rather
- * than a silent exemption of a compact million.
- */
-function isAmbiguousUnit(unit) {
-  if (AMBIGUOUS_UNIT.test(unit)) return true;
-  // One LETTER, counted without its combining marks (round 4): Hindi's
-  // short hour `घं` is one visible letter written as a base plus a mark,
-  // and is exactly as much an abbreviation as `h`. `%` is one character
-  // and is not an abbreviation of anything.
-  const base = unit.replace(/\p{M}/gu, '');
-  if ([...base].length !== 1 || !/^\p{L}$/u.test(base)) return false;
-  return !/^[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]$/u.test(base);
 }
 
 /**
@@ -921,7 +582,6 @@ export function monetaryAmountsIn(text, { locale } = {}) {
   if (typeof text !== 'string' || text === '') return [];
   const vocabulary =
     locale === undefined || locale === null ? EMPTY_VOCABULARY : durationVocabularyFor(locale);
-  const localeUnits = vocabulary.units;
   const hits = [];
   // Numbers with optional grouping and decimals. The separators are
   // locale-dependent — the console formats for the reader's language —
@@ -1195,9 +855,14 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       // `unitAfter`. Read from a longer window than `after`: a three-token
       // phrase does not fit in sixteen characters.
       const afterLong = text.slice(end, end + 48);
-      const matched = NON_MONETARY_UNIT.test(run)
-        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length }
-        : unitAfter(afterLong, localeUnits, locale);
+      // The LOCALE's longest phrase first, then the English list (round
+      // 5): Italian's short past is `3 h fa`, one stored phrase, and
+      // reading the English `h` first reduced it to an ambiguous letter.
+      const matched =
+        unitAfter(afterLong, vocabulary, { isDenomination: denominationLeads }) ??
+        (NON_MONETARY_UNIT.test(run)
+          ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length }
+          : null);
       const unit = matched === null ? null : matched.unit;
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
@@ -1228,8 +893,8 @@ export function monetaryAmountsIn(text, { locale } = {}) {
         const temporal =
           DURATION_LEAD.test(before) ||
           DURATION_TRAIL.test(afterUnit) ||
-          localeLeadEnds(before, vocabulary, locale) ||
-          localeTrailStarts(afterUnit, vocabulary, locale);
+          localeLeadEnds(before, vocabulary) ||
+          localeTrailStarts(afterUnit, vocabulary);
         if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
           continue;
@@ -1298,15 +963,15 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       endsCleanly &&
       !isTicker(firstWordAfter)
     ) {
-      const matchedBefore = unitBefore(before, localeUnits, locale);
+      const matchedBefore = unitBefore(before, vocabulary);
       if (matchedBefore !== null) {
         const { unit, start: unitStart } = matchedBefore;
         const beforeUnit = before.slice(0, unitStart);
         const temporal =
           DURATION_LEAD.test(beforeUnit) ||
           DURATION_TRAIL.test(after) ||
-          localeLeadEnds(beforeUnit, vocabulary, locale) ||
-          localeTrailStarts(after, vocabulary, locale);
+          localeLeadEnds(beforeUnit, vocabulary) ||
+          localeTrailStarts(after, vocabulary);
         if (isAmbiguousUnit(unit) && (!temporal || trailingTicker)) {
           hits.push(fragment(text, start, end));
         }
