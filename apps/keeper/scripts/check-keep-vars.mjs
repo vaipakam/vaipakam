@@ -60,7 +60,7 @@
  *     scanner did not look for it either — it searched for a MISSING flag, and
  *     went quiet entirely once a Worker declared `keep_vars`. So this is an
  *     exposure the retirement inherits, not one it creates.
- * - A configuration GENERATED OR REWRITTEN at deploy time. This is coverage
+ *   - A configuration GENERATED OR REWRITTEN at deploy time. This is coverage
  *     the retirement REMOVES, not an inherited gap, and an earlier revision of
  *     this header said the opposite. Review disproved it by naming three of
  *     the deleted scanner's own fixtures (#2171 r3, P1): `a config ABSENT from
@@ -104,8 +104,8 @@ const REPO_ROOT = (
  *
  * THIS LIST NO LONGER GATES THE `keep_vars` REQUIREMENT — every wrangler
  * config declares it, `apps/app` and `apps/www` included, for the reasons in
- * the note above `SKIP_BASENAMES`. What the list still does is narrower and worth
- * keeping: it names the Workers that have something to LOSE, which is what
+ * the note above `SKIP_BASENAMES`. What the list still does is narrower and
+ * worth keeping: it names the Workers that have something to LOSE, which is what
  * the per-Worker mutation fixtures exercise and what the `vars`-block
  * staleness assertion below is about. A Worker absent from it is still
  * required to preserve; it simply has nothing at stake yet.
@@ -218,10 +218,24 @@ for (const rel of discoverWorkerConfigs()) {
  * in the tracked tree declares preservation**, whatever it names, wherever it
  * sits, whether or not that Worker has vars today. A config is identified by
  * WRANGLER'S OWN FILENAME CONVENTION (`wrangler*.json`/`.jsonc`/`.toml`),
- * which is a total test on a string, not a judgement about content. Named
- * environments are asserted too: `keep_vars` inheritance into an `env.<name>`
- * block is not something this file can verify, so it requires the key there
- * rather than assuming it carries down.
+ * which is a total test on a string, not a judgement about content.
+ *
+ * TWO EXCEPTIONS, and both come from wrangler's own rules rather than from a
+ * judgement this file makes — see the code for each:
+ *
+ *   - A NAMED ENVIRONMENT is not separately required to declare the key.
+ *     `keep_vars` is top-level-only; wrangler rejects it inside `env.<name>`
+ *     and reads the top-level value after environment selection.
+ *   - A PAGES CONFIG is exempt, keyed on `pages_build_output_dir`. Wrangler
+ *     refuses `keep_vars` for Pages outright, so requiring it would leave no
+ *     version of the file that satisfies both this check and the tool.
+ *
+ * An intermediate revision of this file required the key in every `env.<name>`
+ * block, and said so right here, on the reasoning that inheritance "could not
+ * be verified". Review established that it is top-level-only (#2171 r3), the
+ * code changed, and this paragraph did not — which is how a maintainer ends up
+ * restoring an unsupported field on the strength of the design note (#2171
+ * r4). The rule is stated once per exception, beside the code that applies it.
  *
  * The cost is that two Workers with no `vars` at all — `apps/app`, `apps/www`
  * — now declare the key as well. That is the point rather than a side effect:
