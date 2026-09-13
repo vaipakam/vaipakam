@@ -1822,6 +1822,37 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // Round 37, all three in code written the same hour. The member
+  // reader had tried to work out what a property HOLDS by reading the
+  // object literal; three rounds found three ways that reading is wrong
+  // — the property reassigned afterwards, the property an accessor, a
+  // spread bringing it in from elsewhere — so it stopped trying. An
+  // intrinsic settles it and everything else is refused.
+  it('refuses a borrowing through an object it cannot read', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a property written over after the literal',
+        'const box = { cut: () => 42 };\nbox.cut = String.prototype.slice;\n' +
+          'const r = Reflect.apply(box.cut, s, [start, start + 320]);',
+      ],
+      [
+        'a property defined as an accessor, so the literal holds a getter',
+        'const box = { get cut() { return String.prototype.slice; } };\n' +
+          'const r = Reflect.apply(box.cut, s, [start, start + 320]);',
+      ],
+      [
+        'a truncator bound to a name by assignment rather than declaration',
+        'let cut;\ncut = s.slice.bind(s);\nconst r = cut(start, start + 320);',
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
   // Round 36 REVERSES an earlier accepting case. "Just BEFORE a
   // landmark" was pinned as accepted for several rounds, and it is not
   // safe: when the landmark sits at the very start of the text the

@@ -596,6 +596,36 @@ is only known when the code runs. Stepping PAST a landmark is the shape
 these checks actually write, and nothing in them steps back, so refusing
 it costs nothing.
 
+The last round is the one that stopped a rule from trying.
+
+A reader had been working out what a property holds by looking at the
+object it was written in. Three consecutive rounds found three ways that
+is wrong: the property written over after the object was created, the
+property defined so that reading it runs code rather than fetching a
+value, and the property brought in from somewhere else entirely. Each fix
+was correct about the case in front of it and revealed the next. That is
+the signature this work has learned to recognise — a rule that depends on
+having listed every way something can happen is wrong without knowing it,
+and the list here is "everything the program can do to an object", which
+has no end.
+
+So the reader stopped asking. A built-in settles the question; anything
+else is unreadable and therefore refused. What is lost is a name — a
+narrowing borrowed through an ordinary object is now reported as an
+unreadable one rather than identified by its method — and what is kept is
+that it is reported at all, which is the only part that protects
+anything.
+
+The same round widened a different rule in the opposite direction, and
+the pairing is the point. A name can be given its value by assignment
+rather than at its declaration, and the resolver refuses a reassigned
+name because it cannot say which value stands. But "which one" was not
+the question: if any value the name is ever given is a narrowing, the
+call may be one, and a may-be is refused. Enumerating a name's own
+assignments is bounded, where choosing between them is not. Where there
+is more than one candidate, the bounds are reported as unknown rather
+than guessed at.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the

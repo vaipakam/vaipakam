@@ -445,6 +445,39 @@ function taggedTruncator(src, tag) {
   return method ? { method, receiverNode: held.arguments[0] ?? null } : null;
 }
 
+/**
+ * A bound truncator among EVERY value a name is given — its declaration
+ * and every later assignment — or null.
+ *
+ * `certain` says whether that was the only candidate. With one, the
+ * preset bounds are knowable and are read; with several, the call is
+ * still reported but its bounds are not claimed.
+ */
+function boundTruncatorValues(src, node) {
+  const { variableOf, parents } = astOf(src, 'boundTruncatorValues');
+  const variable = variableOf.get(node);
+  if (!variable) return null;
+  const values = [];
+  for (const def of variable.defs) if (def.node?.init) values.push(def.node.init);
+  for (const ref of variable.references) {
+    if (!ref.isWrite() || ref.init) continue;
+    const p = parents.get(ref.identifier);
+    if (p?.type === 'AssignmentExpression' && p.left === ref.identifier) values.push(p.right);
+  }
+  const bound = values
+    .map((v) => unwrapChain(v))
+    .filter((v) => v?.type === 'CallExpression')
+    .map((call) => {
+      const inner = unwrapChain(call.callee);
+      if (!inner || inner.type !== 'MemberExpression' || memberName(inner) !== 'bind') return null;
+      const method = borrowedTruncator(src, inner, 'bind');
+      return method ? { method, call } : null;
+    })
+    .filter(Boolean);
+  if (bound.length === 0) return null;
+  return { ...bound[0], certain: values.length === 1 };
+}
+
 export function sliceCallsIn(src) {
   const { nodes } = astOf(src, 'sliceCallsIn');
   const out = [];
@@ -517,29 +550,35 @@ export function sliceCallsIn(src) {
     // and the `bind` call is skipped for being a `bind`, while the call
     // that uses it is skipped for having a plain name as its callee. The
     // window left the collector through the gap between the two.
+    // EVERY value the name is ever given, not only its initialiser
+    // (round 37). `let cut; cut = src.slice.bind(src); cut(…)` gives the
+    // name its value by assignment, and the alias resolver refuses a
+    // reassigned name — correctly, since it cannot say WHICH value
+    // stands. But "which one" is not the question here: if ANY of them
+    // is a bound truncator, this call may be a narrowing, and a may-be
+    // is refused. Enumerating a name's own writes is bounded, unlike
+    // deciding between them.
     if (c && c.type === 'Identifier') {
-      const held = resolveAlias(src, c);
-      if (held && held.type === 'CallExpression') {
-        const inner = unwrapChain(held.callee);
-        if (inner && inner.type === 'MemberExpression' && memberName(inner) === 'bind') {
-          const method = borrowedTruncator(src, inner, 'bind');
-          if (method) {
-            out.push({
-              method,
-              line: lineOf(src, n.start),
-              receiver: held.arguments[0]
-                ? src.slice(held.arguments[0].start, held.arguments[0].end)
-                : '',
-              // Preset bounds first, exactly as the inline form: they are
-              // what a two-argument truncator consumes.
-              args: effective([...held.arguments.slice(1), ...n.arguments]),
-              text: src.slice(n.start, n.end),
-              node: n,
-              receiverNode: held.arguments[0] ?? null,
-            });
-          }
-          continue;
-        }
+      const held = boundTruncatorValues(src, c);
+      if (held) {
+        out.push({
+          method: held.method,
+          line: lineOf(src, n.start),
+          receiver: held.call.arguments[0]
+            ? src.slice(held.call.arguments[0].start, held.call.arguments[0].end)
+            : '',
+          // Preset bounds first, exactly as the inline form: they are
+          // what a two-argument truncator consumes. When the name has
+          // more than one candidate value the bounds are not knowable,
+          // so they are reported unreadable rather than guessed.
+          args: held.certain
+            ? effective([...held.call.arguments.slice(1), ...n.arguments])
+            : UNKNOWN_BOUNDS,
+          text: src.slice(n.start, n.end),
+          node: n,
+          receiverNode: held.certain ? (held.call.arguments[0] ?? null) : null,
+        });
+        continue;
       }
     }
     if (!c || c.type !== 'MemberExpression') continue;
@@ -761,26 +800,24 @@ function memberTruncator(src, member) {
   if (object && INTRINSIC_TEXT_HOSTS.some((name) => isIntrinsic(src, object, name))) {
     return null;
   }
-  // An object written out can be read: find the property and ask again.
-  if (object && object.type === 'ObjectExpression') {
-    const prop = object.properties.find(
-      (p) =>
-        p.type === 'Property' &&
-        !p.computed &&
-        (p.key?.type === 'Identifier'
-          ? p.key.name
-          : p.key?.type === 'Literal'
-            ? String(p.key.value)
-            : null) === method,
-    );
-    // A SPREAD can bring the property in from anywhere, so a literal
-    // that carries one is not a complete description of itself.
-    if (object.properties.some((p) => p.type === 'SpreadElement')) return UNREADABLE;
-    if (!prop) return null;
-    const value = unwrapChain(prop.value);
-    if (value && value.type === 'MemberExpression') return memberTruncator(src, value);
-    return definiteNonTruncator(value) ? null : UNREADABLE;
-  }
+  // AND NOTHING ELSE IS READ (round 37, and this is a root fix rather
+  // than a fourth patch to the same function).
+  //
+  // This used to look inside an object written out, find the property,
+  // and judge its value. Three consecutive rounds found three ways for
+  // that reading to be wrong — the property reassigned after the literal
+  // was written, the property defined as an accessor so the literal
+  // holds a getter rather than the value, a spread bringing it in from
+  // elsewhere — and each fix exposed the next. That is the shape round 6
+  // named: a rule whose correctness depends on having enumerated an open
+  // set is wrong without knowing it. "What does this property hold when
+  // this line runs" is a question about the whole program.
+  //
+  // So it is not asked. An intrinsic settles it; everything else is
+  // UNREADABLE, which REFUSES. The cost is naming: a borrowing through
+  // an ordinary object is reported as an unreadable narrowing rather
+  // than as a `slice` one. It is still reported, which is what matters,
+  // and no live suite borrows through an object at all.
   return UNREADABLE;
 }
 
