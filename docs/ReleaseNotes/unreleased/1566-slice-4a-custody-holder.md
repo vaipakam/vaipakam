@@ -47,7 +47,13 @@ through its own script, which rewrites the deployment record's holder address
 in the same run so no later tool reads the emptied previous address as
 custody. Before governance handover the script runs the ceremony directly;
 after handover, where pausing and administration sit with different signers,
-it stages the two calls for those signers without pre-authorising the
-unpause, since that would lift whatever else paused the platform in the
-meantime, and a final record step reconciles the deployment record only once
-the platform reports a new holder as bound. Refs #1566, #1349, #1956.
+it stages the two calls for those signers, and a final record step reconciles
+the deployment record only once the platform reports a new holder as bound.
+In neither mode does the ceremony resume service: a replacement leaves the
+platform paused, and unpausing stays a fresh decision, because a ceremony
+that lifted the pause could also lift an unrelated emergency pause raised in
+the meantime. The one-shot initial binding on a live chain follows the same
+direct-or-staged shape, so a handed-over deployment can bind its holder
+through its signers and reconcile the record afterwards. The multi-chain
+refresh wrapper carries the rebase figure per chain, exactly as it carries the
+older seed, and refuses to run a chain whose figure is not stated. Refs #1566, #1349, #1956.

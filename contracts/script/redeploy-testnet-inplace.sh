@@ -100,6 +100,29 @@
 #   exports the resolved value as the process-global REWARD_ROLE_EXPECTED, per
 #   chain, inside the loop.
 #
+#   PAID-SIDE REBASE (#1566 slice 4 PR A) — required for every selected chain
+#   that has not run it. Closure 2 (#2151) widened what the paid side charges
+#   to every vintage, so a pre-existing mirror with ordinary-schedule history
+#   reads UNDER-counted after the refresh unless its paid counter is rebased to
+#   the reconstructed absolute total. RefreshAllFacetsInPlace runs the
+#   one-shot rebase itself, paused, after the role backfill — and, like the
+#   P1-b seed, refuses to default the figure. Per chain, same <PREFIX>:
+#
+#     ARMED_FRESH_PAID_TOTAL_<PREFIX>        the reconstructed ABSOLUTE fresh-paid total
+#                                            (every vintage; existing counter / retirement
+#                                            watermark are a FLOOR the call applies itself)
+#     ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX> =true to declare there is nothing to import
+#
+#   Exactly one of the two must be set for each NOT-YET-REBASED selected chain
+#   (the pre-flight reads the on-chain `armedFreshPaidRebased()` flag and
+#   skips an already-rebased chain). On a chain whose reward role is inactive
+#   (unconfigured / detached) the facet accepts only a history-free chain; a
+#   detached chain with history is DEFERRED by the refresh with the stated
+#   total logged for its re-attachment ceremony. The orchestrator exports the
+#   resolved pair as the process-global ARMED_FRESH_PAID_TOTAL /
+#   ARMED_FRESH_REBASE_NO_HISTORY, per chain, inside the loop — never one
+#   chain's irreversible total for another.
+#
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
 #   bash script/redeploy-testnet-inplace.sh
@@ -306,6 +329,32 @@ for slug in $CHAINS; do
   else
     fail "chain '$slug': the P1-b armed-fresh migration is UNSEEDED and irreversible. Set \$$seed_var to the armed fresh already paid out on this chain before the P1-b upgrade (from the indexed payout history), or \$$nohist_var=true to declare there is none. Refusing to broadcast an accounting migration this run cannot state an answer for."
   fi
+  # #1566 slice 4 PR A — the paid-side REBASE answer, same posture as the
+  # seed: per chain, validated before any broadcast, skipped only on the
+  # on-chain "already rebased" flag (a pre-slice-4 Diamond does not route the
+  # getter yet; a revert reads as "not rebased", never as a failure).
+  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"
+  rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
+  total_val="${!total_var:-}"
+  rnohist_val="${!rnohist_var:-}"
+  already_rebased=""
+  if command -v cast >/dev/null 2>&1 && [ -n "${diamond2:-}" ]; then
+    already_rebased="$(cast call "$diamond2" 'armedFreshPaidRebased()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
+  fi
+  if [ "$already_rebased" = "true" ]; then
+    info "$slug: slice-4 paid-side rebase already run ✓ (migration will be skipped)"
+  elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
+    fail "chain '$slug': both \$$total_var and \$$rnohist_var are set — they are mutually exclusive; state ONE answer for this chain"
+  elif [ -n "$total_val" ]; then
+    case "$total_val" in
+      ''|*[!0-9]*) fail "chain '$slug': \$$total_var='${total_val}' is not a non-negative integer (wei)" ;;
+    esac
+    info "$slug: slice-4 rebase total = \$$total_var ($total_val)"
+  elif [ "$rnohist_val" = "true" ]; then
+    info "$slug: slice-4 rebase total = 0 (\$$rnohist_var declares nothing to import)"
+  else
+    fail "chain '$slug': the slice-4 paid-side rebase has NOT run and is irreversible. Set \$$total_var to the reconstructed absolute fresh-paid total for this chain (every vintage; the deduplicated sum of payouts, expiry/forfeit absorptions and the fresh portions of non-recovery remittance and compensation dispatches), or \$$rnohist_var=true to declare there is nothing to import. Refusing to broadcast an accounting migration this run cannot state an answer for."
+  fi
 done
 if [ "$BROADCAST" -eq 1 ]; then
   info "MODE: --broadcast (steps 4-5 will send real txs with --slow)"
@@ -426,6 +475,8 @@ EOF
     echo "  #   (P1-b, only if this chain is not yet seeded: prefix the command with"
     echo "  #    ARMED_FRESH_PAID_SEED=\$ARMED_FRESH_PAID_SEED_${pfx}  or  ARMED_FRESH_PAID_NO_HISTORY=true)"
     echo "  #   (#1566 role backfill, ALWAYS: prefix with REWARD_ROLE_EXPECTED=\$REWARD_ROLE_EXPECTED_${pfx})"
+    echo "  #   (#1566 slice-4 rebase, if not yet rebased: prefix with"
+    echo "  #    ARMED_FRESH_PAID_TOTAL=\$ARMED_FRESH_PAID_TOTAL_${pfx}  or  ARMED_FRESH_REBASE_NO_HISTORY=true)"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
     [ "$SKIP_VAULT" -eq 0 ] && \
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
@@ -454,6 +505,12 @@ for slug in $CHAINS; do
   role_var="REWARD_ROLE_EXPECTED_${pfx}"
   unset REWARD_ROLE_EXPECTED
   export REWARD_ROLE_EXPECTED="${!role_var}"
+  # Same per-chain scoping for the slice-4 paid-side rebase (validated above).
+  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"
+  rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
+  unset ARMED_FRESH_PAID_TOTAL ARMED_FRESH_REBASE_NO_HISTORY
+  [ -n "${!total_var:-}" ] && export ARMED_FRESH_PAID_TOTAL="${!total_var}"
+  [ "${!rnohist_var:-}" = "true" ] && export ARMED_FRESH_REBASE_NO_HISTORY=true
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \

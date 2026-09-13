@@ -5924,9 +5924,14 @@ into the holder yet.**
 > through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
 > the roles, or staged after governance handover (the Pauser Safe's `pause`
 > and the Timelock's `replace` calldata written to a ceremony record; NO
-> unpause is pre-authorised, since it would lift whatever else paused the
-> Diamond meanwhile; then `record()` reconciles the artifact only once the
-> chain reports a new holder bound). Simulations neither create nor erase
+> unpause is pre-authorised — and the direct path does not unpause either,
+> since either could lift an unrelated emergency pause raised meanwhile;
+> then `record()` reconciles the artifact only once the chain reports a new
+> holder bound). `DeployRewardCustodyHolder.s.sol` (the live-chain initial
+> bind) has the same direct / `stage()` / `record()` shape through a shared
+> ceremony base, and `redeploy-testnet-inplace.sh` carries
+> `ARMED_FRESH_PAID_TOTAL_<PREFIX>` / `ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX>`
+> per chain with the seed's preflight. Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 
