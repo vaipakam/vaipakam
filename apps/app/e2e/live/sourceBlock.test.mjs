@@ -1390,6 +1390,48 @@ describe('#2144 — no source region is bounded by a character count', () => {
     );
   });
 
+  // ROUND 29 — five, and ALL FIVE were the guard refusing correct work.
+  it('does not refuse the round-29 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an unrelated destructuring default outside the value being computed',
+        "let end = s.indexOf('e');\n[end = 0] = [s.slice(start, end).length];",
+      ],
+      [
+        'a built-in String wrapper, which uses the built-in finder',
+        "const copy = new String(s);\nconst r = s.slice(start, copy.indexOf('end'));",
+      ],
+      [
+        'a local Reflect that is not the intrinsic',
+        'const Reflect = { apply(fn, recv, args) { return fn(recv, args); } };\n' +
+          "const r = s.slice(start, s.indexOf('end'));\nReflect.apply(custom, s, [start, start + 320]);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  it('finds the call containing a needle that also appears earlier', () => {
+    const src = "const note = 'target';\nconsole.log('target', value);\n";
+    expect(callContaining(src, "'target'")).toContain('console.log');
+  });
+
+  it('lets a marker attach to an exported declaration', () => {
+    const src =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'export const label = text.slice(0, 40);\n';
+    const call = sliceCallsIn(src).at(-1);
+    expect(
+      markableStatementsOf(src, call.node).some((stmt) =>
+        markedStatement(src, stmt, 'not-a-source-region'),
+      ),
+    ).toBe(true);
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

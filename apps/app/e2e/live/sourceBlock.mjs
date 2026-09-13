@@ -369,20 +369,28 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
  * source text.
  */
 export function callContaining(src, needle, callee = 'console.log(') {
-  const inside = anchorAt(src, needle, 'callContaining');
   const want = callee.endsWith('(') ? callee.slice(0, -1) : callee;
   const { nodes } = astOf(src, 'callContaining');
-  // Innermost first: `nodes` is sorted so more specific containers come
-  // later, and the LAST match is the tightest call around the anchor.
-  const calls = nodes.filter(
-    (n) =>
-      (n.type === 'CallExpression' || n.type === 'NewExpression') &&
-      n.start <= inside &&
-      n.end >= inside + needle.length &&
-      src.slice(n.callee.start, n.callee.end) === want,
-  );
-  if (calls.length === 0) throw new Error(`${needle} is not inside a ${callee} call`);
-  return src.slice(calls[calls.length - 1].start, calls[calls.length - 1].end);
+  // EVERY occurrence of the needle, not just the first (round 29). The
+  // needle identifies WHICH call is wanted, so an earlier copy of the
+  // same text elsewhere — in another string, in another call — is not a
+  // reason to report that no call contains it.
+  let seen = 0;
+  for (let inside = anchorIn(src, needle, 0); inside !== -1; inside = anchorIn(src, needle, inside + 1)) {
+    seen++;
+    // Innermost first: `nodes` is sorted so more specific containers come
+    // later, and the LAST match is the tightest call around the anchor.
+    const calls = nodes.filter(
+      (n) =>
+        (n.type === 'CallExpression' || n.type === 'NewExpression') &&
+        n.start <= inside &&
+        n.end >= inside + needle.length &&
+        src.slice(n.callee.start, n.callee.end) === want,
+    );
+    if (calls.length > 0) return src.slice(calls.at(-1).start, calls.at(-1).end);
+  }
+  if (seen === 0) throw new Error(`${needle} was renamed or removed`);
+  throw new Error(`${needle} is not inside a ${callee} call`);
 }
 
 /**
@@ -561,7 +569,7 @@ export { UNKNOWN_BOUNDS };
  *  where every other borrowing form carries it on the callee. */
 function reflectApplyTruncator(src, call) {
   const callee = unwrapChain(call.callee);
-  if (callee.object?.type !== 'Identifier' || callee.object.name !== 'Reflect') return null;
+  if (!isIntrinsic(src, callee.object, 'Reflect')) return null;
   if (memberName(callee) !== 'apply') return null;
   const fn = resolveAlias(src, unwrapChain(call.arguments[0]));
   if (!fn || fn.type !== 'MemberExpression') return UNREADABLE;
@@ -615,7 +623,15 @@ function borrowedTruncator(src, callee, only) {
   // function through a name (round 25). Resolve it, the way every other
   // rule here resolves a name, rather than giving up and letting the
   // direct path see only `call`.
+  const named = inner?.type === 'Identifier';
   inner = resolveAlias(src, inner);
+  // UNRESOLVABLE and RESOLVED-TO-SOMETHING-ELSE are different answers
+  // (round 29). Round 26 made an unreadable borrowing refuse, and that
+  // is right — but a name that resolves to an object literal is a
+  // DEFINITE non-truncator, and refusing it demanded an exemption for a
+  // call that truncates nothing. Only a failed resolution is unknown.
+  if (named && inner === null) return UNREADABLE;
+  if (inner && inner.type !== 'MemberExpression') return null;
   // A BORROWING THIS CANNOT READ IS REFUSED, NOT DROPPED (round 26).
   // Returning null here handed the call to the direct path, which saw
   // only `call`/`apply`, so it left the collector entirely — and every
@@ -979,6 +995,12 @@ export function markableStatementsOf(src, node) {
     const stmt = parents.get(n);
     // One name per marked statement, or the reason is ambiguous.
     if (stmt && stmt.type === 'VariableDeclaration' && stmt.declarations.length === 1) {
+      // A marker above `export const label = …` sits above the EXPORT,
+      // so the export is the statement it attaches to (round 29). The
+      // inner declaration has the `export` token between it and the
+      // comment, and `markedStatement` rightly refused that.
+      const outer = parents.get(stmt);
+      const markable = outer?.type === 'ExportNamedDeclaration' ? outer : stmt;
       // EVERY marked declarator takes the one-truncator rule, whatever
       // its initializer is (round 19). Round 18 applied it only when the
       // initializer WAS a function, so a marker above
@@ -987,7 +1009,7 @@ export function markableStatementsOf(src, node) {
       // round 7's multi-declarator statement and round 17's function
       // declaration. One reason cannot say which of two bounds it is
       // about, wherever the two sit.
-      if (truncatorCount(src, stmt) <= 1) out.push(stmt);
+      if (truncatorCount(src, stmt) <= 1) out.push(markable);
     }
   }
   return out;
@@ -1118,8 +1140,12 @@ function writesAfterUse(parents, write, useAt) {
     // `[end = s.slice(start, end).length] = []` evaluates the default
     // before the write (round 28), and walking past it to the outer
     // assignment tested the wrong right-hand side.
+    // CONTINUE past one whose default does not contain the use (round
+    // 29): in `[end = 0] = [s.slice(start, end).length]` the inner
+    // pattern's default is unrelated, and returning there never reached
+    // the outer assignment whose right side does contain it.
     if ((p.type === 'AssignmentExpression' || p.type === 'AssignmentPattern') && p.left === c) {
-      return p.right.start <= useAt && p.right.end >= useAt;
+      if (p.right.start <= useAt && p.right.end >= useAt) return true;
     }
   }
   return false;
@@ -1496,6 +1522,13 @@ export function isStartOfText(src, node) {
   return !!init && init !== node && isStartOfText(src, init);
 }
 
+/** Whether `node` is the global `name`, and not a local of that
+ *  spelling. A binding found in this file is somebody else's. */
+function isIntrinsic(src, node, name) {
+  if (node?.type !== 'Identifier' || node.name !== name) return false;
+  return !bindingOf(src, node).found;
+}
+
 /** Whether `node` is a bound that may end a source region. */
 export function isAnchored(src, node, seen = new Set()) {
   return kindOf(src, node, seen) === 'position';
@@ -1594,6 +1627,10 @@ function suspectReceiver(src, node, seen) {
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
   // read as a search until round 13.
+  // `new String(src)` uses the built-in finder and returns a
+  // source-relative position (round 29). Only an UNSHADOWED intrinsic
+  // counts — a local `String` is somebody else's function.
+  if (t === 'NewExpression' && isIntrinsic(src, bound.init.callee, 'String')) return false;
   if (NOT_TEXT.has(t)) return true;
   return t === 'Identifier' ? suspectReceiver(src, bound.init, seen) : false;
 }
