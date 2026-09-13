@@ -133,27 +133,32 @@ Makefile variables, sourced helpers, shell functions and aliases, matrix
 expressions, reusable-workflow inputs, Windows shims, `eval`, marketplace
 actions) without reaching the end.
 
-The flag stays on the package script — it is still correct, and harmless — and
-`scripts/check-deploy-invocations.mjs` remains as defence in depth that
-**switches itself off**: it reports nothing while a Worker declares
-preservation, and resumes full command-level scrutiny for any Worker that
-loses the declaration. `scripts/check-keep-vars.mjs` asserts the declaration
-itself, unconditionally in CI.
+The flag stays on the package script — it is still correct, and harmless.
+`scripts/check-keep-vars.mjs` asserts the declaration itself, unconditionally
+in CI, on **every** wrangler config in the tree — any depth, any directory,
+whatever Worker it names — and is now the whole implemented defence. The rule
+is unconditional because deciding which config a deploy loads, and which
+Worker it targets, are command-line questions (`--config`, `--name`, `--env`,
+`--compatibility-date`) that no file scan can answer; six review findings in
+one round came from trying. `apps/app` and `apps/www` declare the key too,
+though they carry no vars today.
 
 **The trade, stated deliberately:** a deploy can no longer *remove* a var.
 Deleting one is now an explicit dashboard action — see the rollback note in
 `apps/indexer/wrangler.jsonc` for a case where that matters.
 
-**And a guard enforces it tree-wide**: `scripts/check-deploy-invocations.mjs`,
-wired into `pnpm --filter @vaipakam/keeper typecheck`, fails on any
-keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because
-fixing the package script did **not** fix the problem: four subsequent review
-rounds each found another caller reaching wrangler directly — three deploy
-wrappers, a rollout runbook, a deployment runbook, the staging plan — and each
-fix looked complete until the next round. The guard is default-deny with a
-small `ALLOWED` list, each entry carrying a reason, so prose that quotes the
-unsafe command has to be declared rather than guessed at. New prose fails the
-check until someone adds it; that is the intended cost.
+**The tree-wide command scanner that used to sit alongside it is retired.**
+`scripts/check-deploy-invocations.mjs` searched every file in the repository
+for a keeper-scoped `wrangler deploy` lacking `--keep-vars`. It was written
+because fixing the package script did not fix the problem — four review rounds
+each found another caller reaching wrangler directly — but asking whether a
+piece of text will run a command means modelling the execution model of every
+interpreter it might be, and it never got there: fourteen open issues, each a
+different parsing edge, four of them false reports that redden a correct tree,
+and none naming a real file here. The declaration answers the same question
+without parsing anything, so the scanner and its fixtures (about 23,800 lines)
+are gone. What that gives up is listed by name in the header of
+`scripts/check-keep-vars.mjs`.
 
 Keeping vars costs nothing here: the only var this config declares is
 `TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read

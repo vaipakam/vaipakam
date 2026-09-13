@@ -1,5 +1,24 @@
 # Deploy-guard rewrite scan — design record
 
+> **⚠ SUPERSEDED — the check this document is about no longer exists.**
+> `apps/keeper/scripts/check-deploy-invocations.mjs`, its fixture suite and the
+> `keeper deploy guard (--keep-vars, tree-wide)` CI job were deleted: the
+> question they tried to answer — will this text run a command, and with which
+> configuration — needs the execution model of every interpreter the text might
+> be, and fourteen open issues each naming a different parsing edge showed it
+> was not reachable. `apps/keeper/scripts/check-keep-vars.mjs` asserts the
+> `keep_vars` declaration instead, which makes every spelling of a deploy safe
+> without parsing any of them, and its header lists by name what that gives up.
+>
+> **Two things below are now false in the present tense and are left standing
+> as history rather than corrected in place:** the deferral to "the fixtures"
+> as ground truth for a verdict (there are no fixtures, and no verdict), and
+> the defect catalogue's description of wrong verdicts "the check currently
+> produces". Read the whole document as a record of a design that was retired,
+> which is the most useful thing it can now be: it is the fullest account of
+> why inference over text does not converge, and the argument any proposal to
+> rebuild such a check has to answer first.
+
 **Status:** record of work done and withdrawn. No behaviour change landed.
 
 This is the single home for the reasoning behind the deploy guard's

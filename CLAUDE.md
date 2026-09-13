@@ -617,11 +617,52 @@ Do NOT go back to requiring `--keep-vars` per call site: that predicate is
 unbounded (package scripts, manifest aliases, Makefile variables, sourced
 helpers, shell functions and aliases, matrix expressions, reusable-workflow
 inputs, Windows shims, `eval`, marketplace actions), and #1995 spent 242 review
-findings demonstrating it. The flag is still correct where it appears and the
-tree-wide scanner
-(`apps/keeper/scripts/check-deploy-invocations.mjs`) is kept as defence in
-depth — it now reads `keep_vars` too, so it stays quiet while the declaration
-holds and resumes full command-level scrutiny for any Worker that loses it.
+findings demonstrating it. The flag is still correct where it appears.
+
+**The tree-wide scanner that enforced it is RETIRED** —
+`apps/keeper/scripts/check-deploy-invocations.mjs` and its fixtures are
+deleted, and so is the `keeper deploy guard (--keep-vars, tree-wide)` CI job.
+#1995 kept it as defence in depth on top of the declaration; what that bought
+was fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), each a
+different parsing edge of the same unbounded predicate and four of them false
+reports on a correct tree, with no issue naming a real file in this repo.
+`apps/keeper/scripts/check-keep-vars.mjs` — structural, unconditional in CI —
+is now the whole implemented defence, and it asserts the declaration on
+**EVERY wrangler config in the tracked tree**, at any depth and in any
+directory, whatever Worker it names and whether or not that Worker has vars
+today. `apps/app` and `apps/www` therefore declare it too.
+
+That unconditionality is itself a #1995-pattern fix, and the second one in this
+PR. A first attempt scoped the rule — configs whose `name` matched a
+var-carrying Worker and which carried a `compatibility_date`, under `apps/` or
+`ops/` — and review returned **six P1s in one round**, each a different way a
+deploy reaches a protected Worker through an excluded config: `--name`
+overrides the stored name, `--compatibility-date` supplies the missing date,
+`--env staging` merges an `env.staging.name`, `--config` reaches any path, a
+sixth Worker is in no list. Answering those needs wrangler's CLI-and-config
+merge semantics — the same unbounded inference, moved from shell text into
+JSON. **Do not reintroduce a scoping predicate here.** A config is identified
+by wrangler's own filename convention (`wrangler*.json`/`.jsonc`/`.toml`),
+which is a test on a string. A named environment is NOT separately
+required to declare it — `keep_vars` is top-level-only, wrangler rejects it
+inside an `env.<name>` block, and the top-level value is what a `--env` deploy
+reads (an intermediate revision required it there and was wrong). A **Pages**
+config is exempt, keyed on `pages_build_output_dir`: wrangler refuses
+`keep_vars` outright for Pages, so requiring it would leave no version of the
+file that satisfies both. A TOML config is refused with an instruction rather
+than parsed. Directories are skipped by exact path where the name is ambiguous
+(`contracts/lib` is vendored, `packages/lib` is ours) and by basename only for
+unambiguously generated ones. Two things it does not cover are stated in the script's
+header, and **BOTH are reductions rather than inherited gaps** — the scanner
+covered each, and review established both by naming its deleted fixtures. One
+is a config **generated or rewritten at deploy time**, which the scanner
+refused by falling back to judging the command when it could not read the
+selected file. The other is a checked-in config named **outside the
+`wrangler*` convention**, which the scanner read because it followed whatever
+path the command selected. The second is narrower — no config in this repo is
+named that way — but it is a removal, and an earlier revision wrongly called it
+merely the price of not classifying files. Do not rebuild the command scanner;
+if either gap has to close, it needs an owner decision first.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.

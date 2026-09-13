@@ -21,6 +21,21 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-app",
   "compatibility_date": "2026-04-23",
+
+  // Declared even though this Worker carries no `vars` today.
+  //
+  // The rule is deliberately unconditional: `check-keep-vars.mjs` requires
+  // preservation on EVERY wrangler config, because deciding which config a
+  // deploy will load — and which Worker it will target — needs wrangler's
+  // CLI-and-config merge semantics (`--name`, `--env`, `--config`,
+  // `--compatibility-date`). Six review findings in one round (#2171 r2) came
+  // from trying to classify that; not classifying is the fix.
+  //
+  // The trade is the same one every other Worker already accepts: a deploy can
+  // no longer REMOVE a dashboard var here, so deleting one is a deliberate
+  // dashboard action. Nothing is lost today since none exist, and if one is
+  // ever added this Worker is already safe.
+  "keep_vars": true,
   "observability": {
     "enabled": true
   },
