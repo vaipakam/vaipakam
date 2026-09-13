@@ -1,3 +1,14 @@
+import {
+  CONTEXT_SEP,
+  EMPTY_VOCABULARY,
+  durationVocabularyFor,
+  isAmbiguousUnit,
+  leadingScriptRun,
+  localeLeadEnds,
+  localeTrailStarts,
+  unitAfter,
+  unitBefore,
+} from './durationVocabulary.mjs';
 /**
  * Does the DEPLOYED forced-close card keep the two promises its spec
  * makes about what it may say?
@@ -136,9 +147,16 @@ const CURRENCY_MARK = /\p{Sc}/u;
  */
 function isTicker(word) {
   if (typeof word !== 'string') return false;
-  if (/^\p{Lu}$/u.test(word)) return true;
-  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(word)) return false;
-  return /\p{Lu}{2}/u.test(word);
+  // NORMALISED first (#2125 round 1): once combining marks are part of a
+  // token, a canonically DECOMPOSED one-letter symbol — `A` + U+0301
+  // rather than `Á` — is two code points, fails the single-letter test
+  // and has one upper-case letter, so it stopped being a ticker while its
+  // composed twin still was. Composed to NFC, then marks dropped for the
+  // case tests, so both spellings classify alike.
+  const w = word.normalize('NFC').replace(/\p{M}/gu, '');
+  if (/^\p{Lu}$/u.test(w)) return true;
+  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(w)) return false;
+  return /\p{Lu}{2}/u.test(w);
 }
 
 /**
@@ -454,7 +472,7 @@ function hasTickerNear(after) {
   // sentence. Splitting on punctuation alone left exactly the boundary
   // that real card markup produces.
   const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-  for (const word of clause.split(/[^\p{L}\p{N}]+/u)) {
+  for (const word of clause.split(/[^\p{L}\p{M}\p{N}]+/u)) {
     if (isTicker(word)) return true;
   }
   return false;
@@ -470,21 +488,6 @@ function hasTickerNear(after) {
 const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
-/**
- * Single-letter units are AMBIGUOUS and the rest are not.
- *
- * `m` is minutes or millions, `h` is hours or nothing, `s` is seconds or
- * a plural. `mins`, `hours` and `days` carry no such reading. Round 3
- * closed `1m USDC` by consulting the trailing ticker, but the absolute
- * contract says a BARE figure fails too — and `You receive 1m` has no
- * ticker to cancel the exemption, so the scanner read a promise of a
- * million as a promise of a minute (round 21 P2).
- *
- * So an ambiguous unit is exempt only when something in front of the
- * number actually reads as a duration. `unlocks in 30m` is a wait;
- * `You receive 1m` is an amount.
- */
-const AMBIGUOUS_UNIT = /^[hms]$/i;
 /**
  * Context that ESTABLISHES TIME, not merely context that precedes a
  * number (round 22 P2).
@@ -532,6 +535,43 @@ const DURATION_LEAD = /\b(in|within|after|wait|waits|waiting|takes|lasts|expires
 const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
 
 /**
+ * The continuation after a prefix-matched counter has to read as a
+ * PARTICLE, not as a denomination (#2125 rounds 1–2): `3日USDC`, `3日Ξ`
+ * and `3日ethです` all continue in a different script, and accepting `日`
+ * there exempted an amount on the strength of the counter in front of its
+ * ticker. The suffix's LEADING SCRIPT RUN — `eth` out of `ethです` — is
+ * what is judged, so a denomination followed by a particle is still seen;
+ * a suffix that opens with a ticker, an asset glyph, a lower-case asset
+ * unit or a magnitude word is evidence of an amount, and the run is then
+ * not a unit at all.
+ */
+/**
+ * Does `span`, as written, carry a run that reads as a ticker? A run of two
+ * or more letters is judged by `isTicker`; a SINGLE upper-case letter is one
+ * too — but only when the span has several runs (#2125 round 8): Polish's
+ * narrow singular month is `m-c`, and `M-C` is two ticker-shaped letters,
+ * while a standalone `M` (German for Monat) is the ambiguous path's
+ * business and keeps its contextual exception.
+ */
+function tickerShapedSpan(span) {
+  const runs = [...span.matchAll(/[\p{L}\p{M}\p{N}]+/gu)].map((m) => m[0]);
+  for (const run of runs) {
+    const letters = [...run.replace(/\p{M}/gu, '')].length;
+    if ((letters > 1 || runs.length > 1) && isTicker(run)) return true;
+  }
+  return false;
+}
+function denominationLeads(suffix) {
+  const head = leadingScriptRun(suffix);
+  return (
+    isTicker(head) ||
+    ASSET_GLYPH.test(suffix.slice(0, 2)) ||
+    LOWERCASE_ASSET_UNIT.test(head) ||
+    MAGNITUDE_WORD.test(head)
+  );
+}
+
+/**
  * A number with something money-shaped attached to it.
  *
  * Scans for a numeric run and then looks at what sits immediately
@@ -549,10 +589,15 @@ const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
  * would let the next reviewer skip the reading.
  *
  * @param {string} text rendered card text
+ * @param {{locale?: string | string[]}} [options] the language the text
+ *   is rendered in, so its duration words can be sourced (#2125); without
+ *   it only the English list applies
  * @returns {string[]} the offending fragments, empty when clean
  */
-export function monetaryAmountsIn(text) {
+export function monetaryAmountsIn(text, { locale } = {}) {
   if (typeof text !== 'string' || text === '') return [];
+  const vocabulary =
+    locale === undefined || locale === null ? EMPTY_VOCABULARY : durationVocabularyFor(locale);
   const hits = [];
   // Numbers with optional grouping and decimals. The separators are
   // locale-dependent — the console formats for the reader's language —
@@ -625,8 +670,13 @@ export function monetaryAmountsIn(text) {
     // is untouched, so `3-day` is exempt for the same reason `3 days`
     // is and for no new one: a compound adjective is how English writes
     // that phrase, not a different claim about the number.
+    // `\p{M}` in every letter run (#2125): Devanagari and Tamil write
+    // vowels and viramas as COMBINING MARKS, which are not `\p{L}`, so
+    // `दिन` tokenised as `द` and no unit word could ever match it. Same
+    // widening in `leading`, `firstWordAfter`, `hasTickerNear` and
+    // `isTicker`, so a word is one token in every reader of it.
     const trailing = after.match(
-      /^[\s‐-―-]*([\p{L}%][\p{L}\p{N}]*)\s*([\p{L}][\p{L}\p{N}]*)?/u,
+      /^[\s‐-―-]*([\p{L}%][\p{L}\p{M}\p{N}]*)\s*([\p{L}][\p{L}\p{M}\p{N}]*)?/u,
     );
     // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
     //
@@ -742,7 +792,7 @@ export function monetaryAmountsIn(text) {
     // word is not, so it does not.
     const firstWordAfter = (() => {
       const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{N}]*)/u);
+      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{M}\p{N}]*)/u);
       return w ? w[1] : '';
     })();
     const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
@@ -812,23 +862,66 @@ export function monetaryAmountsIn(text) {
       hits.push(fragment(text, start, end));
       continue;
     }
-    if (trailing) {
-      const unit = trailing[1];
-      const next = trailing[2];
+    // The English list, or the LOCALE's own words (#2125) — a whole
+    // phrase, or a prefix of the first token in a script that writes no
+    // space between a counter and the particle after it. See `unitAfter`.
+    // Read from a longer window than `after`: a three-token phrase does not
+    // fit in sixteen characters. NOT gated on `trailing` (round 6): that
+    // regex wants a letter run after whitespace or a hyphen, and a locale
+    // phrase may open with a bracket — Tagalog's `sa 1 (na) araw`.
+    const afterLong = text.slice(end, end + 48);
+    const run = trailing ? trailing[1] : '';
+    // The LOCALE's longest phrase first, then the English list (round 5):
+    // Italian's short past is `3 h fa`, one stored phrase, and reading the
+    // English `h` first reduced it to an ambiguous letter.
+    const matched =
+      unitAfter(afterLong, vocabulary, { isDenomination: denominationLeads }) ??
+      (trailing && NON_MONETARY_UNIT.test(run)
+        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length, raw: run }
+        : null);
+    {
+      // A unit written as an UPPER-CASE RUN is ticker-shaped (#2125 rounds
+      // 6–7): `3 TAGE`, `3 DAYS`, `3 M-CE`. Token symbols are arbitrary,
+      // and this scanner's own ticker rule already reads such a run as an
+      // asset, so the folded match must not erase that evidence — reported,
+      // the loud direction. Judged on the matched span AS WRITTEN, run by
+      // run: any run of two or more letters that reads as a ticker condemns
+      // the match, whether the span is one word, a hyphenated one or a
+      // phrase. A one-letter upper-case unit (German `M`) is the ambiguous
+      // path's business.
+      const unit = matched === null || tickerShapedSpan(matched.raw) ? null : matched.unit;
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
       // figure and never looks at `USDC` — so the scanner missed
       // precisely the promise it exists to catch, on the shortest way
       // of writing a large one. The exemption now only applies when
       // nothing token-shaped follows.
-      if (NON_MONETARY_UNIT.test(unit)) {
+      if (unit !== null) {
         // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
         // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
         // Strip the UNIT only — `trailing[0]` also swallows the word
-        // after it, which is precisely the word being looked for.
-        const afterUnit = after.replace(/^\s*[\p{L}%][\p{L}\p{N}]*/u, '');
-        const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
-        if (AMBIGUOUS_UNIT.test(unit) && !temporal) {
+        // after it, which is precisely the word being looked for. From
+        // where the matched unit ENDS, since it may be a phrase, or a
+        // prefix of the run.
+        const afterUnit = afterLong.slice(matched.end);
+        // A MONEY SIGN OR GLYPH DIRECTLY AFTER THE UNIT (#2125 round 4):
+        // `3日$` splits the run at the sign, so `日` matched exactly and
+        // `hugsCurrency`, which reads what follows the FIGURE, could not
+        // see through the counter. The unit is then the wrong reading of
+        // the run: a currency sign is never a particle.
+        if (currencyAfter.test(afterUnit) || ASSET_GLYPH.test(afterUnit.replace(CONTEXT_SEP, '').slice(0, 2))) {
+          hits.push(fragment(text, start, end));
+          continue;
+        }
+        // Duration CONTEXT: the English lists, or the locale's own lead /
+        // trail phrases learned from its relative-time wording (round 4),
+        // so `dentro de 3 h` reads as a wait in Spanish.
+        const temporal =
+          DURATION_LEAD.test(before) ||
+          DURATION_TRAIL.test(afterUnit) ||
+          localeLeadEnds(before, vocabulary) ||
+          localeTrailStarts(afterUnit, vocabulary);
+        if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
           continue;
         }
@@ -852,19 +945,67 @@ export function monetaryAmountsIn(text) {
         // The false-positive direction is the one this file argues at
         // length gets a check switched off, and here it fired on the two
         // exemptions most likely to appear in real sentences.
-        if (AMBIGUOUS_UNIT.test(unit) && trailingTicker) {
+        // A ticker AFTER THE UNIT (#2125), not anywhere after the figure:
+        // a one-letter unit in an upper-case script — German's `M` for
+        // Monat — is itself an upper-case run, so the whole-clause
+        // lookahead read the unit as the ticker that cancels it, and
+        // `in 3 M` was reported through the very context that had just
+        // exempted it. `1m USDC` still reports: `USDC` is after the unit.
+        if (isAmbiguousUnit(unit) && hasTickerNear(afterUnit)) {
           hits.push(fragment(text, start, end));
         }
         continue;
       }
-      if (isTicker(unit)) {
+      if (trailing && isTicker(run)) {
         hits.push(fragment(text, start, end));
         continue;
       }
     }
 
+    const leading = before.match(/([\p{L}][\p{L}\p{M}\p{N}]*)\s*$/u);
+    // A locale that writes the unit BEFORE the figure (#2125 round 1):
+    // Swahili renders three days as `siku 3`, so a vocabulary consulted
+    // only on `after` never saw it. Exact match only — the prefix rule is
+    // about a counter and the particle that follows it — and the same
+    // ambiguity rule: a one-letter unit in front still needs duration
+    // context. No shipped locale orders its units this way today; the
+    // rule is here so the first one that does is not a false FAIL.
+    // IMMEDIATE evidence cancels it — a currency mark, glyph, lower-case
+    // asset unit or ticker as the very next word (`siku 3 USDC`) — while
+    // a ticker LATER in the clause counts only against an ambiguous unit
+    // (#2125 round 3), exactly as for a unit after the figure: `Bado siku
+    // 3 kabla USDC irudi` states a duration and then names an asset.
+    // ... and the MAGNITUDE guards the identifier exemption already has
+    // (round 4): `siku 3k USDC` and `siku 3 million` are quantities
+    // whatever word stands in front of them.
+    // Not gated on `leading` (round 4): that regex wants a letter run
+    // right before the figure, and a unit may be separated from it by an
+    // opening bracket — `unitBefore` reads the phrase itself.
+    if (
+      !hugsCurrency &&
+      !trailingGlyph &&
+      !trailingLower &&
+      !spacedMagnitude &&
+      endsCleanly &&
+      !isTicker(firstWordAfter)
+    ) {
+      const matchedBefore = unitBefore(before, vocabulary);
+      // The same ticker-shaped rule as after the figure (rounds 6–7).
+      if (matchedBefore !== null && !tickerShapedSpan(matchedBefore.raw)) {
+        const { unit, start: unitStart } = matchedBefore;
+        const beforeUnit = before.slice(0, unitStart);
+        const temporal =
+          DURATION_LEAD.test(beforeUnit) ||
+          DURATION_TRAIL.test(after) ||
+          localeLeadEnds(beforeUnit, vocabulary) ||
+          localeTrailStarts(after, vocabulary);
+        if (isAmbiguousUnit(unit) && (!temporal || trailingTicker)) {
+          hits.push(fragment(text, start, end));
+        }
+        continue;
+      }
+    }
     // A ticker immediately BEFORE the number — `USDC 120`.
-    const leading = before.match(/([\p{L}][\p{L}\p{N}]*)\s*$/u);
     if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
       continue;
@@ -1782,7 +1923,12 @@ function forcedCloseVerdictBody(obs, copy) {
   // two identical fragments say nothing a reader can act on differently.
   // The verdict turns on whether there were any, which dedup cannot
   // change.
-  const amounts = [...new Set(parts.flatMap((part) => monetaryAmountsIn(part)))];
+  // In the LANGUAGE the card was rendered in (#2125): the drive pins its
+  // browser locale and passes it with the copy, so the scanner sources
+  // that locale's duration words rather than reading only English ones.
+  const amounts = [
+    ...new Set(parts.flatMap((part) => monetaryAmountsIn(part, { locale: copy?.locale }))),
+  ];
   const amountFinding = () => ({
     verdict: 'fail',
     failKind: 'observed',

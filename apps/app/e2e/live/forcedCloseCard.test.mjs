@@ -15,6 +15,7 @@ import {
   reconcileEligibility,
   saysCheckRunning,
 } from './forcedCloseCard.mjs';
+import { durationSamplesFor, durationUnitsFor, durationVocabularyFor } from './durationVocabulary.mjs';
 
 const FORCED_CLOSE = enBundle.copy.forcedClose;
 
@@ -1345,8 +1346,11 @@ describe('the calibration covers EVERY shipped locale, not only English', () => 
     const perBundle = new Map();
     for (const [file, fc] of bundles) {
       let here = 0;
+      // In the bundle's OWN locale (#2125): the scanner sources that
+      // language's duration words, as the drive does for its pinned one.
+      const locale = file.replace(/\.json$/, '');
       for (const [key, value] of walk(fc, 'forcedClose')) {
-        expect(monetaryAmountsIn(value), `${file} ${key}: ${value}`).toEqual([]);
+        expect(monetaryAmountsIn(value, { locale }), `${file} ${key}: ${value}`).toEqual([]);
         here += 1;
         checked += 1;
       }
@@ -3209,27 +3213,20 @@ describe('round 38 review findings', () => {
     // non-ASCII character after a figure is a glyph" — is actively
     // harmful, so the list stays explicit.
     //
-    // ⚠ THIS CASE PINS BEHAVIOUR THAT IS WRONG, deliberately. I wrote it
-    // first as `toEqual([])` and it FAILED, which is how #2125 was
-    // found: every exemption in this scanner tokenises with `[A-Za-z]`,
-    // so a non-Latin duration cannot reach `NON_MONETARY_UNIT` at all
-    // and falls through to the absolute bare-figure arm. A grace-window
-    // sentence in ja/hi/ta/ko/zh is therefore reported as an invented
-    // amount — the false-FAIL direction, on copy the spec explicitly
-    // permits.
-    //
-    // It is LATENT: the all-locale calibration passes because no shipped
-    // string currently writes a figure that way. That is luck, not a
-    // guard.
-    //
-    // Pinned as-is rather than deleted or written as a wish. A test
-    // asserting the wish goes green the day someone "fixes" the symptom
-    // by weakening the scanner; this one fails loudly when #2125 is
-    // genuinely fixed, which is the prompt to come back and update it.
-    it('reports a non-Latin duration as an amount — WRONG, tracked in #2125', () => {
+    // #2125 — FIXED. This case used to pin the WRONG behaviour on purpose
+    // (a non-Latin duration reported as an amount), written as reality
+    // rather than as a wish so it would fail loudly when the scanner was
+    // genuinely fixed. It did, and this is the update it asked for: told
+    // the language, the scanner sources that language's duration words
+    // from CLDR and exempts the grace window. NOT told the language, it
+    // still reports — a loud false hit rather than a silent exemption,
+    // which is the direction a caller that forgot the locale should feel.
+    it('exempts a non-Latin duration when told the language, and reports it when not', () => {
+      expect(monetaryAmountsIn('猶予期間は 3 日です。', { locale: 'ja' })).toEqual([]);
+      expect(monetaryAmountsIn('3 दिन शेष हैं।', { locale: 'hi' })).toEqual([]);
       expect(monetaryAmountsIn('猶予期間は 3 日です。')).toHaveLength(1);
       expect(monetaryAmountsIn('3 दिन शेष हैं।')).toHaveLength(1);
-      // The English equivalent, for contrast: the exemption reaches it.
+      // The English equivalent, for contrast: the base list reaches it.
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
     });
 
@@ -7553,5 +7550,471 @@ describe('round 85 review findings', () => {
       );
       expect(v.verdict).not.toBe('fail');
     });
+  });
+});
+
+describe('#2125 — duration words sourced per locale', () => {
+  const LOCALES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales');
+  const shipped = fs
+    .readdirSync(LOCALES_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace(/\.json$/, ''));
+
+  // The vocabulary is only as good as the runtime's knowledge of the
+  // locale, and `durationUnitsFor` returns EMPTY for one it does not know
+  // — which would make the all-locale calibration green for exactly the
+  // reason it must not be. So every shipped bundle is asserted known, and
+  // each yields a word for a day.
+  it('knows every shipped locale and finds its day word', () => {
+    expect(shipped.length).toBeGreaterThan(1);
+    for (const locale of shipped) {
+      expect(Intl.NumberFormat.supportedLocalesOf([locale]).length, locale).toBe(1);
+      const words = durationUnitsFor(locale);
+      expect(words.size, locale).toBeGreaterThan(5);
+      const day = new Intl.NumberFormat(locale, { style: 'unit', unit: 'day', unitDisplay: 'long' })
+        .formatToParts(3)
+        .find((p) => p.type === 'unit')?.value;
+      expect(typeof day, locale).toBe('string');
+      // Stored as the scanner reads it: the letter-run of each word, the
+      // whole phrase, folded with the locale.
+      const stored = day
+        .split(/\s+/)
+        .map((w) => w.normalize('NFC').match(/[\p{L}\p{M}\p{N}]+/u)?.[0] ?? '')
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase(locale);
+      expect(words.has(stored), `${locale}: ${day}`).toBe(true);
+    }
+  });
+
+  it('returns an empty set for an unknown or absent locale rather than guessing', () => {
+    expect(durationUnitsFor('zz-Zzzz-QQ').size).toBe(0);
+    expect(durationUnitsFor(undefined).size).toBe(0);
+    expect(durationUnitsFor('').size).toBe(0);
+  });
+
+  // Each shipped non-Latin script, in the grace-window shape the issue
+  // gives, exempted in its own locale.
+  it('exempts the grace window in every shipped non-Latin locale', () => {
+    expect(monetaryAmountsIn('3 நாட்கள் மீதமுள்ளன.', { locale: 'ta' })).toEqual([]);
+    expect(monetaryAmountsIn('3일 남았습니다.', { locale: 'ko' })).toEqual([]);
+    expect(monetaryAmountsIn('还有 3 天。', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3天', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 أيام متبقية.', { locale: 'ar' })).toEqual([]);
+    expect(monetaryAmountsIn('Noch 3 Tage.', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('Encore 3 jours.', { locale: 'fr' })).toEqual([]);
+    expect(monetaryAmountsIn('Quedan 3 días.', { locale: 'es' })).toEqual([]);
+  });
+
+  // The PREFIX rule's boundary: a counter followed by a particle in a
+  // different script is a unit; the same unit character continuing in
+  // its own script is a different word — and `日本円` is yen.
+  it('accepts a unit as a prefix only across a script boundary', () => {
+    expect(monetaryAmountsIn('3 日です', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3 日本円', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // An asset glyph is still an amount in every locale: the sourced words
+  // are duration words, never a licence for "any non-ASCII token".
+  it('keeps reporting asset glyphs and tickers under a locale', () => {
+    expect(monetaryAmountsIn('Loan 100 Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 USDC', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('You receive 1.5', { locale: 'zh' })).toHaveLength(1);
+  });
+
+  // Ambiguity generalised: a one-letter unit in an alphabetic script is
+  // an abbreviation that might be a magnitude, so without duration
+  // context it is reported (loud) rather than exempted (silent). A
+  // single ideograph or Hangul syllable is the whole word and is not.
+  it('treats a one-letter alphabetic unit as ambiguous, an ideograph as a word', () => {
+    expect(monetaryAmountsIn('Noch 3 M', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 天', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 일', { locale: 'ko' })).toEqual([]);
+    expect(monetaryAmountsIn('Reste 3 j', { locale: 'fr' })).toHaveLength(1);
+  });
+
+  // The English locale gains CLDR's abbreviations too, under the same
+  // ambiguity rule, and everything the base list already decided holds.
+  it('adds the English abbreviations under the pinned drive locale', () => {
+    expect(monetaryAmountsIn('Wait 2 yr.', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('Wait 3 wks.', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 1d', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('in 1d', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('1m USDC', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('The grace period is 3 days.', { locale: 'en-US' })).toEqual([]);
+  });
+
+  // The verdict threads the copy's locale through, so a drive pinned to a
+  // non-English locale would judge its card in that language.
+  it('scans the card in the language the copy names', () => {
+    const copy = {
+      locale: 'ja',
+      unknownCopy: FORCED_CLOSE.unknown,
+      readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+      withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+      recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
+    };
+    const base = {
+      present: true,
+      text: `${FORCED_CLOSE.notYet} 猶予期間は 3 日です。`,
+      bodyText: FORCED_CLOSE.notYet,
+      hasControl: false,
+      settled: true,
+    };
+    const inJa = forcedCloseVerdict(base, copy);
+    expect(inJa.why ?? '', 'the grace window in Japanese is not an amount').not.toMatch(/states an amount/);
+    const noLocale = forcedCloseVerdict(base, { ...copy, locale: undefined });
+    expect(noLocale.verdict).toBe('fail');
+    expect(noLocale.why).toMatch(/states an amount/);
+  });
+});
+
+describe('#2125 — the drive declares its pinned locale before the copy that carries it', () => {
+  // The first live run after threading the locale exited BLOCKED with
+  // `Cannot access 'PINNED_LOCALE' before initialization`: the constant
+  // was declared below the module-level binding whose initialiser reads
+  // it. Anchored on the declarations themselves, not on offsets.
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'live-position-observe.mjs'),
+    'utf8',
+  );
+  it('declares PINNED_LOCALE above FORCED_CLOSE_COPY, and both readers use it', () => {
+    const declared = src.indexOf("const PINNED_LOCALE = 'en-US';");
+    const copyBinding = src.indexOf('const FORCED_CLOSE_COPY = (() => {');
+    expect(declared).toBeGreaterThan(-1);
+    expect(copyBinding).toBeGreaterThan(declared);
+    // The copy carries it, and the browser context is pinned to the same name.
+    // Exactly two readers — the copy and the browser context — and the
+    // literal appears once, in the declaration (a comment elsewhere quotes
+    // it, so this is counted rather than asserted absent).
+    expect((src.match(/locale: PINNED_LOCALE,/g) ?? []).length).toBe(2);
+    expect((src.match(/'en-US'/g) ?? []).length).toBe(2);
+  });
+});
+
+describe('#2125 round 1 — unit order, tokeniser parity, plural categories, suffix evidence, NFC', () => {
+  const LOCALES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales');
+  const shipped = fs
+    .readdirSync(LOCALES_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace(/\.json$/, ''));
+
+  // A locale that writes the unit BEFORE the figure. Not shipped; the
+  // rule exists so the first one that is does not fail the live check.
+  it('exempts a unit written before the figure, with the same evidence guards', () => {
+    expect(new Intl.NumberFormat('sw', { style: 'unit', unit: 'day', unitDisplay: 'long' }).format(3)).toBe(
+      'siku 3',
+    );
+    expect(monetaryAmountsIn('Bado siku 3.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3 USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 Ξ', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('Bado siku 3.')).toHaveLength(1);
+  });
+
+  // CLDR writes some abbreviations with punctuation the scanner's token
+  // never includes; the vocabulary stores the token the scanner reads.
+  it('stores CLDR units in the token shape the scanner reads', () => {
+    expect(new Intl.NumberFormat('he', { style: 'unit', unit: 'day', unitDisplay: 'short' }).format(3)).toBe(
+      '3 ימ׳',
+    );
+    expect(durationUnitsFor('he').has('ימ')).toBe(true);
+    expect(monetaryAmountsIn('נותרו 3 ימ׳', { locale: 'he' })).toEqual([]);
+    // Polish's narrow month is `m-ce`: since round 6 every token run of a
+    // rendered unit is stored, so it is the two-token phrase `m ce`, which
+    // the text `3 m-ce` matches whole (the hyphen is a separator), and it
+    // is not a one-letter abbreviation.
+    expect(durationUnitsFor('pl').has('m ce')).toBe(true);
+    expect(durationUnitsFor('pl').has('m')).toBe(false);
+    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toEqual([]);
+    expect(monetaryAmountsIn('3 dni', { locale: 'pl' })).toEqual([]);
+  });
+
+  // Samples come from the locale's OWN plural categories.
+  it('reaches every plural category of every shipped locale, and Tagalog and Czech', () => {
+    for (const locale of [...shipped, 'tl', 'cs', 'pl', 'uk', 'ar']) {
+      const { categories, reached } = durationSamplesFor(locale);
+      for (const c of categories) expect(reached, `${locale} misses ${c}`).toContain(c);
+    }
+    expect(new Intl.NumberFormat('tl', { style: 'unit', unit: 'day', unitDisplay: 'long' }).format(4)).toBe(
+      '4 na araw',
+    );
+    expect(monetaryAmountsIn('4 na araw', { locale: 'tl' })).toEqual([]);
+    expect(monetaryAmountsIn('0,1 dne', { locale: 'cs' })).toEqual([]);
+  });
+
+  // A prefix-matched counter followed by a DENOMINATION is not a unit.
+  it('rejects a denomination suffix after a matched unit prefix', () => {
+    expect(monetaryAmountsIn('3日USDC', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日eth', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Decomposed and composed one-letter symbols classify alike.
+  it('normalises a token before the one-letter ticker test', () => {
+    const composed = 'Loan 100 \u00C1 principal';
+    const decomposed = 'Loan 100 A\u0301 principal';
+    expect(composed.normalize('NFC')).toBe(decomposed.normalize('NFC'));
+    expect(monetaryAmountsIn(composed)).toHaveLength(1);
+    expect(monetaryAmountsIn(decomposed)).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 2 — whole phrases, denomination prefixes, sentence case, cache keys', () => {
+  // A multi-word unit is one unit: its linker word is not a unit alone.
+  it('keeps a multi-word unit phrase atomic', () => {
+    expect(durationUnitsFor('tl').has('na araw')).toBe(true);
+    expect(durationUnitsFor('tl').has('na')).toBe(false);
+    expect(monetaryAmountsIn('4 na araw', { locale: 'tl' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 4 na USDC', { locale: 'tl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('4 na', { locale: 'tl' })).toHaveLength(1);
+  });
+
+  // The suffix's LEADING SCRIPT RUN is judged, so a denomination followed
+  // by a particle is still a denomination.
+  it('sees a denomination that a particle follows inside a counter suffix', () => {
+    expect(monetaryAmountsIn('3日ethです', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日USDCです', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Sentence case, folded with the locale, on both sides of the figure.
+  it('matches sentence-cased units before and after the figure', () => {
+    expect(monetaryAmountsIn('Siku 3 zimebaki.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('Bado siku 3.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('Noch 3 Tage.', { locale: 'de' })).toEqual([]);
+    // An all-caps run is TICKER-SHAPED and is reported since round 6 —
+    // see that block — where round 2 had folded it into `tage`.
+    expect(monetaryAmountsIn('Noch 3 TAGE.', { locale: 'de' })).toHaveLength(1);
+  });
+
+  // The cache key cannot make a malformed scalar and a valid array share
+  // a vocabulary, in either order.
+  it('keeps cache slots distinct for a tag array and a delimited scalar', () => {
+    expect(durationUnitsFor(['en', 'ja']).size).toBeGreaterThan(0);
+    expect(durationUnitsFor('en|ja').size).toBe(0);
+    expect(monetaryAmountsIn('3日', { locale: 'en|ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日', { locale: ['en', 'ja'] })).toEqual([]);
+  });
+});
+
+describe('#2125 round 3 — contextual forms, particle transitions, preceding units', () => {
+  // Case-inflected forms come from relative-time formatting, the same
+  // CLDR data in sentence position; prepositions on the other side of
+  // the number are not taken.
+  it('learns inflected unit forms from relative-time phrases', () => {
+    const de = durationUnitsFor('de');
+    expect(de.has('tagen')).toBe(true);
+    expect(de.has('in')).toBe(false);
+    expect(de.has('vor')).toBe(false);
+    expect(monetaryAmountsIn('in 3 Tagen', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('vor 3 Tagen', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 日後', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3天后', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 दिन में', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
+    // A unit-first language: the phrase before the number, and not the
+    // adverb after it.
+    expect(durationUnitsFor('sw').has('baada ya siku')).toBe(true);
+    expect(durationUnitsFor('sw').has('zilizopita')).toBe(false);
+    expect(monetaryAmountsIn('baada ya siku 3', { locale: 'sw' })).toEqual([]);
+  });
+
+  // Only Hiragana after a Han counter reads as a particle. Katakana is
+  // where Japanese writes loanwords — and asset names.
+  it('reads only a Hiragana continuation as a particle', () => {
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3か月です', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 3日ビットコイン', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日ビットコイン', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 日本円', { locale: 'ja' })).toHaveLength(1);
+  });
+
+  // A preceding, unambiguous unit survives an asset named later in the
+  // clause, as a following one does; immediate evidence still cancels.
+  it('keeps a preceding unit when an asset is only mentioned later', () => {
+    expect(monetaryAmountsIn('Bado siku 3 kabla USDC irudi.', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3 USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 Ξ', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 eth', { locale: 'sw' })).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 4 — per-phrase unit side, money after a counter, magnitudes, localised context, marked letters', () => {
+  // The unit's side is read from each relative-time phrase: Hebrew's
+  // singular puts the unit before a bracketed number although its unit
+  // formatter writes the number first.
+  it('learns a unit that precedes a bracketed number', () => {
+    expect(new Intl.RelativeTimeFormat('he', { numeric: 'always' }).format(1, 'day')).toBe('בעוד יום (1)');
+    expect(monetaryAmountsIn('בעוד יום (1)', { locale: 'he' })).toEqual([]);
+    expect(monetaryAmountsIn('בעוד 3 ימים', { locale: 'he' })).toEqual([]);
+  });
+
+  // A currency sign or glyph directly after a matched unit is an amount.
+  it('reports a money sign or glyph appended to a counter', () => {
+    expect(monetaryAmountsIn('3日$', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日₿', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 days $', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日', { locale: 'ja' })).toEqual([]);
+  });
+
+  // The magnitude guards apply before a preceding unit exempts.
+  it('rejects a magnitude after a preceding unit', () => {
+    expect(monetaryAmountsIn('siku 3k USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 million', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3.', { locale: 'sw' })).toEqual([]);
+  });
+
+  // Localised temporal context makes a one-letter unit a duration.
+  it('reads the locale\'s own temporal wording around a one-letter unit', () => {
+    expect(durationVocabularyFor('es').leads.has('dentro de')).toBe(true);
+    expect(monetaryAmountsIn('dentro de 3 h', { locale: 'es' })).toEqual([]);
+    expect(monetaryAmountsIn('hace 3 h', { locale: 'es' })).toEqual([]);
+    expect(monetaryAmountsIn('dans 3 h', { locale: 'fr' })).toEqual([]);
+    expect(monetaryAmountsIn('za 3 h', { locale: 'cs' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 Std.', { locale: 'de' })).toEqual([]);
+    // Without any context the abbreviation stays ambiguous and reports.
+    expect(monetaryAmountsIn('3 h', { locale: 'es' })).toHaveLength(1);
+    expect(monetaryAmountsIn('Recibes 3 h', { locale: 'es' })).toHaveLength(1);
+  });
+
+  // A one-letter abbreviation written with a combining mark is still one
+  // letter, and still ambiguous.
+  it('counts a marked base letter as a one-letter abbreviation', () => {
+    expect(new Intl.NumberFormat('hi', { style: 'unit', unit: 'hour', unitDisplay: 'short' }).format(3)).toBe(
+      '3 घं॰',
+    );
+    expect(monetaryAmountsIn('You receive 3 घं USDC', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 घंटे', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 घंटे में', { locale: 'hi' })).toEqual([]);
+  });
+});
+
+describe('#2125 round 5 — numeric span, locale phrase first, both directions, safe folding, marked phrases', () => {
+  // The literal on either side of the WHOLE number: a fractional sample
+  // must not push the context word into the units.
+  it('never stores a context word as a unit', () => {
+    expect(durationUnitsFor('cs').has('za')).toBe(false);
+    expect(durationVocabularyFor('cs').leads.has('za')).toBe(true);
+    expect(monetaryAmountsIn('You receive 3 ZA', { locale: 'cs' })).toHaveLength(1);
+    expect(monetaryAmountsIn('za 3 dny', { locale: 'cs' })).toEqual([]);
+  });
+
+  // The locale's longest phrase wins over the English one-letter list.
+  it('prefers the longest locale phrase over an English abbreviation', () => {
+    expect(durationUnitsFor('it').has('h fa')).toBe(true);
+    expect(monetaryAmountsIn('3 h fa', { locale: 'it' })).toEqual([]);
+    expect(monetaryAmountsIn('Ricevi 3 h', { locale: 'it' })).toHaveLength(1);
+  });
+
+  // A single-category locale still learns both relative-time directions.
+  it('samples a nonzero representative so past forms are learned', () => {
+    expect(durationSamplesFor('ja').samples.every((n) => n !== 0)).toBe(true);
+    expect(durationUnitsFor('ja').has('日前')).toBe(true);
+    expect(monetaryAmountsIn('3 日前', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3日前', { locale: 'ja' })).toEqual([]);
+  });
+
+  // Folding uses the validated tags, so a malformed entry in a fallback
+  // list cannot throw at match time.
+  it('folds with the validated tag list, never the raw locale', () => {
+    expect(durationVocabularyFor(['bad_tag', 'ja']).tags).toEqual(['ja']);
+    expect(() => monetaryAmountsIn('3日', { locale: ['bad_tag', 'ja'] })).not.toThrow();
+    expect(monetaryAmountsIn('3日', { locale: ['bad_tag', 'ja'] })).toEqual([]);
+  });
+
+  // A phrase's words may be separated by CLDR's abbreviation marks.
+  it('matches a phrase whose words carry abbreviation marks', () => {
+    expect(new Intl.RelativeTimeFormat('hi', { numeric: 'always', style: 'short' }).format(3, 'hour')).toBe(
+      '3 घं॰ में',
+    );
+    expect(monetaryAmountsIn('3 घं॰ में', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 6 — punctuation inside phrases, placement, ticker-shaped units', () => {
+  // A phrase's words may be separated by any punctuation short of a line
+  // break, since the vocabulary was built by dropping exactly that.
+  it('matches localized phrases whose words are separated by punctuation', () => {
+    expect(new Intl.RelativeTimeFormat('tl', { numeric: 'always' }).format(1, 'day')).toBe('sa 1 araw');
+    expect(monetaryAmountsIn('sa 1 (na) araw', { locale: 'tl' })).toEqual([]);
+    expect(new Intl.RelativeTimeFormat('te', { numeric: 'always', style: 'short' }).format(1, 'hour')).toBe(
+      '1 గం.లో',
+    );
+    expect(monetaryAmountsIn('1 గం.లో', { locale: 'te' })).toEqual([]);
+    // A line break is still a boundary.
+    expect(monetaryAmountsIn('4 na\naraw', { locale: 'tl' })).toHaveLength(1);
+  });
+
+  // A form observed only after the number is not accepted in front of it.
+  it('keeps each form to the side of the number it was sourced on', () => {
+    const de = durationVocabularyFor('de');
+    expect(de.after.has('tage')).toBe(true);
+    expect(de.before.has('tage')).toBe(false);
+    expect(monetaryAmountsIn('Tage 3', { locale: 'de' })).toHaveLength(1);
+    expect(durationVocabularyFor('sw').before.has('siku')).toBe(true);
+    expect(monetaryAmountsIn('siku 3', { locale: 'sw' })).toEqual([]);
+  });
+
+  // An upper-case run spelling a unit word is ticker evidence, before or
+  // after the figure and in English too.
+  it('reports a ticker-shaped unit word', () => {
+    expect(monetaryAmountsIn('You receive 3 TAGE', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('TAGE 3', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('SIKU 3', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS')).toHaveLength(1);
+    // Ordinary casing, a one-letter abbreviation with context, and a phrase
+    // are unaffected.
+    expect(monetaryAmountsIn('3 Tage', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
+  });
+});
+
+describe('#2125 round 7 — symbols are never phrase separators, ticker-shaped hyphenated units', () => {
+  // Punctuation may sit between a phrase's words; a symbol may not, since
+  // a currency sign there is the scanner's evidence of an amount.
+  it('does not swallow a currency sign inside a phrase span', () => {
+    expect(monetaryAmountsIn('You receive 3 m$ce', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m₿ce', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toEqual([]);
+    expect(monetaryAmountsIn('3 m.ce', { locale: 'pl' })).toEqual([]);
+  });
+
+  // The ticker-shaped test reads the matched span as written, run by run,
+  // so a hyphenated unit written in capitals is still ticker evidence.
+  it('reports a ticker-shaped run inside a punctuation-split unit', () => {
+    expect(monetaryAmountsIn('You receive 3 M-CE', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS AGO', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+  });
+});
+
+describe('#2125 round 8 — single-letter runs in split units, line breaks around a unit', () => {
+  // Polish's narrow singular month is `m-c`: two single letters. In
+  // capitals each reads as a ticker; a standalone `M` keeps its context
+  // exception.
+  it('treats single-letter runs of a split unit as ticker evidence', () => {
+    expect(durationUnitsFor('pl').has('m c')).toBe(true);
+    expect(monetaryAmountsIn('You receive 3 M-C', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m-c', { locale: 'pl' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+  });
+
+  // A line break is a rendered-element boundary on both sides of the
+  // figure, as it already was between a phrase's words.
+  it('does not attach a unit across a line break', () => {
+    expect(monetaryAmountsIn('You receive 3\nTage', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku\n3', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 Tage', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('siku 3', { locale: 'sw' })).toEqual([]);
+    expect(monetaryAmountsIn('dentro de\n3 h', { locale: 'es' })).toHaveLength(1);
   });
 });
