@@ -80,7 +80,15 @@ the seed already was, so neither migration writer can run on a chain with no
 history to import. The in-place facet refresh runs the rebase itself while the
 Diamond is still paused, after the reward-role backfill and before service
 resumes, and refuses to default the figure: the operator states the
-reconstructed total or declares there is none — and the multi-chain
+reconstructed total or declares there is none. A stated figure — the older
+seed or this total — is accepted only from a chain that could not move while
+it was taken: the pre-flight refuses it unless the platform is already under
+its manual pause, and the refresh itself pauses as its very first transaction,
+before any implementation is deployed, so no payout between the
+reconstruction and the pause can go uncounted behind a one-shot guard. The
+refresh also decides a deferral from what it reads rather than by calling
+into a refusal, so a deferred rebase on a detached chain never puts a failing
+transaction on the broadcast — and the multi-chain
 pre-flight refuses, before any chain broadcasts, a stated total, a stated seed
 or an already-recorded paid counter above what the reward pool can ever pay
 out — and, where that counter can be read, the seed's own predicate, the

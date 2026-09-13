@@ -5976,7 +5976,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > remainder has a disposition — an ADMIN sweep to the treasury under the
 > manual pause, bounded by `held - attributed` so no row's custody is ever
 > reachable — and a mid-broadcast failure is reported as a possibly partial
-> refresh, never as "nothing sent" (review r23). Simulations neither create nor erase
+> refresh, never as "nothing sent" (review r23). The refresh pauses as its
+> FIRST transaction and the pre-flight refuses a stated seed or total unless
+> the chain is already manually paused, so a reconstructed figure is never
+> stale behind a one-shot guard; a deferred rebase is decided from reads and
+> never called into a refusal under broadcast (review r25). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

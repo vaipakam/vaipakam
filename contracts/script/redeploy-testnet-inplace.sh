@@ -132,6 +132,14 @@
 #   Where the counter reads, the seeder's own predicate — the RESULTING
 #   counter, existing plus seed, within the cap — is checked as well.
 #
+#   A STATED seed or total must have been reconstructed from a chain that
+#   could not move: the pre-flight refuses a stated figure unless the Diamond
+#   is already under the MANUAL pause, and the refresh itself pauses as its
+#   first transaction, before the implementation deploys — otherwise a
+#   payout between the reconstruction and the pause never reaches the
+#   counter the one-shot migration seals. A NO_HISTORY declaration needs no
+#   pause.
+#
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
 #   skipped): each refusal the forge script can raise is exercised at that
@@ -501,11 +509,34 @@ for slug in $CHAINS; do
   else
     info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
   fi
+  # A RECONSTRUCTED figure is only as good as the moment it was taken (Codex
+  # #2158 r25 P1): a payout between the reconstruction and the refresh's
+  # pause is charged to the old counter under the old rules and never reaches
+  # the seeded or rebased figure, which a one-shot guard then seals. The
+  # refresh pauses as its FIRST transaction, closing the window inside the
+  # run; the window before it is closed here — a chain for which a seed or a
+  # total is STATED must already be under the MANUAL pause (paused() and no
+  # auto-pause window) when this pre-flight runs, so the figure was read from
+  # a chain that could not move. A NO_HISTORY declaration needs no pause: it
+  # asserts an absence that no payout can create on a chain whose counter
+  # does not charge.
+  manual_paused=""
+  if [ -n "${diamond2:-}" ]; then
+    p_flag="$(cast call "$diamond2" 'paused()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
+    p_until="$(cast call "$diamond2" 'pausedUntil()(uint256)' --rpc-url "$val" 2>/dev/null | cut -d' ' -f1 || echo '')"
+    if [ "$p_flag" = "true" ] && [ "$p_until" = "0" ]; then manual_paused=true; fi
+  fi
+  require_manual_pause_for() {
+    # $1 = the stated variable's name (for the message)
+    [ "$manual_paused" = "true" ] && return 0
+    fail "chain '$slug': \$$1 is stated but the Diamond is not under the MANUAL pause (paused()=${p_flag:-unreadable}, pausedUntil()=${p_until:-unreadable}) -- a reconstructed figure taken from a live chain can be stale by the time the refresh pauses, and a payout in between never reaches the seeded or rebased counter. Pause the Diamond (AdminFacet.pause(), the manual pause; an auto-pause window does not count), reconstruct the figure from the paused chain, then re-run. Nothing has been sent"
+  }
   if [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
   elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
     fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
   elif [ -n "$seed_val" ]; then
+    require_manual_pause_for "$seed_var"
     # Same shape and cap checks as the slice-4 total below (Codex #2158 r14
     # P2): the seed is now capped on chain too, and that refusal must land
     # here, before any chain has broadcast.
@@ -544,6 +575,7 @@ for slug in $CHAINS; do
   elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
     fail "chain '$slug': both \$$total_var and \$$rnohist_var are set — they are mutually exclusive; state ONE answer for this chain"
   elif [ -n "$total_val" ]; then
+    require_manual_pause_for "$total_var"
     case "$total_val" in
       ''|*[!0-9]*) fail "chain '$slug': \$$total_var='${total_val}' is not a non-negative integer (wei)" ;;
     esac

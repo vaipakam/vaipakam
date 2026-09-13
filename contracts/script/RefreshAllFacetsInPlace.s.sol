@@ -259,6 +259,38 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
         vm.startBroadcast(ownerKey);
 
+        // The pause is the FIRST transaction of the run (Codex #2158 r25 P1),
+        // before the 78 implementation deploys, not after them: under `--slow`
+        // those deploys are minutes of separate transactions, during which an
+        // ordinary payout or absorption through the OLD facets would go
+        // uncharged by the widened ledger and never reach the reconstructed
+        // seed or total the migrations below install — sealing an understated
+        // counter behind a one-shot guard. Pausing first closes that window
+        // inside the run; the orchestrator's pre-flight closes the one before
+        // it by requiring a stated figure to have been taken under the manual
+        // pause already.
+        // Codex #992 — pause the diamond across the batched cuts so no
+        // `whenNotPaused` entry point can be exercised under a partially-
+        // refreshed (mixed old/new facet) configuration between batches, or if
+        // a later batch reverts. Shared libraries are inlined across facets, so
+        // a mixed configuration is exactly the unsafe state this full refresh
+        // exists to avoid. The refresh signer is the diamond owner, which on a
+        // testnet holds PAUSER/UNPAUSER. Restore ONLY if we paused it (an
+        // already-paused diamond is left paused), and only AFTER the post-cut
+        // routing verification passes — a failed verify reverts the script
+        // before the unpause broadcasts, so a bad refresh is left safely frozen.
+        bool wasPaused = AdminFacet(diamond).paused();
+        // The paused migrations below require the MANUAL pause (Codex #2158
+        // r18 P2): an auto-pause window reads as paused here but lapses on
+        // its own, resuming service by no one's decision after an
+        // irreversible migration. `paused() && pausedUntil() == 0` proves the
+        // manual flag; any other paused state gets the flag set as well
+        // (idempotent) and is then LEFT paused for a fresh Unpauser decision
+        // — this script restores service only where it found the Diamond
+        // live.
+        bool manuallyPaused = wasPaused && AdminFacet(diamond).pausedUntil() == 0;
+        if (!manuallyPaused) AdminFacet(diamond).pause();
+
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
 
@@ -285,28 +317,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(items[i].key, items[i].impl);
             console.log("   replace:", reps.length, "add:", adds.length);
         }
-
-        // Codex #992 — pause the diamond across the batched cuts so no
-        // `whenNotPaused` entry point can be exercised under a partially-
-        // refreshed (mixed old/new facet) configuration between batches, or if
-        // a later batch reverts. Shared libraries are inlined across facets, so
-        // a mixed configuration is exactly the unsafe state this full refresh
-        // exists to avoid. The refresh signer is the diamond owner, which on a
-        // testnet holds PAUSER/UNPAUSER. Restore ONLY if we paused it (an
-        // already-paused diamond is left paused), and only AFTER the post-cut
-        // routing verification passes — a failed verify reverts the script
-        // before the unpause broadcasts, so a bad refresh is left safely frozen.
-        bool wasPaused = AdminFacet(diamond).paused();
-        // The paused migrations below require the MANUAL pause (Codex #2158
-        // r18 P2): an auto-pause window reads as paused here but lapses on
-        // its own, resuming service by no one's decision after an
-        // irreversible migration. `paused() && pausedUntil() == 0` proves the
-        // manual flag; any other paused state gets the flag set as well
-        // (idempotent) and is then LEFT paused for a fresh Unpauser decision
-        // — this script restores service only where it found the Diamond
-        // live.
-        bool manuallyPaused = wasPaused && AdminFacet(diamond).pausedUntil() == 0;
-        if (!manuallyPaused) AdminFacet(diamond).pause();
 
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
@@ -902,27 +912,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
             if (seed == type(uint256).max) seed = 0;
 
-            // Codex #1699 r4 P1 — swallow ONLY the replay, never every revert.
-            //
-            // The previous catch-all reported ANY failure as "already
-            // migrated" and then unpaused with an unseeded ledger — an
-            // ADMIN_ROLE loss or an overflow would have looked identical to a
-            // benign rerun. Reusing an existing failure signal is sound, but
-            // it has to discriminate WHICH failure; anything unexpected must
-            // abort while the Diamond is still PAUSED.
-            try IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed) {
-                console.log("P1-b: seeded armed-fresh paid history:", seed);
-            } catch (bytes memory err) {
-                require(
-                    err.length >= 4
-                        && bytes4(err) == ArmedFreshPaidAlreadySeeded.selector,
-                    "P1-b: seed failed for a reason other than a replay - "
-                    "aborting while paused"
-                );
-                console.log(
-                    "P1-b: armed-fresh paid history already seeded - skipped"
-                );
-            }
+            // Codex #1699 r4 P1 / #2158 r25 P1 — no try/catch under
+            // `startBroadcast`: Forge records every external call made in
+            // broadcast mode as a transaction whether or not Solidity caught
+            // its simulated revert, so a call that is EXPECTED to revert
+            // must not be made at all. The replay is excluded by the
+            // `armedFreshPaidSeeded()` read above, and every other failure
+            // must abort while the Diamond is still PAUSED — which a plain
+            // reverting call does.
+            IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed);
+            console.log("P1-b: seeded armed-fresh paid history:", seed);
         }
 
         // ─── #1566 closure 3 (Codex #2070 r6 P1) — reward ROLE backfill ──
@@ -1018,42 +1017,43 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
             if (total == type(uint256).max) total = 0;
 
-            try RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total) {
+            // The deferral is decided from READS, and the rebase is called
+            // only when it will succeed (Codex #2158 r25 P1): Forge records
+            // every external call made under `startBroadcast` as a
+            // transaction whether or not Solidity caught its simulated
+            // revert, so calling into an expected `RequiresActiveRole`
+            // refusal would put a reverting transaction on the broadcast
+            // list and stop the run after the pause, the cuts and the
+            // earlier migrations had mined. The gate mirrored here is the
+            // facet's own: an inactive role refuses any import over history
+            // on either side or any stated total. Only DETACHED is a
+            // deferral (r22 P2) — nothing spends on a detached chain and the
+            // re-attachment ceremony is where the carried total lands; an
+            // UNCONFIGURED chain with history has no such ceremony ahead of
+            // it and keeps paying under the max bound, so it aborts, paused,
+            // for an explicit disposition. Every other failure of the call
+            // itself aborts while still paused, as a plain revert does.
+            uint8 liveRole = RewardReporterFacet(diamond).getRewardRole();
+            (uint256 receivedBefore, uint256 paidBefore) = RewardCustodyFacet(diamond).armedFreshLedger();
+            bool activeRole = liveRole == _roleFromLabel("canonical") || liveRole == _roleFromLabel("mirror");
+            bool inactiveWithHistory = !activeRole && (total != 0 || paidBefore != 0 || receivedBefore != 0);
+            if (inactiveWithHistory) {
+                require(
+                    liveRole == _roleFromLabel("detached"),
+                    "slice-4: rebase would be refused on an UNCONFIGURED chain that carries history "
+                    "(paid, received, or a stated total) - no re-attachment ceremony can carry "
+                    "the figure and the chain keeps paying under the max bound; aborting while "
+                    "paused for an explicit disposition"
+                );
+                console.log(
+                    "slice-4: DETACHED reward role with history on the paid or received side, "
+                    "or a stated total - rebase DEFERRED (not called), guard left OPEN; carry "
+                    "this total to the re-attachment ceremony:",
+                    total
+                );
+            } else {
+                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total);
                 console.log("slice-4: rebased armed-fresh paid side to total:", total);
-            } catch (bytes memory err) {
-                bytes4 sel = err.length >= 4 ? bytes4(err) : bytes4(0);
-                if (sel == IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector) {
-                    console.log("slice-4: armed-fresh paid side already rebased - skipped");
-                } else if (sel == IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector) {
-                    // The refusal names the role, and only DETACHED is a
-                    // deferral (Codex #2158 r22 P2): nothing spends on a
-                    // detached chain (its bound is zero) and the
-                    // re-attachment ceremony is where the carried total
-                    // lands. An UNCONFIGURED chain has no such ceremony
-                    // ahead of it, keeps paying under a `max` bound that
-                    // charges no paid counter, and would make the logged
-                    // total stale by the time anyone used it — so its
-                    // refusal aborts, paused, for an explicit disposition.
-                    (uint8 role,,,) = abi.decode(_errorData(err), (uint8, uint256, uint256, uint256));
-                    require(
-                        role == _roleFromLabel("detached"),
-                        "slice-4: rebase refused on an UNCONFIGURED chain that carries history "
-                        "(paid, received, or a stated total) - no re-attachment ceremony can carry "
-                        "the figure and the chain keeps paying under the max bound; aborting while "
-                        "paused for an explicit disposition"
-                    );
-                    console.log(
-                        "slice-4: DETACHED reward role with history on the paid or received side, "
-                        "or a stated total - rebase DEFERRED, guard left OPEN; carry this total to "
-                        "the re-attachment ceremony:",
-                        total
-                    );
-                } else {
-                    revert(
-                        "slice-4: rebase failed for a reason other than a replay or an "
-                        "inactive-role deferral - aborting while paused"
-                    );
-                }
             }
         }
 
@@ -1492,15 +1492,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             } else {
                 reps[ri++] = sels[i];
             }
-        }
-    }
-
-    /// @dev The ABI-encoded arguments of a custom error: the revert data
-    ///      minus its 4-byte selector.
-    function _errorData(bytes memory err) private pure returns (bytes memory data) {
-        data = new bytes(err.length - 4);
-        for (uint256 i = 0; i < data.length; ++i) {
-            data[i] = err[i + 4];
         }
     }
 
