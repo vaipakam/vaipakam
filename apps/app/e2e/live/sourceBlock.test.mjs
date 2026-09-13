@@ -1055,6 +1055,36 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(blockFrom('if (ready) { work(); }\n', 'if (ready) {')).toContain('work()');
   });
 
+  // ROUND 20 — both findings were holes in round 19's own fixes.
+  it('refuses the round-20 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a measurement whose text cannot be read',
+        'const r = s.slice(start, start + `${\'x\'.repeat(320)}`.length);',
+      ],
+      [
+        'a measurement of text the search did not find',
+        "const r = s.slice(start, s.indexOf('x') + 'yyyy'.length);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // An anchor naming only PART of a statement must not reach past that
+  // statement for a block — round 19 keyed the owner on "first statement
+  // at or after the anchor", which skipped the statement the anchor sits
+  // INSIDE and took the next one's block.
+  it('refuses a partial anchor that reaches into a later block', () => {
+    const src = 'const anchor = 1;\nif (ready) { work(); }\n';
+    expect(() => blockFrom(src, 'anchor = 1')).toThrow(/opens no block/);
+    expect(blockFrom('function f() { a(); }\n', 'function f()')).toContain('a()');
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

@@ -188,7 +188,14 @@ export function blockFrom(src, header) {
   // The failure it hides is the one this module exists to refuse: refactor
   // a guarded construct to drop its block while a neighbour keeps one, and
   // the assertions carry on over the neighbour instead of going red.
-  const owner = nodes.find((n) => n.start >= start && STATEMENT.test(n.type));
+  // CONTAINING, not "first at or after" (round 20). An anchor that begins
+  // part-way into a statement — `'anchor = 1'` inside `const anchor = 1;`
+  // — leaves that statement starting BEFORE the anchor, so a search
+  // forward skipped it and took the later `if` as the owner: the same
+  // unrelated block, reached by naming the header slightly differently.
+  const owner = [...nodes]
+    .reverse()
+    .find((n) => STATEMENT.test(n.type) && n.start <= start && n.end >= start);
   if (owner && (brace.start < owner.start || brace.end > owner.end)) {
     throw new Error(`${header} opens no block of its own`);
   }
@@ -1071,8 +1078,12 @@ export function kindOf(src, node, seen = new Set()) {
       if (node.operator !== '+' && node.operator !== '-') return null;
       const l = kindOf(src, node.left, seen);
       const r = kindOf(src, node.right, seen);
-      if (l === 'position' && r === 'offset') return 'position';
-      if (node.operator === '+' && l === 'offset' && r === 'position') return 'position';
+      if (l === 'position' && r === 'offset') {
+        return sameLandmark(src, node.left, node.right, seen) ? 'position' : null;
+      }
+      if (node.operator === '+' && l === 'offset' && r === 'position') {
+        return sameLandmark(src, node.right, node.left, seen) ? 'position' : null;
+      }
       if (node.operator === '-' && l === 'position' && r === 'position') return 'offset';
       if (l === 'offset' && r === 'offset') return 'offset';
       return null;
@@ -1304,6 +1315,60 @@ function measurable(node) {
   if (node.type === 'Literal' && typeof node.value === 'string') return true;
   if (node.type === 'TemplateLiteral') return true;
   return isPlainName(node);
+}
+
+/**
+ * Whether a MEASURED offset measures the landmark the position found.
+ *
+ * "A place plus a distance is a place" (round 7) was true of the shapes
+ * this suite writes — `s.indexOf('x') + 'x'.length` steps just past the
+ * needle — and round 20 showed it admitting any measurement at all:
+ * `start + `${'x'.repeat(320)}`.length` is a 320-character window
+ * spelled as an offset, and so is a 320-character string literal.
+ *
+ * So the two halves have to be ABOUT THE SAME TEXT. When both are
+ * statically readable and differ, the sum measures something the search
+ * did not find, and is refused.
+ *
+ * The stated limit: when either side cannot be read statically — the
+ * position came through a name, the measurement is a name — this keeps
+ * accepting, because refusing there would reject the `at(x) + x.length`
+ * shape these suites legitimately write. The demonstrated escapes both
+ * close: an unreadable template measures nothing nameable, and a literal
+ * that is not the needle is caught by the comparison.
+ */
+function sameLandmark(src, positionNode, offsetNode, seen) {
+  const measured = measuredText(offsetNode);
+  if (measured === undefined) return true;
+  if (measured === null) return false;
+  const needle = finderNeedle(src, positionNode, seen);
+  return needle === undefined || needle === measured;
+}
+
+/** The text whose `.length` an offset takes: its value when readable,
+ *  `null` when it is a measurement that cannot be read, `undefined` when
+ *  the offset is not a measurement at all. */
+function measuredText(node) {
+  if (!node || node.type !== 'MemberExpression') return undefined;
+  if (propertyName(node) !== 'length') return undefined;
+  const t = node.object;
+  if (t?.type === 'Literal' && typeof t.value === 'string') return t.value;
+  if (t?.type === 'TemplateLiteral') {
+    return t.expressions.length === 0 ? t.quasis.map((q) => q.value.cooked).join('') : null;
+  }
+  return undefined;
+}
+
+/** The statically readable needle a finder call searched for, or
+ *  `undefined` when the position did not come from a readable search. */
+function finderNeedle(src, node, seen) {
+  if (!node || node.type !== 'CallExpression') return undefined;
+  const arg = node.arguments[0];
+  if (arg?.type === 'Literal' && typeof arg.value === 'string') return arg.value;
+  if (arg?.type === 'TemplateLiteral' && arg.expressions.length === 0) {
+    return arg.quasis.map((q) => q.value.cooked).join('');
+  }
+  return undefined;
 }
 
 /**
