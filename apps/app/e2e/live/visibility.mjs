@@ -77,13 +77,24 @@ export function visibilityHelpers() {
     (typeof cs.rotate === 'string' && cs.rotate !== 'none') ||
     (typeof cs.scale === 'string' && cs.scale !== 'none') ||
     cs.perspective !== 'none' ||
+    // A motion path positions absolute descendants against the element too
+    // (measured, #2157 round 12).
+    (typeof cs.offsetPath === 'string' && cs.offsetPath !== 'none') ||
     cs.filter !== 'none' ||
     (typeof cs.backdropFilter === 'string' && cs.backdropFilter !== 'none') ||
     /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
     // `backdrop-filter` is spelled out although `\bfilter\b` already matched
     // inside it across the hyphen (#2157 round 7): a reader should not have
     // to know that to see it is covered.
-    /\b(transform|perspective|filter|backdrop-filter)\b/.test(cs.willChange || '');
+    // `will-change` establishes the block in advance for any property whose
+    // non-initial value would — MEASURED in the same Chromium (#2157 round
+    // 12): `contain`, `translate` / `rotate` / `scale` and `offset-path` do;
+    // `content-visibility`, `container-type` and `opacity` do NOT, although
+    // the first is a containing block when actually set, so they are left
+    // out on that evidence.
+    /\b(transform|perspective|filter|backdrop-filter|contain|translate|rotate|scale|offset-path)\b/.test(
+      cs.willChange || '',
+    );
 
   /**
    * The matrix of `acs`'s OWN transform: the individual `rotate` / `scale`
@@ -414,6 +425,13 @@ export function visibilityHelpers() {
     let awaiting = outOfFlowKind(getComputedStyle(node).position);
     return {
       carries(n, cs) {
+        // An element that generates NO BOX (`display: contents`, round 12)
+        // neither scrolls, clips nor positions anything, whatever its
+        // `position` computes to: a `position: relative` one is not the
+        // containing block of an absolute descendant, which is positioned
+        // against the next real box above. Passed over without a word, so
+        // the awaited kind is unchanged.
+        if (cs.display === 'contents') return false;
         if (awaiting !== null) {
           const isCB =
             awaiting === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs);
@@ -869,6 +887,9 @@ export function visibilityHelpers() {
         return Math.min(to + d, want.hi) - Math.max(from + d, want.lo);
       };
       const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      // Half of what could be shown: the line's own extent or the opening
+      // it is seen through, whichever is smaller (round 12).
+      const readable = (seen, extent, opening) => seen >= Math.min(extent, opening) / 2;
       if (range !== null && range.unquantifiable) unbounded = true;
       // PER AXIS (#2157 round 3): an `overflow: auto` box whose content fits
       // on an axis has no movement there and is an ordinary clipper for it.
@@ -883,18 +904,26 @@ export function visibilityHelpers() {
       }
       if (!unbounded) {
         if (slit === null) {
+          // READABLE overlap, not any overlap, at a scroller too (#2157
+          // round 12): the best offset in the range still has to show half
+          // of what COULD be shown — half the line, or the whole opening
+          // when the line is taller than it. A relatively shifted row with
+          // one pixel inside a scrollport that can only carry it further
+          // out is never readable at any offset, and `> 0` admitted it. A
+          // clipper keeps the plain half-line rule: it cannot scroll, so a
+          // line taller than it is never read in full.
           for (const q of boxes) {
             if (clipsY && q.height > 0) {
               const seen = scrollsY
                 ? reach(shift.yLo, shift.yHi, q.top, q.bottom, { lo: clip.top, hi: clip.bottom })
                 : Math.min(q.bottom, clip.bottom) - Math.max(q.top, clip.top);
-              if (scrollsY ? seen <= 0 : seen / q.height < 0.5) return false;
+              if (!readable(seen, q.height, scrollsY ? clip.bottom - clip.top : Infinity)) return false;
             }
             if (clipsX && q.width > 0) {
               const seen = scrollsX
                 ? reach(shift.xLo, shift.xHi, q.left, q.right, { lo: clip.left, hi: clip.right })
                 : Math.min(q.right, clip.right) - Math.max(q.left, clip.left);
-              if (scrollsX ? seen <= 0 : seen / q.width < 0.5) return false;
+              if (!readable(seen, q.width, scrollsX ? clip.right - clip.left : Infinity)) return false;
             }
           }
           if (scrollsY || scrollsX) {
@@ -997,14 +1026,22 @@ export function visibilityHelpers() {
             if (
               clipsY &&
               q.height > 0 &&
-              reach(innerShift.yLo, innerShift.yHi, q.top, q.bottom, { lo: want.top, hi: want.bottom }) <= 0
+              !readable(
+                reach(innerShift.yLo, innerShift.yHi, q.top, q.bottom, { lo: want.top, hi: want.bottom }),
+                q.height,
+                want.bottom - want.top,
+              )
             ) {
               return false;
             }
             if (
               clipsX &&
               q.width > 0 &&
-              reach(innerShift.xLo, innerShift.xHi, q.left, q.right, { lo: want.left, hi: want.right }) <= 0
+              !readable(
+                reach(innerShift.xLo, innerShift.xHi, q.left, q.right, { lo: want.left, hi: want.right }),
+                q.width,
+                want.right - want.left,
+              )
             ) {
               return false;
             }

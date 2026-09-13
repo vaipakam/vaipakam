@@ -131,7 +131,16 @@ region may extend past its edge, measured in the check's own browser so
 that copy painted in that margin is read as shown, and the half-shown
 rule for a nested region is now asked at the position chosen for each
 line, so a line reachable only through a mostly hidden region is
-rejected as it should be.
+rejected as it should be. A twelfth round tightened the scrolling
+region's own test from "can any of it be reached" to "can enough of it
+be read": the best position a region can reach must show at least half
+of the line, or the whole opening when the line is taller than it, so a
+row leaving a sliver in a region that can only carry it further away is
+rejected. An ancestor that draws no box of its own is no longer mistaken
+for the reference of an absolutely positioned row, and two more
+declarations of intent to change an element's containing-block
+properties, measured in the check's own browser, are recognised as
+establishing that reference in advance.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

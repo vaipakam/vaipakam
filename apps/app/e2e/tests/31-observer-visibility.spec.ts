@@ -2668,3 +2668,96 @@ test('nested fixed chains, out-of-flow wrappers, clip margins, per-line slit vis
   expect(result.nestedFixedRowBottom).toBe(-580);
   expect(result.nestedFixedRow, 'a row inside a fixed card captured by a fixed transformed card').toBe(false);
 });
+
+// #2157 round 12 — three corrections inside the stated scope:
+//
+//   - at a scroller the best reachable overlap must be READABLE — half of
+//     the line or of the opening, whichever is smaller — not merely
+//     positive, so a row with a sliver inside a scrollport that can only
+//     carry it further out is condemned;
+//   - an element that generates no box (`display: contents`) is neither a
+//     containing block nor a carrier, whatever its `position`;
+//   - `will-change: contain` (with `translate` / `rotate` / `scale` and
+//     `offset-path`) establishes a containing block in advance, measured.
+test('readable overlap at scrollers, boxless positioned ancestors, will-change: contain', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: an absolute row under a display: contents "relative" ancestor
+         inside a scroller; its real containing block is the box above -->
+    <div style="position:relative; width:300px; height:40px">
+      <div id="contentsScroller" style="height:40px; overflow:auto">
+        <div id="contentsCB" style="display:contents; position:relative">
+          <p id="contentsRow" style="position:absolute; top:-600px; height:20px">positioned past a boxless ancestor</p>
+        </div>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- 40..80: a static scroller made a containing block by will-change -->
+    <div id="wcContain" style="will-change:contain; width:300px; height:40px; overflow:auto">
+      <p id="wcRow" style="position:absolute; top:0; height:20px">anchored by will-change: contain</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a scrollport with a relatively shifted row showing a few pixels of
+         its glyphs at the minimum offset; scrolling only carries it out -->
+    <div id="sliverBox" style="position:absolute; top:200px; left:0; width:300px; height:40px; overflow:auto">
+      <p id="sliverRow" style="position:relative; top:-15px; height:20px">a sliver at the top</p>
+      <p style="height:500px">filler</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('contentsScroller').scrollTop = 600;
+    byId('wcContain').scrollTop = 300;
+    const glyph = (() => {
+      const r = document.createRange();
+      r.selectNodeContents(byId('sliverRow'));
+      const rects = Array.from(r.getClientRects()).filter((q) => q.height > 0);
+      return { top: Math.min(...rects.map((q) => q.top)), bottom: Math.max(...rects.map((q) => q.bottom)) };
+    })();
+    return {
+      contentsDisplay: getComputedStyle(byId('contentsCB')).display,
+      contentsPosition: getComputedStyle(byId('contentsCB')).position,
+      contentsRowBottom: byId('contentsRow').getBoundingClientRect().bottom,
+      contentsSpan: byId('contentsScroller').scrollHeight - byId('contentsScroller').clientHeight,
+      contentsRow: visible(byId('contentsRow')),
+      wcComputed: getComputedStyle(byId('wcContain')).willChange,
+      wcRowTop: byId('wcRow').getBoundingClientRect().top,
+      wcRow: visible(byId('wcRow')),
+      sliverBoxTop: byId('sliverBox').getBoundingClientRect().top,
+      sliverGlyphTop: glyph.top,
+      sliverGlyphBottom: glyph.bottom,
+      sliverSpan: byId('sliverBox').scrollHeight - byId('sliverBox').clientHeight,
+      sliverScrollTop: byId('sliverBox').scrollTop,
+      sliverRow: visible(byId('sliverRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The boxless ancestor is not the containing block: the row sits against
+  // the relative box above the scroller, whose 960px of credit never moves
+  // it. Parked, condemned — it was admitted while the walk read `relative`.
+  expect(result.contentsDisplay).toBe('contents');
+  expect(result.contentsPosition).toBe('relative');
+  expect(result.contentsRowBottom).toBe(-580);
+  expect(result.contentsSpan).toBe(960);
+  expect(result.contentsRow, 'an absolute row under a display: contents ancestor').toBe(false);
+  // Measured: the absolute row is anchored to the will-change scroller (at
+  // -260 after a scroll of 300 from a box at 40), so the scroller carries
+  // it and its credit admits.
+  expect(result.wcComputed).toBe('contain');
+  expect(result.wcRowTop).toBe(-260);
+  expect(result.wcRow, 'an absolute row anchored by will-change: contain').toBe(true);
+  // At the minimum offset the glyphs protrude a few pixels into the
+  // scrollport; every other offset carries them further out. Less than
+  // half of the line is ever shown.
+  expect(result.sliverScrollTop).toBe(0);
+  expect(result.sliverSpan).toBeGreaterThan(0);
+  expect(result.sliverGlyphTop).toBeLessThan(result.sliverBoxTop);
+  expect(result.sliverGlyphBottom - result.sliverBoxTop).toBeGreaterThan(0);
+  expect(result.sliverGlyphBottom - result.sliverBoxTop).toBeLessThan(
+    (result.sliverGlyphBottom - result.sliverGlyphTop) / 2,
+  );
+  expect(result.sliverRow, 'a row whose best reachable overlap is a sliver').toBe(false);
+});
