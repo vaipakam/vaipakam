@@ -653,11 +653,16 @@ file that satisfies both. A TOML config is refused with an instruction rather
 than parsed. Directories are skipped by exact path where the name is ambiguous
 (`contracts/lib` is vendored, `packages/lib` is ours) and by basename only for
 unambiguously generated ones. Two things it does not cover are stated in the script's
-header: a config checked in under a non-`wrangler*` name, and — the one real
-REDUCTION rather than an inherited gap — a config **generated or rewritten at
-deploy time**, which the retired scanner refused by falling back to judging the
-command when it could not read the selected file. Do not rebuild the command
-scanner; if that gap ever has to close, it needs an owner decision first.
+header, and **BOTH are reductions rather than inherited gaps** — the scanner
+covered each, and review established both by naming its deleted fixtures. One
+is a config **generated or rewritten at deploy time**, which the scanner
+refused by falling back to judging the command when it could not read the
+selected file. The other is a checked-in config named **outside the
+`wrangler*` convention**, which the scanner read because it followed whatever
+path the command selected. The second is narrower — no config in this repo is
+named that way — but it is a removal, and an earlier revision wrongly called it
+merely the price of not classifying files. Do not rebuild the command scanner;
+if either gap has to close, it needs an owner decision first.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.

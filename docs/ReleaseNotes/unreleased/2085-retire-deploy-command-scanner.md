@@ -23,21 +23,36 @@ spelled in a different case, a helper saved with an upper-case extension, a
 semicolon after an assignment. Four of those were false reports — they redden a
 tree that is correct — and none of the fourteen named a real file in this
 repository. The check, its fixtures and its CI job come to about 23,800 lines,
-and deleting them costs **two** guarantees, of which **one is kept and one is
-not**. Both are named here rather than only in the detail below, because this
-paragraph is what an approver reads.
+and deleting them costs **three** guarantees, of which **one is kept and two
+are not**. All three are named here rather than only in the detail below,
+because this paragraph is what an approver reads — and two successive review
+rounds found this summary understating the cost, first by claiming none and
+then by claiming one.
 
-*Kept:* a deployment can be pointed at a different checked-in configuration
-file, and the canonical one's declaration is then not what gets loaded. Review
-caught the first draft claiming the retirement cost nothing at all; that case
-is real, it is the one the retired check demonstrably handled, and it is
-preserved — see below for the two attempts it took.
+*Kept:* a deployment pointed at a different checked-in configuration file whose
+name follows the tool's own convention. The canonical file's declaration is not
+what gets loaded in that case, and the requirement now applies to every such
+configuration, so the coverage survives.
 
-*Lost:* a configuration **generated or rewritten at deploy time**. The retired
-check refused those, not by reading them — it could not — but by falling back
-to judging the command when it could not trust the file it named. A check that
-looks only at files has no such fallback. This is the reduction that wants a
-deliberate acceptance, and it is set out in full further down.
+*Lost — first:* a configuration **generated or rewritten at deploy time**. The
+retired check refused those, not by reading them, but by falling back to
+judging the command when it could not trust the file it named. A check that
+looks only at files has no such fallback.
+
+*Lost — second:* a checked-in configuration named **outside the tool's
+convention**. The retired check read whatever path the command selected,
+whatever it was called; the replacement finds configurations by that
+convention, so a file named anything else is invisible to it. An earlier draft
+of this note called that "the price of not classifying files by their
+contents", which is true of why it cannot be recovered cheaply but wrong about
+what it is: the old check did cover it, so it is a removal and not a limitation
+the change inherited.
+
+Both losses are real reductions and both want a deliberate acceptance. The
+second is narrower — it needs someone to check in a deployable configuration
+under a name that does not begin the way every configuration in this repository
+begins — but narrower is not the same as absent, and an approver should be told
+the count rather than the adjective.
 
 Keeping it took two attempts, and the second is the more useful lesson. The
 first kept it by deciding which configurations mattered — those naming a
@@ -97,17 +112,19 @@ exist in the tree when the check runs because it is generated, and a
 configuration checked in under a name that does not follow the tool's
 convention.
 
-Only the first of those is inherited. **The generated-configuration case is
-coverage this change removes**, and an earlier draft of these notes said the
-opposite — review disproved it by naming three of the retired check's own
-fixtures. It did not read a generated file either; it fell back to judging the
-command on its own terms and refused it, which is a defence a file scan
-structurally cannot offer. That is a real reduction, it is the one thing here
-that genuinely needs the owner's acceptance rather than a note, and saying so
-is the point of writing these down at all. The third — a configuration named
-outside the tool's convention — is the price of not classifying files by their
-contents, which is what produced the false reports in the first place: one
-accepted miss, named, in place of six edges.
+Only the first of those is inherited. The other two are removals, and each was
+established by review naming the retired check's own deleted fixtures rather
+than by argument: for the generated case, three of them; for the
+non-conventionally-named case, one that seeded exactly such a file and asserted
+the old check refused the deployment that selected it.
+
+Why the second cannot simply be recovered: finding configurations by anything
+other than their name means classifying files by their contents, and that is
+what produced four false reports on a correct tree earlier in this very change.
+The convention is therefore stated as a contributor rule — a deployment
+configuration is named the way the tool names them — and the residual exposure
+is one accepted miss, named, in place of six edges. That is a reasonable trade
+and it is still a reduction; both things are true and the note now says both.
 
 This is the third and fourth instance of one pattern, and it is recorded as
 such in the contributor handbook alongside the others: when successive review

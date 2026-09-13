@@ -71,6 +71,12 @@
  *     reported, which is a defence a file scan structurally cannot offer. So
  *     this one wants the owner's acceptance rather than a note.
  *   - A checked-in wrangler config named outside the `wrangler*` convention.
+ *     ALSO A REMOVAL rather than an inherited gap (#2171 r8): the retired
+ *     scanner read whatever path the command selected, and its deleted fixture
+ *     `a config selected through an argv array is the one consulted` seeded
+ *     `apps/agent/unsafe.jsonc` and asserted the deploy was refused. Narrower
+ *     than the generated case — it needs someone to check in a deployable
+ *     config under a name no config here uses — but narrower is not absent.
  *     See THE ONE MISS in the note below for why recognising it would cost
  *     false reports.
  *
@@ -206,7 +212,9 @@ const problems = [];
  * the others already accept — a deploy can no longer REMOVE a var, which
  * becomes a deliberate dashboard action.
  *
- * THE ONE MISS, and it is one rather than six: a wrangler config checked in
+ * THE ONE REMAINING MISS OF THIS RULE — one rather than six, though it is a
+ * REMOVAL and not a limitation the change inherited; see the accepted list
+ * above. A wrangler config checked in
  * under a name that does not begin `wrangler`. `--config` accepts any path,
  * so such a file is reachable and this check will not see it. Recognising it
  * would mean classifying arbitrary JSON by its contents, which is where the
