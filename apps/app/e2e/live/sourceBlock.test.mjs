@@ -20,6 +20,7 @@ import {
   isAnchored,
   isBoundedRegion,
   markableStatementsOf,
+  UNKNOWN_BOUNDS,
   markedStatement,
   sliceCallsIn,
   statementFrom,
@@ -386,6 +387,10 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // many characters that landmark happens to sit at, which is a fixed
   // window wearing an anchor's clothes.
   const countsCharacters = (src, call) => {
+    // Bounds this cannot read are not absent bounds (round 25). Zero
+    // arguments on a bounded receiver is a legitimate slice-to-end;
+    // an unreadable argument list is a window nobody can see.
+    if (call.args === UNKNOWN_BOUNDS) return true;
     // A MISSING end is not an anchored end (round 7): the region runs to
     // the end of the text, so a rule over it can be satisfied by matching
     // anything later. True of `substr` too, whose one-argument form takes
@@ -1219,6 +1224,37 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(() =>
       blockFrom(' // if (target) {\nif (ready) { work(); }\n', ' // if (target) {'),
     ).toThrow(/renamed or removed/);
+  });
+
+  // ROUND 25 — four distinct, three of them the collector's argument
+  // and receiver resolution.
+  it('refuses the round-25 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        "bind's PRESET bounds, which are the ones consumed",
+        "const r = String.prototype.slice.bind(s, start, start + 320)(s.indexOf('x'), s.indexOf('y'));",
+      ],
+      [
+        'apply bounds handed over through a name, on a bounded receiver',
+        "import { blockFrom } from './sourceBlock.mjs';\nconst block = blockFrom(s, 'if (x) {');\n" +
+          'const args = [start, start + 320];\nconst r = String.prototype.slice.apply(block, args);',
+      ],
+      [
+        'a truncator held in an alias',
+        'const cut = String.prototype.slice;\nconst r = cut.call(s, start, start + 320);',
+      ],
+      [
+        'a structural helper from a same-named module in another directory',
+        "import { raw as blockFrom } from './fixtures/sourceBlock.mjs';\n" +
+          "const b = blockFrom(s, 'if (x) {');\nconst r = b.slice(start);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
   });
 
   // ROUND 8 — the list kept shrinking in kind: these are the remaining

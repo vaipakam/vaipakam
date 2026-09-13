@@ -413,7 +413,11 @@ export function sliceCallsIn(src) {
             method,
             line: lineOf(src, n.start),
             receiver: c.arguments[0] ? src.slice(c.arguments[0].start, c.arguments[0].end) : '',
-            args: effective(n.arguments),
+            // `bind`'s PRESET arguments come first and are what a
+            // two-argument truncator actually consumes (round 25):
+            // `slice.bind(src, start, start + 320)(at('x'), at('y'))`
+            // truncates at the preset window and ignores the rest.
+            args: effective([...c.arguments.slice(1), ...n.arguments]),
             text: src.slice(n.start, n.end),
             node: n,
             receiverNode: c.arguments[0] ?? null,
@@ -517,7 +521,7 @@ const BORROWERS = new Set(['call', 'apply']);
  * exemption marker asserting that correct code counts characters.
  */
 function effective(args) {
-  return args.slice(0, 2);
+  return args === UNKNOWN_BOUNDS ? UNKNOWN_BOUNDS : args.slice(0, 2);
 }
 
 function borrowedArgs(via, args) {
@@ -526,12 +530,22 @@ function borrowedArgs(via, args) {
   return arrayElements(rest[0]);
 }
 
-/** The statically readable elements of an argument ARRAY, or none. A
- *  spread or a hole makes the bounds unknown, and unknown refuses. */
+/** The statically readable elements of an argument ARRAY, or UNKNOWN.
+ *
+ *  UNKNOWN is not the empty list (round 25). Zero arguments means "take
+ *  the rest", which on an already-bounded receiver is legitimate — so
+ *  collapsing an unreadable list to `[]` had
+ *  `String.prototype.slice.apply(block, args)` read as a deliberate
+ *  slice-to-end while the runtime used a fixed window. */
 function arrayElements(node) {
-  if (!node || node.type !== 'ArrayExpression') return [];
-  return node.elements.some((e) => !e || e.type === 'SpreadElement') ? [] : node.elements;
+  if (!node || node.type !== 'ArrayExpression') return UNKNOWN_BOUNDS;
+  return node.elements.some((e) => !e || e.type === 'SpreadElement')
+    ? UNKNOWN_BOUNDS
+    : node.elements;
 }
+
+const UNKNOWN_BOUNDS = Symbol('bounds this cannot read');
+export { UNKNOWN_BOUNDS };
 
 /** The truncator a `Reflect.apply(fn, recv, args)` is borrowing, or null.
  *  Takes the whole call: the borrowed function is its FIRST ARGUMENT,
@@ -550,7 +564,17 @@ function reflectApplyTruncator(call) {
 function borrowedTruncator(src, callee, only) {
   const via = memberName(callee);
   if (only ? via !== only : !BORROWERS.has(via)) return null;
-  const inner = callee.object;
+  let inner = callee.object;
+  // `const cut = String.prototype.slice; cut.call(src, …)` — the borrowed
+  // function through a name (round 25). Resolve it, the way every other
+  // rule here resolves a name, rather than giving up and letting the
+  // direct path see only `call`.
+  if (inner?.type === 'Identifier') {
+    const bound = bindingOf(src, inner);
+    if (bound.found && bound.init && !writeReaches(src, bound.writes, inner.start)) {
+      inner = bound.init;
+    }
+  }
   if (!inner || inner.type !== 'MemberExpression') return null;
   const method = memberName(inner);
   // An UNREADABLE inner name is inspected, not dropped (round 19). The
@@ -1309,7 +1333,12 @@ function importedFromThisModule(src, node) {
  * segment rather than on the tail of the string.
  */
 function isThisModule(specifier) {
-  return specifier.split('/').pop() === 'sourceBlock.mjs';
+  // The CANONICAL sibling specifier, not any path ending that way
+  // (round 25). `./fixtures/sourceBlock.mjs` shares the basename and can
+  // return raw source; every real consumer of this helper sits beside it
+  // and imports it as './sourceBlock.mjs'. Matching the whole specifier
+  // needs no file-path plumbing and admits nothing else.
+  return specifier === './sourceBlock.mjs';
 }
 
 /** Whether `node` is a bound that may end a source region. */
