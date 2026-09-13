@@ -346,6 +346,27 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshRebaseRequiresActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {

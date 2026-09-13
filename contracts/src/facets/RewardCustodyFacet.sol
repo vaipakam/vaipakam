@@ -200,10 +200,21 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         without it the chain would sit at `paid = P, received = 0`,
      *         negative headroom, swallowing every later delivery until
      *         funding exceeded `P`. A MIRROR's received side is the messenger's
-     *         to write and is left alone. `Unconfigured` and `Detached` never
-     *         read this ledger (the bound is `max` and `0` respectively), so
-     *         on those roles the call is inert beyond consuming the guards —
-     *         which is exactly what a fresh deploy uses it for.
+     *         to write and is left alone.
+     *
+     *         On an INACTIVE role (`Unconfigured`, `Detached`) the call is
+     *         accepted only when there is nothing to import AND nothing
+     *         already on the paid side (`total == 0 && paid == 0`): that is
+     *         the fresh-deploy case, which consumes both guards so neither
+     *         migration writer can ever run on a chain with no history.
+     *         Anything else on an inactive role is REFUSED (Codex #2158 r1
+     *         P2): the role decides whether the received side is rewritten,
+     *         and a one-shot that ran before the role was known could raise
+     *         `paid` without its baseline and then close the door — a chain
+     *         later configured canonical would start in deficit with no way
+     *         to install `received = paid`. A detached chain carrying paid
+     *         history therefore keeps its guard OPEN until it is re-attached
+     *         and the rebase runs under the active role.
      *
      *         Consumes {LibVaipakam.Storage.armedFreshPaidSeeded} as well as
      *         its own guard: if the P1-b seeder never ran, it would otherwise
@@ -230,6 +241,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
         uint256 paidBefore = s.rewardBudgetArmedFreshPaid;
         uint256 receivedBefore = s.rewardBudgetArmedFreshReceived;
+        bool activeRole = role == LibVaipakam.RewardRole.Canonical
+            || role == LibVaipakam.RewardRole.Mirror;
+        if (!activeRole && (total != 0 || paidBefore != 0)) {
+            revert IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole(
+                uint8(role), total, paidBefore
+            );
+        }
         uint256 paidAfter = total > paidBefore ? total : paidBefore;
 
         s.rewardBudgetArmedFreshPaid = paidAfter;

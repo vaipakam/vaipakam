@@ -147,6 +147,14 @@ contract RewardCustodyFacetTest is SetupTest {
         _rep().setIsCanonicalRewardChain(false);
     }
 
+    /// @dev A chain that WAS a mirror and was detached: `rewardRoleConfigured`
+    ///      is set, `baseChainId` is zero.
+    function _becomeDetached() internal {
+        _becomeMirror();
+        _rep().setBaseChainId(0);
+        assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Detached));
+    }
+
     // ─── 1. The holder itself ───────────────────────────────────────────────
 
     function test_Holder_ConstructorRefusesZeroDiamond() public {
@@ -510,6 +518,75 @@ contract RewardCustodyFacetTest is SetupTest {
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
         assertEq(paid, 0);
         assertEq(remaining, type(uint256).max, "Unconfigured never reads this ledger");
+    }
+
+    /// @dev Codex #2158 r1 P2 — an inactive role may not import history:
+    ///      the role decides whether the received baseline is installed, so
+    ///      a one-shot that ran before the role was known would close the
+    ///      door on a deficit.
+    function test_Rebase_Unconfigured_RefusesANonzeroTotal() public {
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
+                uint8(LibVaipakam.RewardRole.Unconfigured),
+                5 ether,
+                0
+            )
+        );
+        _custody().rebaseArmedFreshPaid(5 ether);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
+        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
+    }
+
+    function test_Rebase_Unconfigured_RefusesToCloseOverAnExistingPaidCounter() public {
+        // A seeded-but-unconfigured chain: consuming the guard with a zero
+        // total would leave the seeded paid figure without its baseline.
+        _rep().seedArmedFreshPaid(300 ether);
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
+                uint8(LibVaipakam.RewardRole.Unconfigured),
+                0,
+                300 ether
+            )
+        );
+        _custody().rebaseArmedFreshPaid(0);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
+    }
+
+    function test_Rebase_Detached_HistoryFreeChainConsumesGuards() public {
+        _becomeDetached();
+        _pause();
+        _custody().rebaseArmedFreshPaid(0);
+        assertTrue(_custody().armedFreshPaidRebased());
+        assertTrue(_rep().armedFreshPaidSeeded());
+    }
+
+    function test_Rebase_Detached_WithPaidHistoryKeepsTheGuardOpen() public {
+        // A detached mirror carrying history: the rebase waits for the
+        // re-attachment ceremony, where the active role decides the baseline.
+        _becomeDetached();
+        _mut().setArmedFreshLedgerRaw(0, 500 ether);
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
+                uint8(LibVaipakam.RewardRole.Detached),
+                0,
+                500 ether
+            )
+        );
+        _custody().rebaseArmedFreshPaid(0);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open for re-attachment");
+
+        // Re-attached as a mirror, the same call now runs.
+        _becomeMirror();
+        _custody().rebaseArmedFreshPaid(700 ether);
+        (, uint256 paid) = _custody().armedFreshLedger();
+        assertEq(paid, 700 ether);
+        assertTrue(_custody().armedFreshPaidRebased());
     }
 
     // ─── 5. Read surface ────────────────────────────────────────────────────

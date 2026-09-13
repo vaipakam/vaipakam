@@ -87,6 +87,7 @@ import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver, VPFI_RETURN_RECEIVER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnReceiver.sol";
@@ -949,6 +950,72 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 console.log("role-backfill: recorded Detached (was pre-field Unconfigured)");
             } else {
                 console.log("role-backfill: live role matches declaration:", expected);
+            }
+        }
+
+        // ─── #1566 slice 4 PR A (Codex #2158 r1 P1) — paid-side REBASE ──
+        //
+        // Closure 2 (#2151) widened what the paid side charges to every
+        // vintage, so a pre-existing MIRROR with ordinary-schedule payout or
+        // absorption history reads UNDER-counted after this refresh: the
+        // delivered backing those payouts already consumed shows as
+        // available again. The refresh therefore runs the one-shot rebase
+        // HERE, paused, after the role backfill (the role decides whether
+        // the received side is rewritten) and before service resumes —
+        // the same refuse-to-default posture as the P1-b seed above.
+        //
+        //   ARMED_FRESH_PAID_TOTAL=<wei>   the reconstructed ABSOLUTE total:
+        //       the deduplicated sum of every genuine historical fresh
+        //       outflow (payouts, expiry/forfeit absorptions, the fresh
+        //       portions of non-recovery remittance and compensation
+        //       dispatches; recovery redispatches excluded), with any
+        //       existing counter or retirement watermark as a FLOOR, not a
+        //       term — the call applies `max` itself.
+        //   ARMED_FRESH_REBASE_NO_HISTORY=true   there is nothing to import.
+        //
+        // The facet refuses a nonzero import — or any import over a nonzero
+        // paid counter — on an INACTIVE role (Unconfigured / Detached), so a
+        // detached chain with history keeps its guard open for the
+        // re-attachment ceremony; that refusal is reported and the refresh
+        // continues, because nothing spends on a detached chain. Every
+        // other failure aborts while still paused.
+        if (RewardCustodyFacet(diamond).armedFreshPaidRebased()) {
+            console.log("slice-4: armed-fresh paid side already rebased - skipped");
+        } else {
+            uint256 total = vm.envOr("ARMED_FRESH_PAID_TOTAL", type(uint256).max);
+            bool ackNoHistory = vm.envOr("ARMED_FRESH_REBASE_NO_HISTORY", false);
+            require(
+                total != type(uint256).max || ackNoHistory,
+                "slice-4: set ARMED_FRESH_PAID_TOTAL (the reconstructed absolute "
+                "fresh-paid total, every vintage) or ARMED_FRESH_REBASE_NO_HISTORY=true "
+                "to declare there is none. Refusing to default an irreversible "
+                "accounting migration to zero."
+            );
+            if (total == type(uint256).max) total = 0;
+
+            try RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total) {
+                console.log("slice-4: rebased armed-fresh paid side to total:", total);
+            } catch (bytes memory err) {
+                bytes4 sel = err.length >= 4 ? bytes4(err) : bytes4(0);
+                if (sel == IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector) {
+                    console.log("slice-4: armed-fresh paid side already rebased - skipped");
+                } else if (sel == IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector) {
+                    require(
+                        total == 0,
+                        "slice-4: a nonzero ARMED_FRESH_PAID_TOTAL was given for a chain whose "
+                        "reward role is inactive (Unconfigured/Detached) - correct the "
+                        "declaration; the rebase runs under the active role"
+                    );
+                    console.log(
+                        "slice-4: inactive reward role with paid history - rebase DEFERRED; "
+                        "the guard stays open for the re-attachment ceremony"
+                    );
+                } else {
+                    revert(
+                        "slice-4: rebase failed for a reason other than a replay or an "
+                        "inactive-role deferral - aborting while paused"
+                    );
+                }
             }
         }
 

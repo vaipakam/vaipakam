@@ -32,4 +32,13 @@ rather than negative headroom. It consumes the older additive seed as well as
 its own guard, so a stale seed can never add historical value on top of an
 absolute total. A fresh deployment consumes both guards at deploy, exactly as
 the seed already was, so neither migration writer can run on a chain with no
-history to import. Refs #1566, #1349, #1956.
+history to import. The in-place facet refresh runs the rebase itself while the
+Diamond is still paused, after the reward-role backfill and before service
+resumes, and refuses to default the figure: the operator states the
+reconstructed total or declares there is none. On a chain whose reward role is
+inactive the rebase accepts only a history-free chain; a detached chain
+carrying paid history keeps its guard open until it is re-attached, so the
+baseline is never installed under the wrong role. Replacing a holder is run
+through its own script, which rewrites the deployment record's holder address
+in the same run so no later tool reads the emptied previous address as
+custody. Refs #1566, #1349, #1956.

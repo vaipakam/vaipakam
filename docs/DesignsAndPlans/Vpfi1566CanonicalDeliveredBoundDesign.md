@@ -5904,6 +5904,23 @@ apparatus.
 payout, gate or funding path changes behaviour, and nothing can put value
 into the holder yet.**
 
+> **LANDED — PR #2158.** `RewardCustodyHolder` (non-upgradeable, immutable
+> `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (one-shot
+> bind; paused replacement that refuses a pre-funded successor and verifies
+> the successor holds exactly what was released; `rebaseArmedFreshPaid`;
+> the ledger read surface incl. the raw received/paid pair), the
+> `RewardCustodyRow` enum and three appended storage fields. Two things the
+> review added to this plan: the in-place refresh runs the rebase itself,
+> paused, after the role backfill and before service resumes
+> (`ARMED_FRESH_PAID_TOTAL` or `ARMED_FRESH_REBASE_NO_HISTORY=true`, the
+> seed's refuse-to-default posture), and the rebase refuses a nonzero import
+> — or any import over a nonzero paid counter — on an INACTIVE role, so a
+> detached chain with history keeps its guard open for the re-attachment
+> ceremony rather than closing the door on a deficit. Replacement is run
+> through `ReplaceRewardCustodyHolder.s.sol`, which rewrites the artifact's
+> holder key in the same run. The row invariants are NOT pinned yet: with
+> no writer in PR A they would be vacuous; they land with PR B's writers.
+
 - The holder contract, its ledger and its lifecycle as above, plus its
   deployment-artifact key and `Deployment` field.
 - `rebaseArmedFreshPaid(total)` — the paid-side importer §5b requires: ADMIN,
