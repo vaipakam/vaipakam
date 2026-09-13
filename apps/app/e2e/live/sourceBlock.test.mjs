@@ -467,6 +467,47 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // ROUND 9 — three findings, all on the collection rule and on `var`.
+  it('refuses the round-9 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['a key that is not an index', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[-1]);"],
+      ['a fractional key', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[1.5]);"],
+      ['a key that is not a number', "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[true]);"],
+      [
+        'an element overwritten after the collection was built',
+        "const ends = [s.indexOf('e')];\nends[0] = start + 320;\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a collection grown after it was built',
+        "const ends = [s.indexOf('e')];\nends.push(start + 320);\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a var re-initialised in a branch',
+        "function g(t, at, on) { var e = t.indexOf('e'); if (on) { var e = at + 320; } return t.slice(at, e); }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // READING a collection or a region does not change it. Counting every
+  // call as a write made every region name look mutated and rejected the
+  // regions this suite actually takes.
+  it('does not treat a read as a write', () => {
+    const code = [
+      "const s = f();",
+      "const start = s.indexOf('a');",
+      "const ends = [s.indexOf('e')];",
+      "ends.indexOf('x');",
+      'const r = s.slice(start, ends[0]);',
+    ].join('\n');
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
   // The other side of the same rules, so they cannot be satisfied by
   // refusing everything.
   it('still accepts the landmark shapes this suite writes', () => {

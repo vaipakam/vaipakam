@@ -181,8 +181,22 @@ others, and parsing had made it worse rather than better — the earlier
 hand-written version would usually have run off the end and complained,
 where the parser hands back a plausible, complete, wrong region.
 
-Putting a removed window back, in any of the thirty-seven disguises
-review has demonstrated, turns the suite red.
+A ninth round found three, down from fourteen, and all three concerned
+the one place the check reads a landmark out of a list. A position in
+that list has to be a whole number counting from the front, since
+anything else picks out nothing at all and the region then runs to the
+end of the text. And a list that is changed after it is built no longer
+says what it said, whether by replacing an entry or adding one — though
+merely reading it changes nothing, and an early version of this treated
+every use as a change and rejected regions the checks legitimately take.
+
+The third was an old kind of name that can be declared twice, where the
+second declaration quietly replaces the first rather than making a new
+one. Resolving it where it is written rather than where it belongs had
+made those look like two separate things.
+
+Putting a removed window back, in any of the forty-one disguises review
+has demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is

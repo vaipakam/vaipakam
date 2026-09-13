@@ -539,15 +539,51 @@ function assignsTo(src, name, found) {
           : n.type === 'ForOfStatement' || n.type === 'ForInStatement'
             ? n.left
             : null;
+    // A later `var` DECLARATOR with an initializer writes the same
+    // function-scoped binding (round 9): `var end = s.indexOf('e'); if (on)
+    // { var end = start + 320; }` re-initialises it rather than declaring
+    // a second one.
+    if (n.type === 'VariableDeclarator') {
+      if (n.kind === undefined && n !== found.decl && n.init && n.id.type === 'Identifier') {
+        if (n.id.name === name && inScopeOf(n) && sameBinding(n)) return true;
+      }
+      return false;
+    }
+    // A collection is only as trustworthy as its elements. Writing one,
+    // or calling a method that could, makes what a selection reads
+    // unknown (round 9) — `ends[0] = start + 320` and `ends.push(…)`
+    // both leave the earlier classification stale.
+    if (n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression') {
+      const root = rootName(n.left);
+      return root === name && inScopeOf(n) && sameBinding(n);
+    }
+    if (
+      n.type === 'CallExpression' &&
+      n.callee.type === 'MemberExpression' &&
+      !n.callee.computed &&
+      MUTATORS.has(n.callee.property.name)
+    ) {
+      return rootName(n.callee) === name && inScopeOf(n) && sameBinding(n);
+    }
     if (!target) return false;
     // Destructuring is a write too — `[end] = [start + 320]` and
     // `({ end } = …)` reach the same binding as `end = …` (round 8).
     const written = writtenNames(target);
     if (!written.has(name)) return false;
-    let inScope = false;
-    for (let p = n; p; p = parents.get(p)) if (p === found.scope) inScope = true;
-    return inScope && sameBinding(n);
+    return inScopeOf(n) && sameBinding(n);
   });
+
+  function inScopeOf(n) {
+    for (let p = n; p; p = parents.get(p)) if (p === found.scope) return true;
+    return false;
+  }
+
+  /** The name a member chain is rooted at — `ends` in `ends[0].x`. */
+  function rootName(node) {
+    let n = node;
+    while (n && n.type === 'MemberExpression') n = n.object;
+    return n && n.type === 'Identifier' ? n.name : null;
+  }
 
   // A write only disqualifies OUR binding. An unrelated nested scope
   // reusing the name writes to its own, and treating that as a write to
@@ -558,6 +594,22 @@ function assignsTo(src, name, found) {
     return here !== null && here.decl === found.decl;
   }
 }
+
+// Methods that CHANGE a collection. Reading one — `indexOf`, `slice`,
+// `length` — leaves it exactly as it was, and counting every call as a
+// write made every region name look mutated, which rejected the regions
+// this suite actually takes.
+const MUTATORS = new Set([
+  'push',
+  'pop',
+  'shift',
+  'unshift',
+  'splice',
+  'sort',
+  'reverse',
+  'fill',
+  'copyWithin',
+]);
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
@@ -838,13 +890,18 @@ function helperKind(src, callee, seen) {
 function selectsElement(node) {
   if (!node.computed) return false;
   const key = node.property;
-  if (key.type === 'Literal' && typeof key.value === 'string') {
-    return /^\d+$/.test(key.value);
-  }
-  if (key.type === 'TemplateLiteral') {
-    return key.expressions.length === 0 && /^\d+$/.test(key.quasis[0].value.cooked);
-  }
-  return true;
+  // A provable, non-negative, whole index. `ends[-1]`, `ends[1.5]` and
+  // `ends[true]` are all `undefined` at runtime, so the region would run
+  // to the end of the text while the bound looked like a selection
+  // (round 9). An expression key cannot be proved and is refused for the
+  // same reason: unknown is not a landmark.
+  const text =
+    key.type === 'Literal' && (typeof key.value === 'number' || typeof key.value === 'string')
+      ? String(key.value)
+      : key.type === 'TemplateLiteral' && key.expressions.length === 0
+        ? key.quasis[0].value.cooked
+        : null;
+  return text !== null && /^\d+$/.test(text);
 }
 
 /**
@@ -893,7 +950,12 @@ function declarationsDirectlyIn(scope) {
           ? [scope.init ?? scope.left].filter(Boolean)
           : [];
   for (const s of statements) {
-    if (s.type === 'VariableDeclaration') {
+    // `var` is NOT collected here — it belongs to the function it hoists
+    // to, and `hoistedVarsIn` is what finds it. Collecting it at the
+    // block made a redeclaration inside a branch look like a second,
+    // separate binding, so the write it performs on the first one went
+    // unseen (round 9).
+    if (s.type === 'VariableDeclaration' && s.kind !== 'var') {
       for (const d of s.declarations) add(d.id, d.init, d);
     } else if (s.type === 'FunctionDeclaration') {
       add(s.id, null, s);
