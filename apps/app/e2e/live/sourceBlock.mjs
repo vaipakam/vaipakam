@@ -108,7 +108,14 @@ function anchorAt(src, anchor, label) {
   if (typeof anchor !== 'string' || anchor === '') {
     throw new Error(`${label} needs a non-empty anchor`);
   }
-  const at = src.indexOf(anchor);
+  // Comments are skipped here for the same reason `between` skips them,
+  // and round 8 is why it had to be BOTH: these suites quote code in
+  // prose constantly, and a header matched inside a comment sent
+  // `blockFrom` through to the first unrelated braced node after it. The
+  // parser makes that worse rather than better — the old brace counter
+  // would usually run off the end and throw, where this returns a
+  // plausible, complete, wrong block.
+  const at = anchorIn(src, anchor, 0);
   if (at === -1) throw new Error(`${anchor} was renamed or removed`);
   return at;
 }
@@ -233,7 +240,7 @@ export function between(src, from, to) {
  * with the language about what a comment is.
  */
 function anchorIn(src, anchor, at) {
-  const { comments } = astOf(src, 'between');
+  const { comments } = astOf(src, 'anchorIn');
   for (let i = src.indexOf(anchor, at); i !== -1; i = src.indexOf(anchor, i + 1)) {
     if (!comments.some((c) => i >= c.start && i < c.end)) return i;
   }
@@ -300,6 +307,22 @@ export function sliceCallsIn(src) {
     if (n.type !== 'CallExpression') continue;
     const c = n.callee;
     if (!c || c.type !== 'MemberExpression') continue;
+    // `String.prototype.slice.call(src, a, b)` is the same operation with
+    // the receiver moved into the arguments (round 8). Recognised, and
+    // the shifted receiver dropped so the bounds line up.
+    const borrowed = borrowedTruncator(src, c);
+    if (borrowed) {
+      out.push({
+        method: borrowed,
+        line: lineOf(src, n.start),
+        receiver: n.arguments[0] ? src.slice(n.arguments[0].start, n.arguments[0].end) : '',
+        args: n.arguments.slice(1),
+        text: src.slice(n.start, n.end),
+        node: n,
+        receiverNode: n.arguments[0] ?? null,
+      });
+      continue;
+    }
     // A computed name may be a string, a no-substitution template, or
     // something this cannot read. The first two resolve; the third is
     // INSPECTED ANYWAY rather than skipped (round 7) — `src[`slice`](…)`
@@ -325,9 +348,27 @@ export function sliceCallsIn(src) {
       // to. A marker keyed to nearby LINES excused a neighbour (#2144
       // round 4); keyed to the statement, it cannot.
       node: n,
+      receiverNode: c.object,
     });
   }
   return out;
+}
+
+/**
+ * The truncator a `.call`/`.apply` is borrowing, or `null`.
+ *
+ * `String.prototype.slice.call(src, start, start + 320)` is an ordinary
+ * way to write the same truncation, and a filter keyed to direct method
+ * calls omitted it entirely — the guard reporting green having never
+ * looked (round 8).
+ */
+function borrowedTruncator(src, callee) {
+  if (callee.computed || (callee.property.name !== 'call' && callee.property.name !== 'apply')) {
+    return null;
+  }
+  const inner = callee.object;
+  if (!inner || inner.type !== 'MemberExpression' || inner.computed) return null;
+  return TRUNCATORS.has(inner.property.name) ? inner.property.name : null;
 }
 
 // Nodes that introduce a binding scope.
@@ -447,40 +488,47 @@ export function markedStatement(src, stmt, marker) {
  * it hoists to rather than the block it is written in.
  */
 export function bindingAt(src, name, at) {
+  const found = resolveBinding(src, name, at);
+  if (!found) return { found: false, init: null, decl: null, reassigned: false };
+  return {
+    found: true,
+    init: found.init,
+    decl: found.decl,
+    reassigned: assignsTo(src, name, found),
+  };
+}
+
+/**
+ * The declaration `name` resolves to where `at` stands, without asking
+ * whether it is later written to.
+ *
+ * Split from `bindingAt` so the write check can resolve each write's OWN
+ * binding without recursing back into itself.
+ */
+function resolveBinding(src, name, at) {
   const { nodes, parents } = astOf(src, 'bindingAt');
   let node = null;
   for (const n of nodes) if (n.start <= at && n.end >= at) node = n;
   for (let scope = node; scope; scope = parents.get(scope)) {
     if (!SCOPES.has(scope.type)) continue;
     for (const decl of declarationsDirectlyIn(scope)) {
-      if (decl.name === name) {
-        return { found: true, init: decl.init, reassigned: assignsTo(src, scope, name) };
-      }
+      if (decl.name === name) return { ...decl, scope };
     }
     if (FUNCTIONS.has(scope.type)) {
       for (const decl of hoistedVarsIn(scope)) {
-        if (decl.name === name) {
-          return { found: true, init: decl.init, reassigned: assignsTo(src, scope, name) };
-        }
+        // A HOISTED `var` is found, and its initializer is NOT trusted
+        // (round 8). `if (x) { var END = s.indexOf('e'); }` used after
+        // the branch is `undefined` when the branch did not run, and the
+        // region then runs to the end of the file. The name exists; what
+        // it holds at this point is unknown.
+        if (decl.name === name) return { name, init: null, decl: decl.decl, scope };
       }
     }
   }
-  return { found: false, init: null, reassigned: false };
+  return null;
 }
 
-/**
- * Whether `name` is WRITTEN TO anywhere inside `scope` — assigned, or
- * stepped by `++`/`--`.
- *
- * A declaration's initializer only says what a name held at the start.
- * Round 7: `let end = s.indexOf('next'); end = start + 320;` had the
- * window inheriting a classification the name no longer deserved.
- * Deciding WHICH write reaches a given use is reaching-definitions
- * analysis, whose every gap is another round of this — so any write at
- * all makes the name unusable as a landmark, and the fix in code is a
- * `const` holding the landmark rather than a marker.
- */
-function assignsTo(src, scope, name) {
+function assignsTo(src, name, found) {
   const { nodes, parents } = astOf(src, 'assignsTo');
   return nodes.some((n) => {
     const target =
@@ -488,11 +536,58 @@ function assignsTo(src, scope, name) {
         ? n.left
         : n.type === 'UpdateExpression'
           ? n.argument
-          : null;
-    if (!target || target.type !== 'Identifier' || target.name !== name) return false;
-    for (let p = n; p; p = parents.get(p)) if (p === scope) return true;
-    return false;
+          : n.type === 'ForOfStatement' || n.type === 'ForInStatement'
+            ? n.left
+            : null;
+    if (!target) return false;
+    // Destructuring is a write too — `[end] = [start + 320]` and
+    // `({ end } = …)` reach the same binding as `end = …` (round 8).
+    const written = writtenNames(target);
+    if (!written.has(name)) return false;
+    let inScope = false;
+    for (let p = n; p; p = parents.get(p)) if (p === found.scope) inScope = true;
+    return inScope && sameBinding(n);
   });
+
+  // A write only disqualifies OUR binding. An unrelated nested scope
+  // reusing the name writes to its own, and treating that as a write to
+  // ours rejected a perfectly immutable landmark (round 8) — the kind of
+  // false positive that gets a guard switched off rather than obeyed.
+  function sameBinding(write) {
+    const here = resolveBinding(src, name, write.start);
+    return here !== null && here.decl === found.decl;
+  }
+}
+
+/** Every identifier a write reaches, through patterns and defaults. */
+function writtenNames(target) {
+  const out = new Set();
+  const visit = (n) => {
+    if (!n || typeof n.type !== 'string') return;
+    switch (n.type) {
+      case 'Identifier':
+        out.add(n.name);
+        return;
+      case 'ArrayPattern':
+        n.elements.forEach(visit);
+        return;
+      case 'ObjectPattern':
+        n.properties.forEach((p) => visit(p.type === 'RestElement' ? p.argument : p.value));
+        return;
+      case 'AssignmentPattern':
+        visit(n.left);
+        return;
+      case 'RestElement':
+        visit(n.argument);
+        return;
+      case 'VariableDeclaration':
+        n.declarations.forEach((d) => visit(d.id));
+        return;
+      default:
+    }
+  };
+  visit(target);
+  return out;
 }
 
 // The calls that FIND something in text. A bound produced by one of
@@ -574,9 +669,13 @@ export function kindOf(src, node, seen = new Set()) {
       if (!node.computed && node.property.name === 'length') {
         return measurable(node.object) ? 'offset' : null;
       }
-      // Selecting from a collection of landmarks. The KEY is never
-      // inspected — it selects rather than contributes — so a numeric
-      // index does not make the bound a count.
+      // Selecting an ELEMENT from a collection of landmarks. The key's
+      // VALUE is still never inspected — it selects rather than
+      // contributes, so a numeric index does not make the bound a count —
+      // but it must be an index rather than a named property: round 8
+      // found `ends['length']`, whose value is the count of landmarks
+      // rather than one of them.
+      if (!selectsElement(node)) return null;
       return kindOf(src, node.object, seen) === 'positions' ? 'position' : null;
     }
 
@@ -632,7 +731,17 @@ export function kindOf(src, node, seen = new Set()) {
 export function isBoundedRegion(src, node, seen = new Set()) {
   if (!node || typeof node.type !== 'string') return false;
   if (node.type === 'CallExpression') {
-    if (node.callee.type === 'Identifier' && REGION_HELPERS.has(node.callee.name)) return true;
+    // Spelled like a structural helper AND not shadowed. A parameter or
+    // local named `blockFrom` may return anything at all, including the
+    // raw file, and trusting the spelling let a one-argument slice run to
+    // the end of it again (round 8). No local binding means the import.
+    if (
+      node.callee.type === 'Identifier' &&
+      REGION_HELPERS.has(node.callee.name) &&
+      !bindingAt(src, node.callee.name, node.callee.start).found
+    ) {
+      return true;
+    }
     // A local helper that returns one — `const branch = () => blockFrom(…)`
     // in `confirmTrial`. Expression bodies only, for the reason
     // `helperKind` gives: a block body needs to prove every path returns,
@@ -719,6 +828,26 @@ function helperKind(src, callee, seen) {
 }
 
 /**
+ * Whether a member access reads an ELEMENT out of a collection rather
+ * than one of its named properties.
+ *
+ * Computed only, and a computed STRING is refused unless it spells an
+ * index: `ends['length']` is written as a subscript and is not one
+ * (round 8). `ends.at(0)` is a call and is handled as a helper, not here.
+ */
+function selectsElement(node) {
+  if (!node.computed) return false;
+  const key = node.property;
+  if (key.type === 'Literal' && typeof key.value === 'string') {
+    return /^\d+$/.test(key.value);
+  }
+  if (key.type === 'TemplateLiteral') {
+    return key.expressions.length === 0 && /^\d+$/.test(key.quasis[0].value.cooked);
+  }
+  return true;
+}
+
+/**
  * Something whose `.length` is a real measurement: a name, or a string
  * written out. `'x'.length` is the width of the landmark `'x'`, which is
  * how "just past it" is written. `({ length: start + 320 }).length` is a
@@ -740,17 +869,19 @@ function isPlainName(node) {
 
 function declarationsDirectlyIn(scope) {
   const out = [];
-  const add = (id, init) => {
-    if (id && id.type === 'Identifier') out.push({ name: id.name, init: init ?? null });
+  const add = (id, init, decl) => {
+    if (id && id.type === 'Identifier') out.push({ name: id.name, init: init ?? null, decl });
   };
   // A DEFAULTED parameter is an AssignmentPattern, and its right-hand
   // side is a binding like any other — `function f(WINDOW = 320)` was
   // invisible until round 5.
+  // A PARAMETER's value comes from the caller, so it is never a landmark
+  // — including one with a landmark-shaped DEFAULT, which a caller may
+  // simply not use (round 8). Recorded by name with nothing known.
   for (const p of scope.params ?? []) {
-    if (p && p.type === 'AssignmentPattern') add(p.left, p.right);
-    else add(p, null);
+    add(p && p.type === 'AssignmentPattern' ? p.left : p, null, p);
   }
-  if (scope.type === 'CatchClause') add(scope.param, null);
+  if (scope.type === 'CatchClause') add(scope.param, null, scope);
   const statements =
     scope.type === 'Program' || scope.type === 'BlockStatement' || scope.type === 'StaticBlock'
       ? (scope.body ?? [])
@@ -763,9 +894,9 @@ function declarationsDirectlyIn(scope) {
           : [];
   for (const s of statements) {
     if (s.type === 'VariableDeclaration') {
-      for (const d of s.declarations) add(d.id, d.init);
+      for (const d of s.declarations) add(d.id, d.init, d);
     } else if (s.type === 'FunctionDeclaration') {
-      add(s.id, null);
+      add(s.id, null, s);
     }
   }
   return out;
@@ -784,7 +915,9 @@ function hoistedVarsIn(fn) {
     if (!top && FUNCTIONS.has(n.type)) return;
     if (n.type === 'VariableDeclaration' && n.kind === 'var') {
       for (const d of n.declarations) {
-        if (d.id && d.id.type === 'Identifier') out.push({ name: d.id.name, init: d.init ?? null });
+        if (d.id && d.id.type === 'Identifier') {
+          out.push({ name: d.id.name, init: d.init ?? null, decl: d });
+        }
       }
     }
     for (const k of Object.keys(n)) {

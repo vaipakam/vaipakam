@@ -155,8 +155,34 @@ about one, so a line declaring more than one name is no longer excusable.
 And a note now has to be a stated reason rather than a mention: the words
 alone, or a sentence saying never to use them, no longer count.
 
-Putting a removed window back, in any of the thirty disguises review has
-demonstrated, turns the suite red.
+An eighth round kept narrowing the same short list, and two of its
+findings were the more valuable kind: places where the check objected to
+correct work. A region that starts at the very beginning of the text was
+being told to apologise for counting characters, when the beginning of a
+text is a place like any other. And a name used as a landmark was being
+rejected because somewhere else entirely, in an unrelated piece of code,
+a different thing of the same name was changed. Both are now right. A
+check that complains about correct work does not get obeyed; it gets
+switched off, and then it protects nothing.
+
+The rest were the remaining ways to look like a landmark without being
+one: a name overwritten by unpacking rather than by a plain assignment, a
+collection's count of landmarks mistaken for one of them, a landmark set
+up inside a branch that may not have run, and a value that looks fixed
+until a caller supplies a different one. Two were ways of writing the
+same truncation that the check simply was not looking at, and one was a
+helper trusted by its name where a locally defined thing of the same name
+could have returned anything.
+
+The oldest habit in this work surfaced once more: a region whose starting
+landmark was matched inside a comment rather than in the code. That had
+been fixed for one kind of boundary three rounds earlier and not for the
+others, and parsing had made it worse rather than better — the earlier
+hand-written version would usually have run off the end and complained,
+where the parser hands back a plausible, complete, wrong region.
+
+Putting a removed window back, in any of the thirty-seven disguises
+review has demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is

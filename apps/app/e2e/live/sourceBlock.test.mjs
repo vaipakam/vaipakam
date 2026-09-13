@@ -16,6 +16,7 @@ import {
   between,
   blockFrom,
   callContaining,
+  bindingAt,
   isAnchored,
   isBoundedRegion,
   markableStatementsOf,
@@ -49,6 +50,26 @@ describe('blockFrom', () => {
     // The `else` arm is a SEPARATE block — the if's own brace closes
     // before it, and callers that want the arm take what follows.
     expect(body).not.toContain('two();');
+  });
+
+  // ROUND 8 — these suites quote code in prose constantly, and a header
+  // matched inside a COMMENT sent the search through to the first
+  // unrelated braced node after it. The parser made that worse rather
+  // than better: the old brace counter would usually run off the end and
+  // throw, where this returns a plausible, complete, wrong block.
+  // `between` had skipped comments since round 5; this had not.
+  it('does not take its header from a comment', () => {
+    const src = [
+      '// the rule is about if (target) { below',
+      'function other() { a(); }',
+      'if (target) {',
+      '  real();',
+      '}',
+    ].join('\n');
+    const body = blockFrom(src, 'if (target) {');
+    expect(body).toContain('real();');
+    expect(body).not.toContain('a();');
+    expect(statementFrom(src, 'function other()')).toContain('a();');
   });
 
   it('throws when the header is gone rather than returning nothing', () => {
@@ -321,25 +342,29 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // many characters that landmark happens to sit at, which is a fixed
   // window wearing an anchor's clothes.
   const countsCharacters = (src, call) => {
-    // A MISSING end is not an anchored end (round 7). `s.slice(at(x))`
-    // runs to the end of the file, so a rule over it can be satisfied by
-    // matching text anywhere later — the too-long half of the defect,
-    // and it was live in `exitOrdering`. `substr` is exempt from this:
-    // its one-argument form takes the rest of the string by design and
-    // its second argument is a LENGTH, not an end.
-    // …unless the receiver is ALREADY a bounded region, in which case
-    // the end is that region's end, bounded by meaning when it was taken.
-    if (
-      call.method !== 'substr' &&
-      call.args.length < 2 &&
-      !isBoundedRegion(src, call.node.callee.object)
-    ) {
-      return true;
-    }
-    return call.args.some(
-      (a, i) => (call.method === 'substr' && i === 1) || !isAnchored(src, a),
-    );
+    // A MISSING end is not an anchored end (round 7): the region runs to
+    // the end of the text, so a rule over it can be satisfied by matching
+    // anything later. True of `substr` too, whose one-argument form takes
+    // the rest of the string (round 8) — the earlier exemption for it was
+    // about its SECOND argument and had no business covering this.
+    // …unless the receiver is ALREADY a bounded region, in which case the
+    // end is that region's end, bounded by meaning when it was taken.
+    if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
+    return call.args.some((a, i) => {
+      // `substr`'s second argument is a LENGTH by definition, however it
+      // is produced.
+      if (call.method === 'substr' && i === 1) return true;
+      // A START may be the literal 0 — the stable beginning of the text,
+      // a position and not a count (round 8). Marking it would claim a
+      // character count that is not happening. Every END, and every other
+      // bound, must be a landmark.
+      if (i === 0 && isStartOfText(a)) return false;
+      return !isAnchored(src, a);
+    });
   };
+
+  const isStartOfText = (node) =>
+    node.type === 'Literal' && (node.value === 0 || node.value === '0');
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
   // Proximity alone excused a neighbour (round 4). Two further corrections
@@ -463,6 +488,64 @@ describe('#2144 — no source region is bounded by a character count', () => {
       const call = sliceCallsIn(code).at(-1);
       expect(countsCharacters(code, call), why).toBe(false);
     }
+  });
+
+  // ROUND 8 — the list kept shrinking in kind: these are the remaining
+  // ways a bound can look like a landmark without being one, plus the two
+  // spellings of a truncation the collector was not seeing.
+  it('refuses the round-8 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a destructuring write to the name',
+        "let e = s.indexOf('x');\n[e] = [start + 320];\nconst r = s.slice(start, e);",
+      ],
+      [
+        "a collection's length rather than an element",
+        "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends['length']);",
+      ],
+      [
+        'a conditional hoisted var',
+        "function g(t, at, on) { if (on) { var E = t.indexOf('e'); } return t.slice(at, E); }",
+      ],
+      [
+        'an overrideable parameter default',
+        "function g(t, e = t.indexOf('e')) { return t.slice(t.indexOf('a'), e); }",
+      ],
+      ['a truncator borrowed through call', 'const r = String.prototype.slice.call(s, start, start + 320);'],
+      ['one-argument substr on raw text', 'const r = s.substr(start);'],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // ROUND 8's two FALSE POSITIVES, which matter as much as the gaps: a
+  // guard that objects to correct code gets switched off rather than
+  // obeyed.
+  it('does not object to correct code', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['the start of the text', "const r = s.slice(0, s.indexOf('end'));"],
+      [
+        'an unrelated nested scope reusing the name',
+        "const e = s.indexOf('x');\nfunction h() { let e; e = 0; return e; }\nconst r = s.slice(start, e);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // ROUND 8 — a structural helper must BE the imported one. A parameter
+  // spelled the same may return the whole file.
+  it('does not trust a shadowed structural helper', () => {
+    const code =
+      "function f(blockFrom, s, start) { const b = blockFrom(s); return b.slice(start); }";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
   // Parameter shapes, which need their own fixtures because the count is
@@ -652,18 +735,21 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(excused(src, sliceCallsIn(src)[0])).toBe(true);
   });
 
-  // ROUND 4's third finding: `var` hoists to the function, so one
-  // declared in an inner block is in scope after it. Resolution still
-  // matters under the inverted rule — it is how a name is recognised as
-  // holding a landmark rather than something unknown.
-  it('resolves a hoisted var declared in an inner block', () => {
+  // ROUND 4 found that `var` hoists to the function, so one declared in
+  // an inner block is in scope after it. ROUND 8 then found the other
+  // half: being in scope is not the same as holding anything. If the
+  // branch did not run, the name is `undefined` and the region runs to
+  // the end of the file — so the name RESOLVES and what it holds is
+  // unknown, which means it is not a landmark.
+  it('finds a hoisted var but does not trust what it holds', () => {
     const src = [
       'function f(s, start, enabled) {',
       "  if (enabled) { var END = s.indexOf('end'); }",
       '  return s.slice(start, END);',
       '}',
     ].join('\n');
-    expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(true);
+    expect(bindingAt(src, 'END', src.indexOf('s.slice')).found).toBe(true);
+    expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(false);
   });
 
   // And the hoist stops at a function boundary, or every `var` anywhere
