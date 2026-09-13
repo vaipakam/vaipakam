@@ -369,6 +369,15 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
  * source text.
  */
 export function callContaining(src, needle, callee = 'console.log(') {
+  // An EMPTY needle identifies nothing, and round 29's every-occurrence
+  // loop cannot even end on one: the empty string is found at every
+  // index and then clamps to the end of the text, so the loop receives
+  // the same position forever and hangs the process. `anchorAt` has
+  // rejected empty anchors since it was written; going direct to
+  // `anchorIn` left this caller without that guard (round 30).
+  if (typeof needle !== 'string' || needle === '') {
+    throw new Error('callContaining needs a non-empty needle');
+  }
   const want = callee.endsWith('(') ? callee.slice(0, -1) : callee;
   const { nodes } = astOf(src, 'callContaining');
   // EVERY occurrence of the needle, not just the first (round 29). The
@@ -462,6 +471,13 @@ export function sliceCallsIn(src) {
       });
       continue;
     }
+    // `Reflect.apply` has ONE reader and it has now answered. Falling
+    // through asks a SECOND reader the same question, and that one sees
+    // an object it cannot resolve — `Reflect` is a global, so it has no
+    // binding to follow — and reports unreadable. A call the dedicated
+    // reader just proved harmless came back as a truncation that way
+    // (round 30). Whoever owns a shape owns its answer.
+    if (isReflectApply(src, c)) continue;
     // `String.prototype.slice.call(src, a, b)` is the same operation with
     // the receiver moved into the arguments (round 8). Recognised, and
     // the shifted receiver dropped so the bounds line up.
@@ -564,14 +580,62 @@ function arrayElements(node) {
 const UNKNOWN_BOUNDS = Symbol('bounds this cannot read');
 export { UNKNOWN_BOUNDS };
 
+/**
+ * A value whose IDENTITY IS VISIBLE in the text it is written as — a
+ * function or class written out, an object, an array, a piece of text.
+ * None of these IS `String.prototype.slice`, so a borrowing through one
+ * truncates nothing and is dropped.
+ *
+ * Everything else stays unknown, and the difference is the point: a
+ * call's return value, a conditional, a parameter COULD hold a
+ * truncator, so refusing them is the round-6 posture. Only a value this
+ * can read off the page is a definite negative.
+ *
+ * Round 29 taught the same lesson on one path and round 30 on the other
+ * — a local arrow behind `Reflect.apply` was being called unreadable,
+ * which made the collector report a truncation that is not there and
+ * then demand an exemption for it. One predicate, both paths, so the
+ * next borrowing form does not get a third answer.
+ */
+const SELF_EVIDENT = new Set([
+  'ArrowFunctionExpression',
+  'FunctionExpression',
+  'ClassExpression',
+  'ObjectExpression',
+  'ArrayExpression',
+  'Literal',
+  'TemplateLiteral',
+  'NewExpression',
+]);
+
+function definiteNonTruncator(node) {
+  return node != null && SELF_EVIDENT.has(node.type);
+}
+
 /** The truncator a `Reflect.apply(fn, recv, args)` is borrowing, or null.
  *  Takes the whole call: the borrowed function is its FIRST ARGUMENT,
  *  where every other borrowing form carries it on the callee. */
+function isReflectApply(src, callee) {
+  return (
+    callee?.type === 'MemberExpression' &&
+    isIntrinsic(src, unwrapChain(callee.object), 'Reflect') &&
+    memberName(callee) === 'apply'
+  );
+}
+
 function reflectApplyTruncator(src, call) {
   const callee = unwrapChain(call.callee);
-  if (!isIntrinsic(src, callee.object, 'Reflect')) return null;
-  if (memberName(callee) !== 'apply') return null;
-  const fn = resolveAlias(src, unwrapChain(call.arguments[0]));
+  if (!isReflectApply(src, callee)) return null;
+  const first = unwrapChain(call.arguments[0]);
+  // No first argument, or one hidden behind a spread, is a call this
+  // cannot read — which is refused, not dropped.
+  if (!first || first.type === 'SpreadElement') return UNREADABLE;
+  const named = first.type === 'Identifier';
+  const fn = resolveAlias(src, first);
+  // UNRESOLVABLE and RESOLVED-TO-SOMETHING-ELSE are different answers
+  // (round 29 on the `.call`/`.apply` path, round 30 here).
+  if (named && fn === null) return UNREADABLE;
+  if (definiteNonTruncator(fn)) return null;
   if (!fn || fn.type !== 'MemberExpression') return UNREADABLE;
   const method = memberName(fn);
   if (method === UNREADABLE) return UNREADABLE;
@@ -631,7 +695,7 @@ function borrowedTruncator(src, callee, only) {
   // DEFINITE non-truncator, and refusing it demanded an exemption for a
   // call that truncates nothing. Only a failed resolution is unknown.
   if (named && inner === null) return UNREADABLE;
-  if (inner && inner.type !== 'MemberExpression') return null;
+  if (definiteNonTruncator(inner)) return null;
   // A BORROWING THIS CANNOT READ IS REFUSED, NOT DROPPED (round 26).
   // Returning null here handed the call to the direct path, which saw
   // only `call`/`apply`, so it left the collector entirely — and every
@@ -1454,6 +1518,19 @@ export function isBoundedRegion(src, node, seen = new Set()) {
       isBoundedRegion(src, node.alternate, new Set(seen))
     );
   }
+  // The same choice written with `||`, `??` or `&&` (round 30).
+  // `blockFrom(…) || between(…)` selects between two bounded regions
+  // exactly as the ternary does, and refusing it pressed the author
+  // toward the character count again. Every operand must qualify,
+  // whichever operator: with `||` and `??` either can be the value, and
+  // a left operand of `&&` that could be the value is falsy, which is
+  // not a region at all.
+  if (node.type === 'LogicalExpression') {
+    return (
+      isBoundedRegion(src, node.left, new Set(seen)) &&
+      isBoundedRegion(src, node.right, new Set(seen))
+    );
+  }
   if (node.type !== 'Identifier') return false;
   const key = `region:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
@@ -1614,6 +1691,45 @@ const NOT_TEXT = new Set([
   'ClassExpression',
 ]);
 
+/**
+ * Whether every use of a name is a PLAIN READ THROUGH IT — `copy.x`,
+ * and never `copy.x = …`, never `delete copy.x`, never handed anywhere
+ * that could keep it.
+ *
+ * This is the round-6 inversion again: the question "could this object's
+ * finder have been replaced" has no closed answer, because anything
+ * holding the object can replace it — an argument to a call, a property
+ * of something returned, a closure. So the ALLOWED uses are enumerated
+ * instead, and a name used any other way is not trusted.
+ */
+function onlyReadThrough(src, node) {
+  const { variableOf, parents } = astOf(src, 'onlyReadThrough');
+  const variable = variableOf.get(node);
+  if (!variable) return false;
+  return variable.references.every((ref) => {
+    const id = ref.identifier;
+    // The declaration's own initialiser is how the name got its value.
+    if (ref.init) return true;
+    if (ref.isWrite()) return false;
+    const member = parents.get(id);
+    // Read THROUGH the name, not read AS a value: `f(copy)` hands the
+    // object to somebody who may do anything with it.
+    if (!member || member.type !== 'MemberExpression' || member.object !== id) return false;
+    const outer = parents.get(member);
+    if (!outer) return false;
+    // The property being read must not be the property being written.
+    if (
+      (outer.type === 'AssignmentExpression' || outer.type === 'AssignmentPattern') &&
+      outer.left === member
+    ) {
+      return false;
+    }
+    if (outer.type === 'UpdateExpression') return false;
+    if (outer.type === 'UnaryExpression' && outer.operator === 'delete') return false;
+    return true;
+  });
+}
+
 function suspectReceiver(src, node, seen) {
   if (!node || node.type !== 'Identifier') return false;
   const key = `recv:${node.name}@${node.start}`;
@@ -1630,7 +1746,16 @@ function suspectReceiver(src, node, seen) {
   // `new String(src)` uses the built-in finder and returns a
   // source-relative position (round 29). Only an UNSHADOWED intrinsic
   // counts — a local `String` is somebody else's function.
-  if (t === 'NewExpression' && isIntrinsic(src, bound.init.callee, 'String')) return false;
+  //
+  // And only a wrapper NOBODY HAS TOUCHED (round 30). A wrapper is an
+  // ordinary mutable object: `copy.indexOf = () => start + 320` replaces
+  // the built-in finder with a character count, and a property write is
+  // not a write to the NAME, so the reassignment check above never sees
+  // it. Rather than chase every way a property might be replaced — an
+  // open set — the uses are enumerated and everything else refused.
+  if (t === 'NewExpression' && isIntrinsic(src, bound.init.callee, 'String')) {
+    return !onlyReadThrough(src, node);
+  }
   if (NOT_TEXT.has(t)) return true;
   return t === 'Identifier' ? suspectReceiver(src, bound.init, seen) : false;
 }

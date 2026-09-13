@@ -1706,6 +1706,51 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(isAnchored(src, sliceCallsIn(src)[0].args[1])).toBe(false);
   });
 
+  // Round 30. Two of these are the guard refusing correct work, one is
+  // the guard trusting a finder somebody replaced, and one is a hang.
+  it('does not refuse the round-30 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an ordinary local function handed to Reflect.apply',
+        'const custom = () => 42;\n' +
+          "const r = s.slice(start, s.indexOf('end'));\nReflect.apply(custom, s, [start, start + 320]);",
+      ],
+      [
+        'a choice between two already-bounded regions written with ||',
+        "import { blockFrom, between } from './sourceBlock.mjs';\n" +
+          "const block = blockFrom(s, 'if (x) {') || between(s, 'a', 'b');\n" +
+          "const r = block.slice(block.indexOf('y'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // A String wrapper is an ordinary mutable object, and replacing its
+  // finder replaces the answer. The write is to a PROPERTY, so the
+  // reassignment check never sees it — the wrapper has to be trusted for
+  // how it is USED, not merely for how it was built.
+  it('refuses a built-in wrapper whose finder has been replaced', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const copy = new String(s);\n' +
+      'copy.indexOf = () => start + 320;\n' +
+      "const r = s.slice(start, copy.indexOf('end'));";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // Round 29 made `callContaining` try every occurrence of its needle.
+  // The empty string occurs at every index and then clamps to the end of
+  // the text, so that loop never advances past it — the call hung the
+  // test process rather than failing it.
+  it('rejects an empty callContaining needle instead of looping forever', () => {
+    expect(() => callContaining('console.log(1);', '')).toThrow(/non-empty needle/);
+  });
+
   // A pair of names defined in terms of each other must not spin. It
   // resolves to nothing, so the bound is not recognised as a landmark
   // and is reported — the safe direction.

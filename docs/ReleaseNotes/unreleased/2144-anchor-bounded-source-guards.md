@@ -421,6 +421,33 @@ neither a block nor a call, so there was nothing to convert them to. That
 missing bound now exists — a region may be taken as the statement it
 belongs to, ending where that statement ends.
 
+The last round is the one that names the shape of the whole effort. Two
+of its findings were, again, the check objecting to correct work — a
+choice between two already-bounded regions was accepted when written one
+way and refused when written another, and an ordinary local function
+handed to the language's reflection helper was reported as a truncation
+it plainly is not. That second one had two readers answering the same
+question about the same call, and the one that did not own the shape gave
+the worse answer; whoever owns a shape now owns its answer.
+
+One finding was the check trusting something it should not have. A
+wrapper around a piece of text uses the built-in search, so it had been
+exempted — but a wrapper is an ordinary object whose search can simply be
+replaced, and replacing it is a change to a property, which no check on
+the NAME can see. The exemption now depends on how the wrapper is used
+rather than on how it was made: read through it and nothing else, or it
+is not trusted.
+
+The last one was a defect this effort introduced one round earlier. A
+search had been widened to consider every occurrence of what it is
+looking for, which was right; on an EMPTY thing to look for, every
+position is an occurrence and the search never moves past the end, so
+the call did not fail — it hung. The helper it grew out of has rejected
+an empty landmark since it was written. This one now does too. It is a
+fair record of the loop: most of what the review found in the late
+rounds was over-strictness, but not all of it, and the one that was not
+would have been a test suite that stops rather than a test that reports.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the
