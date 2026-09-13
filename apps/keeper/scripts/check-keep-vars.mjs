@@ -321,34 +321,36 @@ for (const rel of configs) {
     exempt.push(rel);
     continue;
   }
-  // The list's only remaining job: a Worker that has values to lose should be
-  // in VAR_CARRYING_WORKERS, or its per-Worker mutation fixture never runs.
+  // THE "ADD IT TO VAR_CARRYING_WORKERS" ADVISORY THAT SAT HERE IS DELETED,
+  // and the reason is worth more than the advisory was.
   //
-  // SCOPED TO A CANONICAL CONFIG, and that is load-bearing rather than tidy.
-  // Entries in `VAR_CARRYING_WORKERS` are DIRECTORIES, and the pass below
-  // reads `<entry>/wrangler.jsonc` for each. Deriving the entry from any
-  // config's parent directory therefore produced an instruction that could not
-  // be followed: `configs/wrangler.agent.jsonc` — a perfectly valid alternate
-  // config declaring both `vars` and `keep_vars` — was reported as the Worker
-  // `configs`, and adding `configs` to the list would then fail the later pass
-  // for want of `configs/wrangler.jsonc` (#2171 r6). A false report on correct
-  // input, with a remedy that makes it worse, is the exact failure this whole
-  // change argues against, so the advisory now fires only where its remedy is
-  // guaranteed to work: a config that IS `<dir>/wrangler.json(c)`.
-  const canonical = /^(.+)\/wrangler\.jsonc?$/.exec(rel);
-  if (
-    canonical &&
-    typeof cfg.vars === 'object' &&
-    cfg.vars !== null &&
-    !VAR_CARRYING_WORKERS.includes(canonical[1])
-  ) {
-    problems.push(
-      `${rel} declares \`vars\` but \`${canonical[1]}\` is not in ` +
-        `VAR_CARRYING_WORKERS.\n    The preservation rule already covers it; ` +
-        `what is missing is the per-Worker mutation\n    fixture that proves ` +
-        `the check fails when this config loses the key. Add the directory.`,
-    );
-  }
+  // It never asserted the property this file exists for — the preservation
+  // rule above already covers every config, listed Worker or not. All it did
+  // was suggest adding a newly var-carrying Worker to the list so its
+  // per-Worker MUTATION FIXTURE would run. A convenience about test coverage.
+  //
+  // It cost two consecutive review rounds, both defects introduced by the
+  // previous round's fix, and both of the same shape: the advisory named a
+  // remedy the later pass could not honour. First it derived the Worker from
+  // any config's parent directory, so `configs/wrangler.agent.jsonc` was
+  // reported as the Worker `configs` (#2171 r6). Scoping it to a canonical
+  // config was supposed to close that — the fix was described, in this file
+  // and in the pull request, as having a CLOSURE PROPERTY: its domain matched
+  // the shape its consumer required. That was FALSE. The scoping regex admits
+  // `wrangler.json` as well as `.jsonc`, while the consuming pass is
+  // hard-coded to `.jsonc`, so a Worker using the other accepted extension got
+  // an instruction that ends in ENOENT (#2171 r7).
+  //
+  // Two rounds, two remedies-that-break-something, and a confident claim of
+  // convergence that did not hold. The lesson is not "handle the second
+  // extension": it is that a hint which must stay in step with a separate
+  // pass's file-naming is a duplicate by another name, and duplicates here
+  // have drifted every single time. What is lost is stated plainly rather than
+  // papered over: a NEW var-carrying Worker will be required to declare
+  // `keep_vars` like every other config, but will not automatically get a
+  // per-Worker mutation fixture until someone adds it to the list. The paired
+  // suite still asserts that this list and the suite's copy agree, so the
+  // omission surfaces the moment anyone touches either.
   if (cfg.keep_vars !== true) {
     problems.push(
       `${rel} does not declare \`"keep_vars": true\`.\n    EVERY wrangler ` +

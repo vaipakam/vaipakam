@@ -183,18 +183,25 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
-    it('does not treat an alternate config as a new Worker to be listed', () => {
-      // `configs/wrangler.agent.jsonc` is a perfectly valid alternate config.
-      // Deriving the Worker identity from its parent directory reported the
-      // Worker `configs` and told the reader to add it to
-      // VAR_CARRYING_WORKERS — which the later pass would then fail on, for
-      // want of `configs/wrangler.jsonc` (#2171 r6). A false report on correct
-      // input, with an unfollowable remedy.
-      withSeeded(
-        'configs/wrangler.agent.jsonc',
-        `{"name": "vaipakam-agent", "keep_vars": true, "vars": {"A": "1"}}\n`,
-        (r) => expect(r.ok, 'a valid alternate config was reported as a new Worker').toBe(true),
-      );
+    it('no config is reported merely for being absent from VAR_CARRYING_WORKERS', () => {
+      // The advisory that used to do this is deleted (#2171 r7). It never
+      // asserted the preservation property — it suggested adding a Worker to
+      // the list so its mutation fixture would run — and it produced a false
+      // report in each of two consecutive rounds, both times by naming a
+      // remedy the consuming pass could not honour: first any config's parent
+      // directory, then a canonical path whose extension the consumer does not
+      // accept. Both shapes are asserted here, from the passing side.
+      for (const [rel, body] of [
+        // r6: a valid alternate config, outside any Worker directory.
+        ['configs/wrangler.agent.jsonc', '{"name": "vaipakam-agent", "keep_vars": true, "vars": {"A": "1"}}'],
+        // r7: the OTHER extension `CONFIG_NAME` accepts, which the consuming
+        // pass reads only as `.jsonc`.
+        ['apps/new-worker/wrangler.json', '{"name": "vaipakam-new", "keep_vars": true, "vars": {"A": "1"}}'],
+      ] as const) {
+        withSeeded(rel, `${body}\n`, (r) =>
+          expect(r.ok, `${rel} was reported despite being correct: ${r.out}`).toBe(true),
+        );
+      }
     });
 
     it('counts exempt Pages configs apart from the ones it asserted', () => {
