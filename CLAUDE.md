@@ -1311,7 +1311,13 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   (one shared rule, one tokeniser, one module boundary) rather than
   another per-path patch. Record the root fix in the PR as such. A loop
   that has patched the same seam three rounds running is the signal,
-  whatever the round number. Re-trigger after every fix push.
+  whatever the round number. The recorded precedents are **#1995** (242
+  findings enumerating one unbounded predicate, replaced by a bounded
+  declaration), **#2066** (a declaration heuristic deleted after six
+  rounds of edges) and **#2149** (thirty findings across rounds 2–13,
+  every one an edge of a speculative branch nothing had ever observed on
+  that path; deleting the branch at round 13 is what reached a clean
+  round 21). Re-trigger after every fix push.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
