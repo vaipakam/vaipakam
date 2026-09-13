@@ -1887,6 +1887,45 @@ const malformedRpc = [];
  */
 const rpcLedger = [];
 
+/**
+ * WHOSE PAGE a recorded attempt belongs to (#2100).
+ *
+ * `summariseRpcLedger` lets a later success clear an earlier failure of
+ * the same `callKey`, which is right for viem's retries and its
+ * `fallback` alternates and wrong across pages: the same read recurs on
+ * every route, so one page's outage was erased by the next page repeating
+ * it. The ledger now carries a cohort and reconciles only within one.
+ *
+ * The PAGE is the identity, looked up through the request's own frame, so
+ * an attempt is attributed to the page that issued it however the visits
+ * interleave. Where Playwright cannot supply one — a service worker, a
+ * request whose frame has already gone — the CURRENT visit's cohort
+ * stands in. That fallback is the conservative direction: a late success
+ * from the previous page then carries this page's cohort and therefore
+ * clears nothing, so a recovered failure is reported rather than a real
+ * one suppressed, which is the way this drive errs everywhere else.
+ */
+const pageCohorts = new WeakMap();
+let cohortSeq = 0;
+let currentCohort = 0;
+const cohortOfPage = (page) => {
+  let id = pageCohorts.get(page);
+  if (id === undefined) {
+    id = ++cohortSeq;
+    pageCohorts.set(page, id);
+  }
+  return id;
+};
+const cohortOfRequest = (request) => {
+  try {
+    const page = request.frame()?.page();
+    if (page) return cohortOfPage(page);
+  } catch {
+    // No frame — fall through to the current visit.
+  }
+  return currentCohort;
+};
+
 // Page traffic through this process (Chromium TLS is reset by the
 // sandbox gateway). Mutating non-RPC requests are refused: this drive
 // advertises itself as read-only and a page regression must not be able
@@ -2063,6 +2102,9 @@ const routeHandler = async (route) => {
         url: redact(req.url()).slice(0, 160),
         requestedAt,
         deliveredAt,
+        // Whose page issued it (#2100) — the ledger reconciles retries
+        // only within one cohort.
+        cohort: cohortOfRequest(req),
       },
       rpcLedger,
     );
@@ -2292,6 +2334,10 @@ const {
  */
 async function visit(path, { expectChooser = false, loan = null } = {}) {
   const page = await ctx.newPage();
+  // This page's ledger cohort (#2100), claimed before anything can issue a
+  // request from it, and made the fallback for attempts whose frame cannot
+  // be resolved.
+  currentCohort = cohortOfPage(page);
   // Before anything navigates: a socket opened during the first paint must
   // not be missed — see `wsRpcMethods`.
   watchWebSockets(page);

@@ -1821,3 +1821,72 @@ describe('round 63 P2 — the chain-id reader refuses a reused id too', () => {
     ).toBe(84532);
   });
 });
+
+describe('#2100 — a retry is reconciled only inside its own page cohort', () => {
+  // The ledger is global to the run and a `callKey` recurs on every route,
+  // so before this the next page's success cleared the previous page's
+  // outage. Entries are written the way `recordRpcResponse` writes them.
+  const entry = (over) => ({
+    verdict: 'unreachable',
+    key: 'eth_call|0xabc',
+    method: 'eth_call',
+    why: 'HTTP 429',
+    url: 'https://rpc.example',
+    recoverable: true,
+    ...over,
+  });
+  const okEntry = (over) => entry({ verdict: 'ok', why: '', ...over });
+
+  it('does not let another page clear a failure', () => {
+    const out = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 1_200, response: 2, requestedAt: 1_100, cohort: 2 }),
+    ]);
+    expect(out.unreachable).toEqual([
+      { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+    ]);
+  });
+
+  it('still clears a retry within the same page', () => {
+    const out = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 1_200, response: 2, requestedAt: 1_100, cohort: 1 }),
+    ]);
+    expect(out).toEqual({ malformed: [], unreachable: [] });
+  });
+
+  // The undefined-means-older rule: a ledger written before cohorts were
+  // carried is judged exactly as it was.
+  it('judges cohort-less records the way it always did', () => {
+    const out = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900 }),
+      okEntry({ at: 1_200, response: 2, requestedAt: 1_100 }),
+    ]);
+    expect(out).toEqual({ malformed: [], unreachable: [] });
+    const mixed = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 1_200, response: 2, requestedAt: 1_100 }),
+    ]);
+    expect(mixed).toEqual({ malformed: [], unreachable: [] });
+  });
+
+  // The cohort narrows recovery; it never widens it. Every other test the
+  // rule already had still decides the same way inside one cohort.
+  it('leaves the other narrowing tests intact within a cohort', () => {
+    const sibling = summariseRpcLedger([
+      entry({ at: 1_000, response: 7, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 1_000, response: 7, requestedAt: 900, cohort: 1 }),
+    ]);
+    expect(sibling.unreachable).toHaveLength(1);
+    const tooLate = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 4_000, response: 2, requestedAt: 3_900, cohort: 1 }),
+    ]);
+    expect(tooLate.unreachable).toHaveLength(1);
+    const inFlight = summariseRpcLedger([
+      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
+      okEntry({ at: 1_100, response: 2, requestedAt: 950, cohort: 1 }),
+    ]);
+    expect(inFlight.unreachable).toHaveLength(1);
+  });
+});

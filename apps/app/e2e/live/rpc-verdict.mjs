@@ -1065,7 +1065,7 @@ export function classifyRpcResponse(status, body, requestBody) {
 let responseSeq = 0;
 
 export function recordRpcResponse(
-  { status, body, requestBody, url, requestedAt, deliveredAt },
+  { status, body, requestBody, url, requestedAt, deliveredAt, cohort },
   ledger,
 ) {
   // WHEN, as well as what (round 94 P2). Recovery is scoped by time
@@ -1119,7 +1119,11 @@ export function recordRpcResponse(
   // per-response, never reused — is what says so.
   const response = ++responseSeq;
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    ledger.push({ ...outcome, url, at, response, requestedAt });
+    // AND WHOSE PAGE (#2100). The ledger is global to the run and a
+    // `callKey` recurs across routes, so without this a failure that
+    // degraded one page could be cleared by another page repeating the
+    // read. See `recoveredAfter`; the drive supplies the cohort.
+    ledger.push({ ...outcome, url, at, response, requestedAt, cohort });
   }
 }
 
@@ -1175,6 +1179,10 @@ const RETRY_RECOVERY_WINDOW_MS = 1_500;
  * letting the early success cancel it would hide exactly the kind of
  * mid-run degradation this drive is meant to notice.
  *
+ * And only a success from the SAME COHORT — one page's traffic (#2100).
+ * A `callKey` recurs on every route, so without that scope one page's
+ * outage is erased by the next page repeating the read.
+ *
  * The wallet path deliberately has no equivalent. There `pub.request` is
  * our own viem client, which exhausts its retries internally and throws
  * once — so what that path records is already a final answer.
@@ -1190,7 +1198,13 @@ export function summariseRpcLedger(ledger) {
   ledger.forEach((e, i) => {
     if (e.verdict !== 'ok') return;
     const list = oks.get(e.key);
-    const ok = { i, at: e.at, response: e.response, requestedAt: e.requestedAt };
+    const ok = {
+      i,
+      at: e.at,
+      response: e.response,
+      requestedAt: e.requestedAt,
+      cohort: e.cohort,
+    };
     if (list) list.push(ok);
     else oks.set(e.key, [ok]);
   });
@@ -1198,8 +1212,37 @@ export function summariseRpcLedger(ledger) {
   const recoveredAfter = (e, i) => {
     const list = oks.get(e.key);
     if (!list) return false;
-    return list.some(({ i: j, at, response, requestedAt }) => {
+    return list.some(({ i: j, at, response, requestedAt, cohort }) => {
       if (j <= i) return false;
+      // #2100 — A RETRY HAPPENS INSIDE THE SAME COHORT, and a cohort is
+      // one page's traffic.
+      //
+      // `callKey` is method plus params, and the ledger is global to the
+      // run, so the SAME read recurs on every route this drive visits. A
+      // failure that degraded page A was therefore cleared the moment page
+      // B repeated that call successfully — and page B always does, since
+      // the routes read the same contract. Two ways that hurts, and the
+      // second is the worse: the run can pass while concealing that one
+      // page's observation was untrustworthy, and page A's degraded
+      // surface is then blamed on the PRODUCT, because the evidence
+      // explaining it has been suppressed. Exit 1 means "the app did
+      // something wrong"; this could manufacture one.
+      //
+      // The three tests below all narrow WHEN a success may clear a
+      // failure, and each was a round of the same seam — time window,
+      // same-response siblings, causal ordering. Scope is the thing none
+      // of them can express, so it is stated directly rather than by
+      // tightening time again: viem's retries and its `fallback`
+      // alternates all happen within the page that issued the read, so
+      // restricting recovery to one cohort keeps the rule doing what it
+      // was written for (#1529 r23) while removing what it was never
+      // meant to cover.
+      //
+      // Same `undefined`-means-older rule as every field here: a record
+      // written before cohorts were carried is judged the way it was.
+      if (typeof cohort === 'number' && typeof e.cohort === 'number' && cohort !== e.cohort) {
+        return false;
+      }
       // A SIBLING IN THE SAME RESPONSE IS NOT A RETRY (round 95 P2), and
       // this is checked before the window rather than inside it: siblings
       // are zero milliseconds apart, so every time-based test passes them.
