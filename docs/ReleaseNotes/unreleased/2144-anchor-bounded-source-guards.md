@@ -537,6 +537,37 @@ direction the remaining work in this area points: one place that answers
 what a name holds and whether that answer can be trusted here, instead of
 several that each answer a little differently.
 
+A late sweep of the review's own backlog turned up nineteen comments that
+had never been answered. Nine of them described things later rounds had
+already fixed for other reasons. Ten were still true, and five of those
+were letting a window through.
+
+One is worth naming above the others, because it is this family's own
+failure mode committed by the part written to prevent it. A region can be
+asked for by naming the header that introduces it, and a check exists to
+refuse a header that opens no block — the thing that would otherwise hand
+back a plausible, complete, wrong region. A branching statement has two
+arms, and that check only ever looked at the first. So naming the second
+arm, where that arm opens no block, produced exactly the plausible wrong
+region the check is for.
+
+The others: a helper written to run asynchronously does not return a
+place, it returns a promise of one, and the region it bounds is empty
+rather than anchored. A landmark whose value is arithmetic has no width,
+so stepping past it produces nothing at all — and the answer there was to
+stop listing what a landmark may not be and start listing what it may:
+text written out, a name holding some, or a region taken from the source,
+which is what the single composite measurement in these suites actually
+measures. A narrowing fixed to a piece of text and then used as a label
+fell between two forms exactly as one fixed and then called had a round
+earlier. And a narrowing held under an innocuous name was dropped on the
+strength of the name, when a name says nothing about what it holds.
+
+The sweep is the lesson as much as the fixes are. Answering every comment
+is not bookkeeping — half of these had been raised hours earlier and
+described live defects, and the reason they sat unanswered is that the
+tool reading them had been looking at one page of a list with several.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the

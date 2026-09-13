@@ -1792,6 +1792,53 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // Round 35 + the backlog sweep. Nineteen threads were found unresolved
+  // on this PR, nine of them already fixed by later rounds and ten still
+  // live; these are the five that let a window through.
+  it('does not let the round-35 shapes through', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an async arrow helper, whose call is a promise and not a position',
+        "const at = async (n) => s.indexOf(n);\nconst r = s.slice(start, at('end'));",
+      ],
+      [
+        'a needle whose value is arithmetic, so its length is undefined',
+        'const needle = 320 * 1;\nconst r = s.slice(start, s.indexOf(needle) + needle.length);',
+      ],
+      [
+        'a truncator BOUND and then invoked as a tag',
+        'const r = s.slice.bind(s)`320`;',
+      ],
+      [
+        'a truncator behind a property name that is not a truncator name',
+        'const box = { cut: String.prototype.slice };\n' +
+          'const r = Reflect.apply(box.cut, s, [start, start + 320]);',
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // The fifth is `blockFrom` itself handing back a wrong region, which is
+  // the failure this whole family exists to refuse. An `if` has TWO
+  // bodies and the round-28 opens-no-block check only ever looked at the
+  // first, so an anchor on the `else` was answered about the consequent.
+  it('refuses an else arm that opens no block of its own', () => {
+    const src = 'if (ready) { work(); } else consume({ marker: true });\n';
+    expect(() => blockFrom(src, 'else')).toThrow(/opens no block of its own/);
+  });
+
+  // …and an `else if` still works, because it opens no block of its own
+  // legitimately: the nested `if` is its own owner.
+  it('takes an else-if arm through its own header', () => {
+    const src = 'if (a) { one(); } else if (b) { two(); }\nnext();\n';
+    expect(blockFrom(src, 'if (b) {')).toContain('two()');
+  });
+
   // Round 34, both permissive. A truncator invoked as a TAG is a call —
   // the template's parts arrive as an array the truncator coerces to a
   // number — so this is a one-argument slice from a fixed offset to the

@@ -205,7 +205,7 @@ export function blockFrom(src, header) {
   // inside the owner, so the containment check passed, and the helper
   // handed back a plausible partial region instead of saying the header
   // opens nothing.
-  if (owner && unbracedBody(owner)) {
+  if (owner && unbracedBody(owner, start)) {
     throw new Error(`${header} opens no block of its own`);
   }
   return src.slice(start, brace.end);
@@ -418,6 +418,28 @@ const TRUNCATORS = new Set(['slice', 'substring', 'substr']);
 // skipped: silently dropping a call is how `src[`slice`](…)` escaped.
 const UNREADABLE = Symbol('unreadable method name');
 
+/**
+ * The truncator a TAG denotes, with the receiver it narrows, or null.
+ *
+ * A tag is a callee, so it takes the same forms one does: a plain
+ * member, a `bind` call, or a name holding either. One reader for all of
+ * them, so the tagged form cannot fall behind the called form again.
+ */
+function taggedTruncator(src, tag) {
+  if (!tag) return null;
+  if (tag.type === 'MemberExpression') {
+    const method = memberName(tag);
+    if (method !== UNREADABLE && !TRUNCATORS.has(method)) return null;
+    return { method, receiverNode: tag.object };
+  }
+  const held = tag.type === 'Identifier' ? resolveAlias(src, tag) : tag;
+  if (!held || held.type !== 'CallExpression') return null;
+  const inner = unwrapChain(held.callee);
+  if (!inner || inner.type !== 'MemberExpression' || memberName(inner) !== 'bind') return null;
+  const method = borrowedTruncator(src, inner, 'bind');
+  return method ? { method, receiverNode: held.arguments[0] ?? null } : null;
+}
+
 export function sliceCallsIn(src) {
   const { nodes } = astOf(src, 'sliceCallsIn');
   const out = [];
@@ -432,17 +454,24 @@ export function sliceCallsIn(src) {
     // interpreted.
     if (n.type === 'TaggedTemplateExpression') {
       const tag = unwrapChain(n.tag);
-      if (!tag || tag.type !== 'MemberExpression') continue;
-      const tagged = memberName(tag);
-      if (tagged !== UNREADABLE && !TRUNCATORS.has(tagged)) continue;
+      // The tag may be any of the shapes a CALLEE may be, because it IS
+      // a callee (round 35). Restricting it to a direct member let
+      // `src.slice.bind(src)`320`` through — the bind was not a tag this
+      // looked at, and the tagged call was not a call the filter below
+      // looked at, so the window left between the two forms the same way
+      // it left between the two statements in round 33.
+      const tagged = taggedTruncator(src, tag);
+      if (!tagged) continue;
       out.push({
-        method: tagged,
+        method: tagged.method,
         line: lineOf(src, n.start),
-        receiver: src.slice(tag.object.start, tag.object.end),
+        receiver: tagged.receiverNode
+          ? src.slice(tagged.receiverNode.start, tagged.receiverNode.end)
+          : '',
         args: UNKNOWN_BOUNDS,
         text: src.slice(n.start, n.end),
         node: n,
-        receiverNode: tag.object,
+        receiverNode: tagged.receiverNode,
       });
       continue;
     }
@@ -675,6 +704,52 @@ function definiteNonTruncator(node) {
   return node != null && SELF_EVIDENT.has(node.type);
 }
 
+/**
+ * The truncator a MEMBER denotes — `String.prototype.slice`, or
+ * `box.cut` where `box` is written out and `cut` holds one.
+ *
+ * A property NAME that is not a truncator does not establish that the
+ * property's VALUE is not one (round 35):
+ * `const box = { cut: String.prototype.slice }` puts a real narrowing
+ * behind a name that says nothing, and reading the name alone dropped
+ * the call entirely. So the name settles it only where the object is
+ * self-describing — an intrinsic's prototype, where the property name IS
+ * the method — and otherwise the value has to be read. When it cannot
+ * be, the answer is unreadable, which refuses.
+ */
+function memberTruncator(src, member) {
+  const method = memberName(member);
+  if (method === UNREADABLE) return UNREADABLE;
+  if (TRUNCATORS.has(method)) return method;
+  const object = resolveAlias(src, unwrapChain(member.object));
+  // `String.prototype.replace` — an intrinsic's prototype describes
+  // itself, so a non-truncator name there is a definite negative.
+  if (object && object.type === 'MemberExpression' && memberName(object) === 'prototype') {
+    return null;
+  }
+  // An object written out can be read: find the property and ask again.
+  if (object && object.type === 'ObjectExpression') {
+    const prop = object.properties.find(
+      (p) =>
+        p.type === 'Property' &&
+        !p.computed &&
+        (p.key?.type === 'Identifier'
+          ? p.key.name
+          : p.key?.type === 'Literal'
+            ? String(p.key.value)
+            : null) === method,
+    );
+    // A SPREAD can bring the property in from anywhere, so a literal
+    // that carries one is not a complete description of itself.
+    if (object.properties.some((p) => p.type === 'SpreadElement')) return UNREADABLE;
+    if (!prop) return null;
+    const value = unwrapChain(prop.value);
+    if (value && value.type === 'MemberExpression') return memberTruncator(src, value);
+    return definiteNonTruncator(value) ? null : UNREADABLE;
+  }
+  return UNREADABLE;
+}
+
 /** The truncator a `Reflect.apply(fn, recv, args)` is borrowing, or null.
  *  Takes the whole call: the borrowed function is its FIRST ARGUMENT,
  *  where every other borrowing form carries it on the callee. */
@@ -700,9 +775,7 @@ function reflectApplyTruncator(src, call) {
   if (named && fn === null) return UNREADABLE;
   if (definiteNonTruncator(fn)) return null;
   if (!fn || fn.type !== 'MemberExpression') return UNREADABLE;
-  const method = memberName(fn);
-  if (method === UNREADABLE) return UNREADABLE;
-  return TRUNCATORS.has(method) ? method : null;
+  return memberTruncator(src, fn);
 }
 
 /** Follow a STABLE alias to what it holds — one hop or many, refusing
@@ -770,15 +843,14 @@ function borrowedTruncator(src, callee, only) {
   // contain NO `call`/`apply`/`bind` borrowings at all, so nothing
   // correct is newly refused.
   if (!inner || inner.type !== 'MemberExpression') return UNREADABLE;
-  const method = memberName(inner);
   // An UNREADABLE inner name is inspected, not dropped (round 19). The
   // direct path has treated an unreadable computed name that way since
   // round 7 — a call nobody can name is not a reason to stop looking at
   // it — and unifying the two readers in round 17 left this half still
   // returning null, so `String.prototype['sl' + 'ice'].call(…)` fell
-  // through both paths. Same question, same answer, both ways round.
-  if (method === UNREADABLE) return UNREADABLE;
-  return TRUNCATORS.has(method) ? method : null;
+  // through both paths. Same question, same answer, both ways round —
+  // which is now one reader for both, so it cannot drift again.
+  return memberTruncator(src, inner);
 }
 
 /**
@@ -957,9 +1029,25 @@ function crossesDeferredBoundary(parents, decl, use) {
 }
 
 /** Whether a construct that CAN have a braced body does not have one. */
-function unbracedBody(node) {
-  const body = node.type === 'IfStatement' ? node.consequent : node.body;
+function unbracedBody(node, at = -1) {
+  // WHICH ARM the anchor names, not always the first one. An `if` has
+  // two bodies, and an anchor on the `else` asks about the ALTERNATE:
+  // `if (ready) { work(); } else consume({ marker: true });` has a
+  // braced consequent, so checking that one said the header opens a
+  // block and handed back `else consume({ marker: true }` — a partial,
+  // plausible, wrong region, produced by the very check written to
+  // refuse those. Round 28 added the check; it only ever looked at the
+  // consequent.
+  const body =
+    node.type === 'IfStatement'
+      ? at >= 0 && node.alternate && at >= node.alternate.start - 'else '.length
+        ? node.alternate
+        : node.consequent
+      : node.body;
   if (!body || typeof body.type !== 'string') return false;
+  // An `else if` chains rather than opening a block of its own, and the
+  // nested `if` is its own owner — so it is not an unbraced body.
+  if (body.type === 'IfStatement') return false;
   return BODY_BEARING.has(node.type) && !BRACED.has(body.type);
 }
 
@@ -1738,6 +1826,12 @@ function helperKind(src, callee, seen) {
   if (!bound.found || writeReaches(src, bound.writes, callee.start)) return null;
   const fn = bound.init;
   if (!fn || fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
+  // An ASYNC arrow does not return what its body evaluates to — it
+  // returns a promise of it. `const at = async (n) => src.indexOf(n)`
+  // then makes `src.slice(start, at('end'))` coerce an object to NaN and
+  // then to zero, so the region is empty and was being certified as
+  // anchored. The body's kind is the promise's kind, not the call's.
+  if (fn.async) return null;
   return kindOf(src, fn.body, seen);
 }
 
@@ -1886,7 +1980,18 @@ function isTextNeedle(src, node, seen = new Set()) {
   // `const raw = 320; const needle = raw;` stopped at the Identifier
   // initializer and certified it as text. Follow the chain.
   if (init.type === 'Identifier') return isTextNeedle(src, init, seen);
-  return !NOT_TEXT.has(init.type);
+  // A CLOSED LIST of what a needle may be, not an open list of what it
+  // may not (the round-6 inversion, applied here at last). Naming the
+  // non-text shapes left `const needle = 320 * 1` reading as text
+  // because arithmetic is not in that set — and then `needle.length` is
+  // undefined, the end is NaN, and the empty region was certified as
+  // anchored. So: text written out, a name holding some, or a REGION
+  // taken from the source — which is text by construction, and is what
+  // the one composite bound these suites actually contain measures
+  // (`block.indexOf(haveControl) + haveControl.length`, where
+  // `haveControl` is a block taken from `block`). Anything else a
+  // reader cannot see the value of, and is refused.
+  return isBoundedRegion(src, init, new Set());
 }
 
 /** The SOURCE of the text a finder searched for, or null when the
