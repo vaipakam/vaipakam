@@ -1963,7 +1963,14 @@ export function isStartOfText(src, node) {
  *  spelling. A binding found in this file is somebody else's. */
 function isIntrinsic(src, node, name) {
   if (node?.type !== 'Identifier' || node.name !== name) return false;
-  return resolutionOf(src, node).state === UNBOUND;
+  // UNBOUND *AS ITSELF*. The resolver follows chains, so asking only
+  // for the state answers a different question than the one here:
+  // `const String = External` resolves through to an unbound
+  // `External`, which reported UNBOUND and made a local spelling look
+  // like the built-in. The unbound result carries the name it ended on,
+  // and the intrinsic is the case where that is this name.
+  const r = resolutionOf(src, node);
+  return r.state === UNBOUND && r.name === name;
 }
 
 /** Whether `node` is a bound that may end a source region. */
@@ -1978,7 +1985,21 @@ export function isAnchored(src, node, seen = new Set()) {
  * read is not visibly anything, and says nothing either way.
  */
 function visiblyNotText(src, node, seen) {
+  // A SPREAD is a wrapper, not a value. `at(...[{ indexOf: … }])` puts
+  // the stand-in fully in view behind one, and testing the wrapper
+  // accepted it. An array written out is read through; anything else
+  // spread is a value this cannot establish, and is refused.
+  if (node?.type === 'SpreadElement') {
+    const held = resolutionOf(src, node.argument, new Set(seen));
+    if (held.state !== RESOLVED || held.value.type !== 'ArrayExpression') return true;
+    return held.value.elements.some((el) => el && visiblyNotText(src, el, seen));
+  }
   const r = resolutionOf(src, node, new Set(seen));
+  // A DECLARED function or class is known not to be text WITHOUT being
+  // resolved — a declaration has no initialiser to follow, so it comes
+  // back unresolved carrying that fact. Requiring RESOLVED first threw
+  // the fact away and accepted `function fake() {}` as an argument.
+  if (r.notText) return true;
   return r.state === RESOLVED && NOT_TEXT.has(r.value.type);
 }
 

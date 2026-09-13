@@ -2102,6 +2102,40 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
+  // Round 3. Three ways the visibility rule and the intrinsic rule were
+  // asking slightly the wrong question.
+  it('sees a stand-in through a declaration and through a spread', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a DECLARED function, which is known not to be text without being resolved',
+        'function fake() {}\nfake.indexOf = () => start + 320;\n' +
+          "const at = recv => recv.indexOf('end');\nconst r = s.slice(start, at(fake));",
+      ],
+      [
+        'a stand-in handed through a SPREAD, which is a wrapper and not a value',
+        "const at = recv => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at(...[{ indexOf: () => start + 320 }]));',
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // The resolver FOLLOWS CHAINS, so asking it only for a state answers a
+  // different question than "is this name the built-in". A local that
+  // aliases something unbound resolved through to an unbound name and
+  // wore the built-in's exemption.
+  it('recognises the built-in only where the name itself is unbound', () => {
+    const aliased =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const String = External;\nconst r = String.raw.call(s, start, start + 320);';
+    expect(sliceCallsIn(aliased).length).toBeGreaterThan(0);
+    // …and the genuine one is still not a narrowing.
+    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
+  });
+
   // …and the two that genuinely do arrive from outside still work, or
   // the rule above would be satisfied by refusing everything.
   it('still accepts a plain parameter and an import', () => {
