@@ -569,11 +569,14 @@ const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
  */
 export const DERIVED_LOG_INDEX = 1_000_000;
 
-/** Marks a row derived by the #2101 repair rather than by an event. The
- *  column is free text and nothing switches on it, so this is provenance a
- *  reader can see rather than a control flag — and it is NOT `null`, which
- *  already means "cron-derived calendar row". */
-export const RECONCILED_EVENT_KIND = 'Reconciled';
+/** Marks a row derived by the #2101 repair rather than by an event.
+ *
+ *  Re-exported from `@vaipakam/lib`, where the DEFINITION lives so the app
+ *  that renders the provenance and the Worker that writes it cannot drift
+ *  apart — a rename here with a literal on the reading side fails silently,
+ *  the row rendering as a plain announcement (#2190 r5 `4007500682`). */
+export { NOTIF_EVENT_KIND_RECONCILED as RECONCILED_EVENT_KIND } from '@vaipakam/lib/notificationProvenance';
+import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
 
 /**
  * Inbox rows for terminals the repair found rather than an event announced
@@ -659,7 +662,7 @@ export async function planReconciledNotifications(
         recipient,
         kind,
         loanId,
-        eventKind: RECONCILED_EVENT_KIND,
+        eventKind: NOTIF_EVENT_KIND_RECONCILED,
         blockNumber: observedBlock,
         // NOT -1. See `DERIVED_LOG_INDEX`: at the same block as an event the
         // holder has already seen, a lower index sorts OLDER and the client

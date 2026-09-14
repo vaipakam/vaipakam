@@ -41,6 +41,7 @@ import {
   type SeenCursor,
 } from '../lib/notifSeen';
 import { copy } from '../content/copy';
+import { isReconciledNotification } from '@vaipakam/lib/notificationProvenance';
 
 /** Cap the badge so a first-connect backlog reads "9+", not "237". */
 const BADGE_CAP = 9;
@@ -260,6 +261,13 @@ function NotificationRow({
   // secondary line; a static (no-loanId) row shows no sub rather than a
   // misleading tap prompt with nothing to open (Codex #1295 r2).
   const sub = row.loanId != null ? copy.notifications.loanRef(row.loanId) : null;
+  // #2101 — a row the indexer DERIVED by checking its records against the
+  // chain, not one it built from an announcement. The headline stays the
+  // outcome, which is right; this says how it was learned and admits the
+  // one thing the check cannot establish. Storing the provenance and not
+  // rendering it would have left a months-old default reading exactly like
+  // news of the moment (#2190 r5).
+  const correction = isReconciledNotification(row.eventKind);
 
   const body = (
     <>
@@ -268,7 +276,11 @@ function NotificationRow({
       </span>
       <span className="notif-row-text">
         <span className="notif-row-title">{title}</span>
-        {sub ? <span className="notif-row-sub">{sub}</span> : null}
+        {correction ? (
+          <span className="notif-row-sub">{copy.notifications.correctionNote}</span>
+        ) : sub ? (
+          <span className="notif-row-sub">{sub}</span>
+        ) : null}
       </span>
       {unread ? <span className="notif-row-dot" aria-hidden /> : null}
     </>

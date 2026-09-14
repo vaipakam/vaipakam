@@ -282,6 +282,12 @@ The app uses chain reads and indexed reads for different jobs.
   established, that side receives no message rather than one addressed to a
   guess — and the holder the platform does establish is recorded, so other
   surfaces stop naming the wrong one.
+- Such a message is SHOWN as a correction, not merely recorded as one. Its
+  headline states the outcome, and a line beneath it says the platform
+  found this by checking and cannot tell when it happened. A surface that
+  rendered the outcome alone would present a discovery about something
+  months old as news of the moment — which is the same unstated unknown the
+  message's own date is careful to avoid.
 - How fast the correction works through the records depends on the
   deployment's ingest configuration, and the platform states this rather
   than implying a single pace. Where the chain reading has its own capacity

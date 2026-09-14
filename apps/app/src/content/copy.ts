@@ -717,6 +717,15 @@ const copySource = {
     // posture (never a fake empty).
     unavailable: 'Couldn’t load your notifications just now. They’ll be here when the connection is back.',
     connectFirst: 'Connect your wallet to see updates about your loans.',
+    // Shown UNDER the headline on a row the platform derived by checking
+    // its own records against the chain, rather than from an announcement
+    // it saw (#2101). Two things it must say and one it must not: the
+    // outcome was DISCOVERED, and WHEN it happened is not known — but not
+    // that anything is wrong, because nothing is. Without it a correction
+    // is displayed exactly like an announcement, which presents a discovery
+    // about something months old as news of the moment (#2190 r5).
+    correctionNote:
+      'We found this by checking — we can’t tell when it happened. Open it to see where it stands.',
     // The row's headline, by outcome kind. Each row deep-links to the
     // position, which re-verifies the exact state on chain.
     line: {
