@@ -221,6 +221,21 @@ The app uses chain reads and indexed reads for different jobs.
   can tell a forced sale from an ordinary default where the chain's own
   status cannot — a record corrected from the chain may therefore name
   the ending less precisely than the event would have.
+- A corrected record carries the loan's amounts as well as its state,
+  taken from the same reading and therefore describing the same moment.
+  The events that move principal and collateral — a part repayment, a
+  liquidation sale, a collateral release or top-up, an offsetting match,
+  a written-off shortfall — can be missed exactly as an ending can, and a
+  record stale enough to have missed an ending is not to be trusted on the
+  amounts. Preferring the chain's figures gives nothing up: an ending does
+  not erase what was outstanding, so where the chain holds a smaller
+  figure that is an economic event the index missed, not a lost record.
+- A record corrected to ended also drops any collateral sale listing the
+  platform was still publishing for it. Such a sale would fail at the
+  contract, which is no reason to keep offering it. If that removal itself
+  fails, the affected loans are named in the operator's log rather than
+  silently left — the record has already ended, so the rotation will not
+  return to it.
 - A position the platform publishes as open must be one it can still
   substantiate as open. Where it cannot, the surfaces that count and the
   surfaces that list must not answer the same question differently

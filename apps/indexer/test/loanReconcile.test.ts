@@ -30,13 +30,31 @@ const CHAIN = 84532;
  *  `fallback_pending` was added. */
 const LIVE = new Set(['active', 'fallback_pending']);
 
+/** What the chain says about one loan. A bare number is shorthand for
+ *  "this status, and amounts nobody in the case cares about". */
+type ChainStub = number | Error | { status: number; principal: string; collateralAmount: string };
+
+function asRead(v: Exclude<ChainStub, Error>) {
+  return typeof v === 'number'
+    ? { status: v, principal: '0', collateralAmount: '0' }
+    : v;
+}
+
+/** The selector reads only `loan_id` and `status` — the two extra columns
+ *  exist here so a case can observe what the WRITE put in them. */
+type FakeRow = ReconcileRow & { principal?: string; collateral_amount?: string };
+
 /** A fake index: rows in memory, every dependency counted. */
 function fakeDeps(
-  rows: ReconcileRow[],
-  chainStatus: Record<number, number | Error>,
+  rows: FakeRow[],
+  chainStatus: Record<number, ChainStub>,
   chainActive?: number,
 ) {
   const calls = { chainCount: 0, statusReads: 0, writes: 0, rowQueries: 0 };
+  /** Loans whose prepay listing the pass cleared, in order. */
+  const listingsCleared: number[] = [];
+  /** Loan ids whose cleanup should throw. */
+  const listingClearFails = new Set<number>();
   let pointer = 0;
   const deps: ReconcileDeps = {
     async activeRowsAfter(_c, after, limit) {
@@ -53,21 +71,29 @@ function fakeDeps(
       calls.chainCount += 1;
       return chainActive ?? rows.filter((r) => LIVE.has(r.status)).length;
     },
-    async readChainStatus(_c, loanId) {
+    async readChainLoan(_c, loanId) {
       calls.statusReads += 1;
       const v = chainStatus[loanId];
       if (v instanceof Error) throw v;
       if (v === undefined) throw new Error(`no stub for loan ${loanId}`);
-      return v;
+      return asRead(v);
     },
-    async writeStatus(_c, loanId, status) {
+    async writeRepair(_c, loanId, repair) {
       calls.writes += 1;
       const row = rows.find((r) => r.loan_id === loanId);
       // Mirrors the real compare-and-set, which guards on the LIVE set:
       // a row another writer already terminalized does not change.
       if (!row || !LIVE.has(row.status)) return false;
-      row.status = status;
+      row.status = repair.status;
+      // The real write is one UPDATE over all three columns, so a fake
+      // that moved only the status could not observe half a repair.
+      row.principal = repair.principal;
+      row.collateral_amount = repair.collateralAmount;
       return true;
+    },
+    async clearPrepayListing(_c, loanId) {
+      if (listingClearFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
+      listingsCleared.push(loanId);
     },
     async readPointer() {
       return pointer;
@@ -76,7 +102,14 @@ function fakeDeps(
       pointer = v;
     },
   };
-  return { deps, calls, rows, get pointer() { return pointer; } };
+  return {
+    deps,
+    calls,
+    rows,
+    listingsCleared,
+    listingClearFails,
+    get pointer() { return pointer; },
+  };
 }
 
 describe('decideRepair', () => {
@@ -280,15 +313,18 @@ describe('reporting what actually changed', () => {
     const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
     const f = fakeDeps(rows, { 8: 2 }, 0);
     // Another writer wins between selection and write.
-    const inner = f.deps.writeStatus;
-    f.deps.writeStatus = async (c, id, st) => {
+    const inner = f.deps.writeRepair;
+    f.deps.writeRepair = async (c, id, rep) => {
       rows[0].status = 'liquidated';
-      return inner(c, id, st);
+      return inner(c, id, rep);
     };
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
     expect(r.repaired).toEqual([]);
     expect(r.superseded).toEqual([8]);
     expect(rows[0].status).toBe('liquidated');
+    // And the listing is left to the handler that actually closed the row.
+    // Clearing it here would be this pass acting on a close it did not make.
+    expect(f.listingsCleared).toEqual([]);
   });
 
   it('reports a repair it did make', async () => {
@@ -297,5 +333,71 @@ describe('reporting what actually changed', () => {
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
     expect(r.repaired).toEqual([{ loanId: 8, from: 'active', to: 'defaulted' }]);
     expect(r.superseded).toEqual([]);
+  });
+});
+
+describe('a repaired row is a whole row', () => {
+  it('writes the money from the SAME read as the status', async () => {
+    // The event path's match handler refreshes principal/collateral from a
+    // block-pinned read; a repair that moved only the status would leave a
+    // closed loan advertising principal outstanding. The amounts come from
+    // the same read, so they cannot describe a different block.
+    const rows: FakeRow[] = [{ loan_id: 8, status: 'active', principal: '5000', collateral_amount: '700' }];
+    const f = fakeDeps(
+      rows,
+      { 8: { status: 5, principal: '0', collateralAmount: '250' } },
+      0,
+    );
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.repaired).toEqual([{ loanId: 8, from: 'active', to: 'internal_matched' }]);
+    expect(rows[0].principal).toBe('0');
+    expect(rows[0].collateral_amount).toBe('250');
+  });
+
+  it('carries amounts as strings, so a uint256 survives the pass', async () => {
+    // These columns are TEXT because the values do not fit a JS number.
+    // A pass that ever put them through one would round silently.
+    const big = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+    const rows: FakeRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: { status: 1, principal: big, collateralAmount: big } }, 0);
+    await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(rows[0].principal).toBe(big);
+    expect(rows[0].collateral_amount).toBe(big);
+  });
+
+  it('clears the prepay listing of a loan it closed', async () => {
+    // Every terminal handler on the event path does this. Without it the
+    // app keeps offering a Seaport listing for a loan that has ended — the
+    // fill would revert on-chain, which is no comfort to whoever tried.
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 2 }, 0);
+    await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(f.listingsCleared).toEqual([8]);
+  });
+
+  it('does NOT clear the listing of a loan it left alone', async () => {
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 0 }, 1); // chain still calls it running
+    await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(f.listingsCleared).toEqual([]);
+  });
+
+  it('names a listing it could not clear instead of throwing the pass away', async () => {
+    // The status write has landed and the row is no longer live, so the
+    // rotation will never return to it. Aborting would lose the pointer
+    // write and STILL leave the listing, so it is reported by loan id.
+    const rows: ReconcileRow[] = [
+      { loan_id: 8, status: 'active' },
+      { loan_id: 9, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 8: 2, 9: 1 }, 0);
+    f.listingClearFails.add(8);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.listingsNotCleared).toEqual([8]);
+    // The failure stops nothing: loan 9 is still examined, repaired and
+    // cleared, and the pointer still moves.
+    expect(r.repaired.map((x) => x.loanId)).toEqual([8, 9]);
+    expect(f.listingsCleared).toEqual([9]);
+    expect(f.pointer).toBe(9);
   });
 });

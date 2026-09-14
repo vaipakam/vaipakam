@@ -34,6 +34,34 @@
  * exactly this reason, and the pass runs only when that scan has caught
  * up to it.
  *
+ * A REPAIRED ROW IS A WHOLE ROW, NOT A STATUS. The row a terminal event
+ * writes carries the loan's money as well as its state, and a repair that
+ * moved only the status would leave a shape no event-written row has ever
+ * had (#2190 round 1). So the same block-pinned `getLoanDetails` the status
+ * comes from also supplies `principal` and `collateralAmount`, and both are
+ * written with it — no extra subrequest, since the read is already being
+ * made.
+ *
+ * That is deliberately wider than the finding, which named the
+ * `internal_matched` case: a match decrements both figures, so a match-
+ * repaired row would otherwise advertise principal outstanding on a closed
+ * loan. But the same is true of every mutation the index can miss the event
+ * for — partial repay, partial swap-repay, a liquidation swap, a partial
+ * withdrawal, a collateral top-up, a written-off fallback shortfall — and
+ * an index stale enough to have missed a terminal has no claim to be fresh
+ * about the numbers. Nothing is lost by taking the chain's figures: no
+ * terminal transition in the contracts zeroes either field, so the chain
+ * holds the outstanding-at-close amounts the event path preserves, and
+ * where it holds a lower figure that IS the economic truth the index
+ * missed.
+ *
+ * A REPAIRED ROW ALSO CLEARS ITS PREPAY LISTING, for the same reason and
+ * with the same seam: the cleanup belongs to the scan, which owns the
+ * helper every terminal handler already calls, and is handed in rather than
+ * reimplemented here. Without it a closed loan keeps a live Seaport listing
+ * in the indexed projection — a fill would revert on-chain, but the app
+ * would keep offering it.
+ *
  * WHAT IT CANNOT RECOVER. The chain's `LoanStatus` has no `Liquidated`
  * member — an HF-liquidated loan reads `Defaulted(2)` — so a row repaired
  * from the chain may read `defaulted` where the event path would have
@@ -117,6 +145,26 @@ export interface ReconcileRow {
   status: string;
 }
 
+/**
+ * One block-pinned `getLoanDetails` post-image, reduced to what a repair
+ * writes. The amounts are carried as decimal STRINGS because that is how
+ * `loans.principal` / `loans.collateral_amount` are stored — these are
+ * uint256 and do not survive a round trip through a JS number.
+ */
+export interface ChainLoanRead {
+  status: number;
+  principal: string;
+  collateralAmount: string;
+}
+
+/** What a repair writes: the status it decided plus the money the same
+ *  read reported. Kept as one value so a caller cannot write half of it. */
+export interface LoanRepair {
+  status: string;
+  principal: string;
+  collateralAmount: string;
+}
+
 export interface ReconcileReport {
   chainId: number;
   /** `getActiveLoansCount()` — the chain's own answer. */
@@ -133,6 +181,15 @@ export interface ReconcileReport {
    *  writer had already terminalized the row. Not a failure — the other
    *  write is the better-informed one — but not a repair either. */
   superseded: number[];
+  /** Loan ids repaired whose prepay-listing cleanup then FAILED.
+   *
+   *  Reported rather than thrown. The status write has already landed and
+   *  the row is no longer live, so the rotation will never select it again
+   *  — aborting here would lose the pointer write and still leave the
+   *  listing. An operator reading this list is looking at a closed loan the
+   *  app may still advertise a listing for, which is exactly the class of
+   *  ghost this pass exists to remove, so it is named rather than implied. */
+  listingsNotCleared: number[];
   /** Where the rotation pointer was left. */
   nextPointer: number;
 }
@@ -143,11 +200,15 @@ export interface ReconcileDeps {
   countIndexedActive(chainId: number): Promise<number>;
   /** `MetricsFacet.getActiveLoansCount()`. One subrequest. */
   readChainActiveCount(chainId: number): Promise<number>;
-  /** `getLoanDetails(id).status`. One subrequest per call. */
-  readChainStatus(chainId: number, loanId: number): Promise<number>;
+  /** `getLoanDetails(id)`, reduced. ONE subrequest, and it carries the
+   *  money as well as the status precisely so a repair needs no second. */
+  readChainLoan(chainId: number, loanId: number): Promise<ChainLoanRead>;
   /** Returns whether the row actually changed — a compare-and-set that
    *  matched nothing is not a repair, and must not be reported as one. */
-  writeStatus(chainId: number, loanId: number, status: string): Promise<boolean>;
+  writeRepair(chainId: number, loanId: number, repair: LoanRepair): Promise<boolean>;
+  /** Drop any live prepay-listing row for a loan this pass just closed.
+   *  The scan's own helper, handed in — see the module header. */
+  clearPrepayListing(chainId: number, loanId: number): Promise<void>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -212,14 +273,15 @@ export async function reconcileChainLoans(
     repaired: [],
     unread: [],
     superseded: [],
+    listingsNotCleared: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
   };
 
   for (const row of rows) {
     report.examined.push(row.loan_id);
-    let chainStatus: number;
+    let onchain: ChainLoanRead;
     try {
-      chainStatus = await deps.readChainStatus(chainId, row.loan_id);
+      onchain = await deps.readChainLoan(chainId, row.loan_id);
     } catch {
       // A read that did not happen is not evidence about the loan. The
       // row is left exactly as it is and the rotation returns to it.
@@ -227,9 +289,16 @@ export async function reconcileChainLoans(
       continue;
     }
     const from = row.status;
-    const to = decideRepair(from, chainStatus);
+    const to = decideRepair(from, onchain.status);
     if (to === null) continue;
-    const changed = await deps.writeStatus(chainId, row.loan_id, to);
+    // The amounts come from the SAME read as the status, so they are the
+    // same block's post-image and cannot describe a different moment than
+    // the status they are written beside.
+    const changed = await deps.writeRepair(chainId, row.loan_id, {
+      status: to,
+      principal: onchain.principal,
+      collateralAmount: onchain.collateralAmount,
+    });
     // REPORTED ONLY IF THE ROW CHANGED. The compare-and-set exists
     // because the scan may terminalize this row from its own event
     // first; when it does, the CAS matches nothing and the stored status
@@ -246,6 +315,14 @@ export async function reconcileChainLoans(
     // implementation that does. A report of what changed must not depend
     // on the storage layer declining to mutate its input.
     report.repaired.push({ loanId: row.loan_id, from, to });
+    // Only after a repair that ACTUALLY landed. A superseded row was
+    // terminalized by a handler that clears its own listing, and a row
+    // this pass did not close has no business losing a live listing.
+    try {
+      await deps.clearPrepayListing(chainId, row.loan_id);
+    } catch {
+      report.listingsNotCleared.push(row.loan_id);
+    }
   }
 
   await deps.writePointer(chainId, report.nextPointer);
@@ -291,6 +368,11 @@ export interface ScanReconcileContext {
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
+  /** The scan's own `_deletePrepayListing`, bound to this chain. Passed in
+   *  rather than reimplemented: the cleanup every terminal handler performs
+   *  and the cleanup a repair performs must be the same one, and importing
+   *  it here would make the scan module and this one mutually dependent. */
+  clearPrepayListing(loanId: number): Promise<void>;
 }
 
 export async function reconcileAfterScan(
@@ -333,38 +415,60 @@ export async function reconcileAfterScan(
       });
       return Number(n as bigint);
     },
-    async readChainStatus(_chainId, loanId) {
+    async readChainLoan(_chainId, loanId) {
       const d = (await ctx.readContract({
         address: ctx.diamond,
         abi: ctx.loanAbi,
         functionName: 'getLoanDetails',
         args: [BigInt(loanId)],
         blockNumber: ctx.head,
-      })) as { status: number | bigint };
-      return Number(d.status);
+      })) as { status: number | bigint; principal: bigint; collateralAmount: bigint };
+      return {
+        status: Number(d.status),
+        // `String(...)`, never `Number(...)`: these are uint256 amounts and
+        // the column is TEXT for that reason.
+        principal: String(d.principal),
+        collateralAmount: String(d.collateralAmount),
+      };
     },
-    async writeStatus(chainId, loanId, status) {
-      // The SAME columns `flipLoanStatus` writes, not status alone.
+    async writeRepair(chainId, loanId, repair) {
+      // The SAME columns the event path writes, not status alone.
       // `terminal_block` and `terminal_at` are part of what a terminal
-      // row IS here; writing status without them would leave a repaired
-      // row in a shape no event-written row has ever had, which nothing
-      // downstream is built to read. The block recorded is the safe head
-      // the status was read at — the repair cannot know the block the
-      // terminal actually landed in, and recording the block it observed
-      // the state at is the honest substitute.
+      // row IS here, and `principal` / `collateral_amount` are what
+      // `applyMatch` refreshes on the one terminal that moves them;
+      // writing status without them would leave a repaired row in a shape
+      // no event-written row has ever had, which nothing downstream is
+      // built to read. The block recorded is the safe head the state was
+      // read at — the repair cannot know the block the terminal actually
+      // landed in, and recording the block it observed the state at is the
+      // honest substitute.
       //
-      // COMPARE-AND-SET on `status = 'active'`: if the scan just above
+      // COMPARE-AND-SET on the LIVE set: if the scan just above
       // terminalized this row from its own event, that write is the more
       // specific one and wins, and this becomes a no-op.
       const r = await ctx.db
         .prepare(
-          `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+          `UPDATE loans
+              SET status = ?, principal = ?, collateral_amount = ?,
+                  terminal_block = ?, terminal_at = ?, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
-        .bind(status, Number(ctx.head), now(), now(), chainId, loanId)
+        .bind(
+          repair.status,
+          repair.principal,
+          repair.collateralAmount,
+          Number(ctx.head),
+          now(),
+          now(),
+          chainId,
+          loanId,
+        )
         .run();
       return (r.meta?.changes ?? 0) > 0;
+    },
+    async clearPrepayListing(_chainId, loanId) {
+      await ctx.clearPrepayListing(loanId);
     },
     async readPointer(chainId) {
       const row = await ctx.db

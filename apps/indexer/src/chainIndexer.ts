@@ -1106,6 +1106,10 @@ export async function runChainIndexerForChain(
           readContract: (args) => client.readContract(args as never) as Promise<unknown>,
           metricsAbi: DIAMOND_METRICS_ABI,
           loanAbi: DIAMOND_LOAN_DETAILS_ABI,
+          // The same cleanup every terminal handler above performs. Handed
+          // in so a repaired close and an event-driven close clear the
+          // listing through one implementation (#2190 round 1).
+          clearPrepayListing: (loanId) => _deletePrepayListing(env, chainId, loanId),
         },
         { maxRows: 5, minRows: 1 },
       );
@@ -1123,6 +1127,17 @@ export async function runChainIndexerForChain(
         console.warn(
           `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
             `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+        );
+      }
+      // A listing the repair could not clear outlives the rotation: the
+      // row is terminal now, so nothing selects it again. Said out loud
+      // because the app would otherwise keep advertising a listing for a
+      // closed loan, which is the ghost this pass exists to remove.
+      if (report.listingsNotCleared.length > 0) {
+        console.error(
+          `[chainIndexer] reconcile repaired but could NOT clear the prepay listing for ` +
+            `loan(s) ${report.listingsNotCleared.join(', ')} on chain ${chainId} — ` +
+            `these will not be retried; clear them by hand`,
         );
       }
     } catch (err) {

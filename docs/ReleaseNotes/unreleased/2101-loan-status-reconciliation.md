@@ -26,7 +26,20 @@ count. If they differ it examines a handful of its records; if they agree
 it still examines one. Where the chain says a loan has ended and the
 record says otherwise, the record is corrected.
 
-Both halves of that are deliberate. It keeps looking when the totals
+A correction is the whole record, not just the word "ended". The same
+question that returns the loan's state also returns the money still
+attached to it, so both are written together. That matters because the
+things that move those figures — a part repayment, a forced sale, a
+collateral top-up, a debt written off — announce themselves the same way an
+ending does, and can be missed the same way. A record stale enough to have
+missed an ending has no claim to be current about the amounts, and nothing
+is given up by preferring the chain's: an ending never erases what was
+owed, so where the chain holds a smaller figure, that smaller figure is
+what actually happened. A closed loan also loses any collateral sale
+listing the platform was still advertising for it — the sale would fail
+anyway, which is no comfort to whoever tried.
+
+Both halves of the deciding are deliberate. It keeps looking when the totals
 agree because two mistakes cancel — one ending missed and one beginning
 missed leaves the totals equal while both records are wrong — so a check
 that only wakes on a mismatch is one that can be quietly satisfied. And it
@@ -54,6 +67,12 @@ better than "still running". That is stated here rather than left to be
 discovered.
 
 And it cannot say why an ending was missed in the first place.
+
+One failure is reported rather than retried: if the correction lands but
+removing the stale sale listing does not, the record has already ended and
+nothing will look at it again. The affected loans are named in the
+service's log so an operator can clear them by hand, rather than the
+platform quietly continuing to advertise a listing nobody can fill.
 
 ## Not included
 
