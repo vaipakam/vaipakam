@@ -22,7 +22,7 @@
  * An earlier revision stopped there and called that "safe by
  * construction". Review showed the argument inverts (#2190 round 1). The
  * write is IRREVERSIBLE from this pass's point of view: it only ever
- * selects `active` rows, so a row it has terminalized is never examined
+ * selects LIVE rows, so a row it has terminalized is never examined
  * again. Read `latest` and a reorg can remove the terminal afterwards,
  * leaving the row terminal in the index and active on the chain with
  * nothing that would ever look at it — the very permanence that makes a
@@ -60,8 +60,23 @@ export const CHAIN_STATUS_TO_ROW_STATUS: Record<number, string> = {
   5: 'internal_matched',
 };
 
-/** A row this sweep is allowed to change, and the only one. */
-const REPAIRABLE_FROM = 'active';
+/**
+ * Row statuses this pass may change — the LIVE ones.
+ *
+ * `fallback_pending` belongs here and its absence was a defect (#2190
+ * round 1). The rest of the indexer treats it as live and transitions it
+ * straight to terminal: the `InternalMatchExecuted` handler and the
+ * terminal helper both guard on `status IN ('active', 'fallback_pending')`.
+ *
+ * It also broke the COUNT GATE, which is worse than the missed repair and
+ * was not in the finding. `MetricsFacet.getActiveLoansCount` is documented
+ * as "loans currently in Active **or FallbackPending** status", so
+ * counting only `active` on our side compares two different sets: one
+ * `fallback_pending` row makes the counts differ permanently, which pins
+ * the gate open, spends the larger budget every pass, and never examines
+ * the row responsible for the difference.
+ */
+const REPAIRABLE_FROM = new Set(['active', 'fallback_pending']);
 
 /**
  * The status to write, or `null` for "leave it alone".
@@ -70,7 +85,7 @@ const REPAIRABLE_FROM = 'active';
  * one function rather than a condition spread through the query and the
  * loop:
  *
- *  - a row that is not `active` is never touched, even if the chain
+ *  - a row that is not LIVE is never touched, even if the chain
  *    disagrees — the event path owns terminal→terminal corrections, and a
  *    sweep that reopened that question could overwrite the more specific
  *    `liquidated` with the chain's `defaulted`;
@@ -79,9 +94,23 @@ const REPAIRABLE_FROM = 'active';
  *  - an unrecognised member writes nothing rather than guessing.
  */
 export function decideRepair(indexedStatus: string, chainStatus: number): string | null {
-  if (indexedStatus !== REPAIRABLE_FROM) return null;
+  if (!REPAIRABLE_FROM.has(indexedStatus)) return null;
+  // No "is this actually a change?" guard. I wrote one and a probe
+  // showed it unreachable: every value in the map is terminal, so `to`
+  // can never equal a live status, and the map is pinned to the scan's
+  // copy by a test. An unreachable defensive branch is the shape this
+  // repo has spent review rounds deleting — it cannot be exercised, so
+  // it cannot be trusted, and it invites a reader to believe a case is
+  // handled that never arises.
+  //
+  // A live row the chain also calls live simply gets `null` from the
+  // lookup: `Active(0)` and `FallbackPending(4)` are both absent.
   return CHAIN_STATUS_TO_ROW_STATUS[chainStatus] ?? null;
 }
+
+/** The live statuses, for a caller building the SQL. Exported so the
+ *  selector and the compare-and-set cannot drift from `decideRepair`. */
+export const LIVE_ROW_STATUSES = [...REPAIRABLE_FROM];
 
 export interface ReconcileRow {
   loan_id: number;
@@ -274,7 +303,8 @@ export async function reconcileAfterScan(
       const rows = await ctx.db
         .prepare(
           `SELECT loan_id, status FROM loans
-            WHERE chain_id = ? AND status = 'active' AND loan_id > ?
+            WHERE chain_id = ? AND status IN ('active', 'fallback_pending')
+              AND loan_id > ?
             ORDER BY loan_id ASC LIMIT ?`,
         )
         .bind(chainId, after, limit)
@@ -283,7 +313,13 @@ export async function reconcileAfterScan(
     },
     async countIndexedActive(chainId) {
       const row = await ctx.db
-        .prepare(`SELECT COUNT(*) AS n FROM loans WHERE chain_id = ? AND status = 'active'`)
+        // BOTH live statuses, because the chain counter this is compared
+        // against is documented as Active OR FallbackPending. Counting a
+        // narrower set here makes the gate differ forever.
+        .prepare(
+          `SELECT COUNT(*) AS n FROM loans
+            WHERE chain_id = ? AND status IN ('active', 'fallback_pending')`,
+        )
         .bind(chainId)
         .first<{ n: number }>();
       return row?.n ?? 0;
@@ -323,7 +359,8 @@ export async function reconcileAfterScan(
       const r = await ctx.db
         .prepare(
           `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
-            WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+            WHERE chain_id = ? AND loan_id = ?
+              AND status IN ('active', 'fallback_pending')`,
         )
         .bind(status, Number(ctx.head), now(), now(), chainId, loanId)
         .run();

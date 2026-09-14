@@ -95,6 +95,26 @@ describe('decideRepair', () => {
     }
   });
 
+  it('repairs a fallback_pending row the chain reports terminal', () => {
+    // The indexer treats `fallback_pending` as LIVE and transitions it
+    // straight to terminal — the InternalMatchExecuted handler and the
+    // terminal helper both guard on ('active','fallback_pending'). Leaving
+    // it out meant such a row was never repaired, AND that the count gate
+    // compared two different sets: the chain counter is documented as
+    // "Active or FallbackPending", so one such row pinned the gate open
+    // forever (#2190 round 1).
+    expect(decideRepair('fallback_pending', 1)).toBe('repaid');
+    expect(decideRepair('fallback_pending', 2)).toBe('defaulted');
+    expect(decideRepair('fallback_pending', 5)).toBe('internal_matched');
+  });
+
+  it('leaves a fallback_pending row alone while the chain agrees it is pending', () => {
+    // FallbackPending(4) maps to no terminal, so there is nothing to
+    // write — and the row must not be "repaired" to the state it is in.
+    expect(decideRepair('fallback_pending', 4)).toBeNull();
+    expect(decideRepair('fallback_pending', 0)).toBeNull();
+  });
+
   it('refuses to touch a row that is already terminal', () => {
     // The event path owns terminal→terminal. A sweep that reopened it
     // could overwrite the specific `liquidated` with the chain's
