@@ -10,7 +10,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 /**
  * The three answers are the point of the module, so each one is pinned
  * here — including the distinction the bug in #2107 collapsed: a state
- * that is WRONG and a state nobody would tell us about are not the same
+ * that is WRONG and a state no attempt could establish are not the same
  * result and must not produce the same verdict.
  */
 
@@ -160,8 +160,8 @@ describe('confirmWrite', () => {
   it('lets a throwing predicate propagate rather than blaming the endpoint', async () => {
     // A predicate that throws is a bug in the caller — a field that
     // moved, a shape it did not expect. Retrying it to the deadline and
-    // then reporting "no node would answer" would report the drive's own
-    // mistake as an infrastructure problem.
+    // then reporting that no attempt produced a usable answer would
+    // report the drive's own mistake as an infrastructure problem.
     await expect(
       confirmWrite(
         base({

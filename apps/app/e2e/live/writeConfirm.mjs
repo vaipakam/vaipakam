@@ -21,8 +21,9 @@
  *
  * WHAT THIS FIXES IS THE MISSING THIRD ANSWER. The naive check has two:
  * the state is right, or the state is wrong. The situation above is
- * neither — it is "no node would tell me". Reporting that as "the state
- * is wrong" states a fund-state conclusion the drive did not establish,
+ * neither — no attempt produced an answer this could use. Reporting that
+ * as "the state is wrong" states a fund-state conclusion the drive did
+ * not establish,
  * which is the failure this repo's standing principle names directly.
  * So `confirmWrite` answers in three:
  *
@@ -31,9 +32,12 @@
  *   { ok: false, observed }       read at a block at or after the
  *                                 write, and the value is WRONG — a
  *                                 real defect, reported immediately
- *   { ok: false, unconfirmed }    never got an answer from a node at
- *                                 or after that block — NOT a claim
- *                                 about the state either way
+ *   { ok: false, unconfirmed }    no attempt produced an answer this
+ *                                 could use, from a node at or after
+ *                                 that block — NOT a claim about the
+ *                                 state, nor about why (round 5: a
+ *                                 revert IS an answer, so "no node
+ *                                 would answer" was never safe here)
  *
  * HOW THE BLOCK IS PINNED, and why it is not `receipt.blockNumber`
  * directly. Asking a node for state at a block it does not have gets an

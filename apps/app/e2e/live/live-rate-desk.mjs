@@ -1490,7 +1490,7 @@ try {
             'OBSERVED',
             `${sweepIds.length} enumerated id(s) swept; ` +
               `${unconfirmedCancels.length} of them (#${unconfirmedCancels.join(', #')}) ` +
-              'had a cancel mine successfully whose effect no node would confirm, so ' +
+              'had a cancel mine successfully whose effect no attempt could confirm, so ' +
               'this sweep does not claim them either way',
           );
         } else if (stillLive.length === 0 && settled) {

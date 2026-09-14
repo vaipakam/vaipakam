@@ -1,4 +1,4 @@
-# A confirmation nobody would answer is not a failed write
+# A confirmation that could not be obtained is not a failed write
 
 When one of the live drives sends a transaction, it reads the state
 afterwards to check the transaction did what it was for. The reading is
@@ -38,8 +38,11 @@ answer.
 
 The more important half is that there are now three possible outcomes
 where there used to be two. The state is right. The state is wrong. Or
-nobody would answer — which is neither, and is what actually happened in
-September. That third outcome no longer borrows the second one's words.
+no attempt could get an answer it could use — which is neither, and is
+what actually happened in September. That third outcome no longer borrows
+the second one's words. (An earlier draft called it "nobody would
+answer"; a later round showed that was itself a claim the run cannot
+make, since a rejected call is an answer. See the final section.)
 Where it comes up, the report says what IS known — the transaction was
 included and succeeded, so the thing it was for did happen — and
 separately that the confirmation of its effect could not be obtained,
