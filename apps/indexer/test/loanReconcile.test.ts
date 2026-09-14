@@ -1,10 +1,16 @@
 /**
  * Loan-status reconciliation (#2101 part B).
  *
- * The sweep writes to a fund-state surface, so the cases below are mostly
- * about what it REFUSES to do. The safety argument is that a stale read
- * can only miss a repair and never manufacture one — these pin that,
- * rather than leaving it as a claim in a comment.
+ * The pass writes to a fund-state surface, so the cases below are mostly
+ * about what it REFUSES to do.
+ *
+ * An earlier version of this header said the safety argument was that "a
+ * stale read can only miss a repair and never manufacture one". That was
+ * retracted in #2190 round 1: the write is irreversible from this pass's
+ * point of view, since it only ever selects `active` rows, so a wrong
+ * read is permanent rather than harmless. Pinning every read to the
+ * scan's SAFE head is what makes it safe; the refusals below are what
+ * bound what it may do with a read it trusts.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';

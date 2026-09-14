@@ -43,6 +43,8 @@ import {
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { reconcileAfterScan } from './loanReconcile';
+import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   DIAMOND_OFFER_DETAILS_ABI,
@@ -1069,6 +1071,65 @@ export async function runChainIndexerForChain(
   // and ownership rows are current through `last_block`.
   if (scanTo === head) {
     await stampNotifiedWatermark(env, chainId, scanTo);
+
+    // #2101 — repair loan rows whose terminal event was missed for good.
+    // A terminal missed while this Worker was down, throttled, or past
+    // its catch-up window is missed PERMANENTLY: advancing the cursor
+    // restores the cursor, not the rows. Measured on Base Sepolia
+    // 2026-09-14 — chain 6 active, `/loans/stats` 7, `/loans/active` 9,
+    // one ghost untouched since 2026-07-04.
+    //
+    // HERE, not a cron pass of its own, and the placement is the fix
+    // (#2190 round 1). Inside this guard it inherits four properties a
+    // separate pass had to invent and got wrong: reads pin to `head`,
+    // which is SAFE-tagged, so a reorg cannot leave a row terminal in
+    // the index and active on the chain — and that row would never be
+    // looked at again, since the pass selects only `active`. It runs
+    // after this window's events are applied, so it cannot terminalize
+    // ahead of one. It is inside the DO's call, so the DO's broadcast
+    // covers the write. And identity was asserted far above.
+    //
+    // `scanTo === head` is the ordering gate, not a freshness nicety:
+    // mid-backfill there are unapplied events between cursor and head,
+    // and repairing from head state would jump that queue.
+    //
+    // Budget: ONE extra subrequest in the healthy case (the chain's own
+    // active count), and at most `maxRows` status reads when the counts
+    // disagree. No head read and no identity read — this scan has both.
+    try {
+      const report = await reconcileAfterScan(
+        {
+          db: env.DB,
+          chainId,
+          diamond,
+          head,
+          readContract: (args) => client.readContract(args as never) as Promise<unknown>,
+          metricsAbi: DIAMOND_METRICS_ABI,
+          loanAbi: DIAMOND_LOAN_DETAILS_ABI,
+        },
+        { maxRows: 5, minRows: 1 },
+      );
+      if (report.repaired.length > 0) {
+        console.warn(
+          `[chainIndexer] reconciled chain ${chainId}: ` +
+            report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
+        );
+      }
+      // A row whose chain read failed is NOT silently dropped. If a
+      // deployed facet stops matching the compiled ABI, every read fails
+      // every pass and the statuses stay stale forever while the scan
+      // looks healthy — so the unread set is said out loud (#2190 r1).
+      if (report.unread.length > 0) {
+        console.warn(
+          `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
+            `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+        );
+      }
+    } catch (err) {
+      // A repair failure must not wedge the scan that found nothing
+      // wrong; the rotation returns to these rows.
+      console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
+    }
   }
 
   // #1245 measurement rail — one structured line per scan that touched
