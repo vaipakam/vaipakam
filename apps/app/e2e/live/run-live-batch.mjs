@@ -38,67 +38,28 @@
  * driver must pick from the three above rather than inventing a code.
  */
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { driversOnDisk, THREE_VERDICT_DRIVERS } from './verdictContract.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Drivers that IMPLEMENT the three-verdict contract above.
+ * WHICH VERDICTS EACH DRIVER SPEAKS — moved to `verdictContract.mjs` so
+ * something other than this file can read it (#2099).
  *
- * As of #1581 that is every driver in this directory. The set is kept
- * rather than dropped because it is what makes the vocabulary HONEST:
- * membership is enforced at classification, so an exit 2 from a driver
- * outside it is recorded as a FAIL. Reading it as BLOCKED would assert
- * "do not take this as a pass" about a driver that never agreed to mean
- * that by exiting 2 (#1529 review round 19), and a new driver is exactly
- * the case where that could still happen.
+ * This module runs the whole batch on import, so while the lists lived
+ * here nothing could check them without launching browsers against a
+ * live site, and the only guard that could exist was the startup warning
+ * below. That warning prints on a batch run — before a testnet release,
+ * not on a pull request — so a driver could be added, reviewed, merged
+ * and run for weeks with its BLOCKED reported as a product FAIL.
  *
- * NOTE what BLOCKED does and does not say. It means the drive did not
- * complete, so its surfaces are not fully reviewed. It does NOT mean the
- * drive observed nothing: a multi-role driver may pass every scenario
- * for one role and then hit a setup failure on the next, keeping those
- * results and its report while still exiting 2. This file used to say
- * "ran but verified nothing", which erased exactly those observations.
- *
- * So: ADD A NEW DRIVER HERE when you add one. Honouring the contract is
- * a requirement for a driver in this directory, not an aspiration — and
- * the startup check below names anything unregistered rather than
- * letting the batch quietly misreport it.
+ * Behaviour here is unchanged. The check that fails is a unit test.
  */
-const THREE_VERDICT_DRIVERS = new Set([
-  'live-alerts-link.mjs',
-  // Exits 2 for a bad role selector, a browser/profile setup failure, or
-  // an unreachable site — all PRECONDITIONS, not product regressions.
-  // Without this entry the batch relabels those BLOCKED exits as FAIL and
-  // points the operator at the product during an infrastructure problem.
-  'live-role-journeys.mjs',
-  'live-collateral-precheck.mjs',
-  'live-desk-i18n-capture.mjs',
-  'live-dryrun-review.mjs',
-  'live-killswitch-regression.mjs',
-  'live-position-observe.mjs',
-  'live-rate-desk.mjs',
-  'live-recover.mjs',
-  // Exits 2 when a locale bundle lacks a key it is asked to assert —
-  // a missing PRECONDITION in the repo, not a product regression. It
-  // is auto-discovered by the sweep below, so without this entry the
-  // batch would relabel its BLOCKED as `FAIL (exit 2)` and claim the
-  // driver predates the contract, contradicting the driver's own
-  // report of the same run (Codex #1590 r3).
-  'live-recover-locales.mjs',
-  'live-risk-access.mjs',
-  'live-rpc-audit.mjs',
-  'live-signed-book.mjs',
-  'live-support-ticket.mjs',
-  'live-ux-sweep.mjs',
-]);
 
-const scripts = fs
-  .readdirSync(HERE)
-  .filter((f) => f.startsWith('live-') && f.endsWith('.mjs'))
-  .sort();
+const scripts = driversOnDisk(HERE);
 
 // Say so UP FRONT rather than at classification time. An unregistered
 // driver's BLOCKED is silently downgraded to FAIL below — the safe
