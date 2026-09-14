@@ -328,7 +328,7 @@
       "empty": "Nothing yet. Updates about your loans show up here.",
       "unavailable": "Couldn’t load your notifications just now. They’ll be here when the connection is back.",
       "connectFirst": "Connect your wallet to see updates about your loans.",
-      "correctionNote": "We found this by checking — we can’t tell when it happened. Open it to see where it stands.",
+      "correctionNote": "We found this by checking — we can’t tell when it happened.",
       "line": {
         "loan_matched": "Your loan is now active.",
         "partial_repay": "A repayment came in on your loan.",

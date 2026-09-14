@@ -307,7 +307,7 @@
       "bellLabel": "Benachrichtigungen",
       "title": "Benachrichtigungen",
       "loading": "Benachrichtigungen werden geladen…",
-      "correctionNote": "Wir haben das bei einer Prüfung entdeckt — wann es passiert ist, können wir nicht sagen. Öffnen Sie ihn, um den aktuellen Stand zu sehen.",
+      "correctionNote": "Wir haben das bei einer Prüfung entdeckt — wann es passiert ist, können wir nicht sagen.",
       "empty": "Noch nichts. Updates zu Ihren Krediten erscheinen hier.",
       "unavailable": "Benachrichtigungen konnten gerade nicht geladen werden. Sie erscheinen hier, sobald die Verbindung wieder da ist.",
       "connectFirst": "Verbinden Sie Ihre Wallet, um Updates zu Ihren Krediten zu sehen.",

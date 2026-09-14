@@ -307,7 +307,7 @@
       "bellLabel": "Notifications",
       "title": "Notifications",
       "loading": "Chargement de vos notifications…",
-      "correctionNote": "Nous l’avons découvert en vérifiant — nous ne pouvons pas dire quand cela s’est produit. Ouvrez-le pour voir où il en est.",
+      "correctionNote": "Nous l’avons découvert en vérifiant — nous ne pouvons pas dire quand cela s’est produit.",
       "empty": "Rien pour l'instant. Les mises à jour sur vos prêts apparaîtront ici.",
       "unavailable": "Impossible de charger vos notifications pour le moment. Elles seront ici lorsque la connexion reviendra.",
       "connectFirst": "Connectez votre portefeuille pour voir les mises à jour sur vos prêts.",

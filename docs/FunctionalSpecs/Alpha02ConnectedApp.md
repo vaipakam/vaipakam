@@ -300,16 +300,22 @@ The app uses chain reads and indexed reads for different jobs.
   lost the ending could equally have lost a transfer of the position, so
   that record is stale for the same reason. Where a holder cannot be
   established, that side receives no message rather than one addressed to a
-  guess — and the holder the platform does establish is recorded, so other
-  surfaces stop naming the wrong one.
-- Asking who holds a position has THREE answers, and the platform keeps
-  them apart. There is a holder; there is definitively no holder, because
-  that party already took what was theirs and the record of it was lost in
-  the same gap; or the question went unanswered. The first two are recorded
-  — the emptiness included, since that is what stops the platform offering
-  something already taken — and the third changes nothing, because clearing
-  a real holder on a moment's connection trouble would hide what is theirs.
-  The same rule distinguishes them everywhere it is asked.
+  guess.
+- Asking who holds a position has two answers for this purpose: there is a
+  holder the message can be addressed to, or there is not. A side with no
+  answer is left silent, whether that is because the position has been
+  given up or because the question could not be reached — a correction
+  does not need to tell those apart in order to decide who to write to, and
+  the platform does not guess between them. Telling the wrong person that
+  their position ended, while its real holder hears nothing, is worse than
+  the silence the message exists to end.
+- **A correction does not restate who holds a position.** Refreshing that
+  record is a real need and belongs to whatever surface owns it; a pass
+  whose purpose is to correct a loan's state must not also overwrite an
+  ownership record on the strength of a reading it cannot interpret. An
+  unreachable answer and a position genuinely given up look alike from
+  here, and acting on the wrong reading of the two would hide something
+  that is still somebody's.
 - Such a message is SHOWN as a correction, not merely recorded as one. Its
   headline states the outcome, and a line beneath it says the platform
   found this by checking and cannot tell when it happened. A surface that

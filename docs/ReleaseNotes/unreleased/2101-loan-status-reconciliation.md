@@ -137,18 +137,20 @@ swallowed a transfer of the position, so that record is untrustworthy for
 exactly the same reason — and the one message a holder gets about their loan
 ending is the worst possible one to send to somebody who has already sold
 out of it. Where a holder cannot be established at all, no message is sent
-for that side rather than one sent to a guess, and the refreshed holder is
-written back so every other screen stops showing the wrong name too.
+for that side rather than one sent to a guess.
 
-There are three possible answers there, not two, and the third one matters.
-A side may have a holder; it may have NONE, because that party already took
-what was theirs and the record of them doing so was lost in the same gap; or
-the question may simply not have been answered. The first two are recorded —
-including the emptiness, which is what stops the platform going on offering
-something already taken — while the third changes nothing, because clearing
-a real holder on a moment's connection trouble would hide something that IS
-theirs. The rule for telling those apart is now one rule, shared with the
-claims screen that has always applied it.
+What the correction deliberately does NOT do is write that answer back as
+the record of who holds the position. An earlier version did, and told the
+two apart — a position genuinely given up, versus a question that could not
+be reached — by inspecting how the reading failed. Review narrowed that
+test once, and the narrowing was the signal: the same failure also covers an
+ordinary hiccup, so the version that was meant to stop offering something
+already claimed would, on a bad minute, erase a holder who still owned it.
+That is a shape this project has met before, and the answer to it is to
+remove the test rather than keep sharpening it. So the correction reads
+holders only to decide who to write to — which is what the original problem
+asked for — and leaves the ownership record to whatever owns it. Refreshing
+that record is a real want, and it is not this pass's to guess at.
 
 They also arrive as NEW rather than as something already read. The inbox
 decides what is unread by position in the chain's order, and a message

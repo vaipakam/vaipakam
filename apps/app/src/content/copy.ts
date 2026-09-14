@@ -724,8 +724,14 @@ const copySource = {
     // that anything is wrong, because nothing is. Without it a correction
     // is displayed exactly like an announcement, which presents a discovery
     // about something months old as news of the moment (#2190 r5).
-    correctionNote:
-      'We found this by checking — we can’t tell when it happened. Open it to see where it stands.',
+    // It sits BESIDE the loan reference, never instead of it (#2190 r7
+    // `4008016663`). The headlines are generic by design — "A loan
+    // defaulted" — so a correction that replaced the reference left two
+    // corrections rendering identically, with no way to tell which
+    // position had ended without opening each one. The reference line
+    // already carries the tap affordance, so this says only the two
+    // things the reference cannot.
+    correctionNote: 'We found this by checking — we can’t tell when it happened.',
     // The row's headline, by outcome kind. Each row deep-links to the
     // position, which re-verifies the exact state on chain.
     line: {

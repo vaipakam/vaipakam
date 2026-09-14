@@ -307,7 +307,7 @@
       "bellLabel": "Notificaciones",
       "title": "Notificaciones",
       "loading": "Cargando tus notificaciones…",
-      "correctionNote": "Lo detectamos al revisar — no podemos saber cuándo ocurrió. Ábrelo para ver cómo está.",
+      "correctionNote": "Lo detectamos al revisar — no podemos saber cuándo ocurrió.",
       "empty": "Nada aún. Las novedades sobre tus préstamos aparecerán aquí.",
       "unavailable": "No pudimos cargar tus notificaciones ahora mismo. Estarán aquí cuando vuelva la conexión.",
       "connectFirst": "Conecta tu billetera para ver novedades sobre tus préstamos.",

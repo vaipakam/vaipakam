@@ -271,7 +271,10 @@ function NotificationRow({
   // outcome, which is right; this says how it was learned and admits the
   // one thing the check cannot establish. Storing the provenance and not
   // rendering it would have left a months-old default reading exactly like
-  // news of the moment (#2190 r5).
+  // news of the moment (#2190 r5). It is ADDITIVE to the loan reference,
+  // not a replacement for it — the headlines are generic, so a correction
+  // that dropped the reference made two corrections indistinguishable
+  // (#2190 r7 `4008016663`).
   const correction = isReconciledNotification(row.eventKind);
 
   const body = (
@@ -281,10 +284,9 @@ function NotificationRow({
       </span>
       <span className="notif-row-text">
         <span className="notif-row-title">{title}</span>
+        {sub ? <span className="notif-row-sub">{sub}</span> : null}
         {correction ? (
           <span className="notif-row-sub">{copy.notifications.correctionNote}</span>
-        ) : sub ? (
-          <span className="notif-row-sub">{sub}</span>
         ) : null}
       </span>
       {unread ? <span className="notif-row-dot" aria-hidden /> : null}
