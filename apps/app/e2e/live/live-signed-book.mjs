@@ -111,6 +111,7 @@ import {
   requireSigningRole,
   visit,
 } from './driver.mjs';
+import { confirmWrite } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -348,6 +349,42 @@ const diamondRead = (functionName, args) => {
   requireAbiMember(functionName, 'function');
   return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
 };
+
+/** The same read PINNED to a block — the form `confirmWrite` requires
+ *  (see `writeConfirm.mjs`). An unpinned read after a receipt is the
+ *  #2107 race: a load-balanced endpoint can serve the receipt from a
+ *  node that has the block and the call from one that has not. */
+const diamondReadAt = (functionName, args, blockNumber) => {
+  requireAbiMember(functionName, 'function');
+  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args, blockNumber });
+};
+
+/**
+ * The ledger for `orderHash` sits at `ceiling` — confirmed from a node
+ * at or after the block the revocation landed in.
+ *
+ * Returns `confirmWrite`'s three-state answer verbatim, because the
+ * third state is the whole reason this exists: "no node would tell me"
+ * must not reach the operator as "the order may still be fillable"
+ * (#2107). A successful `cancelSignedOffer` receipt IS the revocation;
+ * this read is the confirmation of it, and failing to obtain the
+ * confirmation is a weaker fact than failing the confirmation.
+ */
+const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
+  confirmWrite({
+    what: `signedOfferFilledAmount(${orderHash}) at or above the ceiling ${ceiling}`,
+    minBlock,
+    getBlockNumber: () => pub.getBlockNumber(),
+    read: (blockNumber) => diamondReadAt('signedOfferFilledAmount', [orderHash], blockNumber),
+    // AT OR ABOVE the ceiling, which is the drive's own definition of
+    // "not fillable" and the predicate the cleanup read already used.
+    // Step 6 asked for exact equality; the two are the same value in
+    // practice, and where they would differ the loose one is the safe
+    // direction — a ledger past its ceiling still rests nothing, so
+    // failing it would be a second false alarm of the kind this fixes.
+    accept: (v) => v >= ceiling,
+    timeoutMs: 90_000,
+  });
 
 /** Wire order (all-strings JSON) → the typed struct viem's ABI encoder
  *  expects for `cancelSignedOffer` / `signedOfferOrderHash` — the same
@@ -630,6 +667,9 @@ let wireOrder = null; // the exact replay payload GET served (cancel needs it)
 let signClicked = false; // a signature may exist from here on
 let ledgerPoisoned = false; // signedOfferFilledAmount(orderHash) == ceiling verified
 let cancelTxHash = null;
+/** Block the step-6 cancel landed in, when one did — the floor every
+ *  later ledger read is confirmed at or after (#2107). */
+let cancelBlock = null;
 let ws = null;
 // Pre-existing ACTIVE signed rows under this signer on the driven
 // market, snapshotted at preflight — leftovers of an earlier partial
@@ -1352,23 +1392,49 @@ try {
   if (receipt.status !== 'success') {
     throw new Error(`cancel tx ${cancelTxHash} mined but reverted`);
   }
+  cancelBlock = receipt.blockNumber;
   // (a) the ledger poisoned to the ceiling — the revocation itself.
+  // Confirmed from a node at or after the cancel's own block: an
+  // unpinned read here answered the PRE-cancel value on a live batch
+  // and read as a failed revocation (#2107).
   const ceiling = ceilingOf(wireOrder);
-  const ledgerAfter = await diamondRead('signedOfferFilledAmount', [orderHash]);
-  if (ledgerAfter !== ceiling) {
+  const ledger = await confirmLedgerAtCeiling(orderHash, ceiling, cancelBlock);
+  await snap('signed-book-04-cancelled');
+  if (ledger.ok) {
+    ledgerPoisoned = true;
+    record(
+      '6. cancelSignedOffer on-chain (no cooldown)',
+      'PASS',
+      `tx ${cancelTxHash} (block ${cancelBlock}); ledger poisoned to the ` +
+        `ceiling ${ceiling} at block ${ledger.blockNumber} — the signature is dead`,
+    );
+  } else if (ledger.unconfirmed) {
+    // NOT a failure of the revocation, and deliberately not recorded as
+    // one. The `SignedOfferCancelled` log for this order hash, in a
+    // transaction with status success, is direct evidence the cancel
+    // executed; what could not be obtained is the state read confirming
+    // its consequence.
+    //
+    // `ledgerPoisoned` stays FALSE all the same, and that is the
+    // conservative half of this branch rather than an oversight: it is
+    // what keeps the cleanup boundary below armed, so the confirmation
+    // is attempted again — later, when the endpoint has had time to
+    // settle — instead of the drive standing on evidence it collected
+    // once and could not re-read.
+    record(
+      '6. cancelSignedOffer on-chain (no cooldown)',
+      'OBSERVED',
+      `tx ${cancelTxHash} (block ${cancelBlock}) emitted SignedOfferCancelled for ` +
+        `${orderHash} with status success — the revocation executed. The ledger ` +
+        `confirmation of it did not: ${ledger.why}. Cleanup re-verifies below.`,
+    );
+  } else {
     throw new Error(
-      `signedOfferFilledAmount(${orderHash}) reads ${ledgerAfter} after cancel — ` +
-        `expected the ceiling ${ceiling}`,
+      `signedOfferFilledAmount(${orderHash}) reads ${ledger.value} at block ` +
+        `${ledger.blockNumber}, at or after the cancel's own block ${cancelBlock} — ` +
+        `expected at least the ceiling ${ceiling}`,
     );
   }
-  ledgerPoisoned = true;
-  await snap('signed-book-04-cancelled');
-  record(
-    '6. cancelSignedOffer on-chain (no cooldown)',
-    'PASS',
-    `tx ${cancelTxHash} (block ${receipt.blockNumber}); ledger poisoned to the ` +
-      `ceiling ${ceiling} — the signature is dead`,
-  );
 
   // ---- step 7: the indexer + push rail catch up ------------------------
   // THREE independent observations, accounted separately (see the
@@ -1966,14 +2032,41 @@ try {
               'pending UI cancel (spending gas twice on the same revocation)',
           );
         }
-        const ledger = await diamondRead('signedOfferFilledAmount', [orderHash]);
         const ceiling = ceilingOf(wireOrder);
-        if (ledger >= ceiling) {
+        // Where step 6 DID land a cancel, this read is a post-write
+        // verification like any other and is confirmed at or after that
+        // cancel's block. Without one there is no block to floor it at,
+        // so it stays an unpinned read of the current state — which is
+        // the right question then: nothing was written to be stale
+        // about.
+        const ledger =
+          cancelBlock !== null
+            ? await confirmLedgerAtCeiling(orderHash, ceiling, cancelBlock)
+            : { ok: (await diamondRead('signedOfferFilledAmount', [orderHash])) >= ceiling };
+        if (ledger.ok) {
           ledgerPoisoned = true; // already consumed/cancelled — nothing rests
           record(
             'cleanup: signed order',
             'PASS',
             `ledger already reads the ceiling for ${orderHash} — order not fillable`,
+          );
+        } else if (ledger.unconfirmed) {
+          // A cancel from step 6 is on chain with status success, and
+          // no node will confirm its effect. Sending a SECOND
+          // cancelSignedOffer here would spend gas on a revocation that
+          // has already happened — the same waste the nonce-settle gate
+          // above exists to avoid — and would likely revert, which this
+          // block reports as an order that may still be fillable. So it
+          // is not sent, and the gap is stated instead of papered over.
+          record(
+            'cleanup: signed order',
+            'FAIL',
+            `CANCEL SENT, EFFECT UNCONFIRMED — tx ${cancelTxHash} (block ${cancelBlock}) ` +
+              `emitted SignedOfferCancelled for ${orderHash} with status success, so the ` +
+              `revocation executed; no node would confirm the ledger. ${ledger.why}. ` +
+              `No second cancel was sent (it would duplicate one already mined). ` +
+              `Re-read signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a ` +
+              `synced node — expect at least the ceiling ${ceiling}.`,
           );
         } else {
           console.log(`cleanup: direct on-chain cancelSignedOffer(${orderHash})…`);
@@ -1989,19 +2082,41 @@ try {
           if (receipt.status !== 'success') {
             throw new Error(`cleanup cancel tx ${hash} mined but reverted`);
           }
-          const after = await diamondRead('signedOfferFilledAmount', [orderHash]);
-          if (after !== ceiling) {
+          // THE read from #2107. It answered the pre-cancel value once,
+          // straight after the receipt, and the throw it raised reached
+          // the operator as `ORDER … MAY STILL BE FILLABLE` for an
+          // order that had just been revoked.
+          const after = await confirmLedgerAtCeiling(orderHash, ceiling, receipt.blockNumber);
+          cancelTxHash = cancelTxHash ?? hash;
+          if (after.ok) {
+            ledgerPoisoned = true;
+            record(
+              'cleanup: direct on-chain cancel',
+              'PASS',
+              `order ${orderHash} — tx ${hash} (receipt success, ledger at ceiling ` +
+                `at block ${after.blockNumber})`,
+            );
+          } else if (after.unconfirmed) {
+            // Not thrown — a throw lands in the catch below, whose
+            // message claims the order may still be fillable, and that
+            // is precisely the claim this run cannot make. What it can
+            // say is what it did and what it failed to read.
+            record(
+              'cleanup: direct on-chain cancel',
+              'FAIL',
+              `CANCEL SENT, EFFECT UNCONFIRMED — cancelSignedOffer tx ${hash} mined at ` +
+                `block ${receipt.blockNumber} with status success, so the revocation ` +
+                `executed; no node would confirm the ledger. ${after.why}. Re-read ` +
+                `signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a synced ` +
+                `node — expect at least the ceiling ${ceiling}.`,
+            );
+          } else {
             throw new Error(
-              `cleanup cancel mined but ledger reads ${after}, expected ${ceiling}`,
+              `cleanup cancel mined but ledger reads ${after.value} at block ` +
+                `${after.blockNumber}, at or after the cancel's own block ` +
+                `${receipt.blockNumber} — expected at least ${ceiling}`,
             );
           }
-          ledgerPoisoned = true;
-          cancelTxHash = cancelTxHash ?? hash;
-          record(
-            'cleanup: direct on-chain cancel',
-            'PASS',
-            `order ${orderHash} — tx ${hash} (receipt success, ledger at ceiling)`,
-          );
         }
       }
     }

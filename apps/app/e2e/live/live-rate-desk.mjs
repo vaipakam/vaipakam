@@ -102,6 +102,7 @@ import {
   requireSigningRole,
   visit,
 } from './driver.mjs';
+import { confirmWrite } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -360,6 +361,36 @@ function diamondRead(functionName, args) {
 
 async function getOffer(offerId) {
   return diamondRead('getOffer', [offerId]);
+}
+
+/**
+ * `getOffer`'s creator is zeroed — confirmed from a node at or after
+ * the block the cancel landed in (#2107).
+ *
+ * An unpinned read straight after a receipt is a race this endpoint
+ * loses routinely: the receipt can come from a node that has the block
+ * while the call is served by one that has not applied it, and the
+ * answer is then EXACTLY the pre-cancel creator — indistinguishable
+ * from a cancel that did nothing. `live-signed-book` reported a live
+ * fillable order that way on a real batch.
+ */
+function confirmCreatorZeroed(offerId, minBlock) {
+  requireAbiMember('getOffer', 'function');
+  return confirmWrite({
+    what: `getOffer(${offerId}).creator zeroed`,
+    minBlock,
+    getBlockNumber: () => pub.getBlockNumber(),
+    read: (blockNumber) =>
+      pub.readContract({
+        address: DIAMOND,
+        abi: ABI,
+        functionName: 'getOffer',
+        args: [offerId],
+        blockNumber,
+      }),
+    accept: (offer) => ZERO_CREATOR.test(String(offer.creator)),
+    timeoutMs: 90_000,
+  });
 }
 
 /** Length of `creator`'s LIFETIME offer index. getUserOffersPaginated
@@ -1361,6 +1392,13 @@ try {
         // postAttempted && !settled: CLEANUP-UNKNOWN already recorded above.
       } else {
         const stillLive = [];
+        // Ids whose cancel MINED SUCCESSFULLY but whose effect no node
+        // would confirm (#2107). Deliberately not `stillLive`: a
+        // successful `cancelOffer` receipt is evidence the escrow was
+        // released, so calling these live would be as wrong as calling
+        // them clean. They are their own list precisely so the sweep
+        // verdict below can decline to claim either.
+        const unconfirmedCancels = [];
         for (const id of sweepIds) {
           try {
             const live = await getOffer(id);
@@ -1387,17 +1425,36 @@ try {
             if (receipt.status !== 'success') {
               throw new Error(`cancelOffer tx ${hash} mined but REVERTED (status=${receipt.status})`);
             }
-            const after = await getOffer(id);
-            if (!ZERO_CREATOR.test(String(after.creator))) {
+            const after = await confirmCreatorZeroed(id, receipt.blockNumber);
+            if (!after.ok && after.unconfirmed) {
+              // NOT thrown: the catch below reports the offer as maybe
+              // live with escrow held, and that claim is not available
+              // here — the cancel mined with status success.
+              unconfirmedCancels.push(id);
+              record(
+                'cleanup: direct on-chain cancel',
+                'FAIL',
+                `CANCEL SENT, EFFECT UNCONFIRMED — cancelOffer tx ${hash} for offer #${id} ` +
+                  `mined at block ${receipt.blockNumber} with status success, so the ` +
+                  `cancel executed; no node would confirm it. ${after.why}. Re-read ` +
+                  `getOffer(${id}).creator on ${DIAMOND} against a synced node — expect ` +
+                  `the zero address.`,
+              );
+              continue;
+            }
+            if (!after.ok) {
               throw new Error(
                 `cancelOffer tx ${hash} reported success but offer #${id} creator ` +
-                  `still reads ${after.creator} — offer NOT cancelled`,
+                  `still reads ${after.value.creator} at block ${after.blockNumber}, at ` +
+                  `or after the cancel's own block ${receipt.blockNumber} — offer NOT ` +
+                  `cancelled`,
               );
             }
             record(
               'cleanup: direct on-chain cancel',
               'PASS',
-              `offer #${id} — tx ${hash} (receipt success, creator re-read as zero)`,
+              `offer #${id} — tx ${hash} (receipt success, creator re-read as zero at ` +
+                `block ${after.blockNumber})`,
             );
           } catch (idErr) {
             stillLive.push(id);
@@ -1409,7 +1466,23 @@ try {
             );
           }
         }
-        if (stillLive.length === 0 && settled) {
+        if (unconfirmedCancels.length) {
+          // The PASS below says every id was "verified cancelled
+          // (creator zeroed on-chain)". For these ids that is the one
+          // thing that did not happen, so it is not said. Their cancels
+          // mined successfully, which is why they are not reported as
+          // live either — the per-id FAIL above already carries the
+          // re-read instruction and keeps the run red.
+          cancelled = false;
+          record(
+            'cleanup: index delta sweep',
+            'OBSERVED',
+            `${sweepIds.length} enumerated id(s) swept; ` +
+              `${unconfirmedCancels.length} of them (#${unconfirmedCancels.join(', #')}) ` +
+              'had a cancel mine successfully whose effect no node would confirm, so ' +
+              'this sweep does not claim them either way',
+          );
+        } else if (stillLive.length === 0 && settled) {
           cancelled = true;
           record(
             'cleanup: index delta sweep',
