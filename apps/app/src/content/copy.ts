@@ -717,6 +717,21 @@ const copySource = {
     // posture (never a fake empty).
     unavailable: 'Couldn’t load your notifications just now. They’ll be here when the connection is back.',
     connectFirst: 'Connect your wallet to see updates about your loans.',
+    // Shown UNDER the headline on a row the platform derived by checking
+    // its own records against the chain, rather than from an announcement
+    // it saw (#2101). Two things it must say and one it must not: the
+    // outcome was DISCOVERED, and WHEN it happened is not known — but not
+    // that anything is wrong, because nothing is. Without it a correction
+    // is displayed exactly like an announcement, which presents a discovery
+    // about something months old as news of the moment (#2190 r5).
+    // It sits BESIDE the loan reference, never instead of it (#2190 r7
+    // `4008016663`). The headlines are generic by design — "A loan
+    // defaulted" — so a correction that replaced the reference left two
+    // corrections rendering identically, with no way to tell which
+    // position had ended without opening each one. The reference line
+    // already carries the tap affordance, so this says only the two
+    // things the reference cannot.
+    correctionNote: 'We found this by checking — we can’t tell when it happened.',
     // The row's headline, by outcome kind. Each row deep-links to the
     // position, which re-verifies the exact state on chain.
     line: {
@@ -725,6 +740,26 @@ const copySource = {
       loan_repaid: 'A loan was fully repaid — see what you can claim.',
       loan_defaulted: 'A loan defaulted — see what you can claim.',
       internal_matched: 'A loan of yours closed by matching — see what you can claim.',
+      // #2101 — a loan a CORRECTION found already over, where the chain can
+      // say THAT it ended and not HOW: a repayment, a default and a forced
+      // sale all reach the same on-chain state. Every other outcome line
+      // above names a cause, so none of them can carry this one without
+      // asserting something nobody established. It always appears above the
+      // correction note, which supplies the rest of the honesty.
+      //
+      // NO CLAIM CTA, unlike the three lines above (#2190 r10
+      // `4008939656`). The claim route selects only `repaid` / `defaulted` /
+      // `liquidated` / `internal_matched`, so a `settled` loan NEVER has a
+      // claim — and that is by design rather than by omission: the prepay
+      // fill distributes everything atomically, which is why
+      // `PrepayListingFacet` pays the rebate outright instead of leaving it
+      // for a claim, and why `claimAsBorrower` rejects `Settled`. That same
+      // route is how this line actually reaches anyone — it UNLOCKS the
+      // borrower NFT rather than burning it, so `ownerOf` still resolves —
+      // so the one case that renders this row is exactly the case with
+      // nothing to claim. It points at the position instead, matching the
+      // calendar lines below.
+      loan_ended: 'A loan of yours ended — open it to see where it stands.',
       // Calendar rows (#1213 PR 2) — time-derived reminders from the
       // indexer's cron sweep, covering illiquid loans too. Each line must
       // stay TRUE FOREVER as an inbox history entry (Codex #1298 r1+r2):

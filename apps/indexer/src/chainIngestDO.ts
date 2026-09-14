@@ -40,6 +40,7 @@
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import type { PushHints } from './pushHints';
 import {
+  RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
   isRetryableScanSkip,
   runChainIndexerForChain,
@@ -297,10 +298,18 @@ export function invalidationKeysFromResult(
   // advance. They change what a party is owed/holds, so they ride the same
   // coarse key; previously a scan with ONLY these events broadcast nothing
   // beyond `activity.appended`.
+  // `reconciledLoans` (#2101) = a loan row terminalized from the CHAIN
+  // because its event was missed for good. It rides the same coarse key and
+  // must: the repair has no accompanying log, so without it a scan whose
+  // only loan change was a repair broadcast nothing and every open client
+  // kept presenting the ghost as an open position until its next poll
+  // (#2190 r2 `4005986348`). It is the case where the push matters most —
+  // the correction is precisely the news.
   if (
     result.loanStatusUpdates > 0 ||
     result.loanDetailRefreshes > 0 ||
-    (result.loanEntitlementUpdates ?? 0) > 0
+    (result.loanEntitlementUpdates ?? 0) > 0 ||
+    (result.reconciledLoans ?? 0) > 0
   ) {
     keys.push('loan.updated');
   }
@@ -449,7 +458,18 @@ export class ChainIngestDO {
           await this.clearLoopState();
           return;
         }
-        const result = await runChainIndexerForChain(resolved, chain);
+        // DO PATH — this scan owns its invocation's subrequest budget: the
+        // cron's other passes (`captureBackingSnapshot`,
+        // `sweepUnpublishedListings`) run in the SCHEDULED invocation, not
+        // this one. So the #2101 repair gets the roomier allowance and its
+        // rotation turns faster here than on the legacy inline path. That
+        // difference is a property of the deployment's ingest config, not a
+        // hidden tuning knob.
+        const result = await runChainIndexerForChain(
+          resolved,
+          chain,
+          RECONCILE_BUDGET_OWN_INVOCATION,
+        );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with

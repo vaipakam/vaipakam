@@ -773,3 +773,31 @@ Two of them (#2035, #2038) are the narrower failure of an erasure that works
 while its evidence does not survive, which on a page whose purpose is
 reporting is still a real gap.
 
+
+---
+
+## An unsubstantiable loan record is reported, but not withdrawn from publication (#2190 r8)
+
+Recorded here rather than by softening
+[`Alpha02ConnectedApp.md`](Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and that resolving a divergence by editing the
+spec to match the code needs an explicit human decision. Found by review of the
+change that introduced the intent, so the spec is not stale — the
+implementation has not caught up with it.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"A record the chain has no loan for is not a running loan […] the platform […] reports the ones it cannot substantiate instead of counting them as open forever"* | The reconciliation pass DOES detect these — a loan the chain has never heard of returns a zero-valued answer whose state is indistinguishable from running, so the pass tests existence first and names the failures in the operator's log as unresolvable. What it does not do is change the record: the row keeps its running state, so it is still counted in the index's own total and still published by the surfaces that list running loans. The spec's first clause is therefore met as a matter of *reporting* and not of *publication*. | #2197 |
+
+**Why it is a divergence rather than a bug to fix in place.** Withdrawing such
+a row needs a state the schema does not have — a quarantined or excluded
+status — which is a migration plus a decision at every surface that today
+filters on "running". That is a different change from the one #2190 makes, and
+inventing the state mid-review would put an unreviewed status value into a
+table four Workers read.
+
+**What it does not mean.** The pass does not treat these rows as confirmed
+running, which was the original defect: before #2190 an orphaned row read as a
+healthy active loan on every pass forever, and the count disagreement it caused
+was silent. It is now named, on every tick, with the loan ids. The gap is that
+naming it does not yet stop it being published.

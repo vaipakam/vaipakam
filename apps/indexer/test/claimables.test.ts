@@ -126,19 +126,47 @@ describe('GET /claimables/:address', () => {
   it('an OLD loan that just went terminal survives the cut (recency = terminal time, not loan_id)', async () => {
     // Codex #1269 r2 — ids are assigned at initiation; loan 1 repaid
     // TODAY is the newest terminal event even though its id is lowest.
-    // (terminal_at NULL here → the COALESCE falls back to updated_at.)
+    //
+    // Seeded through `terminal_at`, which is what EVERY production terminal
+    // writer stamps — `flipLoanStatus`, the settle paths and the deferred
+    // `LoanStatusChanged` edges all set it in the same UPDATE as the status.
+    // This case used to seed `terminal_at` NULL with a high `updated_at` and
+    // lean on a `COALESCE` fallback, a row shape nothing in production
+    // produces; #2190 r8 removed that fallback because a repaired row is
+    // exactly the NULL case and must NOT read as fresh. The finding this
+    // guards — recency is the terminal time, not the loan id — is unchanged.
     const h = makeHarness();
     h.db.exec('BEGIN');
-    h.seed(1, 'repaid', ME, OTHER, 9_999); // freshly terminal
-    for (let i = 2; i <= 202; i++) h.seed(i, 'repaid', ME, OTHER);
+    h.seed(1, 'repaid', ME, OTHER, 9_999, 9_999); // freshly terminal
+    for (let i = 2; i <= 202; i++) h.seed(i, 'repaid', ME, OTHER, 0, 0);
     h.db.exec('COMMIT');
     const body = await h.call();
     expect(body.truncated).toBe(true);
     expect(body.asLender).toHaveLength(200);
     expect(body.asLender[0].loanId).toBe(1); // most recent terminal first
-    // The tie-broken tail drops the two lowest ids among updated_at=0.
+    // The tie-broken tail drops the two lowest ids among terminal_at=0.
     expect(body.asLender.map((l) => l.loanId)).not.toContain(2);
     expect(body.asLender.map((l) => l.loanId)).not.toContain(3);
+  });
+
+  it('a row of UNKNOWN terminal age never displaces one known to be recent', async () => {
+    // #2190 r8 `4008583615`. A reconciliation repair leaves `terminal_at`
+    // NULL because the pass genuinely cannot tell when the loan ended, and
+    // it bumps `updated_at` to now because it just wrote the row. Ranking
+    // the unknown by `updated_at` — which the retired `COALESCE` did — put a
+    // loan that ended in July at the TOP of a capped list and pushed
+    // genuinely recent claims out of it, which is the same defect
+    // `2ca88cc7f` removed from the write, surviving through the read.
+    //
+    // Unknown-age rows are not hidden; they rank after everything with a
+    // real terminal time.
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    h.seed(1, 'repaid', ME, OTHER, 9_999, null); // repaired: age unknown, written now
+    h.seed(2, 'repaid', ME, OTHER, 0, 100); // genuinely terminal, long ago
+    h.db.exec('COMMIT');
+    const body = await h.call();
+    expect(body.asLender.map((l) => l.loanId)).toEqual([2, 1]);
   });
 
   it('a later updated_at bump (transfer / counterparty claim) cannot jump the recency window', async () => {

@@ -172,6 +172,13 @@ export default {
     // event condition round-robin exists to prevent. The same constraint
     // that shaped the ingest pass shapes this one.
     //
+    // That census is INCOMPLETE and the conclusion is still right: it
+    // omits `sweepUnpublishedListings` below, whose worst case is 35 (5
+    // rows x 7 subrequests each), so on the legacy inline path this
+    // invocation reaches ~77 against the cap of 50 — see #2194. Per-chain
+    // capture is bounded for a stronger reason than the note gives, not a
+    // weaker one.
+    //
     // Per-chain cadence is therefore `len(chains) × tick`, which the
     // surface discloses as its capture time rather than implying live.
     const backingChains = getChainConfigs(resolved);

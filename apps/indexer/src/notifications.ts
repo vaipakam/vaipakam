@@ -43,6 +43,14 @@ export const NOTIF_KINDS = [
   'loan_repaid',
   'loan_defaulted',
   'internal_matched',
+  // #2101 — a loan the REPAIR found already over, where the chain can say
+  // THAT it ended but not HOW. On-chain `Settled` means the claims are
+  // done; a repayment, a default and a forced sale all reach it. The
+  // outcome kinds above each assert a cause, so none of them can carry
+  // this without asserting one the pass did not establish (#2190 r6
+  // `4007752741`). Silence was the first answer and was wrong for the
+  // repo's own reason: an unstated unknown is a defect.
+  'loan_ended',
   'maturity_7d',
   'maturity_1d',
   'grace_entered',
@@ -451,13 +459,40 @@ export async function materializeNotifications(
   ];
   if (loanIds.length === 0) return 0;
 
+  const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
+  if (partiesByLoan === null) return 0;
+
+  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
+  if (rows.length === 0) return 0;
+
+  try {
+    return await insertNotificationRows(db, rows);
+  } catch (err) {
+    console.error('[notifications] insert failed', err);
+    return 0;
+  }
+}
+
+/**
+ * Both sides of each loan, for deciding who an inbox row is FOR.
+ *
+ * Factored out of `materializeNotifications` when the reconciliation pass
+ * needed the same lookup (#2190 r2 `4006071734`). It carries a hard-won
+ * detail worth not copying: D1 caps a statement at 100 bound parameters, so
+ * a catch-up touching >99 distinct loans would blow the limit, throw, and —
+ * fail-open — skip those rows forever, with the cursor already advanced
+ * (Codex #1292 r1). 90 ids plus the chainId bind stays safely under.
+ *
+ * Returns `null` when the lookup itself failed, which callers treat as "write
+ * nothing this pass" rather than "this loan has no parties".
+ */
+async function loadLoanParties(
+  db: D1Database,
+  chainId: number,
+  loanIds: number[],
+): Promise<Map<number, LoanParties> | null> {
   const partiesByLoan = new Map<number, LoanParties>();
   try {
-    // Chunk the IN-list: D1 caps a statement at 100 bound parameters, so
-    // a catch-up scan touching >99 distinct loans would otherwise blow
-    // the limit, throw, and (fail-open) skip that scan's rows forever —
-    // the cursor has already advanced (Codex #1292 r1). 90 ids + the
-    // chainId bind stays safely under the cap.
     const CHUNK = 90;
     for (let i = 0; i < loanIds.length; i += CHUNK) {
       const slice = loanIds.slice(i, i + CHUNK);
@@ -492,18 +527,278 @@ export async function materializeNotifications(
     }
   } catch (err) {
     console.error('[notifications] party lookup failed', err);
-    return 0;
+    return null;
+  }
+  return partiesByLoan;
+}
+
+/**
+ * The row status a repair writes → the inbox kind both holders get.
+ *
+ * ONLY WHERE THE OUTCOME IS SUBSTANTIATED (#2190 r4 `4007360351`). A first
+ * version mapped `settled` and `internal_matched` to `loan_repaid`, whose
+ * copy tells the holder the loan was fully repaid. For an internal match
+ * that is simply the wrong label when the right one already exists; for
+ * `settled` it is an unsupported financial claim, because on-chain
+ * `Settled` says the claims are done and NOT how the loan ended — a
+ * repair, default or forced sale all reach it.
+ *
+ * `settled` therefore maps to `loan_ended`, which asserts only that the
+ * loan is over. An earlier revision mapped it to NOTHING, reasoning that
+ * inventing a kind was a wording decision rather than a reconciliation
+ * change. Review was right that this is the wrong trade (#2190 r6
+ * `4007752741`): the repo's own rule is that an unstated unknown is a
+ * defect, and both holders knowing their position ended — with the pass
+ * declining to say how — beats them knowing nothing because the pass could
+ * not say everything.
+ *
+ * A status with no mapping at all still writes nothing and is logged, so a
+ * future enum member cannot quietly acquire a guessed outcome.
+ */
+const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
+  repaid: 'loan_repaid',
+  defaulted: 'loan_defaulted',
+  internal_matched: 'internal_matched',
+  // Says only that it ended. See `loan_ended` in NOTIF_KINDS.
+  settled: 'loan_ended',
+};
+
+/**
+ * The `log_index` for ANY row derived from D1 state rather than from a log.
+ *
+ * A sentinel ABOVE any real per-block log index. The feed and the client's
+ * read-state cursor both order by `(block_number, log_index, id)`, and a
+ * real log in the same head block can carry a log index above zero — so a
+ * derived row placed at 0, or at -1, sorts OLDER than an already-seen event
+ * row in that block and is silently treated as already read. Blocks hold
+ * nowhere near a million logs, so this keeps a head-stamped derived row
+ * strictly newest within its block.
+ *
+ * This lives here rather than beside one of its users because it has now
+ * been needed twice. The calendar sweep found it first (Codex #1298 r2) and
+ * the #2101 repair reintroduced the identical defect with `-1` (#2190 r5
+ * `4007500676`) — a per-caller constant is a rule each new derived-row
+ * writer has to rediscover, and one of them already failed to.
+ */
+export const DERIVED_LOG_INDEX = 1_000_000;
+
+/** Marks a row derived by the #2101 repair rather than by an event.
+ *
+ *  Re-exported from `@vaipakam/lib`, where the DEFINITION lives so the app
+ *  that renders the provenance and the Worker that writes it cannot drift
+ *  apart — a rename here with a literal on the reading side fails silently,
+ *  the row rendering as a plain announcement (#2190 r5 `4007500682`). */
+export { NOTIF_EVENT_KIND_RECONCILED as RECONCILED_EVENT_KIND } from '@vaipakam/lib/notificationProvenance';
+import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
+
+/**
+ * Inbox rows for terminals the repair found rather than an event announced
+ * (#2190 r2 `4006071734`).
+ *
+ * Without this the holders of a ghost position get NO terminal row at all:
+ * the event was missed for good, so `materializeNotifications` never sees
+ * it, and the repair corrects the position while the inbox stays silent
+ * forever. The promise the notification surface makes is a terminal outcome
+ * for both holders, and a correction is the only chance left to keep it.
+ *
+ * WHAT THESE ROWS DO NOT CLAIM. The repair cannot know WHEN the loan ended —
+ * it reads the state at a safe head and has no way back to the block the
+ * terminal actually landed in — so nothing here is dated to the ending.
+ * `created_at` is the moment the platform found out, which is true, and is
+ * the same meaning the cron-derived calendar rows already carry.
+ * `event_kind` says `Reconciled` rather than naming an event nobody saw, and
+ * `log_index` is -1 because there is no log. The block recorded is the safe
+ * head the state was observed at, which also sorts the row as current in the
+ * chain-ordered feed — correct here, since the news is now: a two-month-old
+ * default buried two months back in the feed would be no notification at all.
+ *
+ * PLANNED, NOT WRITTEN, and that is the fix for #2190 r4 `4007360360`. An
+ * earlier version wrote these rows AFTER the repair had committed, so a
+ * failed insert — or an isolate that died in between — left the position
+ * corrected and the inbox permanently silent: the row is no longer live, so
+ * no later pass can rediscover the repair and try again. The caller now
+ * commits these statements in the SAME transaction as the repair, which is
+ * the same answer round 3 reached for the side tables and for the same
+ * reason.
+ */
+export async function planReconciledNotifications(
+  db: D1Database,
+  chainId: number,
+  repaired: ReadonlyArray<{ loanId: number; to: string }>,
+  observedBlock: number,
+  nowSec: number,
+  /** Chain-verified current holders, when the caller resolved them. A side
+   *  given as `null` is NOT substantiated and gets no row — see
+   *  `resolveCurrentHolders`. Omitted entirely, the stored columns are used,
+   *  which is right for a caller that has no reason to distrust them. */
+  verifiedHolders?: { lender: string | null; borrower: string | null },
+): Promise<NotifRow[]> {
+  if (repaired.length === 0) return [];
+  const partiesByLoan = await loadLoanParties(
+    db,
+    chainId,
+    repaired.map((r) => r.loanId),
+  );
+  if (partiesByLoan === null) {
+    // THROWS rather than returning an empty plan (#2190 r6 `4007588172`).
+    // A transient D1 failure and "this loan has no recipients" are opposite
+    // facts, and collapsing them let the repair commit while the rows it
+    // owes were dropped — after which the loan leaves the live set and
+    // nothing retries. The caller's per-row catch leaves the row untouched
+    // and the rotation returns to it, which is the outcome a failed lookup
+    // should have.
+    throw new Error(`[notifications] party lookup failed for chain ${chainId}`);
   }
 
-  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
-  if (rows.length === 0) return 0;
-
-  try {
-    return await insertNotificationRows(db, rows);
-  } catch (err) {
-    console.error('[notifications] insert failed', err);
-    return 0;
+  const rows: NotifRow[] = [];
+  /** Repaired loans whose outcome this pass cannot label honestly. */
+  const unlabelled: number[] = [];
+  for (const { loanId, to } of repaired) {
+    const kind = RECONCILED_STATUS_NOTIF_KIND[to];
+    if (!kind) {
+      unlabelled.push(loanId);
+      continue;
+    }
+    const parties = partiesByLoan.get(loanId);
+    // A sale-vehicle loan is bookkeeping, not a position anyone holds —
+    // the same exclusion the event path applies.
+    if (parties?.isSaleVehicle) continue;
+    const seen = new Set<string>();
+    for (const side of ['lender', 'borrower'] as const) {
+      // A verified holder REPLACES the stored one, and a verified `null`
+      // withholds the notice rather than falling back to it: the fallback
+      // is the stale column the verification exists to distrust.
+      const recipient = verifiedHolders
+        ? verifiedHolders[side]
+        : recipientFor(parties, side);
+      if (!recipient) continue;
+      // The KEY keeps its own fixed `-1:-1` tail and does NOT follow the
+      // stored ordering position: it must be stable per (recipient, kind,
+      // loan) so a re-run at a different head cannot duplicate the row,
+      // which is a separate concern from where the row sorts in the feed.
+      const dedupKey = `${chainId}:${recipient}:${kind}:${loanId}:-1:-1`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      rows.push({
+        chainId,
+        recipient,
+        kind,
+        loanId,
+        eventKind: NOTIF_EVENT_KIND_RECONCILED,
+        blockNumber: observedBlock,
+        // NOT -1. See `DERIVED_LOG_INDEX`: at the same block as an event the
+        // holder has already seen, a lower index sorts OLDER and the client
+        // treats this notice as already read — silently defeating the one
+        // thing it exists to do.
+        logIndex: DERIVED_LOG_INDEX,
+        createdAt: nowSec,
+        dedupKey,
+      });
+    }
   }
+  if (unlabelled.length > 0) {
+    console.warn(
+      `[notifications] chain ${chainId}: repaired loan(s) ${unlabelled.join(', ')} ` +
+        `reached a status with no inbox mapping — no row written rather than a ` +
+        `guessed outcome`,
+    );
+  }
+  return rows;
+}
+
+/** The INSERT for one planned inbox row, for a caller that must commit it
+ *  inside a transaction of its own. `INSERT OR IGNORE`, like the batched
+ *  writer, so a replay writes nothing twice. */
+export function notificationInsertStatement(
+  db: D1Database,
+  r: NotifRow,
+  /** When given, the row is inserted ONLY if the loan carries exactly this
+   *  terminal fingerprint — see `repairFingerprint` on why a repair's notice
+   *  must self-gate inside its own transaction. */
+  onlyIfRepaired?: RepairFingerprint,
+): D1PreparedStatement {
+  const binds = [
+    r.chainId,
+    r.recipient,
+    r.kind,
+    r.loanId,
+    r.eventKind,
+    r.blockNumber,
+    r.logIndex,
+    r.createdAt,
+    r.dedupKey,
+  ];
+  // BOTH forms written out in full rather than sharing an interpolated
+  // column list: `sqlSchemaGuard` can only check a statement it can read as
+  // a static string, and its own note says to make a new statement static
+  // rather than raise the skip pin. The duplication is the price of staying
+  // inside the guard, and the guard is what proves these columns exist.
+  if (!onlyIfRepaired) {
+    return db
+      .prepare(
+        `INSERT OR IGNORE INTO notifications
+           (chain_id, recipient, kind, loan_id, event_kind,
+            block_number, log_index, created_at, dedup_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(...binds);
+  }
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO notifications
+         (chain_id, recipient, kind, loan_id, event_kind,
+          block_number, log_index, created_at, dedup_key)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM loans
+           WHERE chain_id = ? AND loan_id = ?
+             AND status = ? AND terminal_at IS NULL AND updated_at = ?
+        )`,
+    )
+    .bind(
+      ...binds,
+      onlyIfRepaired.chainId,
+      onlyIfRepaired.loanId,
+      onlyIfRepaired.status,
+      onlyIfRepaired.updatedAt,
+    );
+}
+
+/**
+ * The exact shape a repair's own compare-and-set leaves on the loan row.
+ *
+ * A repair's notice must NOT be written when the CAS matched nothing
+ * (#2190 r6 `4007588180`): another ingest writer may have terminalized the
+ * row between selection and the batch — the very race the CAS exists for —
+ * and the holders would then get a "we found this by checking" notice for a
+ * correction this pass did not make, probably beside the event path's own
+ * more specific one.
+ *
+ * The side-table DELETES stay unconditional, and the difference is not
+ * inconsistency: what licenses a delete is the loan being closed, which is
+ * true whoever closed it, while what licenses this notice is THIS pass
+ * having been the one to discover it.
+ *
+ * D1 offers no "did the previous statement in this batch match" primitive,
+ * and splitting the batch would give back the atomicity round 3 established.
+ * So the insert self-gates on the fingerprint the CAS writes: the status,
+ * a NULL `terminal_at` — which only a repair leaves, since every event
+ * handler stamps a real one — and this pass's own `updated_at` second. The
+ * residual is stated rather than hidden: another writer would have to have
+ * set the same status, left the terminal time unknown, and done it in the
+ * same second. In that coincidence the notice is still substantively right;
+ * only its provenance would be.
+ */
+export interface RepairFingerprint {
+  chainId: number;
+  loanId: number;
+  status: string;
+  /** The repair's own `updated_at`. It replaced the terminal block and time
+   *  when those stopped being written at all — a repair cannot know when a
+   *  loan ended, so it now records NULL there rather than the moment it
+   *  looked (#2190 r6 `4005830713`). `updated_at` is still this pass's own
+   *  second, which is what the gate needs. */
+  updatedAt: number;
 }
 
 /**

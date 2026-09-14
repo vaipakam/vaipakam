@@ -159,14 +159,13 @@ export function graceCaseSql(buckets: GraceBucketJson[] | null): string {
  *  so a transient overflow self-heals on later ticks. */
 const SWEEP_LIMIT = 2000;
 
-/** The log_index stamped on cron rows — a sentinel ABOVE any real
- *  per-block log index (Codex #1298 r2): the feed and the client's
- *  read-state cursor order by (block, logIndex, id), and a real log in
- *  the same head block can carry logIndex > 0 — a cron row at 0 would
- *  sort OLDER than an already-seen event row and never raise the
- *  badge. Blocks hold nowhere near a million logs, so the sentinel
- *  keeps head-stamped cron rows strictly newest within their block. */
-export const CRON_LOG_INDEX = 1_000_000;
+/** The log_index stamped on cron rows. Re-exported under its original
+ *  name; the DEFINITION and the reasoning moved to `notifications.ts` as
+ *  `DERIVED_LOG_INDEX` when the #2101 repair reintroduced the same defect
+ *  it was written to prevent — a rule each new derived-row writer has to
+ *  rediscover is one that will be missed again (#2190 r5). */
+export { DERIVED_LOG_INDEX as CRON_LOG_INDEX } from './notifications';
+import { DERIVED_LOG_INDEX } from './notifications';
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -252,7 +251,7 @@ export function planCalendarRows(
           loanId: loan.loan_id,
           eventKind: null, // cron-derived — no source event
           blockNumber: headBlock,
-          logIndex: CRON_LOG_INDEX, // above any real log in this block
+          logIndex: DERIVED_LOG_INDEX, // above any real log in this block
           createdAt: nowSec,
           dedupKey,
         });

@@ -203,6 +203,158 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- Indexed lifecycle status must not drift from the chain's indefinitely.
+  A loan's ending is learned from the event announcing it, and an
+  announcement missed while ingestion was down, throttled, or further
+  behind than it is willing to scan back over is missed for good —
+  resuming ingestion restores the reading position, not the records
+  skipped while it was behind. So the index re-examines what it believes
+  to be running against the chain on a continuing rotation, and corrects
+  a record the chain says has ended. It keeps re-examining even while the
+  totals agree, because one missed ending and one missed beginning leave
+  the totals equal with both records wrong.
+- That correction only ever moves a record from running to ended, and
+  only on the chain's word. A source that is behind reports the loan
+  still running, which matches the record and changes nothing, so being
+  out of date can cause a correction to be missed but never invented.
+  **That direction is necessary and not sufficient, and the platform must
+  not rest on it alone.** The correction cannot be undone by the same
+  mechanism — a record it has ended is no longer one the check looks at —
+  so a reading that is WRONG rather than merely old is permanent. The
+  chain state a correction relies on must therefore be read at a point the
+  chain treats as settled, never at whatever the source last saw and never
+  at a point derived from how far the index itself has read. Without that,
+  a reorganisation or a momentarily non-canonical answer can report an
+  ending that then disappears, leaving an open loan recorded as closed with
+  nothing that would ever revisit it. A
+  record that already shows an ending is left to the event path, which
+  can tell a forced sale from an ordinary default where the chain's own
+  status cannot — a record corrected from the chain may therefore name
+  the ending less precisely than the event would have.
+- A corrected record carries the loan's amounts as well as its state,
+  taken from the same reading and therefore describing the same moment.
+  The events that move principal and collateral — a part repayment, a
+  liquidation sale, a collateral release or top-up, an offsetting match,
+  a written-off shortfall — can be missed exactly as an ending can, and a
+  record stale enough to have missed an ending is not to be trusted on the
+  amounts. Preferring the chain's figures gives nothing up: an ending does
+  not erase what was outstanding, so where the chain holds a smaller
+  figure that is an economic event the index missed, not a lost record.
+- A record corrected to ended also drops everything the platform was still
+  offering to act on for that loan — a collateral sale listing, a committed
+  swap the borrower could otherwise still be shown a cancel action for. Each
+  would fail at the contract, which is no reason to keep offering it. What a
+  close clears is one list, and it is the same list whether the close was
+  learned from its announcement or from this correction; a surface added to
+  it is covered by both without either being changed.
+- Ending a listing, or ending a commitment, is not ending the loan. A
+  borrower who withdraws a collateral sale keeps any swap commitment they
+  made, and the reverse. The platform never disposes of a position the user
+  still holds as a side effect of tidying a different one.
+- A corrected record carries NO ending time. The platform cannot determine
+  when the loan ended, and the field is published and used to order and cap
+  the list of positions with something to claim — so recording the moment
+  of discovery there would present a months-old ending as fresh and push
+  genuinely recent ones out of a bounded list. Empty is what is true.
+- **A position whose ending has no known time ranks as unknown, not as
+  recent.** Leaving the time empty is only half of that promise: a surface
+  that then falls back to when the platform last WROTE the record makes the
+  same false claim by another route, since a correction writes the record
+  the moment it makes it. Wherever positions are ordered by how recently
+  they ended, the ones with no known ending time come after all the ones
+  that have one. They are not hidden — where nothing else competes they are
+  all that is listed — but an unknown may never displace something known to
+  be recent from a limited list.
+- A record the chain has no loan for is not a running loan. Asking about an
+  unknown position returns an empty answer whose state is indistinguishable
+  from "running", so the platform tests that the position exists at all
+  before believing it, and reports the ones it cannot substantiate instead
+  of counting them as open forever.
+- A lifecycle state the platform does not recognise is reported, never
+  passed over. Refusing to guess at an unfamiliar state is right; doing so
+  silently is how a newly introduced ENDING would leave records published
+  as open while every check reported health.
+- The correction and that clearing are ONE write: both happen or neither
+  does. A correction that landed alone would take the record out of the set
+  the rotation examines, so nothing would ever return to finish it — and a
+  service interrupted between the two leaves no failure to report. There is
+  no partial state to recover from because there is no window in which one
+  can exist.
+- The correction runs on every tick the index is up to date with the
+  chain, INCLUDING on a chain producing no new blocks. A check that only
+  ran where new blocks had arrived would never run on a quiet chain, which
+  is precisely where an old missed ending sits undisturbed.
+- It runs before any surface that tells a person something. Reminder and
+  inbox messages are derived from the records as they stand and are never
+  withdrawn once sent, so a position corrected after they were composed
+  would have produced a payment reminder for a loan that had already
+  ended. A correction is also announced to anyone watching that position,
+  like any other change — a record put right silently would leave every
+  open screen showing the old one.
+- Both holders of a corrected position receive the ending in their inbox.
+  Without it they receive nothing at all for that position, since the
+  message surface is built from announcements and this ending never had
+  one. Such a message states when the platform FOUND OUT, never when the
+  loan ended — the check cannot determine that — and is marked as derived
+  from a correction rather than attributed to an announcement nobody saw. A
+  bookkeeping position that no person holds produces no message.
+- Where the chain establishes that a loan is finished but not how — one
+  state is reached by repayment, by default and by forced sale alike — the
+  message states only that it ended. It never names a cause the platform
+  did not establish, and it is never withheld merely because the cause is
+  unknown: an ending nobody is told about is a worse silence than one told
+  without its cause.
+- The recipients of such a message are established from the chain, never
+  from the platform's own record of who holds the position. The gap that
+  lost the ending could equally have lost a transfer of the position, so
+  that record is stale for the same reason. Where a holder cannot be
+  established, that side receives no message rather than one addressed to a
+  guess — and the holder the platform does establish is recorded, so other
+  surfaces stop naming the wrong one.
+- Asking who holds a position has two answers the platform will act on: it
+  has an answer naming a holder, or it has no answer. **An answer is acted
+  on; a non-answer changes nothing.** The platform does not read a
+  failure to answer as meaning the position was given up, even though that
+  is one of the things it can mean — the two are indistinguishable from
+  here, and treating an unreachable answer as an empty one would erase a
+  record that is still somebody's.
+- The cost of that asymmetry is **stated, not implied**: where a holder
+  cannot be read, that side is never told its position ended, and no later
+  attempt is made. The record is still corrected, because a position wrongly
+  published as running is the harm the whole check exists to end. Waiting
+  instead — holding the correction until the holder can be established — is
+  not available, since the unanswerable case and the legitimately-empty case
+  are the same answer, so waiting for one would leave the other's record
+  wrong permanently.
+- **A position that finished the ordinary way therefore reaches nobody**, and
+  the platform states this rather than promising a message it does not send.
+  The undifferentiated finished state is reached by both parties taking what
+  is theirs, which destroys the holdings the question of ownership is asked
+  about — so for the commonest case there is no holder to establish. The
+  record is corrected regardless. Relaxing the rule to use the last name the
+  platform stored is not the remedy, since avoiding exactly that is why
+  ownership is asked of the chain; the remedy is a record of who HELD a
+  position that no longer exists, which is a separate capability.
+- Such a message is SHOWN as a correction, not merely recorded as one. Its
+  headline states the outcome, and a line beneath it says the platform
+  found this by checking and cannot tell when it happened. A surface that
+  rendered the outcome alone would present a discovery about something
+  months old as news of the moment — which is the same unstated unknown the
+  message's own date is careful to avoid.
+- How fast the correction works through the records depends on the
+  deployment's ingest configuration, and the platform states this rather
+  than implying a single pace. Where the chain reading has its own capacity
+  the correction examines several records a turn; where it shares capacity
+  with the other scheduled work it examines one. Every record is still
+  reached either way. The pace is never raised at the cost of the chain
+  reading itself, because a reading that starts being refused drops the
+  announcements the correction exists to recover from — and where the
+  scheduled work already asks for more capacity than is available, the
+  platform says so rather than presenting the smaller share as sufficient.
+- A position the platform publishes as open must be one it can still
+  substantiate as open. Where it cannot, the surfaces that count and the
+  surfaces that list must not answer the same question differently
+  without saying so.
 - Activity history may depend on indexed history, but current positions must not
   disappear merely because ingestion is delayed.
 - The Activity feed's "is this event mine" filter covers the wallet's WHOLE
