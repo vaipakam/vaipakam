@@ -2622,6 +2622,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyBootstrapRequiresActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyBootstrapRowNotAllowed",
     "inputs": [
       {

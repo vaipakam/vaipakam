@@ -441,6 +441,13 @@ interface IVaipakamErrors {
     ///         restitution rows have no bootstrap figure).
     /// @param row The {LibVaipakam.RewardCustodyRow} ordinal.
     error RewardCustodyBootstrapRowNotAllowed(uint8 row);
+    /// @notice #1566 slice 4 PR B — a bootstrap writer was called on a
+    ///         deployment whose role cannot activate in this slice
+    ///         (`Unconfigured` never; `Detached` until PR C): a credit there
+    ///         would move funds into the holder, arm the freeze, and leave
+    ///         the allocation reachable by nothing.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyBootstrapRequiresActiveRole(uint8 role);
     /// @notice #1566 slice 4 PR B — a bootstrap credit would take a row above
     ///         the ledger figure it backs.
     /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.

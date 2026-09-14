@@ -282,6 +282,39 @@ export function repatPositionUnavailableGap(
  *
  * Exported for direct testing, like {@link compositionUnavailableGap}.
  */
+/**
+ * #1566 slice 4 PR B — whether the LEGACY backing tuple may stand in for a
+ * missing versioned snapshot: only where non-activation is established —
+ * the activation flag read `false`, or the custody facet is absent
+ * (`'missing'`: no activation was ever possible on that Diamond). A flag
+ * that reads `true`, or one that could not be read for any other reason
+ * (treated as `true`, fail-closed), keeps the backing UNKNOWN.
+ */
+export function legacyFallbackAllowed(probe: boolean | 'missing'): boolean {
+  return probe === 'missing' || probe === false;
+}
+
+/**
+ * #1566 slice 4 PR B — the coverage gap for a chain whose versioned backing
+ * snapshot cannot be read while its custody is (or may be) ACTIVATED: the
+ * holder relation cannot be checked and the legacy relation would be
+ * wrong, so the backing check does not run for this chain.
+ */
+export function custodyStateUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getRecycleBackingSnapshotV2');
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-backing',
+    detail:
+      `getRecycleBackingSnapshotV2() could not be read on chain ${chainId} — ${describeFailure(failure)} — while rewardCustodyActivated() reads true or could not be read.\n\n` +
+      `The chain's reward custody is (or may be) on the holder, so the legacy balance / earmark tuple would describe the wrong relation; the backing check did NOT run for this chain. A partial refresh that cut the custody facet without the versioned snapshot is the likely cause: refresh the custody facet.`,
+  };
+}
+
 export function backingSnapshotUnavailableGap(
   chainId: number,
   err: unknown,
@@ -468,9 +501,35 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     v2Err = err;
     backing = undefined;
   }
+  // A MISSING V2 selector is not proof of legacy custody (Codex #2186 r2
+  // P1): a partial refresh can drop V2 while `rewardCustodyActivated` is
+  // still set in storage. The legacy tuple is read only where
+  // non-activation is established independently — the activation flag
+  // reads false, or the custody facet is absent altogether (no activation
+  // was ever possible); an activated chain with no V2 is a coverage gap.
+  let legacyAllowed = false;
+  if (backing === undefined && v2Err !== undefined && isMissingSelector(v2Err)) {
+    let probe: boolean | 'missing';
+    try {
+      probe = await readView<boolean>(
+        target.client,
+        target.diamond,
+        'rewardCustodyActivated',
+        [],
+        blockNumber,
+        REWARD_CUSTODY_ABI,
+      );
+    } catch (probeErr) {
+      probe = isMissingSelector(probeErr) ? 'missing' : true;
+    }
+    legacyAllowed = legacyFallbackAllowed(probe);
+    if (!legacyAllowed) {
+      viewGaps.push(custodyStateUnavailableGap(target.chainId, v2Err));
+    }
+  }
   if (backing === undefined && v2Err !== undefined && !isMissingSelector(v2Err)) {
     viewGaps.push(backingSnapshotUnavailableGap(target.chainId, v2Err));
-  } else if (backing === undefined) {
+  } else if (backing === undefined && legacyAllowed) {
     try {
       const snap = await readView<
         readonly [

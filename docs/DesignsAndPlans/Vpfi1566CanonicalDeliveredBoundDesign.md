@@ -6178,7 +6178,13 @@ PR C.**
 > activation and a claimed write-down against live state before promoting
 > the record, filing the confirmed figures beside the staged intent under
 > their own names (review r1). The wrapper resolves every activation answer
-> per chain, suffixed with the chain's prefix (review r1). The two holder invariants, the
+> per chain, suffixed with the chain's prefix (review r1). Review r2: the
+> bootstrap writers refuse a role that cannot activate in this slice
+> (`RewardCustodyBootstrapRequiresActiveRole`), the ceremony pre-flight
+> mirrors the canonical recovery-arming prerequisite before anything is
+> sent, and the watcher treats a missing V2 as UNKNOWN unless the
+> activation flag itself (or the custody facet's absence) establishes
+> non-activation. The two holder invariants, the
 > recycled-row and live-row identities and the untouched Diamond balance
 > are pinned by `RewardCustodyInvariant`; the design's test list is
 > `RewardCustodyCutoverTest`.

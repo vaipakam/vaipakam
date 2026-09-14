@@ -1128,6 +1128,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ) private view returns (uint256 figure) {
         if (s.rewardCustodyActivated) revert IVaipakamErrors.RewardCustodyAlreadyActivated();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
+        // Only a role that CAN activate in this slice may be bootstrapped
+        // (Codex #2186 r2 P1): a credit on an `Unconfigured` or `Detached`
+        // deployment would move funds into the holder and arm the freeze,
+        // while activation refuses the role and no reward path debits the
+        // holder there — an allocation reachable by nothing.
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
+            revert IVaipakamErrors.RewardCustodyBootstrapRequiresActiveRole(uint8(role));
+        }
         if (row == LibVaipakam.RewardCustodyRow.LiveFresh) {
             if (!allowLiveFresh) revert IVaipakamErrors.RewardCustodyBootstrapRowNotAllowed(uint8(row));
             uint256 received = s.rewardBudgetArmedFreshReceived;

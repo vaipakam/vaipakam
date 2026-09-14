@@ -49,6 +49,8 @@ import {
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
   backingSnapshotUnavailableGap,
+  custodyStateUnavailableGap,
+  legacyFallbackAllowed,
 } from '../src/mesh';
 import {
   formatAlert,
@@ -2903,6 +2905,17 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
   const REVERT = () => new Error('execution reverted');
   /** An error of no classifiable kind — a transient transport failure. */
   const TRANSIENT = () => new Error('boom');
+
+  // #1566 slice 4 PR B — a missing V2 is not proof of legacy custody.
+  it('legacyFallbackAllowed: only an absent custody facet or a false activation flag admits the legacy tuple', () => {
+    expect(legacyFallbackAllowed('missing')).toBe(true);
+    expect(legacyFallbackAllowed(false)).toBe(true);
+    expect(legacyFallbackAllowed(true)).toBe(false);
+    const gap = custodyStateUnavailableGap(97, REVERT());
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.detail).toContain('getRecycleBackingSnapshotV2');
+    expect(gap.detail).toContain('did NOT run');
+  });
 
   it('isMissingSelector separates a revert from a transport failure', () => {
     // GAP-WORDING discrimination only (r5): a revert means the selector

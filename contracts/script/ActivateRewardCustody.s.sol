@@ -154,6 +154,17 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             RewardCustodyFacet(diamond).armedFreshPaidRebased(),
             "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
         );
+        // Mirrors the contract's canonical prerequisite BEFORE anything is
+        // sent (Codex #2186 r2 P2): a canonical chain whose recovery
+        // attribution was never armed (a partial refresh) would otherwise
+        // refuse only at the activation call, after the pause, the approval
+        // and the row credits had already mined.
+        if (f.role == uint8(LibVaipakam.RewardRole.Canonical)) {
+            require(
+                RewardRemittanceLensFacet(diamond).recoveryAttributionArmed(),
+                "ActivateRewardCustody: this canonical chain has not armed per-receipt recovery attribution (the refresh's armRecoveryAttribution migration) -- activation would refuse after the row credits had mined; run that migration first"
+            );
+        }
         _requireRowAnswer("recycled", f.bucket, f.rowRecycled, a.fundRecycled, a.relocRecycled, "REWARD_CUSTODY_FUND_RECYCLED", "REWARD_CUSTODY_RELOCATE_RECYCLED");
         _requireRowAnswer("recovery", f.position, f.rowRecovery, a.fundRecovery, a.relocRecovery, "REWARD_CUSTODY_FUND_RECOVERY", "REWARD_CUSTODY_RELOCATE_RECOVERY");
         _requireRowAnswer("overage", f.overage, f.rowOverage, a.fundOverage, a.relocOverage, "REWARD_CUSTODY_FUND_OVERAGE", "REWARD_CUSTODY_RELOCATE_OVERAGE");

@@ -210,6 +210,17 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   // `vpfiBalance >= bucket + reserved + recovery` no longer holds there by
   // design; the reader's positional casts of [8]..[11] must fail at startup
   // on any drift.
+  // #1566 slice 4 PR B — the activation flag on its own: read when V2 is
+  // missing, so a legacy read is taken only where non-activation is
+  // established (flag false, or the whole custody facet absent), never
+  // assumed from V2's absence (a partial refresh could drop V2 while the
+  // chain's custody is activated in storage).
+  {
+    name: 'rewardCustodyActivated',
+    inputs: [],
+    outputs: [':bool'],
+    facet: 'custody',
+  },
   {
     name: 'getRecycleBackingSnapshotV2',
     inputs: [],

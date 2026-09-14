@@ -288,6 +288,34 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
     }
 
+    /// A bootstrap credit is refused on a role that cannot activate in this
+    /// slice — Unconfigured, and Detached — since the allocation it would
+    /// create is reachable by nothing there (Codex #2186 r2 P1).
+    function test_Bootstrap_RefusesAnInactiveRole() public {
+        _seedDiamond(10e18);
+        _mut().setRecycleBucketRaw(4e18);
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardCustodyBootstrapRequiresActiveRole.selector, uint8(LibVaipakam.RewardRole.Unconfigured))
+        );
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
+        vpfi.mint(address(this), 1e18);
+        vpfi.approve(address(diamond), 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardCustodyBootstrapRequiresActiveRole.selector, uint8(LibVaipakam.RewardRole.Unconfigured))
+        );
+        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
+        assertEq(_held(), 0, "nothing moved into the holder");
+        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
+
+        _mut().setRewardRoleRaw(0, false, true); // Detached
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardCustodyBootstrapRequiresActiveRole.selector, uint8(LibVaipakam.RewardRole.Detached))
+        );
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
+    }
+
     /// The recovery and overage positions are backed the same way, and the
     /// overage row then has a disposition: release to the treasury, retiring
     /// the recorded position by the same amount, never beyond it.
