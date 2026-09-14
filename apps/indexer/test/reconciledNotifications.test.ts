@@ -138,17 +138,21 @@ describe('planReconciledNotifications', () => {
     expect(rowsFor(h, 13).every((r) => r.kind === 'internal_matched')).toBe(true);
   });
 
-  it('writes NOTHING for a settled loan rather than calling it repaid', async () => {
+  it('says a settled loan ENDED, without saying how', async () => {
     // On-chain `Settled` says the claims are done, not how the loan ended —
-    // a repayment, a default and a forced sale all reach it. Telling a
-    // holder their loan was "fully repaid" when it may have been
-    // liquidated is an unsupported financial claim, and there is no kind
-    // meaning "ended, and this pass cannot say how".
+    // a repayment, a default and a forced sale all reach it — so
+    // `loan_repaid` would be an unsupported financial claim.
+    //
+    // An earlier revision wrote NOTHING here, which review corrected
+    // (#2190 r6): the repo's own rule is that an unstated unknown is a
+    // defect, and both holders knowing their position ended, with the pass
+    // declining to say how, beats them knowing nothing because it could not
+    // say everything. `loan_ended` asserts only the ending.
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 14, 'settled');
     const n = await planAndWrite(h, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000);
-    expect(n).toBe(0);
-    expect(rowsFor(h, 14)).toHaveLength(0);
+    expect(n).toBe(2);
+    expect(rowsFor(h, 14).every((r) => r.kind === 'loan_ended')).toBe(true);
   });
 
   it('writes nothing for a status it does not recognise', async () => {

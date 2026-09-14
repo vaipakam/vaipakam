@@ -123,6 +123,14 @@ for the ending, because the check genuinely cannot work out when it happened;
 and they are marked as coming from a correction rather than from an
 announcement nobody saw.
 
+Where the chain records that a loan is finished but not how it finished —
+the same state is reached by a repayment, by a default and by a forced sale
+— the message says only that it ended. An earlier version said nothing at
+all in that case, on the grounds that anything else would be inventing a
+claim. That was the wrong half of the trade: knowing your position ended,
+from a platform declining to say how, is better than hearing nothing because
+it could not say everything.
+
 Who receives them is asked of the chain, not of the platform's own record of
 who holds what. The same gap that swallowed the ending could equally have
 swallowed a transfer of the position, so that record is untrustworthy for

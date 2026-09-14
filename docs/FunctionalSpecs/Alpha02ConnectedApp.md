@@ -275,6 +275,12 @@ The app uses chain reads and indexed reads for different jobs.
   loan ended — the check cannot determine that — and is marked as derived
   from a correction rather than attributed to an announcement nobody saw. A
   bookkeeping position that no person holds produces no message.
+- Where the chain establishes that a loan is finished but not how — one
+  state is reached by repayment, by default and by forced sale alike — the
+  message states only that it ended. It never names a cause the platform
+  did not establish, and it is never withheld merely because the cause is
+  unknown: an ending nobody is told about is a worse silence than one told
+  without its cause.
 - The recipients of such a message are established from the chain, never
   from the platform's own record of who holds the position. The gap that
   lost the ending could equally have lost a transfer of the position, so

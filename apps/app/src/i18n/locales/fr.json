@@ -317,6 +317,7 @@
         "loan_repaid": "Un prêt a été entièrement remboursé — voyez ce que vous pouvez retirer.",
         "loan_defaulted": "Un prêt a fait défaut — voyez ce que vous pouvez retirer.",
         "internal_matched": "Un de vos prêts a été clôturé par matching — voyez ce que vous pouvez retirer.",
+        "loan_ended": "Un de vos prêts s’est terminé — voyez ce que vous pouvez retirer.",
         "maturity_7d": "Un prêt était à une semaine de son échéance — ouvrez-le pour voir où il en est.",
         "maturity_1d": "Un prêt était à un jour de son échéance — ouvrez-le pour voir où il en est.",
         "grace_entered": "Un prêt a dépassé son échéance — ouvrez-le pour voir où il en est.",

@@ -19,6 +19,7 @@ import {
   AlarmClock,
   AlertTriangle,
   Bell,
+  CircleDot,
   CalendarClock,
   CheckCircle2,
   Coins,
@@ -52,6 +53,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
   loan_repaid: CheckCircle2,
   loan_defaulted: AlertTriangle,
   internal_matched: Repeat,
+  // #2101 — an ending a correction found, with the cause unestablished.
+  // Deliberately NOT the repaid tick or the default warning: both would
+  // assert the cause the kind exists to withhold.
+  loan_ended: CircleDot,
   // Calendar rows (#1213 PR 2) — the indexer's time-derived reminders.
   maturity_7d: CalendarClock,
   maturity_1d: AlarmClock,

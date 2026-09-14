@@ -317,6 +317,7 @@
         "loan_repaid": "Un préstamo fue pagado por completo — ve qué puedes reclamar.",
         "loan_defaulted": "Un préstamo cayó en incumplimiento — ve qué puedes reclamar.",
         "internal_matched": "Un préstamo tuyo se cerró por emparejamiento — ve qué puedes reclamar.",
+        "loan_ended": "Un préstamo tuyo terminó — mira qué puedes reclamar.",
         "maturity_7d": "A un préstamo le faltaba una semana para vencer — ábrelo para ver cómo está.",
         "maturity_1d": "A un préstamo le faltaba un día para vencer — ábrelo para ver cómo está.",
         "grace_entered": "Un préstamo pasó su fecha de vencimiento — ábrelo para ver cómo está.",

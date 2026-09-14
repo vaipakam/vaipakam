@@ -734,6 +734,13 @@ const copySource = {
       loan_repaid: 'A loan was fully repaid — see what you can claim.',
       loan_defaulted: 'A loan defaulted — see what you can claim.',
       internal_matched: 'A loan of yours closed by matching — see what you can claim.',
+      // #2101 — a loan a CORRECTION found already over, where the chain can
+      // say THAT it ended and not HOW: a repayment, a default and a forced
+      // sale all reach the same on-chain state. Every other outcome line
+      // above names a cause, so none of them can carry this one without
+      // asserting something nobody established. It always appears above the
+      // correction note, which supplies the rest of the honesty.
+      loan_ended: 'A loan of yours ended — see what you can claim.',
       // Calendar rows (#1213 PR 2) — time-derived reminders from the
       // indexer's cron sweep, covering illiquid loans too. Each line must
       // stay TRUE FOREVER as an inbox history entry (Codex #1298 r1+r2):

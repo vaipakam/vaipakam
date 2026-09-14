@@ -43,6 +43,14 @@ export const NOTIF_KINDS = [
   'loan_repaid',
   'loan_defaulted',
   'internal_matched',
+  // #2101 — a loan the REPAIR found already over, where the chain can say
+  // THAT it ended but not HOW. On-chain `Settled` means the claims are
+  // done; a repayment, a default and a forced sale all reach it. The
+  // outcome kinds above each assert a cause, so none of them can carry
+  // this without asserting one the pass did not establish (#2190 r6
+  // `4007752741`). Silence was the first answer and was wrong for the
+  // repo's own reason: an unstated unknown is a defect.
+  'loan_ended',
   'maturity_7d',
   'maturity_1d',
   'grace_entered',
@@ -535,19 +543,24 @@ async function loadLoanParties(
  * `Settled` says the claims are done and NOT how the loan ended — a
  * repair, default or forced sale all reach it.
  *
- * So `settled` maps to nothing at all, and that is deliberate rather than
- * an omission: there is no kind meaning "ended, and this pass cannot say
- * how", inventing the copy for one is a user-facing wording decision rather
- * than a reconciliation change, and an on-chain `Settled` means both sides
- * have already acted on the position. Telling someone their loan was
- * "fully repaid" when it may have been liquidated is the worse of the two
- * silences. The skipped loans are logged so the gap is visible rather than
- * implied.
+ * `settled` therefore maps to `loan_ended`, which asserts only that the
+ * loan is over. An earlier revision mapped it to NOTHING, reasoning that
+ * inventing a kind was a wording decision rather than a reconciliation
+ * change. Review was right that this is the wrong trade (#2190 r6
+ * `4007752741`): the repo's own rule is that an unstated unknown is a
+ * defect, and both holders knowing their position ended — with the pass
+ * declining to say how — beats them knowing nothing because the pass could
+ * not say everything.
+ *
+ * A status with no mapping at all still writes nothing and is logged, so a
+ * future enum member cannot quietly acquire a guessed outcome.
  */
 const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
   repaid: 'loan_repaid',
   defaulted: 'loan_defaulted',
   internal_matched: 'internal_matched',
+  // Says only that it ended. See `loan_ended` in NOTIF_KINDS.
+  settled: 'loan_ended',
 };
 
 /**
@@ -686,8 +699,7 @@ export async function planReconciledNotifications(
   if (unlabelled.length > 0) {
     console.warn(
       `[notifications] chain ${chainId}: repaired loan(s) ${unlabelled.join(', ')} ` +
-        `reached a state this pass cannot label (on-chain Settled says the claims ` +
-        `are done, not how the loan ended) — no inbox row written rather than a ` +
+        `reached a status with no inbox mapping — no row written rather than a ` +
         `guessed outcome`,
     );
   }
