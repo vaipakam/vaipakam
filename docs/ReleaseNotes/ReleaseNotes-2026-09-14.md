@@ -283,11 +283,13 @@ one refuses without one) — every reward read and debit goes through the
 address's attribution rows instead of the platform's own token balance. A
 single-chain deployment with no reward role never activates and behaves
 exactly as before, and a detached deployment waits for the era registry
-that gives its inbound packets a rule. Backing a position ahead of the
-activation waits for the paid-side migration whose result the figures
-depend on, and a position that a moved figure leaves over-backed before the
-activation can be released back to the platform's own balance, by at most
-the excess, so nothing is stranded at the address. Activation and the
+that gives its inbound packets a rule. Backing a position ahead of the activation is itself an
+administrator-only action taken under the manual pause, and it waits for
+the paid-side migration whose result the figures depend on; a position
+that a moved figure leaves over-backed before the activation can be
+released back to the platform's own balance — by an administrator, under
+the manual pause, by at most the excess, and to no other destination — so
+nothing is stranded at the address. Activation and the
 backing of a position also require the deployment's whole facet routing —
 every installed facet and every function it serves — to be the one a
 complete refresh or deploy recorded, so a partial refresh can never switch
