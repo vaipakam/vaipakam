@@ -6004,7 +6004,10 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > the refresh always sends pause() first (cuts protected by order; the
 > on-chain cut gate is #2179); a bootstrap run demands no migration answer;
 > and a Diamond-as-treasury receives custody NFT sweeps through a pinned,
-> single-use inbound (review r29). Simulations neither create nor erase
+> single-use inbound (review r29). The refresh REMOVES the retired
+> one-argument seed selector (a pinned retired-selector list, verified
+> unrouted through the loupe), and the bootstrap run is described as
+> everything but the two paid-side migrations (review r30). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

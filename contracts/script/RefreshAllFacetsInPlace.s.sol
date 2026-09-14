@@ -318,9 +318,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     // current and the migrations run under a pinned pause.
                     bootstrapOnly = true;
                     console.log(
-                        "BOOTSTRAP: pause transitions are not yet counted on this Diamond (old pause code) - "
-                        "cutting facets ONLY; the paid-side migrations are deferred to a second run under a "
-                        "pause taken on the new code"
+                        "BOOTSTRAP: pause transitions are not yet counted on this Diamond (old pause code). "
+                        "Every OTHER step of this refresh still runs - the facet cuts, the retired-selector "
+                        "removal, the proxy-generation upgrades, the reward-role backfill, the "
+                        "notification-tariff migration where due; ONLY the two paid-side migrations "
+                        "(P1-b seed, slice-4 rebase) are deferred to a second run under a pause taken on "
+                        "the new code"
                     );
                 } else {
                     uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
@@ -417,6 +420,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         if (nCuts > batchStart) {
             _sendBatch(diamond, cuts, batchStart, nCuts);
         }
+
+        // Retired selectors are REMOVED (Codex #2158 r30 P1): a signature
+        // change creates a new selector, and the lists above only Add or
+        // Replace — so the OLD selector would stay routed to the OLD facet
+        // bytecode, the split Diamond by the opposite door (CLAUDE.md: "a
+        // retired selector needs an explicit Remove leg"). Each is removed
+        // only if the loupe still routes it, and the loupe is asked again
+        // afterwards so a removal that did not take is loud.
+        _removeRetired(diamond, loupe);
 
         // Recycling M1 (#1346) — one-time notification-tariff migration.
         // M1 changed the notification fee from a numeraire-denominated value
@@ -1152,7 +1164,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         if (!wasPaused) AdminFacet(diamond).unpause();
         if (bootstrapOnly) {
             console.log("");
-            console.log("BOOTSTRAP RUN COMPLETE - facets cut, Diamond left PAUSED, paid-side migrations NOT run.");
+            console.log("BOOTSTRAP RUN COMPLETE - facets cut and every other refresh step run (proxy upgrades, role backfill, tariff migration where due); Diamond left PAUSED; ONLY the paid-side seed and rebase were NOT run.");
             console.log("Next: AdminFacet.pause() once more (it counts now), establish the seed / total / no-history");
             console.log("      answer under that pause, set ARMED_FRESH_PAUSE_EPOCH to the pause library's transition");
             console.log("      count, and run refresh() again - the facets are current and the migrations then run.");
@@ -1592,6 +1604,51 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 reps[ri++] = sels[i];
             }
         }
+    }
+
+    /// @dev Selectors this refresh RETIRES: signatures this upgrade changed on
+    ///      a facet that is live somewhere. `RefreshScriptFacetParityTest`
+    ///      pins that none of them is routed by the current DeployDiamond
+    ///      (removing a live function would strand it) and that the list
+    ///      names the legacy seed.
+    function _retiredSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
+        // only the amount; it now carries the pause epoch too, so the old
+        // selector must not survive routed to bytecode that checks neither
+        // the manual pause, the epoch, nor the cap.
+        s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
+    }
+
+    /// @dev Remove every retired selector the loupe still routes, in one cut,
+    ///      and verify through the loupe that none remains.
+    function _removeRetired(address diamond, IDiamondLoupe loupe) private {
+        bytes4[] memory retired = _retiredSelectors();
+        bytes4[] memory routed = new bytes4[](retired.length);
+        uint256 n;
+        for (uint256 i; i < retired.length; ++i) {
+            if (loupe.facetAddress(retired[i]) != address(0)) routed[n++] = retired[i];
+        }
+        if (n == 0) {
+            console.log("retired selectors: none routed on this Diamond - nothing to remove");
+            return;
+        }
+        bytes4[] memory toRemove = new bytes4[](n);
+        for (uint256 i; i < n; ++i) toRemove[i] = routed[i];
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: toRemove
+        });
+        IDiamondCut(diamond).diamondCut(cut, address(0), "");
+        for (uint256 i; i < n; ++i) {
+            require(
+                loupe.facetAddress(toRemove[i]) == address(0),
+                "RefreshAllFacetsInPlace: a retired selector is still routed after the Remove cut"
+            );
+        }
+        console.log("retired selectors removed (verified unrouted):", n);
     }
 
     /// @dev A bool getter probed without reverting the run when it is not

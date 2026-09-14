@@ -156,8 +156,10 @@
 #   FIRST ROLLOUT = TWO RUNS. Until this refresh has cut the new pause code
 #   in, the live Diamond counts no transitions (the count reads zero), so a
 #   pause made under the old code cannot be pinned. On such a chain the run
-#   cuts facets ONLY and defers the migrations — and demands NO migration
-#   answer for that chain on that run; then pause again (counted now),
+#   performs every refresh step EXCEPT the two paid-side migrations (the
+#   cuts, the retired-selector removal, the proxy upgrades and the
+#   reward-role backfill DO run) — and demands NO migration answer for that
+#   chain on that run; then pause again (counted now),
 #   establish the answer under that pause, state its epoch, and run again
 #   for that chain — the facets are current and the migrations run. The
 #   refresh always sends pause() as its first transaction (protecting the
@@ -589,7 +591,7 @@ for slug in $CHAINS; do
       # nothing can pin it. This run cuts facets only on this chain and the
       # refresh defers the migrations; a second run, after re-pausing on the
       # new code, carries the answer and its epoch.
-      info "$slug: BOOTSTRAP — pause transitions are not counted on this Diamond yet (old pause code): this run cuts facets ONLY and leaves it paused; then pause again (counted now), establish the seed / total / no-history answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_${pfx}, and run again for the migrations"
+      info "$slug: BOOTSTRAP — pause transitions are not counted on this Diamond yet (old pause code): this run performs every step of the refresh EXCEPT the two paid-side migrations (facet cuts, retired-selector removal, proxy upgrades, reward-role backfill, tariff migration where due) and leaves it paused; then pause again (counted now), establish the seed / total / no-history answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_${pfx}, and run again for the migrations"
       bootstrap_chains="${bootstrap_chains:+$bootstrap_chains }$slug"
       bootstrap=1
     else
@@ -1018,7 +1020,7 @@ for slug in $CHAINS; do
     info "$slug: in-place redeploy complete (service restored: the pause slot shows neither the manual flag nor a live auto-pause window)."
   fi
   case " ${bootstrap_chains:-} " in *" $slug "*)
-    info "$slug: BOOTSTRAP run -- facets cut, migrations DEFERRED. Next for this chain: AdminFacet.pause() once more (counted now), establish the answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_$(prefix_for "$slug"), and run again with --chains \"$slug\"" ;;
+    info "$slug: BOOTSTRAP run -- every refresh step ran EXCEPT the paid-side seed and rebase (those are DEFERRED; the role backfill and proxy upgrades DID run). Next for this chain: AdminFacet.pause() once more (counted now), establish the answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_$(prefix_for "$slug"), and run again with --chains \"$slug\"" ;;
   esac
   done_chains="${done_chains:+$done_chains }$slug"
 done
@@ -1070,6 +1072,6 @@ if [ -n "${paused_chains:-}" ]; then
   info "NOT LIVE after this run: [$paused_chains] -- a plain slug is under the manual pause it was refreshed under (resume by a fresh Unpauser decision, AdminFacet.unpause(), once its migrations are verified); '(auto-pause)' is under a watcher window; '(unknown)' could not be read and must be verified by hand. Not ordinary completion."
 fi
 if [ -n "${bootstrap_chains:-}" ]; then
-  info "BOOTSTRAP chains (migrations DEFERRED): [$bootstrap_chains] -- for each: AdminFacet.pause() once more (counted now that the new pause code is live), establish the seed / total / no-history answer under that pause, set ARMED_FRESH_PAUSE_EPOCH_<PREFIX> to the pause library's transition count, and run this script again for that chain."
+  info "BOOTSTRAP chains (paid-side seed + rebase DEFERRED; every other refresh step ran): [$bootstrap_chains] -- for each: AdminFacet.pause() once more (counted now that the new pause code is live), establish the seed / total / no-history answer under that pause, set ARMED_FRESH_PAUSE_EPOCH_<PREFIX> to the pause library's transition count, and run this script again for that chain."
 fi
 banner "DONE"

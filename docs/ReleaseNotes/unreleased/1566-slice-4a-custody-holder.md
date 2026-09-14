@@ -108,10 +108,16 @@ chain whose pause state cannot be read afterwards, or that sits under an
 automatic pause window, is reported as not live rather than as restored. On
 the first in-place rollout of this change the platform does not yet count
 pause transitions, so no pause made before it can be pinned: that run cuts
-the facets only and defers the migrations, demanding no migration answer for
-that run, and a second run — after pausing again under the new code and
-establishing the answer under that pause — carries them, so no migration is
-ever sealed against a pause that could not be shown continuous. The refresh
+every part of the refresh except the two paid-side migrations — the facet
+cuts, the removal of retired functions, the proxy upgrades and the
+reward-role record all run — and defers only the seed and the rebase,
+demanding no migration answer for that run; a second run — after pausing
+again under the new code and establishing the answer under that pause —
+carries them, so no migration is ever sealed against a pause that could not
+be shown continuous. A function this change retires — the older seed's
+previous form — is removed from an upgraded platform in the same refresh and
+verified gone, so it cannot survive routed to code that checks neither the
+pause nor its epoch. The refresh
 always sends its pause as the very first transaction, so the facet cuts run
 under it by transaction order; an unpause slipped between two of its
 transactions could still expose a mixed facet set for the rest of the run,

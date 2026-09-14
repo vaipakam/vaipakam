@@ -83,6 +83,10 @@ contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function deployItemsForTest() external returns (Item[] memory) {
         return _deployItems();
     }
+
+    function retired() external pure returns (bytes4[] memory) {
+        return _retiredSelectors();
+    }
 }
 
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
@@ -300,5 +304,37 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
                 )
             );
         }
+    }
+
+    /// @notice #1566 slice 4 PR A (Codex #2158 r30 P1) — the refresh REMOVES
+    ///         the selectors this upgrade retired. Two things must hold: no
+    ///         retired selector is one the current deploy routes (removing
+    ///         it would strand a live function), and the list names the
+    ///         legacy one-argument seed, which must not survive routed to
+    ///         bytecode that checks neither the manual pause nor the epoch.
+    function test_RefreshScript_RetiredSelectors_AreNotRoutedByDeploy() public {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
+        DeployDiamond deployScript = new DeployDiamond();
+        address deployer = vm.addr(DEPLOYER_KEY);
+        deployScript.runWith(deployer, TREASURY, DEPLOYER_KEY);
+        address diamond = deployScript.diamond();
+
+        bytes4[] memory retired = new RefreshItemsProbe().retired();
+        assertGt(retired.length, 0, "the retired list is empty - the legacy seed selector must be listed");
+        bool namesLegacySeed;
+        for (uint256 i; i < retired.length; ++i) {
+            assertEq(
+                IDiamondLoupe(diamond).facetAddress(retired[i]),
+                address(0),
+                "a retired selector is routed by the current DeployDiamond - removing it would strand a live function"
+            );
+            if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
+        }
+        assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
+            "the epoch-bound seed is not routed"
+        );
     }
 }
