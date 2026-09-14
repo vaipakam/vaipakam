@@ -201,18 +201,26 @@ describe('ending a listing or an intent is NOT a close', () => {
  * rather than of the pass — so it is the caller's to set, and the numbers
  * are asserted here rather than left in a comment.
  *
- * Free-tier Workers cap at 50 subrequests per invocation. On the legacy
- * inline cron path one invocation carries the scan (~38), the retained-
- * reserve backing snapshot (~4) and the OpenSea republish sweep (~6) — 48,
- * so the repair has 2. On the DO path the scan runs inside the Durable
- * Object's own invocation and the other two stay in the scheduled one, so
- * the headroom is the full ~12.
+ * Free-tier Workers cap at 50 subrequests per invocation. On the DO path —
+ * which `CHAIN_INGEST_VIA_DO: "true"` makes the deployed one — the scan runs
+ * inside the Durable Object's own invocation, so the ~12 headroom beside its
+ * own ~38 is the repair's to use.
+ *
+ * The legacy inline path is NOT a tighter version of the same sum, and these
+ * cases must not be read as asserting that it fits. That invocation carries
+ * the scan (~38), the backing snapshot (~4) and the OpenSea republish sweep
+ * (up to 35 — 5 rows x 7 calls each), which is ~77 against a cap of 50
+ * before this pass exists at all (#2194). The tight budget is the minimum
+ * non-zero cost on a path that is already over, not a fit.
  *
  * The pass spends `1 + maxRows` at worst: one `getActiveLoansCount` plus one
- * `getLoanDetails` per row examined.
+ * `getLoanDetails` per row examined. That is the number these cases pin.
  */
 describe('reconcile budget', () => {
-  it('fits the legacy tick, where the scan shares its invocation', () => {
+  it('costs the shared legacy invocation the minimum that still turns', () => {
+    // Deliberately NOT phrased as "fits" — see the header: that invocation
+    // is already over the cap without this pass. What is asserted is that
+    // the pass takes the least it can while still doing anything.
     const worst = 1 + (RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0);
     expect(worst).toBeLessThanOrEqual(2);
     // And it still turns: a budget of zero rows would make the rotation a

@@ -254,7 +254,9 @@ The app uses chain reads and indexed reads for different jobs.
   with the other scheduled work it examines one. Every record is still
   reached either way. The pace is never raised at the cost of the chain
   reading itself, because a reading that starts being refused drops the
-  announcements the correction exists to recover from.
+  announcements the correction exists to recover from — and where the
+  scheduled work already asks for more capacity than is available, the
+  platform says so rather than presenting the smaller share as sufficient.
 - A position the platform publishes as open must be one it can still
   substantiate as open. Where it cannot, the surfaces that count and the
   surfaces that list must not answer the same question differently

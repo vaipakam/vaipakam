@@ -305,9 +305,11 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
   try {
     // LEGACY INLINE PATH — this scan shares one 50-subrequest invocation
     // with `captureBackingSnapshot` (~4) and `sweepUnpublishedListings`
-    // (~6) on top of the scan's own ~38, so the repair takes the minimum
-    // that still turns the rotation. The alternative to a slower repair is
-    // a scan whose own subrequests get refused, which is strictly worse.
+    // (up to 35: 5 rows x 7 calls each) on top of its own ~38. That is ~77
+    // against a cap of 50 BEFORE this pass exists, which is #2194 and not
+    // something this PR created or can fix. The repair therefore takes the
+    // minimum that still turns the rotation — 2 — rather than a number
+    // justified by headroom, because there is none to claim.
     const r = await runChainIndexerForChain(env, chain, RECONCILE_BUDGET_SHARED_TICK);
     results.push(r);
   } catch (err) {
@@ -624,14 +626,24 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * How many rows the #2101 repair pass may examine on THIS invocation.
  *
  * It is a parameter rather than a constant because the answer depends on
- * what else shares the invocation, and only the caller knows that. The
- * legacy inline cron path shares its 50-subrequest budget with
- * `captureBackingSnapshot` and `sweepUnpublishedListings`; the DO path does
- * not, because the scan runs inside the Durable Object's own invocation.
+ * what else shares the invocation, and only the caller knows that. The DO
+ * path's scan runs inside the Durable Object's own invocation and shares it
+ * with nothing else here; the legacy inline cron path shares one invocation
+ * with `captureBackingSnapshot` and `sweepUnpublishedListings`.
+ *
+ * DO NOT READ THE TIGHT BUDGET AS "WHAT FITS". An earlier revision of this
+ * comment said the legacy path had 2 subrequests of headroom, which was
+ * wrong: the sweep's worst case is 5 rows x 7 subrequests = 35, not the ~6
+ * that arithmetic assumed, so that invocation's worst case is already about
+ * 77 against a cap of 50 WITHOUT this pass (#2194). Taking 2 instead of 6
+ * is the minimum non-zero cost, not a fit — and removing those 2 would not
+ * make 77 safe, so this pass neither claims to fix that nor pretends to be
+ * free. `CHAIN_INGEST_VIA_DO` is "true" on the deployed config, so the
+ * repair runs in the DO's invocation and is not a contributor there at all.
  *
  * The DEFAULT is the tight one on purpose. A future caller that forgets to
- * pass anything gets the budget that cannot overrun the scan, not the one
- * that can.
+ * pass anything gets the budget that costs the shared invocation least, not
+ * the one that costs it most.
  */
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 5, minRows: 1 };

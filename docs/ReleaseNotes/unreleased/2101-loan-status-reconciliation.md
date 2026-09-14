@@ -63,14 +63,19 @@ record it examines anyway.
 
 How many it may spend when the totals DO disagree depends on how the
 deployment ingests, and that is worth stating rather than leaving to be
-inferred. Where the reading of the chain runs on its own, the correction may
-examine up to five records per turn. Where it shares its slot with the other
-scheduled work — the reserve snapshot and the marketplace republish — there
-is room for one, and it takes one. The alternative to a correction that
-works through the records more slowly is a reading of the chain whose own
-requests start being refused, which would drop the very announcements this
-exists to recover from. Either way every record is reached; the difference
-is how many turns it takes.
+inferred. Where the reading of the chain runs in its own slot — which is how
+the service is currently configured — the correction may examine up to five
+records per turn. Where it shares a slot with the other scheduled work, it
+examines one.
+
+That second case deserves a plain statement rather than a reassuring one.
+The shared slot is not merely tight: counted properly, the work already
+scheduled into it can exceed what the platform allows, before this
+correction is added at all. That is a separate fault, raised on its own, not
+something this change introduced or repairs; taking the smallest possible
+share is what this change can honestly do about it, and it does not pretend
+that makes the slot safe. Either way every record is eventually reached; the
+difference is how many turns it takes.
 
 ## What it will not do
 
