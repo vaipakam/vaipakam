@@ -11,9 +11,17 @@ import {
 import { rpcRetryable } from './rpcRetryable.mjs';
 
 /**
- * The classifier is deliberately lopsided — it names the deterministic
- * failures and retries everything else — so the cases here pin both
- * halves: the named ones are refused, and nothing unnamed is.
+ * The classifier is deliberately lopsided — it names ONE failure and
+ * retries everything else — so the cases here pin both halves: a revert
+ * is refused, and nothing else is.
+ *
+ * It named more than that until #2107 round 3, and this header said so.
+ * What it named were failures to DECODE a reply, and two attempts to
+ * bound that set were broken by review in consecutive rounds. They are
+ * no longer classified here because they are no longer inside the retry
+ * at all — `confirmWrite` decodes outside it — so the cases below assert
+ * the INVERSE of what they once did, and `writeConfirm.test.mjs` holds
+ * the guarantee that replaced them.
  */
 describe('rpcRetryable', () => {
   it('refuses a contract revert, however deep in the cause chain', () => {
