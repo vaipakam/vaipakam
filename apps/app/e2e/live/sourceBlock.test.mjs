@@ -455,6 +455,13 @@ describe('#2144 — no source region is bounded by a character count', () => {
       [/__proto__\s*=/, 'writes a prototype through __proto__'],
       [/Symbol\.(iterator|toPrimitive)\s*\]\s*=/, 'replaces a coercion or iteration hook'],
       [/new\s+Proxy\s*\(/, 'stands a Proxy in for a real value'],
+      // …and REPLACING an intrinsic outright, which the module header
+      // assumes just as squarely as it assumes prototypes are intact and
+      // which the first version of this assertion had no pattern for
+      // (round 16). `String = replacement` creates no binding, so the
+      // name reads as the built-in everywhere while being none of it.
+      [new RegExp(`^\\s*(${GUARDED}|Symbol|Reflect|JSON|Math)\\s*=[^=]`, 'm'), 'replaces an intrinsic outright'],
+      [new RegExp(`(globalThis|window|self|global)\\s*(\\.(${GUARDED}|Symbol|Reflect|JSON|Math)\\b|\\[[^\\]]*\\])\\s*=[^=]`), 'replaces an intrinsic through the global object'],
     ];
     const found = [];
     for (const rel of allLiveFiles()) {
@@ -2567,6 +2574,14 @@ describe('#2175 — one resolver, three answers', () => {
       "const s = f();\nfor (const x of xs) { var end = s.indexOf('e');" +
       ' const r = s.slice(0, end); end = 320; }';
     expect(countsCharacters(hoisted, sliceCallsIn(hoisted).at(-1))).toBe(true);
+    // A `let` in a for HEADER is carried forward from the previous pass
+    // rather than re-initialised, so it is not fresh either — position
+    // inside the loop node was true of it and of a body-local `let`, and
+    // told them apart not at all.
+    const header =
+      "const s = f();\nfor (let end = s.indexOf('e'); next(); )" +
+      ' { if (on()) end = 320; else { var q = s.slice(0, end); } }';
+    expect(countsCharacters(header, sliceCallsIn(header).at(-1))).toBe(true);
     // An OUTER binding written in the loop outlives every iteration.
     const outer =
       "const s = f();\nlet end = s.indexOf('e');\n" +

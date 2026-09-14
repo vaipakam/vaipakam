@@ -1668,12 +1668,21 @@ function oneEvaluation(src, a, b, variable) {
  *  separate question from `bindingLivesIn`. */
 function freshEachIteration(variable, loop) {
   if (!variable || variable.defs.length === 0) return false;
+  // Inside the repeated BODY, not merely inside the loop (round 16). A
+  // `let` in a `for` HEADER is copied forward from the previous pass
+  // rather than re-initialised, so `for (let end = at('e'); next(); ) {
+  // if (on()) end = 320; else s.slice(0, end); }` carries the fixed
+  // write into the next iteration and the arms are not exclusive across
+  // them. Position inside the loop node was true of both and told them
+  // apart not at all.
+  const body = loop.body;
+  if (!body) return false;
   return variable.defs.every(
     (d) =>
       d.type === 'Variable' &&
       (d.parent?.kind === 'let' || d.parent?.kind === 'const') &&
-      d.name.start >= loop.start &&
-      d.name.end <= loop.end,
+      d.name.start >= body.start &&
+      d.name.end <= body.end,
   );
 }
 
