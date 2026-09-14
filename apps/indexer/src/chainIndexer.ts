@@ -680,7 +680,7 @@ async function runLoanReconcilePass(input: {
   /** The SAFE head this path resolved. Every read pins to it. */
   head: bigint;
   budget: ReconcileOptions;
-}): Promise<number> {
+}): Promise<number[]> {
   const { env, chain, chainId, diamond, head, budget } = input;
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
@@ -775,12 +775,18 @@ async function runLoanReconcilePass(input: {
           `(most likely a missed LoanInitiated, which this pass cannot repair)`,
       );
     }
-    return report.repaired.length;
+    // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
+    // `loan.updated` key is not enough on its own: `scopeInvalidationRoots`
+    // drops holder-scoped refetches when the frame's hint set is complete
+    // and does not mention the loan — and a repaired loan is old, so it is
+    // never in `allLogs`. The holders of the position just corrected would
+    // have been precisely the ones whose refetch was scoped away.
+    return report.repaired.map((r) => r.loanId);
   } catch (err) {
     // A repair failure must not wedge the scan that found nothing wrong;
     // the rotation returns to these rows.
     console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
-    return 0;
+    return [];
   }
 }
 
@@ -924,7 +930,7 @@ export async function runChainIndexerForChain(
     // this is the only safe one. D1 still reflects everything up to the
     // cursor, which is at or above `head`, so reading at `head` cannot see
     // state the index has not caught up to.
-    const quietReconciled = await runLoanReconcilePass({
+    const quietReconciledIds = await runLoanReconcilePass({
       env,
       chain,
       chainId,
@@ -962,10 +968,13 @@ export async function runChainIndexerForChain(
       // with no event behind it, so it must broadcast like any other loan
       // change. This path used to return a hard-coded zero result, which is
       // what made the repair invisible to subscribed clients here.
-      reconciledLoans: quietReconciled,
+      reconciledLoans: quietReconciledIds.length,
+      // The repaired ids ride the hints for the same reason the calendar
+      // ids do: without them the frame looks irrelevant to the holders of
+      // the very position that changed, and their scoped refetch is dropped.
       hints:
-        quietCal.inserted > 0
-          ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
+        quietCal.inserted > 0 || quietReconciledIds.length > 0
+          ? mergeHintLoanIds(emptyHints(), [...quietCal.loanIds, ...quietReconciledIds])
           : undefined,
       headBlock: head,
       skipped: 'caught-up',
@@ -1234,10 +1243,10 @@ export async function runChainIndexerForChain(
   // terminal question for this tick with the ghost still active. Ordering
   // is the whole fix for the first; the second is narrower and is answered
   // separately (see the reply on that thread).
-  const reconciledLoans =
+  const reconciledLoanIds =
     scanTo === head
       ? await runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
-      : 0;
+      : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
@@ -1345,18 +1354,21 @@ export async function runChainIndexerForChain(
     // tail feed the `notification.created` push key; their loan ids join
     // the hints below so client relevance scoping still applies.
     calendarNotifications: cal.inserted,
-    reconciledLoans,
+    reconciledLoans: reconciledLoanIds.length,
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).
     // Stub HEALS mutate rows without a corresponding log in THIS scan
     // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
     // can't claim its id list is complete (Codex #1244 r1).
+    // A repaired loan is OLD, so it is never in `allLogs` — its id has to
+    // be merged in explicitly or the hint set is "complete" while omitting
+    // the one position this scan actually corrected (#2190 r5).
     hints: mergeHintLoanIds(
       detailRefreshes > 0 || loanDetailRefreshes > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
-      cal.loanIds,
+      [...cal.loanIds, ...reconciledLoanIds],
     ),
   };
 }

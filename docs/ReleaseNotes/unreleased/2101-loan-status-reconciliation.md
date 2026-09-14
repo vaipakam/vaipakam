@@ -100,7 +100,12 @@ still be sent a "payment due" or "overdue" reminder that nothing would ever
 retract. And a correction now announces itself to anyone watching the
 position, the same way any other change does — without that, the record was
 put right while every open screen kept showing the old one until it happened
-to refresh.
+to refresh. The announcement names the corrected loan, which sounds like a
+detail and is not: the announcement is filtered down to the people it
+concerns, and a corrected loan is by definition an OLD one that appears
+nowhere else in that tick's work. Left unnamed, the one announcement that
+mattered would have been filtered away from exactly the two people it was
+for.
 
 Both holders of a corrected position also get the ending in their inbox.
 They had received nothing: the announcement was missed, so the surface that
@@ -111,6 +116,14 @@ say the platform found this out now, which is true; they do not carry a date
 for the ending, because the check genuinely cannot work out when it happened;
 and they are marked as coming from a correction rather than from an
 announcement nobody saw.
+
+They also arrive as NEW rather than as something already read. The inbox
+decides what is unread by position in the chain's order, and a message
+carrying no position of its own has to be placed deliberately — placed
+wrongly, it lands behind things the holder has already opened and is never
+shown at all. The reminder messages had already learned this; the correction
+messages repeated the mistake, and the placement rule is now one shared rule
+rather than one each writer has to rediscover.
 
 ## What it will not do
 

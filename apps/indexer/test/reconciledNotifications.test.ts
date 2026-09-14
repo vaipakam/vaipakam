@@ -16,6 +16,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  DERIVED_LOG_INDEX,
   notificationInsertStatement,
   planReconciledNotifications,
   RECONCILED_EVENT_KIND,
@@ -90,8 +91,13 @@ describe('planReconciledNotifications', () => {
     // means "cron-derived calendar row".
     expect(row.event_kind).toBe(RECONCILED_EVENT_KIND);
     expect(RECONCILED_EVENT_KIND).not.toBeNull();
-    // No log behind it.
-    expect(row.log_index).toBe(-1);
+    // No log behind it — but it must still sort NEWEST within its block, or
+    // the client's `(block, logIndex, id)` read cursor treats it as already
+    // seen when the holder has opened any event row at that same head. The
+    // calendar sweep learned this first; the repair reintroduced it with -1
+    // (#2190 r5), which is why the sentinel is now shared.
+    expect(row.log_index).toBe(DERIVED_LOG_INDEX);
+    expect(DERIVED_LOG_INDEX).toBeGreaterThan(0);
     // Dated to when the platform found out, which is true; the block is the
     // one the state was observed at, so the row sorts as current.
     expect(row.created_at).toBe(1_700_000_042);

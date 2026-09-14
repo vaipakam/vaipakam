@@ -550,6 +550,25 @@ const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
   internal_matched: 'internal_matched',
 };
 
+/**
+ * The `log_index` for ANY row derived from D1 state rather than from a log.
+ *
+ * A sentinel ABOVE any real per-block log index. The feed and the client's
+ * read-state cursor both order by `(block_number, log_index, id)`, and a
+ * real log in the same head block can carry a log index above zero — so a
+ * derived row placed at 0, or at -1, sorts OLDER than an already-seen event
+ * row in that block and is silently treated as already read. Blocks hold
+ * nowhere near a million logs, so this keeps a head-stamped derived row
+ * strictly newest within its block.
+ *
+ * This lives here rather than beside one of its users because it has now
+ * been needed twice. The calendar sweep found it first (Codex #1298 r2) and
+ * the #2101 repair reintroduced the identical defect with `-1` (#2190 r5
+ * `4007500676`) — a per-caller constant is a rule each new derived-row
+ * writer has to rediscover, and one of them already failed to.
+ */
+export const DERIVED_LOG_INDEX = 1_000_000;
+
 /** Marks a row derived by the #2101 repair rather than by an event. The
  *  column is free text and nothing switches on it, so this is provenance a
  *  reader can see rather than a control flag — and it is NOT `null`, which
@@ -618,10 +637,10 @@ export async function planReconciledNotifications(
     for (const side of ['lender', 'borrower'] as const) {
       const recipient = recipientFor(parties, side);
       if (!recipient) continue;
-      // `-1` for the log index, and NOT the observed block, so the key is
-      // stable per (recipient, kind, loan): a repair happens once per loan
-      // by construction, but a key that moved with the head would let a
-      // re-run duplicate the row.
+      // The KEY keeps its own fixed `-1:-1` tail and does NOT follow the
+      // stored ordering position: it must be stable per (recipient, kind,
+      // loan) so a re-run at a different head cannot duplicate the row,
+      // which is a separate concern from where the row sorts in the feed.
       const dedupKey = `${chainId}:${recipient}:${kind}:${loanId}:-1:-1`;
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
@@ -632,7 +651,11 @@ export async function planReconciledNotifications(
         loanId,
         eventKind: RECONCILED_EVENT_KIND,
         blockNumber: observedBlock,
-        logIndex: -1,
+        // NOT -1. See `DERIVED_LOG_INDEX`: at the same block as an event the
+        // holder has already seen, a lower index sorts OLDER and the client
+        // treats this notice as already read — silently defeating the one
+        // thing it exists to do.
+        logIndex: DERIVED_LOG_INDEX,
         createdAt: nowSec,
         dedupKey,
       });
