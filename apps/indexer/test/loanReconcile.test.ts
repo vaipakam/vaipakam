@@ -7,8 +7,8 @@
  * An earlier version of this header said the safety argument was that "a
  * stale read can only miss a repair and never manufacture one". That was
  * retracted in #2190 round 1: the write is irreversible from this pass's
- * point of view, since it only ever selects `active` rows, so a wrong
- * read is permanent rather than harmless. Pinning every read to the
+ * point of view, since it only ever selects LIVE rows, so a wrong read is
+ * permanent rather than harmless. Pinning every read to the
  * scan's SAFE head is what makes it safe; the refusals below are what
  * bound what it may do with a read it trusts.
  */
@@ -24,6 +24,12 @@ import {
 
 const CHAIN = 84532;
 
+/** The live set the real deps select on. The fake below uses THIS rather
+ *  than a hard-coded `'active'`, or it stops modelling the thing under
+ *  test the moment the set changes — which is exactly what happened when
+ *  `fallback_pending` was added. */
+const LIVE = new Set(['active', 'fallback_pending']);
+
 /** A fake index: rows in memory, every dependency counted. */
 function fakeDeps(
   rows: ReconcileRow[],
@@ -36,16 +42,16 @@ function fakeDeps(
     async activeRowsAfter(_c, after, limit) {
       calls.rowQueries += 1;
       return rows
-        .filter((r) => r.status === 'active' && r.loan_id > after)
+        .filter((r) => LIVE.has(r.status) && r.loan_id > after)
         .sort((a, b) => a.loan_id - b.loan_id)
         .slice(0, limit);
     },
     async countIndexedActive() {
-      return rows.filter((r) => r.status === 'active').length;
+      return rows.filter((r) => LIVE.has(r.status)).length;
     },
     async readChainActiveCount() {
       calls.chainCount += 1;
-      return chainActive ?? rows.filter((r) => r.status === 'active').length;
+      return chainActive ?? rows.filter((r) => LIVE.has(r.status)).length;
     },
     async readChainStatus(_c, loanId) {
       calls.statusReads += 1;
@@ -57,9 +63,9 @@ function fakeDeps(
     async writeStatus(_c, loanId, status) {
       calls.writes += 1;
       const row = rows.find((r) => r.loan_id === loanId);
-      // Mirrors a compare-and-set on `status = 'active'`: a row another
-      // writer already terminalized does not change.
-      if (!row || row.status !== 'active') return false;
+      // Mirrors the real compare-and-set, which guards on the LIVE set:
+      // a row another writer already terminalized does not change.
+      if (!row || !LIVE.has(row.status)) return false;
       row.status = status;
       return true;
     },
@@ -173,6 +179,36 @@ describe('reconcileChainLoans', () => {
     const f = fakeDeps(rows, { 13: 1, 14: 1 }, 0);
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
     expect(r.repaired.map((x) => x.loanId)).toEqual([13, 14]);
+  });
+
+  it('reaches a fallback_pending row end to end, not just in decideRepair', async () => {
+    // The unit case above proves the DECISION admits it; this proves the
+    // selector and the compare-and-set do too. Three places had to change
+    // together and a decision-only case would have passed with the SQL
+    // still excluding the row.
+    const rows: ReconcileRow[] = [
+      { loan_id: 30, status: 'fallback_pending' },
+      { loan_id: 31, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 30: 1, 31: 0 }, 1);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.examined).toEqual([30, 31]);
+    expect(r.repaired).toEqual([{ loanId: 30, from: 'fallback_pending', to: 'repaid' }]);
+    expect(rows[0].status).toBe('repaid');
+  });
+
+  it('counts BOTH live statuses, so a pending row cannot pin the gate open', async () => {
+    // The chain counter is Active OR FallbackPending. Counting only
+    // `active` here made the two differ permanently — larger budget every
+    // pass, forever, over a row the selector would not examine.
+    const rows: ReconcileRow[] = [
+      { loan_id: 30, status: 'fallback_pending' },
+      { loan_id: 31, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 30: 4, 31: 0 }, 2); // chain: 2 live
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5, minRows: 1 });
+    expect(r.indexedActive).toBe(2);
+    expect(r.agreed).toBe(true);
   });
 
   it('keeps examining rows when the counts AGREE', async () => {
