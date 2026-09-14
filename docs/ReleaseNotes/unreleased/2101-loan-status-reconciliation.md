@@ -92,8 +92,8 @@ discovered.
 
 And it cannot say why an ending was missed in the first place.
 
-The correction and the tidying that follows it are a single write, which
-either happens completely or not at all. That is not a refinement: a
+The correction and the tidying are a single write, which either happens
+completely or not at all. That is not a refinement: a
 correction that landed on its own would take the record out of the set the
 rotation looks at, so nothing would ever come back to finish the job, and a
 service killed mid-way leaves no failure to report either. Committing them

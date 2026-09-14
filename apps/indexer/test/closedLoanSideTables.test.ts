@@ -9,9 +9,11 @@
  *
  * Review found the reconciliation pass leaving the first behind, and then —
  * after that was fixed table-by-table — the second. The fix was to stop
- * enumerating tables at the call sites: `_clearClosedLoanSideTables` is the
- * one thing a CLOSE calls, and the repair path calls the same one. These
- * cases are the reason that distinction cannot quietly collapse, in either
+ * enumerating tables at the call sites. One place names them
+ * (`_closedLoanSideTableStatements`); the event handlers run that list
+ * through `_clearClosedLoanSideTables`, and the repair folds the same
+ * statements into its own transaction. These cases are the reason the
+ * close/not-a-close distinction cannot quietly collapse, in either
  * direction:
  *
  *  - a close must clear BOTH, so a new close-out handler that clears only
