@@ -2167,6 +2167,38 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
+  // Round 6. A property read is not an established value, and unwrapping
+  // an optional chain is not enough on its own — both forms leave a
+  // member expression, and what a property holds when a line runs is
+  // not a question this answers (settled at #2170 round 37).
+  it('refuses a stand-in reached through a property', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const holder = { fake: { indexOf: () => start + 320 } };\n';
+    for (const [why, tail] of [
+      ['through an optional chain', 'const r = s.slice(start, at(holder?.fake));'],
+      ['through a plain property read', 'const r = s.slice(start, at(holder.fake));'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // "Unbound" means declared elsewhere and beyond reach — which stops
+  // being true the moment this file writes it. Assigning to an
+  // undeclared name creates no binding, so every reference still reads
+  // as global while the built-in has been replaced outright.
+  it('refuses a built-in this file has written over', () => {
+    const written =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'String = { raw: String.prototype.slice };\n' +
+      'const r = String.raw.call(s, start, start + 320);';
+    expect(sliceCallsIn(written).length).toBeGreaterThan(0);
+    // …and one nobody has touched is still not a narrowing.
+    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open

@@ -916,6 +916,19 @@ const RESOLVED = 'resolved';
 const UNRESOLVED = 'unresolved';
 const UNBOUND = 'unbound';
 
+/** Whether this file ASSIGNS to an undeclared name — which creates no
+ *  binding, so the scope analyser still calls every reference global. */
+function globalIsAssigned(src, name) {
+  const { nodes } = astOf(src, 'globalIsAssigned');
+  return nodes.some(
+    (n) =>
+      (n.type === 'AssignmentExpression' &&
+        n.left?.type === 'Identifier' &&
+        n.left.name === name) ||
+      (n.type === 'UpdateExpression' && n.argument?.type === 'Identifier' && n.argument.name === name),
+  );
+}
+
 function resolutionOf(src, node, seen = new Set()) {
   if (!node || typeof node.type !== 'string') return { state: UNRESOLVED, why: 'absent' };
   if (node.type !== 'Identifier') return { state: RESOLVED, value: node };
@@ -923,7 +936,18 @@ function resolutionOf(src, node, seen = new Set()) {
   if (seen.has(key)) return { state: UNRESOLVED, why: 'defined in terms of itself' };
   seen.add(key);
   const bound = bindingOf(src, node);
-  if (!bound.found) return { state: UNBOUND, name: node.name, notText: bound.notText };
+  if (!bound.found) {
+    // A global THIS FILE WRITES is not the built-in any more. Assigning
+    // to an undeclared name creates no binding, so the scope analyser
+    // reports the reference as global and the name looked untouched —
+    // while `String = { raw: … }` has replaced it outright. Unbound
+    // means "declared elsewhere and beyond reach", which is only true
+    // while nothing here reaches it.
+    if (globalIsAssigned(src, node.name)) {
+      return { state: UNRESOLVED, why: 'a global this file writes', notText: bound.notText };
+    }
+    return { state: UNBOUND, name: node.name, notText: bound.notText };
+  }
   if (writeReaches(src, bound.writes, node.start)) {
     return { state: UNRESOLVED, why: 'written to before the use', notText: bound.notText };
   }
@@ -2029,6 +2053,11 @@ function visiblyNotText(src, node, seen) {
   // along is a place this walk can stop too early, which is the same
   // finding for the third time; they are enumerated here together so
   // there is one list to check rather than one per round.
+  // An OPTIONAL CHAIN is wrapped too, and this file has had a helper for
+  // unwrapping one since round 26 of #2170 — it simply was not used in
+  // this list. Fourth round on this category, and the first where the
+  // answer was already sitting in the file.
+  if (node?.type === 'ChainExpression') return visiblyNotText(src, node.expression, seen);
   if (node?.type === 'AssignmentExpression') return visiblyNotText(src, node.right, seen);
   if (node?.type === 'AwaitExpression') return visiblyNotText(src, node.argument, seen);
   if (node?.type === 'ParenthesizedExpression') return visiblyNotText(src, node.expression, seen);
@@ -2050,6 +2079,14 @@ function visiblyNotText(src, node, seen) {
   // second helper after the direct form had been closed.
   if (r.state === UNRESOLVED && !r.fromCaller) return true;
   if (r.state !== RESOLVED) return false;
+  // A PROPERTY READ is not an established value either, and unwrapping
+  // an optional chain is not enough on its own — `holder?.fake` and
+  // `holder.fake` both leave a member expression, and #2170 round 37
+  // settled that what a property holds when a line runs is not a
+  // question this can answer. RESOLVED means "here is the expression",
+  // which for a member expression is not the same as knowing its value,
+  // so it defeats the exemption on the unestablished ground.
+  if (r.value.type === 'MemberExpression') return true;
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out — the `/x/` stand-in this guard has had an
   // open case about — and a number, boolean or null is not text either.
