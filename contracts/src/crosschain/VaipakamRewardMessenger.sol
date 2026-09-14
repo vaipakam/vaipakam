@@ -166,7 +166,7 @@ interface IRepatriationInstructionIngress {
 ///      the day-pool halves, and the 5-word consumption-attested ACK. A
 ///      proxy without the selector is generation 1 and predates all
 ///      three.
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 3;
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 4;
 
 contract VaipakamRewardMessenger is
     Initializable,
@@ -1689,7 +1689,11 @@ contract VaipakamRewardMessenger is
         uint256 sourceChainId,
         address /* sourceSender */,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        // Unused on this DATA-ONLY channel: the ingress stamp identifies
+        // value-bearing packets (#1566 closure 2 cutover PR 1); the port is
+        // one interface version, so the parameter is carried here too.
+        bytes32 /* transportMessageId */
     ) external override whenNotPaused nonReentrant {
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         // The reward channel is data-only. The messenger forwards any

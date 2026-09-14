@@ -1353,6 +1353,17 @@
   },
   {
     "type": "error",
+    "name": "IngressPacketReplayed",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InitLtvAboveTier",
     "inputs": [
       {
@@ -2790,6 +2801,27 @@
     "type": "error",
     "name": "RewardCustodyTreasuryUnset",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyUnclassifiedHeldShort",
+    "inputs": [
+      {
+        "name": "receiptKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

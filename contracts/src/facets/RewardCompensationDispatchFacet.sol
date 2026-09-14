@@ -613,6 +613,13 @@ contract RewardCompensationDispatchFacet is
      *         permissionlessly re-presentable; the return settles VALUE
      *         and the R6 gate (§5.1's return-settlement arm), each exactly
      *         once.
+     * @param transportMessageId The transport's message id (#1566 closure 2
+     *         cutover PR 1): the return is recorded under its ingress stamp,
+     *         and a return for a receipt that PREDATES recovery attribution
+     *         lands in the holder's `Unclassified` row on an activated
+     *         deployment instead of resting in the shared balance. Not
+     *         `whenNotPaused` — a receive ingress stays executable under
+     *         the migration pause (design §5c).
      */
     function onStrandedReturnReceived(
         address remitter,
@@ -622,8 +629,9 @@ contract RewardCompensationDispatchFacet is
         address token,
         uint256 declaredAmount,
         uint256 actualReceived,
-        uint256 remainingAfter
-    ) external nonReentrant whenNotPaused onlyCanonical {
+        uint256 remainingAfter,
+        bytes32 transportMessageId
+    ) external nonReentrant onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         {
             address receiver = s.repatriationReceiver;
@@ -728,8 +736,11 @@ contract RewardCompensationDispatchFacet is
         // position standing AT that instant; this is the other half of the
         // same rule, stopping it from being refilled afterwards.
         //
-        // The tokens are not lost: they stay as ordinary unearmarked
-        // balance, which is exactly what the CHARGED dispatch path spends.
+        // The tokens are not lost: on a deployment whose custody is not
+        // activated they stay as ordinary unearmarked balance, which is
+        // exactly what the CHARGED dispatch path spends; on an activated
+        // one they are protected into the holder's `Unclassified` row
+        // (closure 2 cutover PR 1, below).
         bool attributable = !_receiptPredatesAttribution(s, remitId);
         if (attributable) {
             s.rewardBudgetRecovered += credited;
@@ -738,12 +749,26 @@ contract RewardCompensationDispatchFacet is
         // #1566 slice 4 PR B — the recovery custody switch (design §5d): on
         // an activated deployment the entitlement-bounded portion is
         // relocated from this balance into the holder's RECOVERY row and
-        // any excess into the protected OVERAGE row, measured. A
-        // pre-attribution receipt's credit touches no position and stays in
-        // this balance, exactly as before.
+        // any excess into the protected OVERAGE row, measured. #1566
+        // closure 2 cutover PR 1 — a pre-attribution receipt's credit
+        // belongs to no position: it is recorded under the packet's ingress
+        // stamp and protected into `Unclassified` at ingress rather than
+        // resting in this balance (design §5c).
         if (LibRewardCustody.active(s)) {
+            bytes32 h = LibRewardCustody.callRecordIngressPacket(
+                sourceChainId,
+                transportMessageId,
+                LibRewardCustody.PACKET_KIND_STRANDED_RETURN,
+                actualReceived,
+                0,
+                0,
+                remitter,
+                remitId
+            );
             if (attributable) {
                 LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, credited);
+            } else {
+                LibRewardCustody.callUnclassifiedReturn(h, credited);
             }
             LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Overage, overage);
         }
@@ -1542,6 +1567,23 @@ contract RewardCompensationDispatchFacet is
             if (holderCustody) {
                 LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
             }
+        } else if (holderCustody && freshInflow != 0) {
+            // #1566 closure 2 cutover PR 1 — a ceremony inflow for a receipt
+            // that predates attribution is the same untyped custody as a
+            // pre-attribution return: protected into `Unclassified` under a
+            // ceremony-kind record (no transport packet — the per-source
+            // sequence keys it).
+            bytes32 h = LibRewardCustody.callRecordIngressPacket(
+                0,
+                bytes32(0),
+                LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW,
+                freshInflow,
+                freshInflow,
+                0,
+                address(this),
+                refId
+            );
+            LibRewardCustody.callUnclassifiedReturn(h, freshInflow);
         }
         if (recycledInflow != 0) {
             LibVpfiRecycle.creditCustodyRelocated(

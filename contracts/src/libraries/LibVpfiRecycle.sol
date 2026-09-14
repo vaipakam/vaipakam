@@ -722,7 +722,15 @@ library LibVpfiRecycle {
         // meaning of the three results is unchanged: live balance, ledger
         // bucket, and this balance minus its OWN earmarks.
         if (LibRewardCustody.active(s)) {
-            uint256 quarantined = s.strandedRecoveryReserved;
+            // #1566 closure 2 cutover PR 1 — a quarantine that landed (or a
+            // demotion that unwound) AFTER the activation is custody of the
+            // holder's `Unclassified` row; only the reservation's remainder
+            // — quarantines that predate the activation — still rests in
+            // this balance. Saturating: the reservation floors at zero on
+            // returns while the held figure is exact.
+            uint256 reservedAll = s.strandedRecoveryReserved;
+            uint256 held = s.strandedRecoveryReservedHeld;
+            uint256 quarantined = reservedAll > held ? reservedAll - held : 0;
             unearmarked = vpfiBalance > quarantined ? vpfiBalance - quarantined : 0;
             return (vpfiBalance, bucket, unearmarked);
         }

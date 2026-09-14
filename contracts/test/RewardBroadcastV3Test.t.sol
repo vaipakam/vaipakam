@@ -1507,7 +1507,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             scheduleVersion,
             lapseWindowSeconds,
             uint64(24 hours)
-        );
+        , bytes32(0));
     }
 
     // ── Quarantine case 1: day applied + era known, NOT zeroed ─────────────
@@ -1708,7 +1708,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             uint32(1),
             uint64(7 days),
             uint64(24 hours)
-        );
+        , bytes32(0));
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
@@ -1784,7 +1784,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             uint32(1),
             uint64(7 days),
             uint64(24 hours)
-        );
+        , bytes32(0));
     }
 
     function testHookIsSelfGated() public {

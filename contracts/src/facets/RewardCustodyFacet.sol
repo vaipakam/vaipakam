@@ -1285,10 +1285,58 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.relocateFreshIngress(LibVaipakam.storageSlot(), amount);
     }
 
-    /// @notice Diamond-internal: {LibRewardCustody.uncreditFresh}.
-    function custodyUncreditFresh(uint256 amount) external {
+    /// @notice Diamond-internal: {LibRewardCustody.recordIngressPacket}.
+    function custodyRecordIngressPacket(
+        uint256 sourceChainId,
+        bytes32 transportMessageId,
+        uint8 kind,
+        uint256 actualReceived,
+        uint256 freshShare,
+        uint256 recycledShare,
+        address remitter,
+        uint256 remitId
+    ) external returns (bytes32) {
         _requireDiamondInternal();
-        LibRewardCustody.uncreditFresh(LibVaipakam.storageSlot(), amount);
+        return LibRewardCustody.recordIngressPacket(
+            LibVaipakam.storageSlot(),
+            sourceChainId,
+            transportMessageId,
+            kind,
+            actualReceived,
+            freshShare,
+            recycledShare,
+            remitter,
+            remitId
+        );
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.unclassifiedIngress}.
+    function custodyUnclassifiedIngress(bytes32 h, uint256 amount) external {
+        _requireDiamondInternal();
+        LibRewardCustody.unclassifiedIngress(LibVaipakam.storageSlot(), h, amount);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.unclassifiedQuarantine}
+    ///         — a quarantine landing (`relocate`) or a demotion's in-holder
+    ///         unwind (`uncredit`); this replaced the Diamond-releasing
+    ///         `custodyUncreditFresh` (retired selector).
+    function custodyUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 uncredit)
+        external
+    {
+        _requireDiamondInternal();
+        LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, uncredit);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.unclassifiedReturn}.
+    function custodyUnclassifiedReturn(bytes32 h, uint256 amount) external {
+        _requireDiamondInternal();
+        LibRewardCustody.unclassifiedReturn(LibVaipakam.storageSlot(), h, amount);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.releaseUnclassifiedForReturn}.
+    function custodyReleaseUnclassifiedForReturn(bytes32 receiptKey, address to, uint256 amount) external {
+        _requireDiamondInternal();
+        LibRewardCustody.releaseUnclassifiedForReturn(LibVaipakam.storageSlot(), receiptKey, to, amount);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.releaseFromRow}.
@@ -1445,7 +1493,17 @@ contract RewardCustodyFacet is DiamondAccessControl {
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
-        strandedRecoveryReserved = s.strandedRecoveryReserved;
+        // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE reservation: the
+        // part the holder backs (a quarantine that landed, or a demotion
+        // that unwound, after the activation) is netted out, so
+        // `vpfiBalance >= strandedRecoveryReserved` stays the exact relation
+        // the watcher alarms on, with no shape change. Saturating, as the
+        // backing position's own subtraction is.
+        {
+            uint256 reservedAll = s.strandedRecoveryReserved;
+            uint256 held = s.strandedRecoveryReservedHeld;
+            strandedRecoveryReserved = reservedAll > held ? reservedAll - held : 0;
+        }
         recoveryPositionReserved = s.rewardBudgetRecovered
             - s.rewardBudgetRedispatched
             + s.strandedReturnOverage;

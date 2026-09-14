@@ -6,6 +6,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -101,7 +104,7 @@ contract MockReturnRelay {
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external {
-        r.onCrossChainMessage(srcChainId, sender, payload, tokens);
+        r.onCrossChainMessage(srcChainId, sender, payload, tokens, bytes32(0));
     }
 }
 
@@ -943,7 +946,7 @@ contract RepatriationTransportTest is SetupTest {
         );
         returnReceiver.onCrossChainMessage(
             uint256(CHAIN_ARB), address(0), ret, _oneToken(40 ether)
-        );
+        , bytes32(0));
 
         // Return kind with no tokens.
         vm.expectRevert(
@@ -1153,6 +1156,45 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         _repat().sendStrandedReturn(base, 11, 1, payable(address(this)));
+    }
+
+    /// #1566 closure 2 cutover PR 1 — on an activated mirror a quarantined
+    /// compensation lands in the holder's `Unclassified` row, and the R4
+    /// return draws it FROM THE ROW: the holder releases it to the sender,
+    /// the record's held figure, the row's figures and the held part of the
+    /// reservation step down with it, and the Diamond's balance never moves.
+    function test_StrandedReturn_DrawsAQuarantineFromTheHolderRow() public {
+        _armMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
+        vpfi.mint(address(diamond), 5 ether); // the receiver forwarded the compensation here
+        address base = address(0xBA5E);
+        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+            address(vpfi), 5 ether, 7, CHAIN_BASE, 11, base, 3 ether, 2 ether, 0, 1, uint64(7 days),
+            uint64(24 hours), keccak256("comp-11")
+        ); // finalizedAt == 0: quarantined
+        RewardCustodyFacet custody = RewardCustodyFacet(address(diamond));
+        address holder = custody.rewardCustodyHolder();
+        assertEq(custody.rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 5 ether, "in the row");
+        assertEq(vpfi.balanceOf(holder), 5 ether, "in the holder");
+        assertEq(vpfi.balanceOf(address(diamond)), 0, "not in the Diamond");
+        assertEq(_rlens().getStrandedRecovery(base, 11).held, 5 ether, "the record knows");
+
+        _repat().sendStrandedReturn(base, 11, 5 ether, payable(address(this)));
+        assertEq(custody.rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 0, "released from the row");
+        assertEq(vpfi.balanceOf(holder), 0, "the holder gave it back");
+        assertEq(vpfi.balanceOf(address(ccip)), 5 ether, "pulled by CCIP from the sender");
+        assertEq(vpfi.balanceOf(address(diamond)), 0, "the Diamond's balance never moved");
+        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        assertEq(uncountedHeld, 0, "the row's figure stepped down");
+        assertEq(reservedHeld, 0, "the reservation's held part stepped down");
+        assertEq(_rlens().getStrandedRecoveryReserved(), 0, "earmark released");
+        assertEq(_rlens().getStrandedRecovery(base, 11).amount, 0, "record retired");
+        assertEq(
+            _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("comp-11")))).unclassified,
+            0,
+            "the packet's record followed"
+        );
     }
 
     function test_StrandedReturn_UnknownRecordReverts() public {

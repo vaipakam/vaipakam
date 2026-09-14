@@ -396,7 +396,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(REPORT, uint256(42), uint256(1_000 ether), uint256(500 ether)),
             _empty()
-        );
+        , bytes32(0));
 
         assertEq(diamondBase.reportCount(), 1, "legacy report accepted");
         assertEq(diamondBase.lastReportDay(), 42, "dayId");
@@ -427,7 +427,7 @@ contract VaipakamRewardFlowTest is Test {
                 uint256(258)
             ),
             _empty()
-        );
+        , bytes32(0));
         // The retired generation-1 bool-false shape (0) fails closed too.
         vm.prank(address(messengerBase));
         vm.expectRevert(
@@ -447,7 +447,7 @@ contract VaipakamRewardFlowTest is Test {
                 uint256(0)
             ),
             _empty()
-        );
+        , bytes32(0));
     }
 
     /// Codex #1413 r1 — the LEGACY four-argument sender overload stays
@@ -486,7 +486,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(REPORT, uint256(7), uint256(11 ether), uint256(3 ether)),
             _empty()
-        );
+        , bytes32(0));
         assertEq(legacyDiamond.reportCount(), 1, "legacy diamond got the report");
         assertEq(legacyDiamond.lastReportDay(), 7);
 
@@ -502,7 +502,7 @@ contract VaipakamRewardFlowTest is Test {
                 REPORT, uint256(8), uint256(1 ether), uint256(1 ether), uint256(9 ether), uint256(9 ether)
             ),
             _empty()
-        );
+        , bytes32(0));
         assertEq(legacyDiamond.reportCount(), 2, "six-word report downgraded, not lost");
         assertEq(legacyDiamond.lastReportDay(), 8);
     }
@@ -525,7 +525,7 @@ contract VaipakamRewardFlowTest is Test {
                 REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
             ),
             _empty()
-        );
+        , bytes32(0));
         assertEq(stub.legacyCalls(), 0, "no downgrade on an empty revert");
     }
 
@@ -546,7 +546,7 @@ contract VaipakamRewardFlowTest is Test {
                 REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
             ),
             _empty()
-        );
+        , bytes32(0));
         assertEq(revDiamond.legacyCalls(), 0, "no downgrade on a reasoned failure");
     }
 
@@ -570,7 +570,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardBase.onCrossChainMessage(
             MIRROR, address(rewardMirror), padded, _empty()
-        );
+        , bytes32(0));
     }
 
     // ─── BROADCAST: Base → mirror ───────────────────────────────────────────
@@ -738,7 +738,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(uint8(5), b),
             _empty()
-        );
+        , bytes32(0));
     }
 
     /// The 15-word pin: a truncated kind-5 payload is rejected before any
@@ -756,7 +756,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardMirror.onCrossChainMessage(
             BASE, address(rewardBase), truncated, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_QuoteBroadcastDayV2() public view {
@@ -850,7 +850,7 @@ contract VaipakamRewardFlowTest is Test {
         vm.prank(address(messengerMirror));
         rewardMirror.onCrossChainMessage(
             BASE, address(rewardBase), abi.encode(uint8(5), b), _empty()
-        );
+        , bytes32(0));
         assertEq(diamondMirror.v2Count(), 1, "kind-5 still dispatches");
         assertEq(diamondMirror.v3Count(), 0, "V3 ingress untouched");
     }
@@ -905,7 +905,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(uint8(10), b),
             _empty()
-        );
+        , bytes32(0));
     }
 
     /// The 21-word pin: a truncated kind-10 payload is rejected before any
@@ -923,7 +923,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardMirror.onCrossChainMessage(
             BASE, address(rewardBase), truncated, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_QuoteBroadcastDayV3_AndSingle() public view {
@@ -1005,7 +1005,7 @@ contract VaipakamRewardFlowTest is Test {
                 uint8(11), uint256(1), uint256(0), uint256(0), address(0)
             ),
             _empty()
-        );
+        , bytes32(0));
     }
 
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
@@ -1027,7 +1027,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
             _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_RevertWhen_ReportOnMirror() public {
@@ -1039,7 +1039,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardBase),
             abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
             _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_RevertWhen_BroadcastOnCanonical() public {
@@ -1061,7 +1061,7 @@ contract VaipakamRewardFlowTest is Test {
                 uint256(0)
             ),
             _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_RevertWhen_PayloadSizeWrong() public {
@@ -1077,7 +1077,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardBase.onCrossChainMessage(
             MIRROR, address(rewardMirror), short, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_RevertWhen_UnknownMessageType() public {
@@ -1096,7 +1096,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(uint8(12), uint256(1), uint256(0), uint256(0)),
             _empty()
-        );
+        , bytes32(0));
     }
 
     // ─── Quotes ─────────────────────────────────────────────────────────────
@@ -1149,7 +1149,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
             _empty()
-        );
+        , bytes32(0));
     }
 
     // ─── Token-bearing message rejected (Codex review) ──────────────────────
@@ -1175,7 +1175,7 @@ contract VaipakamRewardFlowTest is Test {
             address(rewardMirror),
             abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
             toks
-        );
+        , bytes32(0));
     }
 
     // ─── T-087 Sub 2.B — TierUpdated + VersionBumped surface ────────────────
@@ -1261,7 +1261,7 @@ contract VaipakamRewardFlowTest is Test {
         vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
         rewardBase.onCrossChainMessage(
             MIRROR, address(rewardMirror), payload, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_VersionBumped_RevertOnCanonical() public {
@@ -1270,7 +1270,7 @@ contract VaipakamRewardFlowTest is Test {
         vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
         rewardBase.onCrossChainMessage(
             MIRROR, address(rewardMirror), payload, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_TierUpdated_RevertOnWrongSize() public {
@@ -1291,7 +1291,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardMirror.onCrossChainMessage(
             BASE, address(rewardBase), wrongSize, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_Receive_RevertOnInvalidSize() public {
@@ -1320,7 +1320,7 @@ contract VaipakamRewardFlowTest is Test {
         );
         rewardMirror.onCrossChainMessage(
             BASE, address(rewardBase), sevenWords, _empty()
-        );
+        , bytes32(0));
     }
 
     function test_QuoteSendTierUpdate_ReturnsNonZero() public view {

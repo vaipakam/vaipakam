@@ -6240,6 +6240,66 @@ PR C.**
 > are pinned by `RewardCustodyInvariant`; the design's test list is
 > `RewardCustodyCutoverTest`.
 
+> **LANDED — closure 2's cutover apparatus, PR 1 of 2 (the ingress half).**
+> The "second PR (the cutover apparatus)" this section sequences after PR B
+> lands as TWO PRs, at the seam the apparatus itself has: PR 1 is what
+> every packet needs AT INGRESS and changes no ledger arithmetic; PR 2 is
+> the legacy reconciliation epoch that reads what PR 1 recorded. PR 1:
+> **(a) the UNCLASSIFIED ingress attribution** — on an ACTIVATED
+> deployment the three untyped arrivals PR B left Diamond-side are
+> protected into the holder's `Unclassified` row the moment they land
+> (§5c, "an untyped arrival is PROTECTED AT INGRESS"): the uncounted
+> remainder of a delivery (`freshLooking − counted`), a quarantined
+> compensation (the whole quarantined amount; a demotion re-attributes the
+> credit's remainder IN-HOLDER, live then restitution, into the row —
+> `uncreditFreshInHolder` replaced the Diamond-releasing unwind), and a
+> stranded return (or a ceremony inflow) for a receipt that predates
+> recovery attribution. The row is auditable like every other: it equals
+> `rewardCustodyUnclassifiedUncounted + rewardCustodyUnclassifiedReturned`
+> (pinned by `RewardCustodyInvariant`), and `strandedRecoveryReservedHeld`
+> (the part of the reservation the holder backs, kept per record in
+> `StrandedRecovery.held`, beside the record's own packet binding so the
+> return steps down the packet it came from) is netted out of the Diamond's backing position
+> and out of both backing snapshots' reservation field, so `vpfiBalance ≥
+> reservation` stays the exact Diamond-side relation with no shape change.
+> The R4 return draws a record's held part from the row and the rest — a
+> quarantine that predates the activation — from the Diamond, as before.
+> **(b) the ingress stamp** — `ICrossChainMessageRecipient.onCrossChainMessage`
+> gains `transportMessageId` (one interface version: the CCIP adapter, the
+> four recipients and the buyback receiver are upgraded together, each by
+> the generation probe the refresh script already used for the reward
+> recipients — the adapter and the buyback receiver gained one), the three
+> value-bearing Diamond ingresses gain it too, and the Diamond records
+> every packet under `keccak256(sourceChainId, transportMessageId)` — or,
+> for a transport without an id, a per-source sequence the authenticated
+> ingress allocates itself — first write wins, a replayed stamp refuses
+> whole (`IngressPacketReplayed`), the receipt bound to the stamp, the
+> record carrying what landed and what the packet still holds in the row.
+> The receipt itself is now written by that record (the custody facet),
+> which is also how the remittance facet stayed under EIP-170. **(c) the
+> migration mode** — the design's argued option (§5c, "a whenNotPaused
+> exemption gets this free"): the value-bearing receive ingresses
+> (`onRewardBudgetReceived`, `onCompensationBudgetReceived`,
+> `onStrandedReturnReceived`, `onRepatriationReturnReceived`) are no
+> longer `whenNotPaused`, so under the manual pause every reward consumer
+> is refused while a packet in flight still lands and is protected; the
+> pause boundary the expiry predicates already stamp keeps the frozen
+> interval uncredited, and the receivers' own guardian pause remains the
+> edge lever. No new flag enters the expiry predicates. **(d)** the
+> activation ceremony's pre-flight mirrors the holder-wide check (readable
+> balance covering every attribution; review of #2193). The refresh
+> script Removes the retired 8-arg budget, 12-arg compensation and 8-arg
+> stranded-return selectors and `custodyUncreditFresh` where routed, and
+> `RewardRemittanceLensFacet` gains `getIngressPacket` and
+> `getUnclassifiedPosition`. **Deliberately in PR 2, not here:** the
+> three-bound classification entries with their cumulative component
+> counters and the combined exit bound, the reclassification operation
+> with live-queue FIFO spent-ness, the netted bootstrap envelope and its
+> pause/reconcile/import/unpause ceremony (with the recycled-bucket
+> reconciliation verdict), and the transport epochs PR C depends on — the
+> classification EXITS of the `Unclassified` row, in-holder under the
+> deficit split, are PR 2's; PR 1 gives it only the R4 return exit.
+
 - **Role-branched custody, so the frozen column stays frozen** (review r1):
   every custody read and debit below is branched on `LibVaipakam.rewardRole`.
   `Canonical` and `Mirror` read and debit the holder; **`Unconfigured` keeps
@@ -6439,6 +6499,9 @@ closure 2's cutover PR.**
   zero with era rows still consumable.
 
 ### The order, and why
+
+(Closure 2's second PR landed as two — the ingress half first, the
+reconciliation epoch second; see the LANDED note under slice 4 PR B.)
 
 **#2151 (closure 2, first PR) → slice 4 PR A → slice 4 PR B → closure 2's
 second PR (the cutover apparatus) → slice 4 PR C.**

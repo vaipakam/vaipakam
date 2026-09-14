@@ -23,7 +23,18 @@ contract MockCcipRelay {
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external {
-        r.onCrossChainMessage(srcChainId, sender, payload, tokens);
+        r.onCrossChainMessage(srcChainId, sender, payload, tokens, bytes32(0));
+    }
+
+    function relayWithId(
+        RewardRemittanceReceiver r,
+        uint256 srcChainId,
+        address sender,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
+    ) external {
+        r.onCrossChainMessage(srcChainId, sender, payload, tokens, transportMessageId);
     }
 }
 
@@ -50,6 +61,9 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     ///      asserting on it is how the tests pin the "unknown composition ⇒
     ///      no fresh" rule to the receiver rather than to the Diamond.
     uint256 public lastFreshShare;
+    /// @dev #1566 closure 2 cutover PR 1 — the transport id the receiver
+    ///      passed through, the Diamond's ingress stamp.
+    bytes32 public lastTransportMessageId;
 
     function onRewardBudgetReceived(
         address token,
@@ -59,9 +73,11 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         uint256 remitId,
         address remitter,
         uint256 recycledShare,
-        uint256 freshShare
+        uint256 freshShare,
+        bytes32 transportMessageId
     ) external override {
         require(token == vpfi, "ingress: token");
+        lastTransportMessageId = transportMessageId;
         lastAmount = amount;
         lastSourceChainId = sourceChainId;
         lastDayCount = dayIds.length;
@@ -158,6 +174,18 @@ contract RewardRemittanceReceiverTest is Test {
     ///      PLUS the sending deployment's identity (r4 — immutable message
     ///      data, never the adapter's config-derived sourceSender) through
     ///      to the Diamond ingress.
+    /// #1566 closure 2 cutover PR 1 — the transport's message id crosses both
+    /// seams unchanged: adapter → receiver → Diamond ingress.
+    function test_Deliver_ForwardsTheTransportMessageId() public {
+        vpfi.mint(address(receiver), 1e18);
+        bytes32 id = keccak256("ccip-message-1");
+        messenger.relayWithId(
+            receiver, SRC_BASE, address(0xBA5E), abi.encode(_days(1, 2), 1e18), _tokens(address(vpfi), 1e18), id
+        );
+        assertEq(diamond.lastTransportMessageId(), id, "the id reached the Diamond ingress");
+        assertEq(diamond.callCount(), 1);
+    }
+
     function test_Deliver_WidenedPayloadCarriesRemitIdAndRemitter() public {
         vpfi.mint(address(receiver), 500e18);
         messenger.relay(
@@ -337,7 +365,7 @@ contract RewardRemittanceReceiverTest is Test {
             address(0xBA5E),
             abi.encode(_days(1, 2), 1e18),
             _tokens(address(vpfi), 1e18)
-        );
+        , bytes32(0));
     }
 
     function test_Deliver_RevertsOnWrongTokenCount() public {

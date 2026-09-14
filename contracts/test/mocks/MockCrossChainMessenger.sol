@@ -138,8 +138,11 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
             );
         }
 
+        // A deterministic, non-zero transport id per parked message, so a
+        // relayed packet exercises the stamped ingress path (a zero id
+        // takes the per-source sequence fallback instead).
         ICrossChainMessageRecipient(recipient).onCrossChainMessage(
-            sourceChainId, sourceSender, s.payload, s.tokens
+            sourceChainId, sourceSender, s.payload, s.tokens, keccak256(abi.encode("mock-transport", index))
         );
         emit MessageRelayed(index, recipient);
     }

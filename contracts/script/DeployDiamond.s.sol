@@ -3046,7 +3046,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](37);
+        s = new bytes4[](41);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3076,7 +3076,7 @@ contract DeployDiamond is Script {
         s[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
         s[25] = RewardCustodyFacet.custodyMove.selector;
         s[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
-        s[27] = RewardCustodyFacet.custodyUncreditFresh.selector;
+        s[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         s[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         s[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
         s[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
@@ -3089,6 +3089,12 @@ contract DeployDiamond is Script {
         // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
         s[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
         s[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
+        // #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress attribution's
+        // Diamond-internal entry points (the quarantine one took slot 27).
+        s[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
+        s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
+        s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
+        s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
@@ -3097,7 +3103,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](35);
+        s = new bytes4[](37);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3130,6 +3136,10 @@ contract DeployDiamond is Script {
             .selector;
         s[25] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1566 closure 2 cutover PR 1 — the ingress-stamped packet record and
+        // the UNCLASSIFIED attribution's figures.
+        s[35] = RewardRemittanceLensFacet.getIngressPacket.selector;
+        s[36] = RewardRemittanceLensFacet.getUnclassifiedPosition.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         s[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
         s[27] =

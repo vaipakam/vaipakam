@@ -3,6 +3,10 @@ pragma solidity ^0.8.29;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
+/// @dev #1566 closure 2 cutover PR 1 — this receiver's wire generation; the
+///      refresh script compares the deployed probe against this constant.
+uint256 constant BUYBACK_RECEIVER_WIRE_GENERATION = 2;
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -163,7 +167,11 @@ contract BuybackRemittanceReceiver is
         uint256 sourceChainId,
         address /* sourceSender */,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        // Unused on the treasury buyback lane: the ingress stamp is the
+        // REWARD custody design's (#1566 closure 2 cutover PR 1); the port
+        // is one interface version, so the parameter is carried here too.
+        bytes32 /* transportMessageId */
     ) external override whenNotPaused nonReentrant {
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
@@ -253,6 +261,15 @@ contract BuybackRemittanceReceiver is
     }
 
     // ─── UUPS / Ownable MRO ───────────────────────────────────────────
+
+    /// @notice #1566 closure 2 cutover PR 1 — the DURABLE upgrade probe, the
+    ///         same shape the reward receivers carry: generation 2 accepts
+    ///         `transportMessageId` on the recipient port; a deployed
+    ///         receiver without this getter reads as 0 and is upgraded with
+    ///         the adapter, so the port is one interface version.
+    function WIRE_GENERATION() external pure returns (uint256) {
+        return BUYBACK_RECEIVER_WIRE_GENERATION;
+    }
 
     /// @inheritdoc UUPSUpgradeable
     function _authorizeUpgrade(

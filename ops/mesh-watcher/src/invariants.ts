@@ -954,6 +954,10 @@ export function checkHardInvariants(
     // #1566 slice 4 PR B — an ACTIVATED chain: the holder must back every
     // attributed row, and the Diamond's own balance must still cover the
     // one Diamond-side reservation left (quarantined compensation awaiting
+    // its return that PREDATES the activation — since #1566 closure 2
+    // cutover PR 1 a quarantine that lands, or a demotion that unwinds,
+    // on an activated chain is holder custody, and the snapshot's
+    // reservation field is the Diamond-side part only, netted on chain)
     // its return). The legacy relation below would page a false CRITICAL
     // here whenever healthy holder rows exceed the unrelated Diamond
     // balance, so it is not applied.
