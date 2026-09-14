@@ -203,6 +203,28 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- Indexed lifecycle status must not drift from the chain's indefinitely.
+  A loan's ending is learned from the event announcing it, and an
+  announcement missed while ingestion was down, throttled, or further
+  behind than it is willing to scan back over is missed for good —
+  resuming ingestion restores the reading position, not the records
+  skipped while it was behind. So the index re-examines what it believes
+  to be running against the chain on a continuing rotation, and corrects
+  a record the chain says has ended. It keeps re-examining even while the
+  totals agree, because one missed ending and one missed beginning leave
+  the totals equal with both records wrong.
+- That correction only ever moves a record from running to ended, and
+  only on the chain's word. A source that is behind reports the loan
+  still running, which matches the record and changes nothing, so being
+  out of date can cause a correction to be missed but never invented. A
+  record that already shows an ending is left to the event path, which
+  can tell a forced sale from an ordinary default where the chain's own
+  status cannot — a record corrected from the chain may therefore name
+  the ending less precisely than the event would have.
+- A position the platform publishes as open must be one it can still
+  substantiate as open. Where it cannot, the surfaces that count and the
+  surfaces that list must not answer the same question differently
+  without saying so.
 - Activity history may depend on indexed history, but current positions must not
   disappear merely because ingestion is delayed.
 - The Activity feed's "is this event mine" filter covers the wallet's WHOLE
