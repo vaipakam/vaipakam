@@ -12,6 +12,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {ReturnWire} from "../src/crosschain/ReturnWire.sol";
@@ -1264,6 +1265,60 @@ contract RepatriationTransportTest is SetupTest {
             "return settlement cleared the gate"
         );
         assertEq(vpfi.balanceOf(address(diamond)), 5 ether, "tokens home");
+    }
+
+    /// Codex #2198 r1 — the packet is recorded ON EVERY DEPLOYMENT: a
+    /// stranded return landing on a canonical chain whose custody is NOT
+    /// activated is stamped like any other (the second PR's reconciliation
+    /// reads the record; the replay guard is the record's), while the tokens
+    /// stay Diamond-side and nothing enters the row.
+    function test_StrandedReturn_RecordedWhenNotActivated() public {
+        _armBase();
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether, 1);
+        _repat().setRepatriationEndpoints(address(0), address(this)); // this test is the receiver
+        vpfi.mint(address(diamond), 4 ether); // the receiver forwarded the return here
+        bytes32 id = keccak256("ret-11");
+        RewardCompensationDispatchFacet(address(diamond)).onStrandedReturnReceived(
+            address(diamond), 11, 1, CHAIN_ARB, address(vpfi), 4 ether, 4 ether, 0, id
+        );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_ARB), id));
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertGt(p.arrivedAt, 0, "recorded on a deployment whose custody is not activated");
+        assertEq(p.kind, 3, "a stranded-return packet");
+        assertEq(p.actualReceived, 4 ether);
+        assertEq(p.remitId, 11);
+        assertEq(p.unclassified, 0, "nothing of it is in the row");
+        assertEq(vpfi.balanceOf(address(diamond)), 4 ether, "the tokens stay Diamond-side");
+        assertEq(_rlens().getRecoveredForReceipt(11), 4 ether, "credited as before");
+        // And the record's replay guard covers this delivery.
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IngressPacketReplayed.selector, h));
+        RewardCompensationDispatchFacet(address(diamond)).onStrandedReturnReceived(
+            address(diamond), 11, 1, CHAIN_ARB, address(vpfi), 4 ether, 4 ether, 0, id
+        );
+    }
+
+    /// Codex #2198 r1 — the ceremony twin: a recovery ceremony for a receipt
+    /// that predates attribution is recorded under a ceremony-kind packet
+    /// (sequence-keyed — no transport carried it) on a deployment whose
+    /// custody is NOT activated, with the tokens staying Diamond-side.
+    function test_RecoveryCeremony_PreAttributionInflowRecordedWhenNotActivated() public {
+        _armBase();
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 3, 4 ether, 1); // released
+        _mut().setRecoveryAttributionRaw(true, 20); // receipts 1..20 predate the arming
+        vpfi.mint(address(diamond), 4 ether); // brought home by the operator
+        (uint256 recBefore, , ) = _rlens().getRecoveryPosition();
+        RewardCompensationDispatchFacet(address(diamond)).recordRecoveryCeremony(11, 4 ether, 0);
+        (uint256 recAfter, , ) = _rlens().getRecoveryPosition();
+        assertEq(recAfter, recBefore, "no position credited for a pre-attribution receipt");
+        LibVaipakam.IngressPacket memory p =
+            _rlens().getIngressPacket(keccak256(abi.encode(uint256(0), uint256(1), "seq")));
+        assertGt(p.arrivedAt, 0, "recorded, sequence-keyed");
+        assertEq(p.kind, 4, "a ceremony-inflow packet");
+        assertEq(p.actualReceived, 4 ether);
+        assertEq(p.remitId, 11);
+        assertEq(p.unclassified, 0, "nothing of it is in the row");
+        assertEq(vpfi.balanceOf(address(diamond)), 4 ether, "the tokens stay Diamond-side");
+        assertEq(_rlens().getRecoveredForReceipt(11), 4 ether, "recovered as before");
     }
 
     /// Chain binding: a return authenticated from the WRONG chain cannot

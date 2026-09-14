@@ -417,6 +417,13 @@ interface IVaipakamErrors {
     ///         delivered the same message twice, or two sources collided on
     ///         one id. The second landing is refused whole.
     error IngressPacketReplayed(bytes32 packetHash);
+    /// @notice #1566 closure 2 cutover PR 1 (Codex #2198 r1) — a delivery or
+    ///         a compensation arrived for a receipt that has already been
+    ///         delivered: a distinct transport message, past the stamp
+    ///         guard, naming a reservation the remitter already dispatched
+    ///         once. A faulty or compromised remitter; refused whole.
+    /// @param receiptKey `keccak256(remitter, remitId)`.
+    error IngressReceiptAlreadyDelivered(bytes32 receiptKey);
     /// @notice #1566 closure 2 cutover PR 1 — an R4 return asked the
     ///         holder's `Unclassified` row for more than the stranded record
     ///         holds there.

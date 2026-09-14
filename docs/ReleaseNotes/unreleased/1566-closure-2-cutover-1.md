@@ -28,10 +28,15 @@ Every value-bearing reward packet is now recorded under an identity the
 transport itself supplies at delivery — the message id the cross-chain
 adapter passes through to every recipient, which is a change to that
 shared interface, so the adapter and all its recipients are upgraded
-together by the same generation probe the refresh already uses. A packet
-delivered twice under one identity is refused whole; a transport that
-supplies no identity has one allocated in sequence by the platform's own
-ingress; the receipt a delivery creates is bound to the identity. This
+together by the same generation probe the refresh already uses — each
+resolved from the live configuration first and the deployment record
+second, so a missing or stale record can never leave a live contract on
+the old shape. A packet delivered twice under one identity is refused
+whole, and so is a second delivery for a receipt that already exists: a
+receipt is delivered once, so every figure kept against a receipt
+describes exactly one delivery. A transport that supplies no identity has
+one allocated in sequence by the platform's own ingress; the receipt a
+delivery creates is bound to the identity. This
 record is what the second part will reconcile against, and it is taken on
 every deployment, activated or not.
 

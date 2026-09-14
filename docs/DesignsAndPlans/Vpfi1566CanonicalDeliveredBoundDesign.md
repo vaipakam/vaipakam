@@ -6268,12 +6268,18 @@ PR C.**
 > gains `transportMessageId` (one interface version: the CCIP adapter, the
 > four recipients and the buyback receiver are upgraded together, each by
 > the generation probe the refresh script already used for the reward
-> recipients — the adapter and the buyback receiver gained one), the three
+> recipients — the adapter and the buyback receiver gained one, each
+> resolved LIVE-config-first like every other probe: the Diamond's
+> registered buyback receiver, and the adapter every live satellite names
+> as its messenger, with the artifact's address second), the three
 > value-bearing Diamond ingresses gain it too, and the Diamond records
 > every packet under `keccak256(sourceChainId, transportMessageId)` — or,
 > for a transport without an id, a per-source sequence the authenticated
-> ingress allocates itself — first write wins, a replayed stamp refuses
-> whole (`IngressPacketReplayed`), the receipt bound to the stamp, the
+> ingress allocates itself — a replayed stamp refuses whole
+> (`IngressPacketReplayed`), a second packet for a receipt already
+> delivered refuses whole too (`IngressReceiptAlreadyDelivered`: a receipt
+> is delivered once, which is what keeps every receipt-keyed figure
+> describing one packet), the receipt bound to the stamp, the
 > record carrying what landed and what the packet still holds in the row.
 > The receipt itself is now written by that record (the custody facet),
 > which is also how the remittance facet stayed under EIP-170. **(c) the

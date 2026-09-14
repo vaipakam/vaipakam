@@ -672,9 +672,11 @@ library LibRewardCustody {
         return keccak256(abi.encode(sourceChainId, ++s.ingressSequence[sourceChainId], "seq"));
     }
 
-    /// @notice Record a packet as it LANDED (first write wins per stamp; a
-    ///         second landing under the same stamp is refused whole) and
-    ///         bind the receipt it created, if any, to the stamp.
+    /// @notice Record a packet as it LANDED (one record per stamp; a second
+    ///         landing under the same stamp is refused whole) and write the
+    ///         receipt it creates, if any, bound to the stamp (one packet
+    ///         per receipt; a second packet under an existing receipt is
+    ///         refused whole).
     /// @return h The packet's stamp.
     function recordIngressPacket(
         LibVaipakam.Storage storage s,
@@ -699,20 +701,29 @@ library LibRewardCustody {
         p.freshShare = freshShare;
         p.recycledShare = recycledShare;
         // The receipt a delivery creates on a MIRROR (kinds 1 and 2) —
-        // `(srcChainId, receivedAt, amount, remitter)`, first write wins,
-        // exactly as the two ingresses wrote it before this PR — moves here
-        // with the stamp binding, so the ingress facet at EIP-170 budget
-        // pays one call for both. A stranded return (kind 3) lands on the
-        // canonical chain and creates no receipt.
+        // `(srcChainId, receivedAt, amount, remitter)`, bound to the stamp —
+        // is written here with the record, so the ingress facet at EIP-170
+        // budget pays one call for both. A receipt is delivered ONCE (Codex
+        // #2198 r1): the remitter's reservation dispatches one packet, so a
+        // second packet under an existing receipt — a distinct transport
+        // message, past the stamp guard — is a faulty or compromised
+        // remitter and refuses whole (re-executable, like every ingress
+        // refusal). That is what makes every receipt-keyed figure — the
+        // stranded record's held part, the R4 return's per-packet
+        // step-down — describe exactly one packet. (The two ingresses kept
+        // the FIRST receipt silently before this PR, on the reasoning that
+        // CCIP executes a message once; the stamp guard now covers that
+        // case and this guard covers the remitter.) A stranded return
+        // (kind 3) lands on the canonical chain and creates no receipt.
         if (remitId != 0 && remitter != address(0) && kind <= PACKET_KIND_COMPENSATION) {
-            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[keccak256(abi.encode(remitter, remitId))];
-            if (rec.receivedAt == 0) {
-                rec.srcChainId = uint32(sourceChainId);
-                rec.receivedAt = uint64(block.timestamp);
-                rec.amount = actualReceived;
-                rec.remitter = remitter;
-            }
-            if (rec.packetHash == bytes32(0)) rec.packetHash = h;
+            bytes32 receiptKey = keccak256(abi.encode(remitter, remitId));
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[receiptKey];
+            if (rec.receivedAt != 0) revert IVaipakamErrors.IngressReceiptAlreadyDelivered(receiptKey);
+            rec.srcChainId = p.sourceChainId;
+            rec.receivedAt = uint64(block.timestamp);
+            rec.amount = actualReceived;
+            rec.remitter = remitter;
+            rec.packetHash = h;
         }
         emit IngressPacketRecorded(h, sourceChainId, kind, actualReceived, remitter, remitId);
     }
@@ -750,6 +761,10 @@ library LibRewardCustody {
         if (got == 0) return 0;
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
         sr.held += got;
+        // The record's packet: a receipt is delivered once (see
+        // `recordIngressPacket`), and a demotion passes the receipt's own
+        // stamp, so every call for one receipt carries the same `h` — the
+        // landing's, or zero for a receipt that predates the stamp.
         if (sr.packetHash == bytes32(0)) sr.packetHash = h;
         s.strandedRecoveryReservedHeld += got;
         s.rewardCustodyUnclassifiedUncounted += got;
@@ -787,16 +802,16 @@ library LibRewardCustody {
         sr.held = held - amount;
         s.strandedRecoveryReservedHeld -= amount;
         s.rewardCustodyUnclassifiedUncounted -= amount;
-        // The record's own packet (a receipt is delivered once; a second
-        // landing under the same receipt records its own packet, whose
-        // figure this return does not describe), stepped down saturating:
-        // the row and its figures above are the exact ledger, the
-        // per-packet figure is what the second PR's classification bounds.
+        // The record's packet is THE packet — a receipt is delivered once
+        // (`recordIngressPacket` refuses a second packet under it) and a
+        // demotion re-attributes under the receipt's own stamp — so its
+        // per-packet figure was credited in lockstep with the record's held
+        // part and steps down with it EXACTLY (Codex #2198 r1: a saturating
+        // step-down here would hide a broken lockstep instead of surfacing
+        // it). A record whose receipt predates the stamp has no packet and
+        // no per-packet figure to step.
         bytes32 h = sr.packetHash;
-        if (h != bytes32(0)) {
-            LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-            p.unclassified = p.unclassified > amount ? p.unclassified - amount : 0;
-        }
+        if (h != bytes32(0)) s.ingressPackets[h].unclassified -= amount;
         releaseFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, to, amount);
         emit RewardCustodyUnclassifiedReleased(h, to, amount);
     }

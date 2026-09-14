@@ -7824,8 +7824,9 @@ library LibVaipakam {
         //   demote hook when a provisional credit settles.
         uint8 classification;
         /// @dev #1566 closure 2 cutover PR 1 — the ingress stamp of the
-        ///      packet that created this receipt (first write wins), so a
-        ///      later demotion or R4 return can find the packet's record.
+        ///      packet that created this receipt (a receipt is delivered
+        ///      once: a second packet under it is refused at the record), so
+        ///      a later demotion or R4 return can find the packet's record.
         ///      Zero for a receipt that predates the stamp. Appended.
         bytes32 packetHash;
     }

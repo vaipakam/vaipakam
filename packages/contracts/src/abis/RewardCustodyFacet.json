@@ -1701,6 +1701,17 @@
   },
   {
     "type": "error",
+    "name": "IngressReceiptAlreadyDelivered",
+    "inputs": [
+      {
+        "name": "receiptKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },

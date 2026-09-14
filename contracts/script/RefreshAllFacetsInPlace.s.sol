@@ -895,9 +895,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // recipient port): the CCIP adapter and the buyback receiver are
             // upgraded here, in the same run as the reward recipients above,
             // so no adapter ever calls a recipient with the other shape.
-            // Both are read from the artifact; a chain without one skips.
-            _probeUpgradeCcipMessenger(_readAddrOptional(".ccipMessenger"));
-            _probeUpgradeBuybackReceiver(_readAddrOptional(".buybackRemittanceReceiver"));
+            // Codex #2198 r1 — LIVE config first, the artifact second, the
+            // same rule as every probe above (see the helper).
+            _probeUpgradeTransportSatellites(diamond);
         }
 
         // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
@@ -1707,6 +1707,69 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 newImpl
             );
         }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 (Codex #2198 r1) — the buyback
+    ///      receiver and the CCIP adapter, LIVE-config-over-artifact like
+    ///      every probe above (#1660 r9). An artifact-only read skipped a
+    ///      live receiver whose artifact key was missing or stale, and the
+    ///      adapter upgraded just before would then have called it with the
+    ///      five-argument shape — every buyback delivery failing until the
+    ///      artifact was repaired and the refresh rerun.
+    ///
+    ///      The buyback receiver: the Diamond's registered one first, then
+    ///      a distinct artifact address (a dark-but-deployed proxy meets
+    ///      current code). The adapter has no register of its own on the
+    ///      Diamond — the Diamond names its satellites and each satellite
+    ///      names the adapter it trusts (`messenger()`) — so the adapter
+    ///      every LIVE satellite calls through is probed, then the
+    ///      artifact's. Each probe is idempotent on the generation constant,
+    ///      so one adapter named by five satellites is upgraded once and
+    ///      read four times. No adapter anywhere (no live satellite names
+    ///      one, no artifact) is a hard stop: every chain has one, and a
+    ///      refresh that upgraded the recipients without it would leave the
+    ///      adapter calling them with the old shape.
+    function _probeUpgradeTransportSatellites(address diamond) private {
+        address liveBuyback = TreasuryFacet(diamond).getBuybackRemittanceReceiver();
+        address buybackArt = _readAddrOptional(".buybackRemittanceReceiver");
+        _probeUpgradeBuybackReceiver(liveBuyback);
+        if (buybackArt != liveBuyback) _probeUpgradeBuybackReceiver(buybackArt);
+
+        (address liveMsgr, , , , ) =
+            RewardReporterFacet(diamond).getRewardReporterConfig();
+        (, address liveSender, address liveReceiver, ) =
+            RepatriationFacet(diamond).getRepatriationPosition();
+        address[6] memory adapters = [
+            _satelliteMessenger(liveMsgr),
+            _satelliteMessenger(
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver()
+            ),
+            _satelliteMessenger(liveSender),
+            _satelliteMessenger(liveReceiver),
+            _satelliteMessenger(liveBuyback),
+            _readAddrOptional(".ccipMessenger")
+        ];
+        bool any;
+        for (uint256 i = 0; i < adapters.length; ++i) {
+            if (adapters[i] == address(0)) continue;
+            any = true;
+            _probeUpgradeCcipMessenger(adapters[i]);
+        }
+        require(
+            any,
+            "cutover PR 1: refresh needs the CCIP adapter (a live satellite's messenger() or .ccipMessenger)"
+        );
+    }
+
+    /// @dev The adapter a satellite trusts — `messenger()` on every
+    ///      recipient and on the return sender; zero when the satellite is
+    ///      unset or does not answer the selector.
+    function _satelliteMessenger(address satellite) private view returns (address) {
+        if (satellite == address(0)) return address(0);
+        (bool ok, bytes memory ret) =
+            satellite.staticcall(abi.encodeWithSignature("messenger()"));
+        if (!ok || ret.length != 32) return address(0);
+        return abi.decode(ret, (address));
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {

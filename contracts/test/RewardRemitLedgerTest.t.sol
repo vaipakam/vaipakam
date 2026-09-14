@@ -1617,14 +1617,23 @@ contract RewardRemitLedgerTest is SetupTest {
             9e18,
             "new-era receipt co-exists"
         );
-        // Per-key first-write-wins (a delayed duplicate cannot overwrite).
+        // Per-key delivered ONCE (Codex #2198 r1): a delayed duplicate is
+        // refused whole, so it can neither overwrite the receipt nor add
+        // its value to the ledger (it used to be kept silently as
+        // first-write-wins, with the duplicate's value still credited).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.IngressReceiptAlreadyDelivered.selector,
+                keccak256(abi.encode(address(0x2EF), uint256(42)))
+            )
+        );
         remit.onRewardBudgetReceived(
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
         , 0, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
-            "first-wins per key"
+            "the one receipt per key stands"
         );
         // Each receipt's ack echoes ITS remitter.
         remit.sendRemitAck{value: 0.001 ether}(
@@ -4225,6 +4234,37 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(pkt.kind, 3, "a stranded-return packet");
         assertEq(pkt.unclassified, 3e18);
         assertEq(pkt.actualReceived, 3e18);
+    }
+
+    /// #1566 closure 2 cutover PR 1 — the ceremony twin of the test above: a
+    /// recovery ceremony for a receipt that predates attribution is recorded
+    /// under a ceremony-kind packet (sequence-keyed — no transport carried
+    /// it) and, on an activated deployment, protected into the holder's
+    /// `Unclassified` row under it.
+    function test_Recovery_PreAttributionCeremonyInflowIsProtectedIntoUnclassified() public {
+        _releasedCeremonyFixture(); // remit 1 released, fresh-only, 3e18
+        mutator.setRecoveryAttributionRaw(true, 5); // receipts 1..5 predate the arming
+        vpfiTok.mint(address(diamond), 3e18); // brought home by the operator
+        address holder = RewardCustodyFacet(address(diamond)).rewardCustodyHolder();
+        uint256 holderBefore = vpfiTok.balanceOf(holder);
+        (uint256 recBefore, , ) = rlens.getRecoveryPosition();
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 recAfter, , ) = rlens.getRecoveryPosition();
+        assertEq(recAfter, recBefore, "no position credited for a pre-attribution receipt");
+        assertEq(
+            RewardCustodyFacet(address(diamond)).rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified),
+            3e18,
+            "protected into Unclassified"
+        );
+        (, uint256 returnedHeld, ) = rlens.getUnclassifiedPosition();
+        assertEq(returnedHeld, 3e18, "the row's returned figure");
+        assertEq(vpfiTok.balanceOf(holder) - holderBefore, 3e18, "the tokens are in the holder");
+        LibVaipakam.IngressPacket memory pkt =
+            rlens.getIngressPacket(keccak256(abi.encode(uint256(0), uint256(1), "seq")));
+        assertEq(pkt.kind, 4, "a ceremony-inflow packet, sequence-keyed");
+        assertEq(pkt.unclassified, 3e18);
+        assertEq(pkt.actualReceived, 3e18);
+        assertEq(pkt.remitId, 1);
     }
 
     /// r8-h1 - the attribution watermark must gate the CLAW as well as

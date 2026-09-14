@@ -998,6 +998,41 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(h2).remitId, 10);
     }
 
+    /// Codex #2198 r1 — a receipt is delivered ONCE: a second packet under an
+    /// existing receipt (a distinct transport message, past the stamp guard)
+    /// refuses whole, for a delivery and a compensation alike, so the
+    /// stranded record's packet is THE packet and every receipt-keyed figure
+    /// describes exactly one.
+    function test_IngressPacket_SecondPacketForADeliveredReceiptRefused() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(30e18);
+        bytes32 key7 = keccak256(abi.encode(REMITTER, uint256(7)));
+        _deliverStamped(3e18, 3e18, 0, 7, keccak256("pkt-a"));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key7));
+        _deliverStamped(3e18, 3e18, 0, 7, keccak256("pkt-b"));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key7));
+        _deliverCompensation(3e18, 7, 0, keccak256("pkt-c")); // a compensation naming a delivered receipt: the same
+        assertEq(
+            _rlens().getReceivedRemit(REMITTER, 7).packetHash, _packetHash(keccak256("pkt-a")), "the one binding stands"
+        );
+        assertEq(_rlens().getIngressPacket(_packetHash(keccak256("pkt-b"))).arrivedAt, 0, "a refused packet leaves no record");
+
+        // A quarantined compensation, then a second packet for its receipt:
+        // refused, so the record's held part, its packet and the packet's
+        // figure stay one and the same.
+        bytes32 idQ = keccak256("comp-q1");
+        _deliverCompensation(5e18, 11, 0, idQ); // state unknown, no clock: quarantined
+        bytes32 key11 = keccak256(abi.encode(REMITTER, uint256(11)));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key11));
+        _deliverCompensation(5e18, 11, 0, keccak256("comp-q2"));
+        LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 11);
+        assertEq(sr.held, 5e18, "one packet's worth in the row");
+        assertEq(sr.packetHash, _packetHash(idQ), "bound to that packet");
+        assertEq(_rlens().getIngressPacket(_packetHash(idQ)).unclassified, 5e18, "whose figure is the record's");
+        assertEq(_unclassified(), 5e18, "the row holds exactly the quarantine");
+    }
+
     /// A quarantined compensation lands in the row on an activated
     /// deployment: the stranded record and the reservation say how much the
     /// holder backs, the Diamond's backing position no longer subtracts that

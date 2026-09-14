@@ -943,7 +943,8 @@ contract RewardRemittanceFacet is
         // the cutover epoch (closure 2, second PR) reconciles.
         // #1566 closure 2 cutover PR 1 — the packet under its ingress stamp,
         // recorded BEFORE any share moves so the record describes the
-        // whole landing (first write wins; a replayed stamp refuses whole).
+        // whole landing (a replayed stamp, or a second packet for a receipt
+        // already delivered, refuses whole).
         bytes32 h = LibRewardCustody.callRecordIngressPacket(
             sourceChainId,
             transportMessageId,
@@ -999,10 +1000,13 @@ contract RewardRemittanceFacet is
         // the remit PAYLOAD (immutable, messenger-authenticated message
         // data — never delivery-time channel config), so different
         // canonical deployments' same-numbered receipts CO-EXIST under
-        // distinct keys — no collision, no supersession ordering. Plain
-        // first-write-wins per key (CCIP executes a message once).
-        // The receipt itself is written by the packet record above
-        // (`LibRewardCustody.recordIngressPacket`), first write wins.
+        // distinct keys — no collision, no supersession ordering. The
+        // receipt itself is written by the packet record above
+        // (`LibRewardCustody.recordIngressPacket`), ONCE per key: a second
+        // packet for a delivered receipt refuses whole there (Codex #2198
+        // r1 — the ingress used to keep the first receipt silently, on the
+        // reasoning that CCIP executes a message once; the stamp guard
+        // covers that case, the receipt guard covers a faulty remitter).
         emit RewardBudgetReceived(
             sourceChainId, token, amount, dayIds, remitId, recycledShare,
             freshShare
@@ -1092,7 +1096,8 @@ contract RewardRemittanceFacet is
      *         expiry inputs rode the remit itself (R4b).
      *
      *         In EVERY case the receipt is recorded exactly like an
-     *         ordinary delivery (first write wins), so the ACK path is
+     *         ordinary delivery (delivered once — a second packet for the
+     *         receipt refuses whole), so the ACK path is
      *         unchanged, and `rewardBudgetReceivedTotal` records the
      *         arrival. The armed-fresh counter advances only for CREDITED
      *         pools (quarantined value is recorded uncounted instead), and
@@ -1146,8 +1151,9 @@ contract RewardRemittanceFacet is
             remitId
         );
         // Receipt exactly as the ordinary ingress records it — written by
-        // the packet record above, first write wins; the ACK path reads
-        // that record and nothing else.
+        // the packet record above, once per receipt (a second packet for a
+        // delivered receipt refuses whole); the ACK path reads that record
+        // and nothing else.
 
         address era = s.dayClockEra[dayId];
         bool stateKnown = s.broadcastV2Applied[dayId] && era != address(0);
