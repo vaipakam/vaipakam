@@ -46,4 +46,45 @@ describe('isRevert', () => {
       expect(isRevert(v)).toBe(false);
     }
   });
+
+  // THE CASE THE CASES ABOVE STRUCTURALLY CANNOT MAKE (#2190 r11
+  // `4009116588`). They all build their errors from the `viem` THIS file
+  // imports — the same physical module `contractRevert.ts` imports — so an
+  // `instanceof` implementation passes every one of them while being broken
+  // for every real caller. The bug was exactly that: pnpm resolves `viem`
+  // per peer context, `apps/app` and `packages/lib` land on two different
+  // copies, and a `BaseError` from the app's client is not an instance of
+  // this package's `BaseError`.
+  //
+  // So this case reaches for the APP's copy deliberately. If the two ever
+  // hoist to one physical module the assertion still holds — it just stops
+  // being the interesting test, which is why the paths are asserted rather
+  // than assumed: a silent collapse to one copy would otherwise look like
+  // continued coverage.
+  it('is true for a revert thrown by ANOTHER package’s copy of viem', async () => {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(new URL('../../../apps/app/package.json', import.meta.url));
+    const appViemPath = req.resolve('viem');
+    const appViem = req(appViemPath) as typeof import('viem');
+
+    const ownPath = createRequire(import.meta.url).resolve('viem');
+    if (appViemPath !== ownPath) {
+      // The condition that made the original bug possible, pinned so the
+      // test's value is visible rather than incidental.
+      expect(appViem.BaseError).not.toBe(BaseError);
+    }
+
+    const e = new appViem.BaseError('reverted', {
+      cause: new appViem.ContractFunctionRevertedError({
+        abi: [],
+        functionName: 'ownerOf',
+        message: 'ERC721: invalid token ID',
+      }),
+    });
+    expect(isRevert(e)).toBe(true);
+
+    // And the asymmetry survives the crossing too: a transport failure from
+    // the other copy must still read as unknown, not as a burn.
+    expect(isRevert(new appViem.BaseError('HTTP request failed'))).toBe(false);
+  });
 });

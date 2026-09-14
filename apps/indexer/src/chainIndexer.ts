@@ -1001,7 +1001,19 @@ async function runLoanReconcilePass(input: {
       // earlier version said "NOT a missed terminal" over a lap whose only
       // stale row failed its read twice — a confident conclusion drawn
       // from an absence of evidence.
-      const settled = report.unread.length === 0 && report.writeFailed.length === 0;
+      //
+      // `unknownStatus` belongs in the same condition and was left out of
+      // that fix (#2190 r11 `4009116593`). It is the same defect one field
+      // further along, and the sharpest instance of it: the logger would
+      // report "this build cannot project status N" and then, in the very
+      // next line, rule out a missed terminal — when an appended terminal
+      // status from a newer deployment is PRECISELY what that unknown
+      // would be, and precisely what would cause the mismatch being
+      // diagnosed. Three ways to learn nothing about a row, one rule.
+      const settled =
+        report.unread.length === 0 &&
+        report.writeFailed.length === 0 &&
+        report.unknownStatus.length === 0;
       console.warn(
         `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
           `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
@@ -1009,8 +1021,14 @@ async function runLoanReconcilePass(input: {
           (settled
             ? `the difference is NOT a missed terminal (most likely a missed ` +
               `LoanInitiated, which this pass cannot repair)`
-            : `but ${report.unread.length} read(s) and ${report.writeFailed.length} ` +
-              `write(s) failed, so the cause is UNDETERMINED — this lap ruled ` +
+            : // Every reason is named, or the line reads as a contradiction:
+              // an unknown status leaves both failure counts at zero, so
+              // "0 read(s) and 0 write(s) failed, cause UNDETERMINED" would
+              // send an operator looking for a fault that is not there.
+              `but ${report.unread.length} read(s) failed, ` +
+              `${report.writeFailed.length} write(s) failed, and ` +
+              `${report.unknownStatus.length} row(s) carry a status this build ` +
+              `cannot project, so the cause is UNDETERMINED — this lap ruled ` +
               `nothing out`),
       );
     }
