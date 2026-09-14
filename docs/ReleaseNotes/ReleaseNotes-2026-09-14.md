@@ -1,3 +1,22 @@
+# Release Notes — 2026-09-14
+
+One entry, and a long one, because it is the first of the three slice-4
+changes of the #1566 design and it lands the whole custody-holder lifecycle
+at once: the holder itself, its replacement ceremony, the recoveries for
+value that reaches a holder by no protocol path, and the paid-side rebase
+that chains carrying history need before the cutover. Nothing in it moves
+reward value yet — no payout, gate or funding path reads the holder, and no
+writer can fund it — which is why it could be reviewed to convergence and
+merged ahead of the change that will. What it does settle is the shape of
+every irreversible step around the holder: each is bound to the platform's
+manual pause and to a count of pause transitions the platform now keeps, so
+no tooling can pair a stale operator answer with whatever pause happens to
+be in force, and the in-place refresh that carries it pauses first,
+simulates every chain before broadcasting to any, and restores service only
+through an unpause that checks nothing else touched the pause meanwhile.
+The one gate this change deliberately leaves off chain — pausing the facet
+cuts themselves — is tracked as #2179.
+
 ## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #2158)
 
 The reward funding delivered to a chain used to sit in the Diamond's own token
@@ -219,3 +238,4 @@ direct-or-staged shape, so a handed-over deployment can bind its holder
 through its signers and reconcile the record afterwards. The multi-chain
 refresh wrapper carries the rebase figure per chain, exactly as it carries the
 older seed, and refuses to run a chain whose figure is not stated. Refs #1566, #1349, #1956.
+<!-- assembled-fragment: 1566-slice-4a-custody-holder.md sha256=403958adcc79b6de5191e7a4f7db78ec1bb39cc4961f7c2ea3af57fcaecee3f8 -->
