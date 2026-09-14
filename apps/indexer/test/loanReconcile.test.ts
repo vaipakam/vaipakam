@@ -51,10 +51,10 @@ function fakeDeps(
   chainActive?: number,
 ) {
   const calls = { chainCount: 0, statusReads: 0, writes: 0, rowQueries: 0 };
-  /** Loans whose prepay listing the pass cleared, in order. */
-  const listingsCleared: number[] = [];
+  /** Loans whose side tables the pass cleared, in order. */
+  const sideTablesCleared: number[] = [];
   /** Loan ids whose cleanup should throw. */
-  const listingClearFails = new Set<number>();
+  const sideTableClearFails = new Set<number>();
   let pointer = 0;
   const deps: ReconcileDeps = {
     async activeRowsAfter(_c, after, limit) {
@@ -91,9 +91,9 @@ function fakeDeps(
       row.collateral_amount = repair.collateralAmount;
       return true;
     },
-    async clearPrepayListing(_c, loanId) {
-      if (listingClearFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
-      listingsCleared.push(loanId);
+    async clearClosedLoanSideTables(_c, loanId) {
+      if (sideTableClearFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
+      sideTablesCleared.push(loanId);
     },
     async readPointer() {
       return pointer;
@@ -106,8 +106,8 @@ function fakeDeps(
     deps,
     calls,
     rows,
-    listingsCleared,
-    listingClearFails,
+    sideTablesCleared,
+    sideTableClearFails,
     get pointer() { return pointer; },
   };
 }
@@ -322,9 +322,10 @@ describe('reporting what actually changed', () => {
     expect(r.repaired).toEqual([]);
     expect(r.superseded).toEqual([8]);
     expect(rows[0].status).toBe('liquidated');
-    // And the listing is left to the handler that actually closed the row.
-    // Clearing it here would be this pass acting on a close it did not make.
-    expect(f.listingsCleared).toEqual([]);
+    // And the side tables are left to the handler that actually closed the
+    // row. Clearing them here would be this pass acting on a close it did
+    // not make.
+    expect(f.sideTablesCleared).toEqual([]);
   });
 
   it('reports a repair it did make', async () => {
@@ -365,24 +366,25 @@ describe('a repaired row is a whole row', () => {
     expect(rows[0].collateral_amount).toBe(big);
   });
 
-  it('clears the prepay listing of a loan it closed', async () => {
-    // Every terminal handler on the event path does this. Without it the
-    // app keeps offering a Seaport listing for a loan that has ended — the
-    // fill would revert on-chain, which is no comfort to whoever tried.
+  it('clears the side tables of a loan it closed', async () => {
+    // Every terminal handler on the event path runs the same cleanup.
+    // Without it the app keeps offering a Seaport listing, and keeps
+    // publishing a committed swap-to-repay intent with a cancel action,
+    // for a loan that has ended.
     const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
     const f = fakeDeps(rows, { 8: 2 }, 0);
     await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
-    expect(f.listingsCleared).toEqual([8]);
+    expect(f.sideTablesCleared).toEqual([8]);
   });
 
-  it('does NOT clear the listing of a loan it left alone', async () => {
+  it('does NOT clear the side tables of a loan it left alone', async () => {
     const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
     const f = fakeDeps(rows, { 8: 0 }, 1); // chain still calls it running
     await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
-    expect(f.listingsCleared).toEqual([]);
+    expect(f.sideTablesCleared).toEqual([]);
   });
 
-  it('names a listing it could not clear instead of throwing the pass away', async () => {
+  it('names a cleanup it could not complete instead of throwing the pass away', async () => {
     // The status write has landed and the row is no longer live, so the
     // rotation will never return to it. Aborting would lose the pointer
     // write and STILL leave the listing, so it is reported by loan id.
@@ -391,13 +393,13 @@ describe('a repaired row is a whole row', () => {
       { loan_id: 9, status: 'active' },
     ];
     const f = fakeDeps(rows, { 8: 2, 9: 1 }, 0);
-    f.listingClearFails.add(8);
+    f.sideTableClearFails.add(8);
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
-    expect(r.listingsNotCleared).toEqual([8]);
+    expect(r.sideTablesNotCleared).toEqual([8]);
     // The failure stops nothing: loan 9 is still examined, repaired and
     // cleared, and the pointer still moves.
     expect(r.repaired.map((x) => x.loanId)).toEqual([8, 9]);
-    expect(f.listingsCleared).toEqual([9]);
+    expect(f.sideTablesCleared).toEqual([9]);
     expect(f.pointer).toBe(9);
   });
 });

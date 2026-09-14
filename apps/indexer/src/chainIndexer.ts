@@ -1107,9 +1107,14 @@ export async function runChainIndexerForChain(
           metricsAbi: DIAMOND_METRICS_ABI,
           loanAbi: DIAMOND_LOAN_DETAILS_ABI,
           // The same cleanup every terminal handler above performs. Handed
-          // in so a repaired close and an event-driven close clear the
-          // listing through one implementation (#2190 round 1).
-          clearPrepayListing: (loanId) => _deletePrepayListing(env, chainId, loanId),
+          // in so a repaired close and an event-driven close clear the same
+          // side tables through one implementation — which is the point:
+          // round 1 found the prepay listing missing and round 2 the
+          // swap-to-repay intent, so the repair keeps no list of its own
+          // and a table added to `_clearClosedLoanSideTables` reaches it
+          // with no change here (#2190 rounds 1-2).
+          clearClosedLoanSideTables: (loanId) =>
+            _clearClosedLoanSideTables(env, chainId, loanId),
         },
         { maxRows: 5, minRows: 1 },
       );
@@ -1129,14 +1134,15 @@ export async function runChainIndexerForChain(
             `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
         );
       }
-      // A listing the repair could not clear outlives the rotation: the
-      // row is terminal now, so nothing selects it again. Said out loud
-      // because the app would otherwise keep advertising a listing for a
-      // closed loan, which is the ghost this pass exists to remove.
-      if (report.listingsNotCleared.length > 0) {
+      // Side-table rows the repair could not clear outlive the rotation:
+      // the row is terminal now, so nothing selects it again. Said out loud
+      // because the app would otherwise keep advertising a collateral
+      // listing or a live swap-to-repay intent for a closed loan, which is
+      // the ghost this pass exists to remove.
+      if (report.sideTablesNotCleared.length > 0) {
         console.error(
-          `[chainIndexer] reconcile repaired but could NOT clear the prepay listing for ` +
-            `loan(s) ${report.listingsNotCleared.join(', ')} on chain ${chainId} — ` +
+          `[chainIndexer] reconcile repaired but could NOT clear the side tables for ` +
+            `loan(s) ${report.sideTablesNotCleared.join(', ')} on chain ${chainId} — ` +
             `these will not be retried; clear them by hand`,
         );
       }
@@ -2786,7 +2792,7 @@ export async function processLoanLogs(
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
       // T-086 step 12 — clear any live prepay-listing row.
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayExecuted') {
       // T-090 Sub 2 — borrower swap-to-repay full close. The contract
       // path transitions Active→Repaid (same status flip as `LoanRepaid`)
@@ -2794,7 +2800,7 @@ export async function processLoanLogs(
       // the LoanRepaid handler exactly.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayIntentCommitted') {
       // T-090 v1.1 (#389) Sub 2 (#417) — intent-based commit. INSERT
       // a `swap_to_repay_intents` row keyed by (chain_id, loan_id);
@@ -2855,41 +2861,32 @@ export async function processLoanLogs(
       }
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, loanId);
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      // The loan CLOSED here, so the shared close-out cleanup covers both
+      // the prepay listing and this fill's own intent row — the separate
+      // intent DELETE this branch used to carry is inside it. The
+      // `committed_by` read above still happens first, which is the one
+      // ordering constraint `_clearClosedLoanSideTables` documents.
+      await _clearClosedLoanSideTables(env, chainId, loanId);
     } else if (log.eventName === 'SwapToRepayIntentCancelled') {
       // T-090 v1.1 Sub 2 — borrower cancel OR permissionless
       // `cancelExpired` poke. Loan stays Active (the cancel only
       // tears down the v1.1 commit + returns collateral to the
-      // borrower vault). Delete the intent row.
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, Number(a.loanId as bigint))
-        .run();
+      // borrower vault). Delete the intent row — and ONLY that: this is
+      // not a close, so the loan's prepay listing survives it.
+      await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayIntentForceCancelled') {
       // T-090 v1.1 Sub 2 — HF-liquidation OR time-default path
       // force-cancelled the intent. The lender-protection action
       // proceeds in the same tx via downstream events
       // (LoanLiquidated / LoanDefaulted etc.) — those handlers do
-      // the loan-side flip. Here we just delete the intent row.
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, Number(a.loanId as bigint))
-        .run();
+      // the loan-side flip and its cleanup. Here we just delete the
+      // intent row.
+      await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'OffsetCompleted') {
       // Preclose Option 3 — offsetWithNewOffer + completeOffset. The
       // *original* loan transitions Active→Repaid (the new loan emits
@@ -2904,7 +2901,7 @@ export async function processLoanLogs(
         origLoanId,
       );
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, origLoanId);
+      await _clearClosedLoanSideTables(env, chainId, origLoanId);
     } else if (log.eventName === 'LoanRefinanced') {
       // Refinance — the *old* loan transitions Active→Repaid (the new
       // loan emits its own LoanInitiated). Keyed by `oldLoanId`.
@@ -2918,7 +2915,7 @@ export async function processLoanLogs(
         oldLoanId,
       );
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, oldLoanId);
+      await _clearClosedLoanSideTables(env, chainId, oldLoanId);
     } else if (log.eventName === 'LoanExtended') {
       // T-092 Phase 3 (#503) — `extendLoanInPlace` mutates
       // `loan.startTime`, `interestRateBps`, and `durationDays` in
@@ -3303,7 +3300,7 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanStatusChanged') {
       // #1782 — the SAFETY NET, not a replacement for the specific terminal
       // handlers above. `LibLifecycle.transition` is the one primitive every
@@ -3341,7 +3338,7 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'HFLiquidationTriggered') {
       // #1293 — HF-based liquidation terminalizes the loan Active→Defaulted
       // through `EncumbranceMutateFacet.terminalize` (RiskFacet.sol:930 full
@@ -3355,7 +3352,7 @@ export async function processLoanLogs(
       // idempotent no-op on re-scan.
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LiquidationDiscounted') {
       // #1293 — the flash-loan discount liquidation (RiskFacet.sol:1665) is the
       // same Active→Defaulted terminalize and likewise emits ONLY its own
@@ -3364,7 +3361,7 @@ export async function processLoanLogs(
       // the loan `active`.
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'BackstopAbsorbedLoan') {
       // #630 backstop Role B — the liquidator-of-last-resort bought out the
       // lender slice of a FallbackPending loan for cash. This is the lender-side
@@ -3378,7 +3375,7 @@ export async function processLoanLogs(
       // Mirror LoanDefaulted/LoanLiquidated: clear any indexed prepay-listing
       // row on this terminal so the frontend can't serve a stale live listing
       // (the on-chain LibPrepayCleanup clear emits no cancel event).
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
@@ -3540,9 +3537,11 @@ export async function processLoanLogs(
           // subsequent Seaport fill would revert at the executor's
           // `getPrepayContext` check, but the indexed projection needs to mirror
           // the terminal state immediately. (A superseded loan's own terminal
-          // handler — LoanRepaid/SwapToRepayExecuted — also deletes the listing;
-          // both are idempotent.)
-          await _deletePrepayListing(env, chainId, loanId);
+          // handler — LoanRepaid/SwapToRepayExecuted — also runs this cleanup;
+          // both are idempotent.) The loan CLOSED, so the shared close-out
+          // cleanup applies: a matched-out loan holding a committed
+          // swap-to-repay intent would otherwise keep publishing it.
+          await _clearClosedLoanSideTables(env, chainId, loanId);
         } else {
           // Non-terminal-from-a-match: a genuine PARTIAL match (chain status
           // still `Active`, principal > 0) or a partial rescue of a
@@ -3888,13 +3887,11 @@ export async function processLoanLogs(
     } else if (log.eventName === 'PrepayListingCanceled') {
       // Cancel (borrower / grace-expired) terminates the listing
       // WITHOUT closing the loan — loan stays Active until a
-      // separate terminal (repay / default / liquidation) fires.
+      // separate terminal (repay / default / liquidation) fires. LISTING
+      // ONLY, therefore — a committed swap-to-repay intent on a loan that
+      // is still running must survive this.
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
-        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      await _deletePrepayListing(env, chainId, loanId);
     } else if (log.eventName === 'PrepayCollateralSaleSettled') {
       // Successful Seaport fill: loan went Active → Settled
       // ATOMICALLY in `PrepayListingFacet.executorFinalizePrepaySale`
@@ -3905,11 +3902,9 @@ export async function processLoanLogs(
       // would treat the loan as forever-claimable. Codex P1
       // round-1 on PR #304.
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
-        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      // A CLOSE, not a listing end — the loan goes Active→Settled in this
+      // same call — so the shared close-out cleanup applies.
+      await _clearClosedLoanSideTables(env, chainId, loanId);
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       const r = await env.DB.prepare(
         `UPDATE loans
@@ -4097,7 +4092,7 @@ export async function processLoanLogs(
       .run();
     if ((r.meta?.changes ?? 0) > 0) {
       statusUpdates++;
-      await _deletePrepayListing(env, chainId, loanId);
+      await _clearClosedLoanSideTables(env, chainId, loanId);
     }
   }
 
@@ -4424,6 +4419,63 @@ async function _deletePrepayListing(
   )
     .bind(chainId, loanId)
     .run();
+}
+
+/// @dev T-090 v1.1 Sub 2 — drop a loan's committed swap-to-repay intent.
+///      Extracted from the three intent handlers that each carried this
+///      DELETE inline, so the close-out helper below can reuse it rather
+///      than growing a fourth copy.
+async function _deleteSwapToRepayIntent(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+  )
+    .bind(chainId, loanId)
+    .run();
+}
+
+/// @dev EVERY side-table row that represents a LIVE ACTION on a loan and
+///      must not outlive it. Call this wherever a loan CLOSES — not
+///      wherever a listing happens to end.
+///
+///      This exists because #2190 found the same gap twice in consecutive
+///      review rounds: the #2101 reconciliation pass repaired a loan row
+///      to terminal and left first a live prepay listing and then a live
+///      swap-to-repay intent behind it, each of which the app goes on
+///      publishing with an action attached (`/loans/:id/prepayListing`,
+///      and `handleLoanById`'s `swapToRepayIntent` block). Patching the
+///      second table the way the first was patched would have left the
+///      third to be found the same way, so the repair no longer keeps its
+///      own list of tables: it calls THIS, and a table added here reaches
+///      it with no change on that side.
+///
+///      The distinction it encodes is real and not cosmetic —
+///      `LoanExtended` and `PrepayListingCanceled` end a LISTING without
+///      closing the loan, so they keep calling `_deletePrepayListing`
+///      alone and must not acquire the intent delete.
+///
+///      Idempotent, and deliberately safe to run more than once per loan:
+///      a close-out tx normally also emits the intent's own
+///      `SwapToRepayIntentFilled` / `ForceCancelled`, whose handlers delete
+///      the same row. One caution for a future editor — the
+///      `SwapToRepayIntentFilled` handler reads `committed_by` off that row
+///      BEFORE deleting it (the #421 attribution), so this helper must
+///      never be moved ahead of that read. Today no contract path emits a
+///      loan-terminal event in the same tx as an intent fill (the fill's
+///      own transition surfaces as `LoanStatusChanged`, which is applied
+///      after the log loop), so the order cannot arise; if one ever does,
+///      pre-index the lookup the way `loanDetailsByLoanId` is pre-indexed
+///      rather than reordering the cleanup.
+async function _clearClosedLoanSideTables(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<void> {
+  await _deletePrepayListing(env, chainId, loanId);
+  await _deleteSwapToRepayIntent(env, chainId, loanId);
 }
 
 /// Exported for `activityRefs.test.ts` only — it is not imported by any other

@@ -55,12 +55,18 @@
  * where it holds a lower figure that IS the economic truth the index
  * missed.
  *
- * A REPAIRED ROW ALSO CLEARS ITS PREPAY LISTING, for the same reason and
- * with the same seam: the cleanup belongs to the scan, which owns the
- * helper every terminal handler already calls, and is handed in rather than
- * reimplemented here. Without it a closed loan keeps a live Seaport listing
- * in the indexed projection — a fill would revert on-chain, but the app
- * would keep offering it.
+ * A REPAIRED ROW ALSO CLEARS THE LOAN'S SIDE TABLES, and this pass keeps
+ * NO LIST OF WHICH ONES. Review found the same gap twice running: round 1,
+ * that a repaired close left a live prepay listing behind; round 2, that it
+ * left a live swap-to-repay intent behind, which `handleLoanById` goes on
+ * publishing with a cancel action attached. Adding the second table the way
+ * the first was added would have left a third to be found the same way.
+ *
+ * So the cleanup is one named concept owned by the scan —
+ * `_clearClosedLoanSideTables`, the same one every terminal handler calls —
+ * and it is handed in through the context. A table added there reaches the
+ * repair with no change on this side, which is the property that stops this
+ * particular finding recurring.
  *
  * WHAT IT CANNOT RECOVER. The chain's `LoanStatus` has no `Liquidated`
  * member — an HF-liquidated loan reads `Defaulted(2)` — so a row repaired
@@ -181,15 +187,16 @@ export interface ReconcileReport {
    *  writer had already terminalized the row. Not a failure — the other
    *  write is the better-informed one — but not a repair either. */
   superseded: number[];
-  /** Loan ids repaired whose prepay-listing cleanup then FAILED.
+  /** Loan ids repaired whose side-table cleanup then FAILED.
    *
    *  Reported rather than thrown. The status write has already landed and
    *  the row is no longer live, so the rotation will never select it again
-   *  — aborting here would lose the pointer write and still leave the
-   *  listing. An operator reading this list is looking at a closed loan the
-   *  app may still advertise a listing for, which is exactly the class of
-   *  ghost this pass exists to remove, so it is named rather than implied. */
-  listingsNotCleared: number[];
+   *  — aborting here would lose the pointer write and still leave the rows
+   *  behind. An operator reading this list is looking at a closed loan the
+   *  app may still advertise a collateral listing or a live swap-to-repay
+   *  intent for, which is exactly the class of ghost this pass exists to
+   *  remove, so it is named rather than implied. */
+  sideTablesNotCleared: number[];
   /** Where the rotation pointer was left. */
   nextPointer: number;
 }
@@ -206,9 +213,10 @@ export interface ReconcileDeps {
   /** Returns whether the row actually changed — a compare-and-set that
    *  matched nothing is not a repair, and must not be reported as one. */
   writeRepair(chainId: number, loanId: number, repair: LoanRepair): Promise<boolean>;
-  /** Drop any live prepay-listing row for a loan this pass just closed.
-   *  The scan's own helper, handed in — see the module header. */
-  clearPrepayListing(chainId: number, loanId: number): Promise<void>;
+  /** Drop every side-table row representing a live action on a loan this
+   *  pass just closed. The scan's own helper, handed in — see the module
+   *  header for why this is one concept rather than a list of tables. */
+  clearClosedLoanSideTables(chainId: number, loanId: number): Promise<void>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -273,7 +281,7 @@ export async function reconcileChainLoans(
     repaired: [],
     unread: [],
     superseded: [],
-    listingsNotCleared: [],
+    sideTablesNotCleared: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
   };
 
@@ -316,12 +324,13 @@ export async function reconcileChainLoans(
     // on the storage layer declining to mutate its input.
     report.repaired.push({ loanId: row.loan_id, from, to });
     // Only after a repair that ACTUALLY landed. A superseded row was
-    // terminalized by a handler that clears its own listing, and a row
-    // this pass did not close has no business losing a live listing.
+    // terminalized by a handler that runs this same cleanup itself, and a
+    // row this pass did not close has no business losing a live listing or
+    // a committed intent.
     try {
-      await deps.clearPrepayListing(chainId, row.loan_id);
+      await deps.clearClosedLoanSideTables(chainId, row.loan_id);
     } catch {
-      report.listingsNotCleared.push(row.loan_id);
+      report.sideTablesNotCleared.push(row.loan_id);
     }
   }
 
@@ -368,11 +377,12 @@ export interface ScanReconcileContext {
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
-  /** The scan's own `_deletePrepayListing`, bound to this chain. Passed in
-   *  rather than reimplemented: the cleanup every terminal handler performs
-   *  and the cleanup a repair performs must be the same one, and importing
-   *  it here would make the scan module and this one mutually dependent. */
-  clearPrepayListing(loanId: number): Promise<void>;
+  /** The scan's own `_clearClosedLoanSideTables`, bound to this chain.
+   *  Passed in rather than reimplemented: the cleanup every terminal
+   *  handler performs and the cleanup a repair performs must be the same
+   *  one, and importing it here would make the scan module and this one
+   *  mutually dependent. */
+  clearClosedLoanSideTables(loanId: number): Promise<void>;
 }
 
 export async function reconcileAfterScan(
@@ -467,8 +477,8 @@ export async function reconcileAfterScan(
         .run();
       return (r.meta?.changes ?? 0) > 0;
     },
-    async clearPrepayListing(_chainId, loanId) {
-      await ctx.clearPrepayListing(loanId);
+    async clearClosedLoanSideTables(_chainId, loanId) {
+      await ctx.clearClosedLoanSideTables(loanId);
     },
     async readPointer(chainId) {
       const row = await ctx.db

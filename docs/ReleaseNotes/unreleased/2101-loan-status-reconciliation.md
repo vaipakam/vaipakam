@@ -35,9 +35,21 @@ ending does, and can be missed the same way. A record stale enough to have
 missed an ending has no claim to be current about the amounts, and nothing
 is given up by preferring the chain's: an ending never erases what was
 owed, so where the chain holds a smaller figure, that smaller figure is
-what actually happened. A closed loan also loses any collateral sale
-listing the platform was still advertising for it — the sale would fail
-anyway, which is no comfort to whoever tried.
+what actually happened. A closed loan also loses everything the
+platform was still offering to act on for it: a collateral sale listing, and
+a committed swap the borrower could still be shown a cancel button for.
+Neither would work against an ended loan, which is no comfort to whoever
+tried.
+
+These two came from consecutive review rounds — first the listing, then the
+swap — so the fix was not to add the second one beside the first. There is
+now a single named clean-up that runs whenever a loan CLOSES, wherever the
+closing was learned; the correction calls that rather than keeping its own
+list of things to tidy, so anything added to it in future is covered without
+the correction changing at all. Ending a listing or a commitment on a loan
+that is still running stays deliberately separate: withdrawing a collateral
+sale is not withdrawing a swap commitment, and the platform must not dispose
+of a position the borrower still holds.
 
 Both halves of the deciding are deliberate. It keeps looking when the totals
 agree because two mistakes cancel — one ending missed and one beginning
@@ -68,11 +80,11 @@ discovered.
 
 And it cannot say why an ending was missed in the first place.
 
-One failure is reported rather than retried: if the correction lands but
-removing the stale sale listing does not, the record has already ended and
-nothing will look at it again. The affected loans are named in the
-service's log so an operator can clear them by hand, rather than the
-platform quietly continuing to advertise a listing nobody can fill.
+One failure is reported rather than retried: if the correction lands but the
+tidying afterwards does not, the record has already ended and nothing will
+look at it again. The affected loans are named in the service's log so an
+operator can clear them by hand, rather than the platform quietly continuing
+to advertise something nobody can act on.
 
 ## Not included
 

@@ -230,12 +230,20 @@ The app uses chain reads and indexed reads for different jobs.
   amounts. Preferring the chain's figures gives nothing up: an ending does
   not erase what was outstanding, so where the chain holds a smaller
   figure that is an economic event the index missed, not a lost record.
-- A record corrected to ended also drops any collateral sale listing the
-  platform was still publishing for it. Such a sale would fail at the
-  contract, which is no reason to keep offering it. If that removal itself
-  fails, the affected loans are named in the operator's log rather than
-  silently left — the record has already ended, so the rotation will not
-  return to it.
+- A record corrected to ended also drops everything the platform was still
+  offering to act on for that loan — a collateral sale listing, a committed
+  swap the borrower could otherwise still be shown a cancel action for. Each
+  would fail at the contract, which is no reason to keep offering it. What a
+  close clears is one list, and it is the same list whether the close was
+  learned from its announcement or from this correction; a surface added to
+  it is covered by both without either being changed.
+- Ending a listing, or ending a commitment, is not ending the loan. A
+  borrower who withdraws a collateral sale keeps any swap commitment they
+  made, and the reverse. The platform never disposes of a position the user
+  still holds as a side effect of tidying a different one.
+- If that clearing itself fails, the affected loans are named in the
+  operator's log rather than silently left — the record has already ended,
+  so the rotation will not return to it.
 - A position the platform publishes as open must be one it can still
   substantiate as open. Where it cannot, the surfaces that count and the
   surfaces that list must not answer the same question differently
