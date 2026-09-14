@@ -746,7 +746,20 @@ const copySource = {
       // above names a cause, so none of them can carry this one without
       // asserting something nobody established. It always appears above the
       // correction note, which supplies the rest of the honesty.
-      loan_ended: 'A loan of yours ended — see what you can claim.',
+      //
+      // NO CLAIM CTA, unlike the three lines above (#2190 r10
+      // `4008939656`). The claim route selects only `repaid` / `defaulted` /
+      // `liquidated` / `internal_matched`, so a `settled` loan NEVER has a
+      // claim — and that is by design rather than by omission: the prepay
+      // fill distributes everything atomically, which is why
+      // `PrepayListingFacet` pays the rebate outright instead of leaving it
+      // for a claim, and why `claimAsBorrower` rejects `Settled`. That same
+      // route is how this line actually reaches anyone — it UNLOCKS the
+      // borrower NFT rather than burning it, so `ownerOf` still resolves —
+      // so the one case that renders this row is exactly the case with
+      // nothing to claim. It points at the position instead, matching the
+      // calendar lines below.
+      loan_ended: 'A loan of yours ended — open it to see where it stands.',
       // Calendar rows (#1213 PR 2) — time-derived reminders from the
       // indexer's cron sweep, covering illiquid loans too. Each line must
       // stay TRUE FOREVER as an inbox history entry (Codex #1298 r1+r2):

@@ -166,14 +166,25 @@ one would leave the other's record wrong forever, which is the worse of the
 two.
 
 That last point has a consequence for the message above that says only "it
-ended", and it is worth being blunt about: the case it misses is the ordinary
-one. A loan reaches that undifferentiated finished state precisely BY both
-sides taking what was theirs — which destroys the very holdings ownership is
-asked about. So for a loan that finished the normal way there is nobody to
-establish, and nobody is told. The record is still corrected. The fix is not
-to relax any of this and fall back on the stale list; it is a record of who
-HELD a position that no longer exists, which the platform does not keep yet
+ended", and it is worth being blunt about: the commonest way of reaching that
+state is a way this message cannot cover. A loan reaches it when both sides
+take what is theirs — which destroys the very holdings ownership is asked
+about — so there is nobody to establish, and nobody is told. The record is
+still corrected. The fix is not to relax any of this and fall back on the
+stale list; it is a record of who HELD a position that no longer exists,
+which the platform does not keep yet
 and which is raised separately.
+
+There IS a route to that same state where the message lands, and it is what
+decides the wording. When a borrower's collateral sale completes, the loan
+finishes without either side claiming — the borrower's position is released
+rather than destroyed, so there is still somebody to tell. That route also
+hands over everything owed as part of the sale, which means the one case
+where this message reaches a reader is precisely the case with nothing left
+to claim. So it says to open the position and see where it stands, rather
+than pointing at a claim that by construction does not exist. Every other
+ending keeps its own wording, because those genuinely do leave something to
+collect.
 
 They also arrive as NEW rather than as something already read. The inbox
 decides what is unread by position in the chain's order, and a message
@@ -261,10 +272,18 @@ permanently.
 The messages are written only where the correction was actually made by
 this check. If another part of the service recorded the ending first — which
 is the very race the check is built to lose gracefully — it stops, rather
-than telling the two holders it discovered something it did not. And a
-failure to work out who the holders are is treated as a failure, not as
-"nobody to tell": the whole correction is left for the next turn instead of
-going through with the part that is silent.
+than telling the two holders it discovered something it did not. And where
+looking up the parties in its OWN records fails, that is treated as a
+failure rather than as "nobody to tell": the whole correction is left for
+the next turn instead of going through with the part that is silent.
+
+That applies to its own records and not to the chain, and the difference is
+the point. A query of its own store that fails has unambiguously failed, so
+waiting is safe. Asking the chain who holds a position gives one answer for
+"nobody holds it" and for "the question did not get through", and since
+those cannot be told apart, waiting on the second would mean never
+correcting the first. So that case commits the correction and sends no
+message, as set out above.
 
 One failure it survives rather than prevents: if the write for one record
 fails while others in the same turn succeed, the successful ones stand and

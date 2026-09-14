@@ -317,7 +317,7 @@
         "loan_repaid": "एक loan पूरी तरह repay हुआ — देखें आप क्या claim कर सकते हैं।",
         "loan_defaulted": "एक loan default हुआ — देखें आप क्या claim कर सकते हैं।",
         "internal_matched": "आपका एक loan matching से close हुआ — देखें आप क्या claim कर सकते हैं।",
-        "loan_ended": "आपका एक ऋण समाप्त हो गया — देखें कि आप क्या दावा कर सकते हैं।",
+        "loan_ended": "आपका एक ऋण समाप्त हो गया — उसकी स्थिति देखने के लिए खोलें।",
         "maturity_7d": "एक loan due date से एक week दूर था — उसकी स्थिति देखने के लिए खोलें।",
         "maturity_1d": "एक loan due date से एक day दूर था — उसकी स्थिति देखने के लिए खोलें।",
         "grace_entered": "एक loan due date पार कर गया — उसकी स्थिति देखने के लिए खोलें।",
