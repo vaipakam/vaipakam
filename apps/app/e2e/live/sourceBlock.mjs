@@ -916,14 +916,6 @@ const RESOLVED = 'resolved';
 const UNRESOLVED = 'unresolved';
 const UNBOUND = 'unbound';
 
-/** The node types that are a function — the thing a helper may CREATE
- *  rather than BE, which is why a search inside one says nothing about
- *  which of the helper's own parameters it looks through. */
-const FUNCTIONS = new Set([
-  'ArrowFunctionExpression',
-  'FunctionExpression',
-  'FunctionDeclaration',
-]);
 
 /** The names that denote the global object itself. */
 const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
@@ -947,7 +939,7 @@ const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
  * never reassigned. Anything less certain is not an alias, and an
  * uncertain one is reported as no alias at all rather than guessed at.
  */
-function globalObjectAlias(variableOf, start) {
+function globalObjectAlias(src, variableOf, start, atPos) {
   // Termination is a VISITED SET on binding identity, not a hop count.
   // A cap is a guess about how many aliases someone might write, and
   // round 11 walked past an eight-deep chain to show it: the loop ran
@@ -967,9 +959,15 @@ function globalObjectAlias(variableOf, start) {
     seen.add(variable);
     const defs = variable.defs;
     if (defs.length !== 1 || defs[0].type !== 'Variable') return null;
-    // A reassignment anywhere makes the name's value a question of
-    // ordering, which this walk deliberately does not reason about.
-    if (variable.references.some((r) => r.isWrite() && !r.init)) return null;
+    // A reassignment only matters if it REACHES the write being judged
+    // (round 12). `let root = globalThis; root.String = replacement;
+    // root = {};` replaces the built-in before the alias is pointed
+    // anywhere else, and refusing on the existence of a later write
+    // discarded that replacement entirely. Asked through the one
+    // write-ordering reader, so the branch-arm and lifetime reasoning
+    // every other rule gets applies here too.
+    const writes = variable.references.filter((r) => r.isWrite() && !r.init).map((r) => r.identifier);
+    if (writeReaches(src, writes, atPos)) return null;
     const init = defs[0].node?.init;
     // An unpacked name holds a PROPERTY of the initialiser, not the
     // initialiser — the same distinction `bindingOf` draws for `const
@@ -1008,7 +1006,7 @@ function globalWrites(src, name) {
     // …and it may be held through a STABLE ALIAS, which `globalObjectAlias`
     // follows without resolving anything — see its own note for why that
     // separation is load-bearing rather than stylistic.
-    if (!globalObjectAlias(variableOf, host)) return;
+    if (!globalObjectAlias(src, variableOf, host, target.start)) return;
     if (propertyName(target) === name) out.push(target.property);
   };
   for (const n of nodes) {
@@ -1538,8 +1536,13 @@ const SKIPPABLE = {
 const DEFERRED = {
   PropertyDefinition: ['value'],
   ForStatement: ['test', 'update', 'body'],
-  ForOfStatement: ['body'],
-  ForInStatement: ['body'],
+  // The LEFT of a for-of/for-in is assigned once PER ITERATION, so it
+  // repeats exactly as the body does and a position cannot order it
+  // (round 12). It was absent here while present in SKIPPABLE, which
+  // let a write in one iteration's left slot look like straight-line
+  // top-level code to the branch-arm exclusion.
+  ForOfStatement: ['left', 'body'],
+  ForInStatement: ['left', 'body'],
   WhileStatement: ['test', 'body'],
   DoWhileStatement: ['test', 'body'],
   FunctionDeclaration: ALL_SLOTS,
@@ -2259,6 +2262,23 @@ function candidateValues(src, node, seen) {
     // A sequence evaluates to its LAST expression; the rest are discarded.
     case 'SequenceExpression':
       return candidateValues(src, node.expressions.at(-1), seen);
+    // A SPREAD hands over the ELEMENTS of what it spreads, so an array
+    // written out is read through to them — `at(s, ...[1])` passes a
+    // number, not an array. Anything else spread is a value this cannot
+    // establish, and is reported as such rather than guessed at.
+    case 'SpreadElement': {
+      const inner = unwrapChain(node.argument);
+      if (inner?.type !== 'ArrayExpression') return null;
+      const out = [];
+      for (const el of inner.elements) {
+        // A HOLE (`[, 1]`) yields `undefined`, which carries no finder.
+        if (!el) continue;
+        const vals = candidateValues(src, el, seen);
+        if (!vals) return null;
+        out.push(...vals);
+      }
+      return out;
+    }
     case 'AssignmentExpression': {
       const right = candidateValues(src, node.right, seen);
       // A LOGICAL assignment may not assign at all, and then evaluates
@@ -2309,116 +2329,66 @@ function suspectValue(src, node, seen) {
     const r = resolutionOf(src, node);
     return r.state === RESOLVED ? suspectValue(src, r.value, seen) : !r.fromCaller;
   }
-  if (node.type === 'Literal') return typeof node.value !== 'string';
+  // A PRIMITIVE cannot carry a finder that lies. A string's `indexOf` is
+  // the real one and the string is genuine text; a number, boolean, null
+  // or bigint has no such method at all, so a helper handed one fails
+  // loudly rather than returning a fixed window. A REGULAR EXPRESSION is
+  // an object written out and stays refused — it carries no `indexOf`
+  // either, but the receiver rule refuses it (#2174) and one value
+  // answered two ways at two sites is the shape this PR exists to
+  // remove.
+  if (node.type === 'Literal') return node.regex !== undefined;
   if (node.type === 'TemplateLiteral') return false;
   return true;
 }
 
 /**
- * Whether the arguments at a visible call can be trusted for the
- * parameters the helper actually SEARCHES THROUGH.
+ * Whether every argument at a visible call is INCAPABLE OF LYING to the
+ * helper about where something is.
  *
- * Round 8, and this replaces five rounds of checking every argument
- * against a widening predicate. That was wrong in both directions: it
- * refused `at(s, 1)`, whose numeric second argument is an ordinary
- * search offset, while saying nothing about which parameter a stand-in
- * would actually land on. The question was always narrower — WHICH
- * parameter does the body use as a finder receiver, and what is passed
- * for THAT one.
+ * ROUND 12, and this REPLACES the per-parameter targeting rather than
+ * fixing it — the #2149 move, taken because the policy names exactly
+ * this situation. That targeting produced a finding in five consecutive
+ * rounds (8, 9, 10, 11, 12), each a different route by which a search
+ * written somewhere in a helper's body did or did not select an
+ * argument: a nested function reusing a parameter's name, a closure the
+ * helper never calls, a search in a discarded conditional test, a search
+ * whose result only feeds another search's needle, and a helper that
+ * forwards its parameter to a second helper. The sixth was going to
+ * exist too. Each fix was correct and none of them ended the sequence,
+ * which is the signal the policy describes.
+ *
+ * The question underneath was never WHICH parameter a search reads. It
+ * is whether an argument could hand the helper a FINDER THAT LIES — a
+ * `.indexOf` that answers with a fixed number instead of a position. So
+ * that is what is asked, of every argument, with no tracing at all.
+ *
+ * Only an object-ish value can carry a method that lies. A STRING can
+ * too, in principle, but its `indexOf` is the real one and it is genuine
+ * text. Every other primitive carries no such method at all, so a helper
+ * handed one either crashes or returns `undefined` — loud, not a
+ * silently fixed window — which is why a numeric search offset is
+ * accepted where five rounds of a widening predicate had refused it.
+ *
+ * What this gives up, stated because it is a real reduction: an argument
+ * that IS a stand-in, passed to a helper whose every possible result is
+ * source-relative anyway, is now refused (round 11's third finding
+ * accepted it). The cost is a refused region on a shape that appears
+ * nowhere in this tree; the gain is that no amount of forwarding can
+ * route a stand-in past this, because nothing is being traced.
  */
-function helperArgumentsSound(src, fn, args, seen) {
-  const supplied = args ?? [];
-  const searched = searchedParameters(src, fn);
-  if (searched.size === 0) return true;
-  // A SPREAD destroys the positional mapping FROM WHERE IT APPEARS, not
-  // before it. `at(s, ...[1])` still names its first argument
-  // unambiguously, and refusing the whole call changed an accepted bound
-  // into a rejected one.
-  const spreadAt = supplied.findIndex((a) => a?.type === 'SpreadElement');
-  if (spreadAt >= 0 && [...searched].some((i) => i >= spreadAt)) return false;
-  for (const i of searched) {
-    const values = candidateValues(src, supplied[i], seen);
+function helperArgumentsSound(src, args, seen) {
+  // An argument list this cannot READ is not an empty one. The old
+  // targeting never reached that case because it returned early whenever
+  // no parameter was searched; asking of every argument means asking
+  // what the arguments ARE first, and "I could not tell" is refused
+  // rather than treated as nothing to check.
+  if (!Array.isArray(args)) return args == null;
+  for (const a of args) {
+    const values = candidateValues(src, a, seen);
     if (!values || values.some((v) => suspectValue(src, v, seen))) return false;
   }
   return true;
-}
-
-/**
- * Slots whose value is DISCARDED — nothing written there can be the
- * value the construct produces.
- *
- * This is an EXCLUSION list where round 6 of #2170 argued for a closed
- * inclusion list, and the difference is which way a gap fails. There,
- * the question was what a bound may DENOTE, and anything forgotten would
- * have been accepted — so the safe list was the one that names what is
- * allowed. Here the question is what may be SKIPPED, and anything
- * forgotten is inspected: a missing entry costs a refused region, never
- * a certified window. So the list names what is provably discarded, and
- * everything else is conservatively treated as reaching the result.
- */
-const DISCARDED_SLOTS = {
-  ConditionalExpression: ['test'],
-  IfStatement: ['test'],
-  WhileStatement: ['test'],
-  DoWhileStatement: ['test'],
-  ForStatement: ['test'],
-  SwitchStatement: ['discriminant'],
-  SwitchCase: ['test'],
-};
-
-/** Whether nothing `node` evaluates to can be the value `fn` hands back. */
-function cannotReachResult(parents, fn, node) {
-  for (let c = node, p = parents.get(c); p && c !== fn; c = p, p = parents.get(p)) {
-    // A function the helper merely CREATES does not run when the helper
-    // is called, so nothing inside it reaches the helper's result.
-    if (p !== fn && FUNCTIONS.has(p.type)) return true;
-    const slots = DISCARDED_SLOTS[p.type];
-    if (slots && slots.some((s) => holds(p[s], c))) return true;
-    // A sequence evaluates to its LAST expression; the rest are dropped.
-    if (p.type === 'SequenceExpression' && p.expressions.at(-1) !== c) return true;
-  }
-  return false;
-}
-
-/**
- * The parameter POSITIONS a helper's body uses as a finder receiver.
- *
- * By BINDING, never by spelling. A nested function may reuse one of the
- * helper's parameter names for something else entirely, and comparing
- * names attributed that inner receiver to the outer parameter. This is
- * the third rule on this PR to be caught matching a spelling where it
- * meant an identity — twice on globals, now here — so it asks the scope
- * analyser which variable the receiver actually is, and whether that
- * variable is a parameter OF THIS function.
- *
- * And only where the finder's value CAN REACH the helper's result, which
- * is the root of three consecutive rounds on this one function rather
- * than a third exclusion beside the other two. Rounds 9, 10 and 11 each
- * reported a different node this walk should not have been looking at,
- * and all three are one question asked about the wrong unit: the walk
- * was enumerating every finder call UNDER the parameter when what
- * selects an argument for inspection is a finder whose value can BE the
- * bound the helper hands back. `cannotReachResult` is that question, in
- * one place, with one table to extend.
- */
-function searchedParameters(src, fn) {
-  const { variableOf, parents } = astOf(src, 'searchedParameters');
-  const used = new Set();
-  walk(fn.body, (n) => {
-    if (n.type !== 'CallExpression') return;
-    if (cannotReachResult(parents, fn, n)) return;
-    const callee = unwrapChain(n.callee);
-    if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return;
-    const object = unwrapChain(callee.object);
-    if (object?.type !== 'Identifier') return;
-    const variable = variableOf.get(object);
-    if (!variable) return;
-    const index = fn.params.findIndex(
-      (p) => p.type === 'Identifier' && variable.defs.some((d) => d.type === 'Parameter' && d.node === fn && d.name === p),
-    );
-    if (index >= 0) used.add(index);
-  });
-  return used;
 }
 
 function callKind(src, node, seen) {
@@ -2475,12 +2445,14 @@ function helperKind(src, callee, args, seen) {
   // then to zero, so the region is empty and was being certified as
   // anchored. The body's kind is the promise's kind, not the call's.
   if (fn.async) return null;
-  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2), but only
-  // the ones that reach a parameter the body SEARCHES THROUGH (round 8).
-  // A helper's receiver is a parameter and a parameter is exempt from
-  // the stand-in check — sound while the caller is out of sight, and not
-  // when it is in plain view.
-  if (!helperArgumentsSound(src, fn, args, seen)) return null;
+  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2). A
+  // helper's receiver is a parameter and a parameter is exempt from the
+  // stand-in check — sound while the caller is out of sight, and not
+  // when it is in plain view. EVERY argument is asked, since round 12
+  // replaced the five-round attempt to work out which ones a search
+  // reads; see `helperArgumentsSound` for why that was the wrong
+  // question.
+  if (!helperArgumentsSound(src, args, seen)) return null;
   return kindOf(src, fn.body, seen);
 }
 

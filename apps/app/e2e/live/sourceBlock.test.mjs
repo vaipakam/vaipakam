@@ -2268,41 +2268,44 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(later, sliceCallsIn(later).at(-1))).toBe(false);
   });
 
-  // Only the arguments reaching a parameter the helper SEARCHES THROUGH
-  // are inspected. Checking every argument refused ordinary ones — a
-  // numeric search offset is not a stand-in for the source.
-  // The source text arrives from the CALLER here, which is how a drive
-  // is actually handed it — and, since round 10, the only shape that
-  // makes this fixture about what it claims. `const s = f()` would now
-  // be refused for its own reason (the call's return is not established
-  // text), which would have proved nothing about WHICH arguments the
-  // rule judges.
-  it('does not judge arguments the helper never searches through', () => {
+  // A NUMBER cannot carry a finder that lies, so an ordinary search
+  // offset passed alongside the text is accepted. Rounds 8 to 11 reached
+  // this same answer by working out which parameter the helper searched
+  // through; round 12 reaches it by asking what the argument could DO.
+  // The source text arrives from the CALLER, which is how a drive is
+  // actually handed it.
+  it('accepts a numeric search offset passed alongside the text', () => {
     const code =
       "const at = (text, from) => text.indexOf('e', from);\n" +
       'export function region(s) { return s.slice(0, at(s, 1)); }';
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
-  // Round 9. Two more of this PR's own rules reaching past their
-  // question, and two more routes to a value it had claimed to refuse.
-  it('identifies a searched parameter by binding, not by spelling', () => {
-    // A nested function reusing the name is a different binding, and
-    // comparing names blamed the outer parameter for it.
+  // Round 9's case, kept because the ANSWER is still load-bearing even
+  // though the reason changed: a numeric argument cannot hand a helper a
+  // finder, whatever the body does with its parameters. It used to pass
+  // because the walk identified searched parameters by binding rather
+  // than by spelling; there is no such walk now.
+  it('accepts a numeric argument whatever the body does with it', () => {
     const shadowed =
       "const s = f();\nconst at = needle => s.indexOf((needle => needle.indexOf('x'))(s));\n" +
       'const r = s.slice(0, at(1));';
     expect(countsCharacters(shadowed, sliceCallsIn(shadowed).at(-1))).toBe(false);
   });
 
-  it('lets a spread destroy the mapping only from where it appears', () => {
+  // A SPREAD of an array written out hands over its ELEMENTS, so each is
+  // judged on its own. There is no positional mapping left to destroy —
+  // round 12 deleted the targeting this used to guard, and a spread is
+  // now just another way of writing the arguments.
+  it('reads a spread through to the elements it hands over', () => {
     const lead = "const at = (text, from) => text.indexOf('e', from);\n";
-    // After every searched parameter: the first argument is still named.
     const after = lead + 'export function region(s) { return s.slice(0, at(s, ...[1])); }';
     expect(countsCharacters(after, sliceCallsIn(after).at(-1))).toBe(false);
-    // At the searched parameter: nothing can be attributed to it.
     const before = lead + 'export function region(s) { return s.slice(0, at(...[s], 1)); }';
-    expect(countsCharacters(before, sliceCallsIn(before).at(-1))).toBe(true);
+    expect(countsCharacters(before, sliceCallsIn(before).at(-1))).toBe(false);
+    // A spread of something this cannot establish stays refused.
+    const opaque = lead + 'export function region(s) { return s.slice(0, at(...rest())); }';
+    expect(countsCharacters(opaque, sliceCallsIn(opaque).at(-1))).toBe(true);
   });
 
   it('refuses a property read reached through a name, as well as inline', () => {
@@ -2405,20 +2408,74 @@ describe('#2175 — one resolver, three answers', () => {
     expect(sliceCallsIn(code).length).toBeGreaterThan(0);
   });
 
-  it('ignores a finder whose value cannot be the bound handed back', () => {
-    // In the TEST of a conditional: both results are source-relative
-    // however the stand-in answers, so it selects no argument.
+  // ROUND 12 REVERSES THIS, and it is pinned in its new direction rather
+  // than deleted so the reversal is visible. Round 11 established that a
+  // stand-in handed to a helper whose every possible result is
+  // source-relative cannot change the bound, and made that case pass.
+  // Round 12 removed the machinery that could tell — five rounds of
+  // findings on it, each a different route through a helper body — and
+  // asks instead whether an argument could hand over a finder that lies.
+  // A stand-in could, wherever it lands, so both shapes are now refused.
+  //
+  // This is a REDUCTION and is recorded as one: a correct region of this
+  // shape is now refused. It appears nowhere in this tree, and the
+  // direction is the safe one — a refused region, never a certified
+  // window.
+  it('refuses a stand-in argument wherever the helper would use it', () => {
     const test =
       'const s = f();\nconst fake = make();\n' +
       "const at = text => text.indexOf('x') ? s.indexOf('a') : s.indexOf('b');\n" +
       'const r = s.slice(0, at(fake));';
-    expect(countsCharacters(test, sliceCallsIn(test).at(-1))).toBe(false);
-    // In an ARM of one: the stand-in's answer can be the bound.
+    expect(countsCharacters(test, sliceCallsIn(test).at(-1))).toBe(true);
     const arm =
       'const s = f();\nconst fake = make();\n' +
       "const at = text => on ? text.indexOf('x') : s.indexOf('b');\n" +
       'const r = s.slice(0, at(fake));';
     expect(countsCharacters(arm, sliceCallsIn(arm).at(-1))).toBe(true);
+    // Round 12 named a second shape with the same answer: the stand-in's
+    // search supplies only the NEEDLE of an outer source-relative search,
+    // so the bound really is a position. Refused for the same reason —
+    // establishing that would need the tracing this round removed.
+    const needle =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => s.indexOf(text.indexOf('x'));\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(true);
+  });
+
+  // Round 12. Four findings, TWO OF WHICH DISSOLVED rather than being
+  // fixed: the seam they were edges of is gone. See the release note.
+  it('refuses a stand-in forwarded through any number of helpers', () => {
+    const one =
+      "const s = f();\nconst inner = recv => recv.indexOf('end');\n" +
+      'const at = text => inner(text);\n' +
+      'const r = s.slice(0, at({ indexOf: () => 320 }));';
+    expect(countsCharacters(one, sliceCallsIn(one).at(-1))).toBe(true);
+    // Nothing is traced, so a second hop changes nothing.
+    const two =
+      "const s = f();\nconst inner = recv => recv.indexOf('end');\n" +
+      'const mid = t => inner(t);\nconst at = text => mid(text);\n' +
+      'const r = s.slice(0, at({ indexOf: () => 320 }));';
+    expect(countsCharacters(two, sliceCallsIn(two).at(-1))).toBe(true);
+  });
+
+  it('counts a write in a for-of assignment slot as repeating', () => {
+    // The left slot is assigned once per ITERATION, so one iteration's
+    // write is there for the next and the arms are not exclusive across
+    // them. It was absent from the repeated-evaluation table while
+    // present in the may-not-run one.
+    const code =
+      "const s = f();\nlet end = s.indexOf('e'), on = true;\n" +
+      'for ([x = on ? ((on = false), end = 320) : s.slice(0, end)] of [[], []]) {}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  it('keeps an alias valid for a write that precedes its reassignment', () => {
+    const code =
+      'const s = f();\nlet root = globalThis;\n' +
+      'root.String = { raw: String.prototype.slice };\nroot = {};\n' +
+      'const r = String.raw.call(s, 0, 320);';
+    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
   });
 
   // A LITERAL is text only when it is a STRING. A regular expression is

@@ -181,6 +181,44 @@ question in one place, and the accompanying list names only what is
 provably discarded, so anything missing from it is inspected rather than
 skipped — a gap costs a refused region, never a certified one.
 
+And then the round after that removed the thing all three of those rounds
+had been about, which is the most consequential change here and the one
+worth reading if you read only one.
+
+Working out which of a helper's parameters a search actually looks
+through had produced a finding in five consecutive reviews. Each named a
+different route through a helper's body — a nested function reusing a
+name, a function created and never called, a search used only to pick
+between two outcomes, a search feeding another search's starting point, a
+helper handing its value to a second helper. Every one of those findings
+was right, every fix was correct, and not one of them ended the sequence.
+The sixth was going to exist as well.
+
+The question underneath was never which parameter a search reads. It is
+whether an argument could hand the helper a SEARCH THAT LIES — something
+shaped like a text search that answers with a fixed number instead of a
+position. Only an object can carry a method that lies. A piece of text
+can too, in principle, except that its own search is the genuine one.
+Every other simple value — a number, a true or false, nothing at all —
+carries no such method, so a helper handed one fails visibly rather than
+quietly producing a fixed window.
+
+So that is the question now, asked of every argument, with nothing traced
+through anything. It is shorter, it cannot be evaded by passing a value
+through one more helper, and it accepts the ordinary numeric offset that
+five rounds of a widening rule had refused.
+
+Two things are given up, and they are recorded rather than glossed. An
+argument that really is a stand-in, handed to a helper whose every
+possible answer is a genuine landmark regardless, is now refused — the
+previous round had established that case and made it pass. So is one
+whose search only supplies the starting point of an outer genuine search.
+Both were correct regions. Both are refused, because establishing
+otherwise needs exactly the tracing that produced five rounds of findings.
+The cost is a refused region on shapes that appear nowhere in this
+codebase; the direction is the safe one, and the alternative was a rule
+whose edges had no end.
+
 This note ENUMERATES the behaviour changes rather than counting them, and
 that is a correction rather than a preference: a running total beside a
 list is a second place the same fact is recorded, and this one was wrong
