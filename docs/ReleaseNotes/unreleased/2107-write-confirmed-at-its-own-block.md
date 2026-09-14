@@ -98,10 +98,13 @@ deliberately: the list of ways a network call can fail has no end, so the
 short, knowable list is the one worth naming, and anything unfamiliar
 behaves exactly as it did before.
 
-*(The half of this about replies that will not decode was replaced twice
-over the next two rounds and finally stopped being a matter of
-recognition at all — see the last two sections. The half about a call
-being rejected is still exactly this.)*
+*(Neither half of this survived. The part about replies that will not
+decode was replaced twice over the next two rounds and finally stopped
+being a matter of recognition at all; the part about a call being
+rejected was deleted in the round after that, along with the whole idea
+of recognising anything. The last two sections are what replaced them,
+and this is left standing because four failed attempts are the argument
+for the answer that worked.)*
 
 A third suggestion was to prove the reading came from the same chain the
 transaction is on, rather than merely from the same height — two machines
