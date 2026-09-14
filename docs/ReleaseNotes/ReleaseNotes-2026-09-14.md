@@ -1230,14 +1230,21 @@ own count. If the two differ it examines a handful of its records; if they
 agree it still examines one. Where the chain says a loan has ended and the
 record says otherwise, the record is corrected.
 
-That qualification is deliberate and is the one place this check is weakest
-exactly where it is most needed. A service that has been down long enough to
-miss an ending comes back needing several passes to read the blocks it
-slept through, and the comparison waits until that is done — so the records
-this exists to repair are repaired after the catching-up, not during it. The
-alternative is worse rather than better: reading the chain's present state
-while the index is still applying months-old events would have the two
-disagreeing about which moment they describe.
+That qualification is deliberate, and it is the one place this check is
+weakest exactly where it is most needed. Reading old blocks is done in
+bounded passes — two thousand blocks at a time — so a service that has been
+down long enough to miss an ending comes back needing as many passes as the
+gap divides into, and the comparison waits until the last of them. On a
+network producing a block every couple of seconds that is roughly an hour of
+lost time recovered per pass, so a long outage is repaired over many turns
+rather than on the first one. The records this exists to repair are
+therefore repaired after the catching-up, not during it.
+
+The alternative is worse rather than better, which is why it is a
+qualification and not a defect: reading the chain's present state while the
+index is still working through months-old events would have the two
+disagreeing about which moment they describe, and a correction drawn from
+that disagreement could close a position that is genuinely open.
 
 How many chains that covers per tick depends on how the service takes in
 data. As currently configured every chain is serviced on every tick, so the
