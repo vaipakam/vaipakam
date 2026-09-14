@@ -73,10 +73,12 @@ the three kinds of reward value the afternoon's switch had deliberately
 left in the platform's own balance — a delivery's unattributed remainder,
 a quarantined compensation, and a return for a receipt older than
 per-receipt attribution — now move into the address's unclassified
-attribution as they land; every reward packet is recorded, on every
-deployment, under the identity the transport supplies — or, where the
-transport supplies none, under one the platform's own ingress allocates
-in sequence per source — and a receipt is delivered once; and the
+attribution as they land; every reward-budget packet — a delivery, a
+compensation, a stranded return, a recovery-ceremony inflow — is
+recorded, on every deployment, under the identity the transport supplies
+— or, where the transport supplies none, under one the platform's own
+ingress allocates in sequence per source — and a receipt is delivered
+once; and the
 platform's manual pause becomes the migration mode
 the cutover needs, because the receive ingresses are no longer pause-gated
 while every reward consumer still is. The second half — the reconciliation
@@ -1239,7 +1241,8 @@ figure both backing snapshots publish, count only the Diamond-side part of
 the quarantine reservation from now on, so the watcher's exact balance
 relation keeps its meaning without a shape change.
 
-Every value-bearing reward packet is now recorded under an identity the
+Every reward-budget packet — a budget delivery, a compensation, a stranded
+return, a recovery-ceremony inflow — is now recorded under an identity the
 transport itself supplies at delivery — the message id the cross-chain
 adapter passes through to every recipient, which is a change to that
 shared interface, so the adapter and all its recipients are upgraded
@@ -1253,7 +1256,9 @@ describes exactly one delivery. A transport that supplies no identity has
 one allocated in sequence by the platform's own ingress; the receipt a
 delivery creates is bound to the identity. This
 record is what the second part will reconcile against, and it is taken on
-every deployment, activated or not.
+every deployment, activated or not. One value-bearing arrival is not yet
+recorded this way: a planned-surplus repatriation return, which credits
+recycled custody only; #2204 tracks recording it.
 
 The migration mode the design calls for is the platform's own manual
 pause: reward packets still land and are protected while the pause
@@ -1297,10 +1302,12 @@ says a loan has ended and the record says otherwise, the record is
 corrected.
 
 How many chains that covers per tick depends on how the service takes in
-data. As currently configured every chain is serviced on every tick, so the
-check reaches all of them. On the fallback arrangement one chain is taken
-per tick in turn, and the wait before a given chain comes round grows with
-the number of chains. The distinction is stated because it decides how long
+data. As currently configured — the durable-object ingest path — every
+chain is serviced together, but only on every fifth one-minute tick, so
+the check reaches all of them once every five minutes. On the fallback
+arrangement one chain is taken per one-minute tick in turn, and the wait
+before a given chain comes round grows with the number of chains. The
+distinction is stated because it decides how long
 a wrong record can survive, which is the figure an operator would actually
 want.
 
@@ -1521,8 +1528,10 @@ the next one does the work.
 Two answers it treats as neither running nor ended. A record for a loan the
 chain has never heard of — one indexed once from something later undone —
 reads, through the chain's own interface, exactly like a running loan; those
-are now named in the operator's log as unresolvable rather than counted as
-running forever. And a state this build does not recognise, which a newer
+are now named in the operator's log as unresolvable. The row itself is left
+as it is — still counted and published as running until an operator repairs
+it — so what changes is that the condition is visible rather than silent.
+And a state this build does not recognise, which a newer
 deployment could introduce, is named rather than passed over in silence: if
 such a state turns out to be an ending, quietly skipping it would leave the
 record published as open while every check reported perfect health.
@@ -1557,7 +1566,9 @@ message, as set out above.
 
 One failure it survives rather than prevents: if the write for one record
 fails while others in the same turn succeed, the successful ones stand and
-are reported, and the failed one is left exactly as it was for the next turn.
+are reported, and the failed one is left exactly as it was, to be revisited
+when the rotation comes round to it again — a later lap, since the cursor
+has already moved past it, not necessarily the next turn.
 An earlier version threw the whole turn away, which quietly discarded
 corrections that had already been made — and because a corrected record
 leaves the set being checked, nothing would ever have gone back to account
