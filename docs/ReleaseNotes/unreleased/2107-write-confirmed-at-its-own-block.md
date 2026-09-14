@@ -183,6 +183,13 @@ that retries. What remains to be recognised is a single question: did
 the machine answer by rejecting the call? That one has been stable
 throughout and has produced no surprises.
 
+*(Two claims in that paragraph did not hold. "A reply that arrived
+arrived everywhere" is false — the last section explains why — so
+making sense of a reply IS worth trying again, and it is retried now.
+And the single remaining question was itself deleted a round later. The
+split described here is real and stayed; only the reason for it
+changed.)*
+
 The split was checked against the live chain before being trusted:
 reading the two values the two drives actually read, the old way and
 the new way, returns identical results — including for the one that
