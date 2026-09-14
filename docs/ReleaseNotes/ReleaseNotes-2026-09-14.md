@@ -1230,9 +1230,16 @@ exactly what cannot be recovered, so quoting it as one would be the same
 mistake the correction refuses to make.
 
 That is not a cosmetic miscount. Each of those entries is a position the
-platform is telling the world is still open, in the offer book and in
-anything else reading the published list, for a loan that has already
-defaulted or been repaid.
+platform is telling the world is still open, for a loan that has already
+defaulted or been repaid. It is published two ways: as a row in the list of
+running loans the platform serves to anyone reading it, and inside the
+running-loan total, which is what the analytics screen shows a visitor.
+
+Naming those two rather than a general reach is deliberate. An earlier draft
+said the ghosts also appeared in the offer book, and they do not — that
+screen is built from the offer list, which is a different published set and
+was never wrong here. A note about a platform publishing something it cannot
+substantiate is a poor place to overstate which surfaces were affected.
 
 ### What now happens
 
