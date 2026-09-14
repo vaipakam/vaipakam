@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title Deployments
@@ -231,6 +232,10 @@ library Deployments {
     }
 
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
+    /// @notice #1566 slice 4 PR A — optional, non-reverting read of
+    ///         `.rewardCustodyHolder`. Zero on a chain that predates the
+    ///         holder and has not yet run `DeployRewardCustodyHolder`.
+    function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -325,6 +330,11 @@ library Deployments {
     function writeVpfiReturnReceiver(address a)     internal { _writeAddr(".vpfiReturnReceiver",     a); }
     function writeVpfiReturnReceiverImpl(address a) internal { _writeAddr(".vpfiReturnReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
+    /// @notice #1566 slice 4 PR A — the delivered reward custody holder
+    ///         (`RewardCustodyHolder`) bound to this Diamond. Written once by
+    ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
+    ///         (live chains); replaced only by the paused ceremony.
+    function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
@@ -658,24 +668,62 @@ library Deployments {
         );
     }
 
+    /// @dev ONE gate for every artifact write (#1566 slice 4 PR A, Codex #2158
+    ///      r16 P2, r19 P1): a forge dry run (`forge script` without
+    ///      `--broadcast`) writes NOTHING, whichever helper reached here.
+    ///      Foundry evaluates the script and its filesystem cheatcodes before
+    ///      it submits anything, so a write from a dry run records addresses
+    ///      that were never broadcast — an upgrade probe's implementation, a
+    ///      simulated facet. Scripts that skip their writes themselves still
+    ///      do; this is the gate a forgotten one cannot slip past. Checked
+    ///      before the publication marker so a dry run never demands a live
+    ///      publication token either. There is NO switch that widens it — not
+    ///      an environment variable, which a caller's shell or `.env` could
+    ///      carry into every write (Codex #2158 r21 P2); the single real-run
+    ///      exception is {writeRewardCustodyHolderReconciled}, a dedicated
+    ///      writer for one field that a caller invokes on purpose.
+    function _dryRunSkips(string memory jsonKey) private view returns (bool) {
+        if (!CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun)) return false;
+        console.log("Deployments: dry run - NOT writing", jsonKey);
+        return true;
+    }
+
+    /// @dev The ONE artifact write a non-broadcasting step may make: the
+    ///      reward-custody `record()` reconciling `.rewardCustodyHolder` from
+    ///      live chain state once a ceremony has confirmed. That step sends
+    ///      nothing, so forge classifies it as a dry run, yet it IS the real
+    ///      run — this writer alone bypasses the dry-run gate, for this key
+    ///      only, by an explicit call and never by anything an environment
+    ///      could carry (Codex #2158 r19 P1, r21 P2). Every other rule of a
+    ///      write still applies.
+    function writeRewardCustodyHolderReconciled(address a) internal {
+        requireMarkedPublication(".rewardCustodyHolder");
+        _ensureFile();
+        CHEATS.writeJson(CHEATS.toString(a), path(), ".rewardCustodyHolder");
+    }
+
     function _writeAddr(string memory jsonKey, address a) private {
+        if (_dryRunSkips(jsonKey)) return;
         requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(a), path(), jsonKey);
     }
 
     function _writeUint(string memory jsonKey, uint256 v) private {
+        if (_dryRunSkips(jsonKey)) return;
         requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(v), path(), jsonKey);
     }
 
     function _writeBool(string memory jsonKey, bool v) private {
+        if (_dryRunSkips(jsonKey)) return;
         _ensureFile();
         CHEATS.writeJson(v ? "true" : "false", path(), jsonKey);
     }
 
     function _writeString(string memory jsonKey, string memory v) private {
+        if (_dryRunSkips(jsonKey)) return;
         _ensureFile();
         // Manually quote — `vm.writeJson(value, path, key)` accepts a
         // raw JSON fragment. For strings we must wrap in double quotes

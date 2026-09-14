@@ -5901,8 +5901,128 @@ consequences and blast radius, and one of them depends on closure 2's cutover
 apparatus.
 
 **Slice 4 PR A — the holder and the migration writers. Deployable dark: no
-payout, gate or funding path changes behaviour, and nothing can put value
-into the holder yet.**
+payout, gate or funding path changes behaviour, and no protocol writer can
+fund the holder yet (an unsolicited ERC-20 transfer to its public address
+remains possible and shows only as the unattributed remainder — review r5).**
+
+> **LANDED — PR #2158.** `RewardCustodyHolder` (non-upgradeable, immutable
+> `DIAMOND`, four Diamond-gated releases — `release` for an ERC-20,
+> `releaseNative`, `releaseERC721` and `releaseERC1155` for what can be
+> forced or delivered into the address; no receiver hook, so safe NFT
+> transfers into a constructed holder are refused by the token — review
+> r13/r16/r27), `RewardCustodyFacet` (the Diamond
+> CONSTRUCTS its own holders — one-shot bind; a paused replacement that
+> creates the successor, moves the whole balance and flips the pointer in
+> one transaction, verifying BOTH ends of the move — the successor grew and
+> the previous holder was debited by exactly what was released, the one
+> measured move a predecessor recovery goes through as well (review r15) —
+> and reporting any dust already at the predicted address as unattributed
+> rather than refusing; `rebaseArmedFreshPaid`; a read surface incl. the raw
+> received/paid pair that reports an unreadable balance as unknown), the
+> `RewardCustodyRow` enum and FOUR appended storage fields — the holder
+> pointer, the attribution rows, the one-shot rebase guard and the registry
+> of Diamond-constructed holders that authenticates every sweep and recovery
+> (review r13; the count said three until review r15; a three-field NFT
+> inbound pin added at review r29 was withdrawn again at the post-cap
+> review, since a Diamond-as-treasury has no NFT withdrawal path and the NFT
+> sweeps now refuse it). No externally
+> supplied address is ever accepted as a holder (review r3). Two things the
+> review added to this plan: the in-place refresh runs the rebase itself,
+> paused, after the role backfill and before service resumes
+> (`ARMED_FRESH_PAID_TOTAL` or `ARMED_FRESH_REBASE_NO_HISTORY=true`, the
+> seed's refuse-to-default posture), and the rebase refuses a nonzero import
+> — or any import over a nonzero paid OR received counter — on an INACTIVE
+> role, so a detached chain with history on either side keeps its guard open
+> for the re-attachment ceremony rather than closing the door on a deficit
+> (review r5: a pre-role-field chain detached before residual retirement
+> carries `received > 0, paid == 0`). Replacement is run
+> through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
+> the roles, or staged after governance handover (the Pauser Safe's `pause` —
+> ALWAYS executed immediately before the switch, whatever the pause state was
+> at staging, since an auto-pause window can lapse and an authorised unpause
+> can resume service during the Timelock delay — and the Timelock's
+> `replace` calldata written to a ceremony record; NO unpause is pre-authorised — and the direct path does not unpause either,
+> since either could lift an unrelated emergency pause raised meanwhile;
+> then `record()` reconciles the artifact only once the chain reports a new
+> holder bound — and the DIRECT path reconciles the same way, leaving a
+> record for `record()` instead of writing the artifact from its own
+> simulated read, review r9). `DeployRewardCustodyHolder.s.sol` (the
+> live-chain initial bind) has the same direct / `stage()` / `record()`
+> shape through a shared ceremony base, and `redeploy-testnet-inplace.sh` carries
+> `ARMED_FRESH_PAID_TOTAL_<PREFIX>` / `ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX>`
+> per chain with the seed's preflight, and that preflight reads the EXISTING
+> paid counter of every not-yet-rebased chain, refusing one over the pool cap
+> before any broadcast (review r15) and the seed's resulting counter likewise;
+> the wrapper simulates every selected chain's refresh end to end before the
+> first broadcast on any chain — a per-chain validation at simulation time,
+> not a cross-chain guarantee; a later state change refuses that chain before
+> it sends, with earlier chains complete, and the run names the rerun (review
+> r19) — every artifact write refusing a dry run at one gate inside the
+> artifact library, with `record()`'s one reconciliation write the sole
+> exception — a dedicated writer for that field, not an environment switch
+> (review r19, r21),
+> and classifies the bound-holder / artifact relation up front by the one rule
+> the post-refresh bind step applies (review r16). An NFT that reached a holder
+> — a non-safe ERC-721 transfer, or delivery to the predicted address before
+> construction; a constructed holder refuses safe transfers — is recoverable
+> to the treasury from any registered holder (review r16), a single-token
+> recovery reported only once the treasury reads as the owner (review r17); a
+> pending record is accepted by the pre-flight only after the ceremony script's
+> own validation, and a direct run's record names the block it was PREPARED
+> against, never an inclusion block (review r17). Both paused ceremonies —
+> the replacement and the rebase — require the MANUAL pause on chain; an
+> auto-pause window does not qualify, and the in-place refresh proves or sets
+> the manual flag before its migrations (review r18). The pre-flight's holder
+> read fails closed on a transport failure, the loupe alone deciding "not
+> routed" (review r18), and an unexecuted bind record over a holderless chain
+> refuses before any broadcast (review r20). Every release from a holder,
+> foreign assets included, verifies the holder's debit; a replacement record
+> must name the artifact's current holder as its predecessor; and only a
+> Detached refusal of the rebase is a deferral — an Unconfigured chain with
+> history aborts paused (review r22). The bound holder's unattributed
+> remainder has a disposition — an ADMIN sweep to the treasury under the
+> manual pause, bounded by `held - attributed` so no row's custody is ever
+> reachable — and a mid-broadcast failure is reported as a possibly partial
+> refresh, never as "nothing sent" (review r23). The refresh pauses as its
+> FIRST transaction and the pre-flight refuses a stated seed or total unless
+> the chain is already manually paused, so a reconstructed figure is never
+> stale behind a one-shot guard; a deferred rebase is decided from reads and
+> never called into a refusal under broadcast (review r25). Every answer to a
+> due migration, a no-history declaration included, requires the manual
+> pause — read directly from the pause library's slot, so a manual pause
+> beside a watcher window counts — and is pinned to a pause epoch the refresh
+> re-verifies before its first transaction; the native sweep verifies the
+> holder's debit like every other release (review r26). The pause epoch is
+> the pause library's strictly monotonic transition count (a lift-and-reapply
+> inside one block moves it where a timestamp would not), the OPERATOR states
+> the epoch the answer was established at, and the rebase refuses a stale
+> epoch ON CHAIN (`rebaseArmedFreshPaid(total, pauseEpoch)`); the pre-flight
+> also checks the signer's ADMIN_ROLE wherever [4b] will bind, and a chain
+> left paused is reported as such, never as ordinary completion (review r27);
+> the first in-place rollout is two runs — facets only while the live pause
+> code counts no transitions, then the migrations under a pause taken on the
+> new code — and the completion report treats an unreadable pause slot or a
+> live auto-pause window as not live (review r28). The legacy seed carries
+> the pause epoch and requires the manual pause exactly as the rebase does;
+> the refresh always sends pause() first (cuts protected by order; the
+> on-chain cut gate is #2179); and a bootstrap run demands no migration
+> answer (review r29 — the pinned NFT inbound that round also added was
+> withdrawn at the post-cap review; the refusal below is normative). The
+> refresh REMOVES the retired
+> one-argument seed selector (a pinned retired-selector list, verified
+> unrouted through the loupe), and the bootstrap run is described as
+> everything but the two paid-side migrations (review r30). A Diamond that is
+> its own treasury has every ERC-20 the sweeps deliver credited to its tracked
+> treasury balance, and the ERC-721 sweep reads ownership before as well as
+> after the release; the native AND the NFT sweeps refuse a
+> Diamond-as-treasury destination (no claim or withdrawal path there), and a
+> refresh that found the chain live restores service through
+> `AdminFacet.unpauseIfPauseEpoch`, which refuses ON CHAIN unless the
+> transition count shows nothing but the run's own pause — and a watcher's
+> `autoPause` while the manual pause is in force is recorded as a transition
+> rather than swallowed, so that refusal actually fires (post-cap review). Simulations neither create nor erase
+> ceremony records. The row invariants are NOT pinned yet: with
+> no writer in PR A they would be vacuous; they land with PR B's writers.
 
 - The holder contract, its ledger and its lifecycle as above, plus its
   deployment-artifact key and `Deployment` field.
@@ -6041,9 +6161,15 @@ PR C.**
 - The migration ceremony per deployment, for BOTH active roles (review r2 —
   the first draft covered Canonical only while the same deploy switches every
   Mirror to holder custody). Canonical (Base Sepolia first): pause →
-  recovery/overage and recycled reconciliations above → `rebaseArmedFreshPaid(P)`
-  → verify `received == paid` → bind the holder as the custody source → unpause
-  → fund forward through `fundRewardPool`. Mirror: pause → the same
+  recovery/overage and recycled reconciliations above → VERIFY the paid-side
+  baseline PR A already installed (`armedFreshPaidRebased()` true and
+  `received == paid` through `armedFreshLedger()`; review r7 — a fresh
+  deploy consumes the one-shot at deploy and an active-role in-place refresh
+  runs it itself, so calling `rebaseArmedFreshPaid(P)` here would revert
+  `ArmedFreshPaidAlreadyRebased`); the call itself is reserved for a chain
+  whose refresh DEFERRED it (inactive role with history, now re-attached
+  under the active role) → switch custody reads to the holder PR A bound →
+  unpause → fund forward through `fundRewardPool`. Mirror: pause → the same
   recovery/overage and recycled reconciliations → read the historical
   `received − paid`: zero is recorded as a verified-zero position; a positive
   gap is dispositioned per §5c's mirror bootstrap rule with the two
@@ -6051,7 +6177,13 @@ PR C.**
   the recorded gap, touching no `received` counter) or an atomic write-down
   of the imported ledger figures to what the holder backs — so no Mirror
   binds the holder with ghost headroom or with previously funded claims
-  refused → bind → unpause. No deployed Mirror carries a non-zero ledger
+  refused → verify ROLE-BRANCHED (review r8): a Mirror does NOT require
+  `received == paid` — its remaining `received − paid` is expected and must
+  reconcile to the holder position just credited or written down (a
+  custody-only credit changes no `received` counter) — while
+  `armedFreshPaidRebased()` must be true, the deferred rebase having run
+  under the now-active role if the refresh deferred it → switch custody
+  reads to the holder PR A bound → unpause. No deployed Mirror carries a non-zero ledger
   today, so each ceremony is expected to record a verified zero; the rule is
   stated so the ceremony cannot be skipped on that expectation.
 - Tests: a canonical claim is refused with nothing funded and pays once

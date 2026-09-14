@@ -81,6 +81,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -665,7 +666,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](48);
+        selectors = new bytes4[](49);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -721,6 +722,7 @@ contract HelperTest {
         selectors[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
         selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
         return selectors;
     }
 
@@ -2331,6 +2333,32 @@ contract HelperTest {
         // #1662 r7 - the one-shot attribution watermark.
         selectors[13] =
             RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
+    }
+
+    /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side
+    /// rebase. Mirrors `DeployDiamond._getRewardCustodySelectors`.
+    function getRewardCustodyFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](16);
+        selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
+        selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
+        selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
+        selectors[3] = RewardCustodyFacet.rewardCustodyHolder.selector;
+        selectors[4] = RewardCustodyFacet.armedFreshPaidRebased.selector;
+        selectors[5] = RewardCustodyFacet.rewardCustodyRow.selector;
+        selectors[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
+        selectors[7] = RewardCustodyFacet.armedFreshLedger.selector;
+        selectors[8] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
+        selectors[9] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
+        selectors[10] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
+        selectors[11] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
+        selectors[12] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
+        selectors[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
+        selectors[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
+        selectors[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

@@ -219,6 +219,158 @@ interface IVaipakamErrors {
     /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
     ///         second call would double-charge the bound and strand funding.
     error ArmedFreshPaidAlreadySeeded();
+
+    /// @notice #1566 slice 4 PR A — the one-shot paid-side rebase
+    ///         (`rebaseArmedFreshPaid`) has already run on this chain.
+    /// @dev    One-shot because it installs an ABSOLUTE figure and, on the
+    ///         canonical chain, resets `received` to it: a second call could
+    ///         only lower delivered headroom that has since been earned.
+    error ArmedFreshPaidAlreadyRebased();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r11 P1) — the reconstructed
+    ///         paid total offered to the one-shot rebase exceeds the
+    ///         interaction pool's lifetime cap. No honest history can be
+    ///         larger than everything that can ever be rewarded, and a
+    ///         mistyped value would be installed irreversibly — as `paid`,
+    ///         and on the canonical chain as `received` — with no way left
+    ///         to lower it.
+    /// @param total The total offered.
+    /// @param cap   The pool cap it must not exceed.
+    error ArmedFreshRebaseTotalExceedsCap(uint256 total, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P1) — the additive P1-b
+    ///         seed would push the paid counter above the interaction pool's
+    ///         lifetime cap. The seed is the one writer that could install an
+    ///         impossible paid figure ahead of the rebase; bounding it keeps
+    ///         `paid` inside what can ever be rewarded.
+    /// @param resulting The paid counter the seed would produce.
+    /// @param cap       The pool cap it must not exceed.
+    error ArmedFreshSeedExceedsCap(uint256 resulting, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P2) — the address offered
+    ///         to a custody sweep is not a holder this Diamond CONSTRUCTED.
+    ///         Every holder the Diamond creates (the first and every
+    ///         successor) is registered at construction; a getter an
+    ///         arbitrary contract could imitate is never consulted.
+    /// @param holder The address offered.
+    error RewardCustodyHolderNotConstructedHere(address holder);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
+    ///         rebase was called on an inactive reward role (`Unconfigured`
+    ///         or `Detached`) on a chain that is not history-free: something
+    ///         to import, or something already on the paid OR received side.
+    ///         The role decides whether the received-side baseline is
+    ///         installed, so a one-shot run before the role is known would
+    ///         close the door on state the later role needs levelled. Only a
+    ///         chain with all three at zero may consume the guard while
+    ///         inactive — the fresh-deploy case.
+    /// @param role           The resolved role ordinal.
+    /// @param total          The total offered.
+    /// @param paidBefore     The paid counter as found.
+    /// @param receivedBefore The received counter as found.
+    error ArmedFreshRebaseRequiresActiveRole(uint8 role, uint256 total, uint256 paidBefore, uint256 receivedBefore);
+    /// @notice #1566 slice 4 PR A — the custody holder is already bound;
+    ///         binding is one-shot and changes only through the paused
+    ///         replacement ceremony.
+    error RewardCustodyHolderAlreadyBound();
+    /// @notice #1566 slice 4 PR A — no custody holder is bound yet.
+    error RewardCustodyHolderNotBound();
+    /// @notice #1566 slice 4 PR A — the Diamond has no VPFI token configured,
+    ///         so the replacement ceremony cannot read or move a custody
+    ///         balance; it refuses rather than flip a pointer away from a
+    ///         balance it cannot see.
+    error RewardCustodyTokenUnset();
+    /// @notice #1566 slice 4 PR A — the successor's balance did not grow by
+    ///         exactly the amount released from the old holder, so the
+    ///         ledger would describe a custody the successor does not hold.
+    ///         Growth, not the starting balance: value already sitting at
+    ///         the predicted successor address is reported, never refused.
+    /// @param expected What was released (the old holder's whole balance at
+    ///                 a replacement; the requested amount at a recovery).
+    /// @param delta    What the destination's balance actually grew by.
+    error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r12 P2, r15 P2) — after a
+    ///         release the SOURCE holder was not debited by exactly what was
+    ///         released. Raised by the one measured move every
+    ///         holder-to-holder transfer of the configured VPFI goes through:
+    ///         the replacement (whose source must end empty) and the
+    ///         predecessor recovery. A token that credits the destination
+    ///         without debiting the source would otherwise pass the growth
+    ///         check and, at a replacement, leave VPFI abandoned at an
+    ///         address the Diamond no longer points at (the foreign-token
+    ///         sweep refuses the configured VPFI, so nothing could reach it);
+    ///         at a recovery, report a move that moved nothing and could be
+    ///         repeated against a balance that never leaves.
+    /// @param source   The holder released from.
+    /// @param expected What was released.
+    /// @param debited  What the source's balance actually fell by (zero when
+    ///                 it did not fall).
+    error RewardCustodySourceNotDebited(address source, uint256 expected, uint256 debited);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r17 P2) — after the ERC-721
+    ///         release the treasury does not own the token. A non-conforming
+    ///         token, or a proxy upgraded into an implementation whose
+    ///         transfer returns without moving anything, would otherwise
+    ///         leave the NFT stranded in the holder behind a "recovered"
+    ///         event.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token that did not move.
+    /// @param owner   Who the token reports as its owner after the release.
+    error RewardCustodyErc721NotDelivered(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r23 P2) — the unattributed
+    ///         sweep asked for more configured VPFI than the bound holder
+    ///         holds beyond what the ledger rows describe. Attributed custody
+    ///         is never reachable this way.
+    /// @param requested    The amount asked for.
+    /// @param unattributed The remainder no row describes (held minus
+    ///                     attributed) at the time of the call.
+    error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
+    ///         with a pause epoch that is not the live one: the figure was
+    ///         established under a different pause (or none), and a payout in
+    ///         between may be missing from it.
+    /// @param stated The pause epoch the caller established the figure at.
+    /// @param live   The pause library's current transition count.
+    error ArmedFreshRebaseStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r29 P1) — the seed's twin of
+    ///         the rebase's stale-epoch refusal.
+    /// @param stated The pause epoch the caller established the figure at.
+    /// @param live   The pause library's current transition count.
+    error ArmedFreshSeedStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the ERC-721
+    ///         sweep was asked to recover a token the named holder does not
+    ///         own, so there is nothing to recover from it.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token.
+    /// @param owner   Who the token reports as its owner.
+    error RewardCustodyErc721NotAtHolder(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the native sweep
+    ///         was asked to deliver into a Diamond that is its own treasury,
+    ///         which has no tracked native balance and no native claim path;
+    ///         the currency would be stranded in the raw balance.
+    error RewardCustodyNativeToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — an NFT sweep was
+    ///         asked to deliver into a Diamond that is its own treasury, which
+    ///         has no NFT withdrawal path; the token would be stranded there.
+    error RewardCustodyNftToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P1) — a conditional
+    ///         unpause found the pause epoch moved since the caller observed
+    ///         it: someone else paused or unpaused in between, and this
+    ///         unpause must not clear that.
+    /// @param expected The transition count the caller expected.
+    /// @param live     The current transition count.
+    error PauseEpochMoved(uint64 expected, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
+    ///         sweep was asked to move the configured VPFI token. VPFI in a
+    ///         holder IS the custody the attribution ledger describes and
+    ///         leaves only through the reward outflows; the sweep is for
+    ///         everything else.
+    error RewardCustodySweepIsVpfi();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r14 P2) — the VPFI recovery
+    ///         from a predecessor was pointed at the CURRENTLY bound holder.
+    ///         What the bound holder holds IS the custody; only a retired
+    ///         predecessor (proven empty when its pointer was retired) can
+    ///         carry unattributed VPFI to bring back.
+    /// @param holder The address offered, which is the bound holder.
+    error RewardCustodyRecoverTargetsBoundHolder(address holder);
+    /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
+    ///         to deliver to and none is configured.
+    error RewardCustodyTreasuryUnset();
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that

@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
@@ -1452,17 +1452,37 @@ contract RewardReporterFacet is
      *         migration-capable writers the design specifies for a chain
      *         mid-flight (received-side import, `paid = max(existing,
      *         reconciled)`) arrive with the second closure-2 PR.
-     * @param  amount Fresh reward value already paid out of delivered
-     *                funding before this upgrade, any vintage.
+     * @param  amount     Fresh reward value already paid out of delivered
+     *                    funding before this upgrade, any vintage.
+     * @param  pauseEpoch The pause epoch — the pause library's transition
+     *                    count — at which the caller established `amount`
+     *                    under the MANUAL pause (#1566 slice 4 PR A, Codex
+     *                    #2158 r29 P1). The seed is as irreversible as the
+     *                    rebase and is bound to its pause the same way: it
+     *                    requires the manual pause and refuses a stated epoch
+     *                    that is no longer the live one, so a figure a payout
+     *                    may have overtaken can never be sealed.
      */
-    function seedArmedFreshPaid(uint256 amount)
+    function seedArmedFreshPaid(uint256 amount, uint64 pauseEpoch)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
+        LibPausable.requireManuallyPaused();
+        uint64 liveEpoch = LibPausable.pauseTransitions();
+        if (pauseEpoch != liveEpoch) {
+            revert IVaipakamErrors.ArmedFreshSeedStalePauseEpoch(pauseEpoch, liveEpoch);
+        }
+        // #1566 slice 4 PR A (Codex #2158 r13 P1) — bounded to the pool cap,
+        // as the rebase is: this is the one writer that could install an
+        // impossible paid figure ahead of it.
+        uint256 resulting = s.rewardBudgetArmedFreshPaid + amount;
+        if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert IVaipakamErrors.ArmedFreshSeedExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        }
         s.armedFreshPaidSeeded = true;
-        s.rewardBudgetArmedFreshPaid += amount;
+        s.rewardBudgetArmedFreshPaid = resulting;
         emit ArmedFreshPaidSeeded(amount);
     }
 

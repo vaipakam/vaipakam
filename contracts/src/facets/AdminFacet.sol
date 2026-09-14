@@ -811,6 +811,22 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         LibPausable.unpause();
     }
 
+    /// @notice Lift the pause ONLY if the pause epoch — the pause library's
+    ///         transition count — still equals `expectedEpoch`.
+    /// @dev UNPAUSER_ROLE. For a scripted run that paused a live Diamond and
+    ///      means to restore it: the run passes the count it expects right
+    ///      after its own pause, so an incident pause a watcher or a Pauser
+    ///      raised meanwhile — which moves the count — makes THIS
+    ///      transaction revert on chain, whatever a simulation decided to
+    ///      put on the broadcast list (#1566 slice 4 PR A, Codex #2158
+    ///      post-cap P1). The Diamond then stays paused for a fresh decision.
+    /// @param expectedEpoch The transition count the caller expects to find.
+    function unpauseIfPauseEpoch(uint64 expectedEpoch) external onlyRole(LibAccessControl.UNPAUSER_ROLE) {
+        uint64 live = LibPausable.pauseTransitions();
+        if (live != expectedEpoch) revert IVaipakamErrors.PauseEpochMoved(expectedEpoch, live);
+        LibPausable.unpause();
+    }
+
     /// @notice Returns whether the protocol is currently paused.
     /// @return True iff a {pause} call is currently in effect, OR an
     ///         auto-pause window is still active.

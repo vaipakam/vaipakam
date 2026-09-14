@@ -14,6 +14,8 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
@@ -108,6 +110,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
+    }
+
+    /// @dev The live pause epoch, as the deploy tooling reads it.
+    function _pauseEpoch() internal view returns (uint64 transitions) {
+        (,,, transitions) =
+            LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -671,7 +679,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (, uint256 beforeSeed) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(beforeSeed, 1_000 ether, "LIVE: unseeded reads fully available");
 
-        _rep().seedArmedFreshPaid(400 ether);
+        AdminFacet(address(diamond)).pause(); // the seed is bound to the manual pause (Codex #2158 r29 P1)
+        _rep().seedArmedFreshPaid(400 ether, _pauseEpoch());
 
         (uint256 paid, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(paid, 400 ether, "the seed lands on the paid side");
@@ -679,7 +688,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // One-shot: a second call must refuse rather than add again.
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        _rep().seedArmedFreshPaid(1 ether);
+        _rep().seedArmedFreshPaid(1 ether, _pauseEpoch());
 
         (, uint256 after_) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(after_, 600 ether, "a refused re-seed changes nothing");
