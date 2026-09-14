@@ -799,8 +799,10 @@ table four Workers read.
 **What it does not mean.** The pass does not treat these rows as confirmed
 running, which was the original defect: before #2190 an orphaned row read as a
 healthy active loan on every pass forever, and the count disagreement it caused
-was silent. It is named, with the loan ids, WHENEVER THE ROTATION EXAMINES IT — not on
-every tick. The pass looks at one or three rows a turn, so on a larger live
+was silent. It is named, with the loan ids, WHENEVER THE ROTATION EXAMINES IT AND THE
+PASS FINISHES — not on every tick. (The second qualifier is #2203: a pass
+that fails its cursor write discards every diagnostic it collected, so a row
+can be examined, correctly identified as unresolvable, and still not named.) The pass looks at one or three rows a turn, so on a larger live
 set a known orphan can go unmentioned for most of a lap. The gap is that
 naming it does not stop it being published, and that the naming itself is
 periodic rather than continuous.
@@ -817,7 +819,7 @@ the change that introduced the intent.
 
 | Intent, as the spec states it | Where the code falls short | Tracked |
 | --- | --- | --- |
-| *"The chain state a correction relies on must therefore be read at a point the chain treats as settled, never at whatever the source last saw and never at a point derived from how far the index itself has read."* | The scan asks the source for its settled point and, when the source does not understand the question, falls back to a fixed step back from the latest block. That is derived from what the source last saw — the thing the sentence forbids — and it is a heuristic finality margin rather than the chain's own statement. Against a reorganisation deeper than the margin it can report an ending that later disappears. | #2201 |
+| *"The chain state a correction relies on must therefore be read at a point the chain treats as settled, never at whatever the source last saw and never at a point derived from how far the index itself has read."* | The scan asks the source for its settled point and falls back to a fixed step back from the latest block whenever that request FAILS FOR ANY REASON — the `catch` is unconditional, so a timeout or a momentary error from a source that normally answers takes it just as an old node does. That is derived from what the source last saw — the thing the sentence forbids — and it is a heuristic finality margin rather than the chain's own statement. Against a reorganisation deeper than the margin it can report an ending that later disappears. | #2201 |
 
 **BOTH consumers are exposed, and an earlier version of this entry said
 otherwise.** It claimed the ordinary scan self-corrects — cursor re-read,

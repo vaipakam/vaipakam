@@ -1585,13 +1585,16 @@ the surfaces would still contradict each other, and the remaining ghost
 would be harder to notice because the obvious disagreement had gone. The
 repair is the part that has to land first.
 
-Closes #2101. Four follow-ups carry what deliberately did not land here:
+Closes #2101. Five follow-ups carry what deliberately did not land here,
+two of which predate this change and were found by documenting it:
 #2194 (a subrequest overrun on the fallback ingest arrangement that
 predates this change), #2195 (the participation and lifecycle records a
 correction does not yet write, and a source for who HELD a position that no
 longer exists), #2196 (making a correction's live announcement survive the
 service dying between the write and the sending) and #2197 (a record state
 for a row the chain has never heard of, so it can stop being published as
-running). The last is recorded in the code-versus-docs audit rather than
-resolved by editing the specification.
+running) and #2201 (a settled point that is guessed rather than asked for
+when the question fails, which can leave a permanently wrong record on
+either the reading or the correction). The last two are recorded in the
+code-versus-docs audit rather than resolved by editing the specification.
 <!-- assembled-fragment: 2101-loan-status-reconciliation.md sha256=2e0dd532484d4a9591652908ad99907aae6bd1b6563ac327be4f8d880b66d99a -->

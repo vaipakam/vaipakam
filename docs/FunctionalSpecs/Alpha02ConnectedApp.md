@@ -205,10 +205,12 @@ The app uses chain reads and indexed reads for different jobs.
   data-source warning rather than a confident empty list.
 - Indexed lifecycle status must not drift from the chain's indefinitely.
   A loan's ending is learned from the event announcing it, and an
-  announcement missed while ingestion was down, throttled, or further
-  behind than it is willing to scan back over is missed for good —
-  resuming ingestion restores the reading position, not the records
-  skipped while it was behind. So the index re-examines what it believes
+  announcement the platform does not see is missed for good — resuming
+  ingestion restores the reading position, not the records already behind
+  it. The platform does not assert WHY an announcement goes unseen: the
+  reading survives being stopped, being refused, and falling a long way
+  behind, so naming those as the cause would claim something it has not
+  established. So the index re-examines what it believes
   to be running against the chain on a continuing rotation, and corrects
   a record the chain says has ended. It keeps re-examining even while the
   totals agree, because one missed ending and one missed beginning leave
