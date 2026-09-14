@@ -1403,8 +1403,8 @@ try {
         // postAttempted && !settled: CLEANUP-UNKNOWN already recorded above.
       } else {
         const stillLive = [];
-        // Ids whose cancel MINED SUCCESSFULLY but whose effect no node
-        // would confirm (#2107). Deliberately not `stillLive`: a
+        // Ids whose cancel MINED SUCCESSFULLY and whose effect no
+        // attempt could confirm (#2107). Deliberately not `stillLive`: a
         // successful `cancelOffer` receipt is evidence the escrow was
         // released, so calling these live would be as wrong as calling
         // them clean. They are their own list precisely so the sweep

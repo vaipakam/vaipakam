@@ -2064,7 +2064,7 @@ try {
           );
         } else if (ledger.unconfirmed) {
           // A cancel from step 6 is on chain with status success, and
-          // no node will confirm its effect. Sending a SECOND
+          // no attempt could confirm its effect. Sending a SECOND
           // cancelSignedOffer here would spend gas on a revocation that
           // has already happened — the same waste the nonce-settle gate
           // above exists to avoid — and would likely revert, which this
