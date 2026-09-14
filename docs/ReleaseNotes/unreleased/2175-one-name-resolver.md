@@ -287,6 +287,44 @@ which is true only of the three that may decline to assign at all. It
 hands back what it computed, and that is a simple value whatever it was
 computed from.
 
+And then the check itself was removed, along with an older one it turned
+out to be a second copy of. This is the third such removal here, and the
+one that names the pattern rather than being another instance of it.
+
+Both checks were answering the same question: has this file replaced
+something the language provides. Neither could. Six reviews each found
+another way to write the replacement — a key computed rather than
+spelled, three different standard functions that do it without an
+assignment, a name taken apart from a list, and several pieces of
+machinery that reach the same end without naming the thing they replace.
+A check over a list with no end is not a weaker check. It reports a
+certainty it does not have, which on something whose entire job is
+refusing unearned certainty is worse than admitting the limit.
+
+It was also never the danger. This guard exists to stop somebody writing
+a fixed-length window by mistake, and nobody rewrites the language's own
+machinery in a browser test by accident.
+
+So the assumption is now written down where the reasoning lives, and the
+suite checks it against the real files in the forms a person might
+plausibly reach for. Best effort is the right standard there and was the
+wrong standard inside the reasoning: a form the suite misses means nobody
+noticed something strange in our own files, while a form the reasoning
+missed meant a region certified as correct that was not.
+
+The check in the suite is deliberately narrower than "no prototypes
+touched". One of the drives legitimately replaces a browser method on the
+page it is driving, which has nothing to do with the searches this
+reasons about, and a rule that objected to it would be objecting to
+correct work — the failure this whole family of guards exists to avoid.
+
+One finding from that review is fixed rather than removed. A name created
+afresh on each pass of a loop cannot be affected by a later pass, so
+ordinary before-and-after reasoning holds within one pass; the rule had
+been discounting every loop unconditionally. Freshness depends on how the
+name was declared as well as where, since the older form of declaration
+is written inside the loop and still outlives it.
+
 This note ENUMERATES the behaviour changes rather than counting them, and
 that is a correction rather than a preference: a running total beside a
 list is a second place the same fact is recorded, and this one was wrong

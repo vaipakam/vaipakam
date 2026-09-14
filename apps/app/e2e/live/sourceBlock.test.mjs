@@ -405,6 +405,72 @@ describe('#2144 — no source region is bounded by a character count', () => {
     .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
     .sort();
 
+  // EVERY live file, not only the suites: the assumption below is about
+  // the code the guard reads, and it reads drives as well as tests.
+  // Block comments as well as line comments: this module's own header
+  // discusses the very forms below, and a scan that reads prose reports
+  // the documentation as the violation.
+  const stripComments = (text) => stripLineComments(text).replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const allLiveFiles = () =>
+    fs
+      .readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
+      .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
+      .filter((rel) => rel !== 'sourceBlock.test.mjs')
+      .sort();
+
+  // THE ASSUMPTION THE MODULE STATES, ASSERTED OVER THE REAL FILES.
+  //
+  // `sourceBlock.mjs` reads each file's own text to decide what a value
+  // is, which holds only while the language behaves as written. It used
+  // to CHECK that — first for a replaced global, then for a written
+  // prototype — and both checks were deleted at round 15 of #2175,
+  // because "has this file replaced something the language provides" has
+  // no syntactic answer and six review rounds each produced another
+  // spelling of it.
+  //
+  // So it is asserted HERE instead, and the change of place is the whole
+  // point. Best-effort is appropriate in this assertion and was not
+  // appropriate inside the analyser: a form this misses means nobody
+  // noticed something bizarre in our OWN drive files, while a form the
+  // analyser missed meant a region certified as anchored that is not.
+  // These are the forms a person might actually reach for, not a claim
+  // to have enumerated the language.
+  it('no live file rewrites the machinery the guard assumes', () => {
+    // Scoped to the machinery the guard's REASONING depends on — text
+    // and array searches, iteration, coercion — and not to prototypes in
+    // general. `live-position-observe.mjs` patches
+    // `Element.prototype.scrollIntoView` for the page it drives, which
+    // is a legitimate thing for a drive to do and touches nothing this
+    // module reasons about. A rule that refused it would be refusing
+    // correct work, which is the failure this whole family exists to
+    // avoid.
+    const GUARDED = 'String|Array|Object|Number|Boolean|Function';
+    const suspect = [
+      [new RegExp(`(${GUARDED})\\.prototype\\s*(\\.\\w+|\\[[^\\]]*\\])\\s*=[^=]`), 'writes a built-in prototype'],
+      [new RegExp(`Object\\.(defineProperty|defineProperties|assign)\\s*\\(\\s*(${GUARDED})\\.prototype`), 'mutates a built-in prototype through the Object API'],
+      [new RegExp(`Reflect\\.(set|defineProperty)\\s*\\(\\s*(${GUARDED})\\.prototype`), 'mutates a built-in prototype through Reflect'],
+      [/Object\.setPrototypeOf\s*\(/, 'changes an object\'s prototype'],
+      [/__proto__\s*=/, 'writes a prototype through __proto__'],
+      [/Symbol\.(iterator|toPrimitive)\s*\]\s*=/, 'replaces a coercion or iteration hook'],
+      [/new\s+Proxy\s*\(/, 'stands a Proxy in for a real value'],
+    ];
+    const found = [];
+    for (const rel of allLiveFiles()) {
+      const body = stripComments(fs.readFileSync(path.join(dir, rel), 'utf8'));
+      for (const [re, why] of suspect) {
+        if (re.test(body)) found.push(`${rel} — ${why}`);
+      }
+    }
+    expect(
+      found,
+      'a live file rewrites the language the source guard assumes is intact; ' +
+        'see the assumption stated in sourceBlock.mjs. Either write it another ' +
+        'way, or the guard cannot reason about that file at all',
+    ).toEqual([]);
+  });
+
   const MARKER = 'not-a-source-region';
 
   // A bound is a CHARACTER COUNT unless it is recognisably an ANCHOR.
@@ -2185,19 +2251,6 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
-  // "Unbound" means declared elsewhere and beyond reach — which stops
-  // being true the moment this file writes it. Assigning to an
-  // undeclared name creates no binding, so every reference still reads
-  // as global while the built-in has been replaced outright.
-  it('refuses a built-in this file has written over', () => {
-    const written =
-      "const s = f();\nconst start = s.indexOf('a');\n" +
-      'String = { raw: String.prototype.slice };\n' +
-      'const r = String.raw.call(s, start, start + 320);';
-    expect(sliceCallsIn(written).length).toBeGreaterThan(0);
-    // …and one nobody has touched is still not a narrowing.
-    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
-  });
 
   // Round 7. Two of these reverse tightenings this PR itself introduced
   // one and two rounds earlier — both were rules reaching one step past
@@ -2237,21 +2290,6 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
-  // Round 8. Both of the rules this PR added for writes were wrong in
-  // BOTH directions — too strict where the write could not reach the
-  // use, too loose where the write was shaped differently — and the
-  // reaching-write reasoning every other rule here uses answers both.
-  it('asks whether a write can reach the use, not merely whether one exists', () => {
-    // Globals: a write AFTER the use cannot have affected it…
-    expect(sliceCallsIn("const s = f();\nconst t = String.raw`x`;\nString = {};")).toEqual([]);
-    // …a write through a PATTERN counts just as a plain one does…
-    const destructured =
-      'const s = f();\n[String] = [{ raw: String.prototype.slice }];\n' +
-      'const r = String.raw.call(s, 0, 320);';
-    expect(sliceCallsIn(destructured).length).toBeGreaterThan(0);
-    // …and a local sharing the spelling is still not the global.
-    expect(sliceCallsIn('function f() { let String; String = {}; }\nconst t = String.raw`x`;')).toEqual([]);
-  });
 
   it('asks which definitions can supply the value AT the use', () => {
     // A loop target supplies without an initialiser, so the value no
@@ -2317,12 +2355,6 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
-  it('sees a built-in replaced through the global object', () => {
-    const code =
-      'const s = f();\nglobalThis.String = { raw: String.prototype.slice };\n' +
-      'const r = String.raw.call(s, 0, 320);';
-    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
-  });
 
   // Round 10. Four more findings, and three of them are the SAME two
   // mistakes this PR has now been shown four times each: a rule applied
@@ -2339,13 +2371,6 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
-  it('sees a built-in replaced through an alias of the global object', () => {
-    const code =
-      'const s = f();\nconst root = globalThis;\n' +
-      'root.String = { raw: String.prototype.slice };\n' +
-      'const r = String.raw.call(s, 0, 320);';
-    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
-  });
 
   it('ignores a finder inside a closure the helper only creates', () => {
     // The nested arrow is never called, so it selects no argument for
@@ -2399,14 +2424,6 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(once, sliceCallsIn(once).at(-1))).toBe(false);
   });
 
-  it('follows an alias chain to its end rather than to a hop limit', () => {
-    const links = Array.from({ length: 7 }, (_, i) => `const r${i + 1} = r${i};`).join('\n');
-    const code =
-      `const s = f();\nconst r0 = globalThis;\n${links}\n` +
-      'r7.String = { raw: String.prototype.slice };\n' +
-      'const r = String.raw.call(s, 0, 320);';
-    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
-  });
 
   // ROUND 12 REVERSES THIS, and it is pinned in its new direction rather
   // than deleted so the reversal is visible. Round 11 established that a
@@ -2470,30 +2487,7 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
   });
 
-  it('keeps an alias valid for a write that precedes its reassignment', () => {
-    const code =
-      'const s = f();\nlet root = globalThis;\n' +
-      'root.String = { raw: String.prototype.slice };\nroot = {};\n' +
-      'const r = String.raw.call(s, 0, 320);';
-    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
-  });
 
-  // Round 13. Two holes in the closed list round 12 introduced, and the
-  // branch rule missing from the second of its two sites.
-  it('refuses a primitive once this file plants a finder on a prototype', () => {
-    // A primitive is BOXED on property access, so a written prototype
-    // makes `1` answer with a fixed number. Round 12 said flatly that a
-    // number carries no such method; it does if the file gives it one.
-    const planted =
-      'const s = f();\nNumber.prototype.indexOf = () => 320;\n' +
-      "const at = recv => recv.indexOf('end');\nconst r = s.slice(0, at(1));";
-    expect(countsCharacters(planted, sliceCallsIn(planted).at(-1))).toBe(true);
-    // Without one, the ordinary numeric offset is still accepted.
-    const plain =
-      "const at = (text, from) => text.indexOf('e', from);\n" +
-      'export function region(s) { return s.slice(0, at(s, 1)); }';
-    expect(countsCharacters(plain, sliceCallsIn(plain).at(-1))).toBe(false);
-  });
 
   it('judges a primitive by its result, not by its syntax', () => {
     const lead = "const at = (text, from) => text.indexOf('e', from);\n";
@@ -2536,34 +2530,6 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
-  it('refuses everything in a file that rewrites the language', () => {
-    // A prototype write reaches values by routes no classification of
-    // values can cover, so it is asked once, of the file, before any
-    // value is classified.
-    const byAssignment =
-      'const s = f();\nString.prototype.indexOf = () => 320;\n' +
-      "const r = s.slice(0, s.indexOf('e'));";
-    expect(countsCharacters(byAssignment, sliceCallsIn(byAssignment).at(-1))).toBe(true);
-    // …installed through a for-of left-hand side rather than an `=`.
-    const byLoop =
-      'const s = f();\nfor (Number.prototype.indexOf of [() => 320]) {}\n' +
-      "const at = recv => recv.indexOf('e');\nconst r = s.slice(0, at(1));";
-    expect(countsCharacters(byLoop, sliceCallsIn(byLoop).at(-1))).toBe(true);
-    // …reaching a CALLER-PROVIDED value, which is boxed exactly as a
-    // written-out one is.
-    const fromCaller =
-      'String.prototype.indexOf = () => 320;\n' +
-      "const at = recv => recv.indexOf('e');\n" +
-      'export function region(s) { return s.slice(0, at(s)); }';
-    expect(countsCharacters(fromCaller, sliceCallsIn(fromCaller).at(-1))).toBe(true);
-    // …and a replaced ARRAY ITERATOR, which is not about finders at all
-    // and is why this is a question about the file rather than the value.
-    const iterator =
-      'const s = f();\n' +
-      'Array.prototype[Symbol.iterator] = function* () { yield { indexOf: () => 320 }; };\n' +
-      "const at = recv => recv.indexOf('e');\nconst r = s.slice(0, at(...[1]));";
-    expect(countsCharacters(iterator, sliceCallsIn(iterator).at(-1))).toBe(true);
-  });
 
   it('reads an arithmetic compound assignment as the value it computes', () => {
     const lead = "const at = (text, from) => text.indexOf('e', from);\n";
@@ -2581,6 +2547,31 @@ describe('#2175 — one resolver, three answers', () => {
       const code = region(expr);
       expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(true);
     }
+  });
+
+  // Round 15. A loop-local binding is fresh on every pass, so a write in
+  // one iteration reaches neither the same iteration's earlier use nor
+  // the next iteration's new binding.
+  it('keeps ordering for a binding recreated each iteration', () => {
+    const exclusiveArms =
+      "const s = f();\nwhile (next()) { let end = s.indexOf('e');" +
+      ' if (on) { end = 320; } else { var r = s.slice(0, end); } }';
+    expect(countsCharacters(exclusiveArms, sliceCallsIn(exclusiveArms).at(-1))).toBe(false);
+    const writeAfterUse =
+      "const s = f();\nfor (const x of xs) { let end = s.indexOf('e');" +
+      ' const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(writeAfterUse, sliceCallsIn(writeAfterUse).at(-1))).toBe(false);
+    // A `var` is written INSIDE the loop and is still function scoped,
+    // so it is not fresh and the write still reaches.
+    const hoisted =
+      "const s = f();\nfor (const x of xs) { var end = s.indexOf('e');" +
+      ' const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(hoisted, sliceCallsIn(hoisted).at(-1))).toBe(true);
+    // An OUTER binding written in the loop outlives every iteration.
+    const outer =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'for (const x of xs) { const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(outer, sliceCallsIn(outer).at(-1))).toBe(true);
   });
 
   // A LITERAL is text only when it is a STRING. A regular expression is

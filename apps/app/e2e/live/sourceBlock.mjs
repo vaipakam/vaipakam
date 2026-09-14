@@ -37,6 +37,41 @@
  * end" is the question a JavaScript grammar answers, and a hand-rolled
  * scanner is a worse implementation of it every time.
  *
+ * WHAT THIS ASSUMES ABOUT THE ENVIRONMENT, stated because it was twice
+ * built as a check and the check was twice wrong (#2175 rounds 9-15).
+ *
+ * Every rule here reads the file's own text to decide what a value is.
+ * That reasoning holds only while the language behaves as written — so
+ * THIS MODULE ASSUMES THE DRIVE FILES DO NOT REWRITE THE LANGUAGE'S OWN
+ * MACHINERY: no replaced intrinsic, no written prototype, no swapped
+ * iterator or coercion hook, no Proxy standing in for source text.
+ *
+ * It was tempting to CHECK that instead of assuming it, and two rounds
+ * were spent doing so — first for a replaced global, then for a written
+ * prototype. Both were deleted, because "has this file replaced
+ * something the language provides" has no syntactic answer: a computed
+ * key spells it, `Object.defineProperty` and `Reflect.set` and
+ * `Object.setPrototypeOf` each spell it, destructuring spells it, and
+ * `valueOf` / `Symbol.toPrimitive` / a prototype getter / a Proxy reach
+ * the same end without naming a prototype at all. Six review rounds each
+ * produced another spelling. A check over an open set is not a weaker
+ * check — it is a check that REPORTS SOUNDNESS IT DOES NOT HAVE, which
+ * on a guard whose whole job is refusing unearned confidence is worse
+ * than the honest assumption.
+ *
+ * The assumption is also the right shape for the actual threat. This
+ * guard exists to stop an AUTHOR writing `src.slice(start, start + 320)`
+ * by mistake. It was never an adversary model, and nobody reaches for
+ * `Object.defineProperty(String.prototype, …)` in a Playwright drive by
+ * accident.
+ *
+ * What replaces the check is in the SUITE, not here: `sourceBlock.test`
+ * asserts that no file under `e2e/live/**` rewrites machinery, in the
+ * forms it can recognise. Best-effort is appropriate THERE and was not
+ * appropriate here — a miss in the suite means nobody noticed something
+ * bizarre in our own drive files, while a miss here meant a region
+ * certified as anchored that is not.
+ *
  * So the boundaries come from `acorn`. Strings, template holes,
  * comments, regex literals and division all stop being special cases:
  * a node's `start` and `end` are the region, by construction. The
@@ -921,110 +956,6 @@ const UNBOUND = 'unbound';
 const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
 
 /**
- * Follow a name back to the GLOBAL OBJECT it holds, if it holds one.
- *
- * `const root = globalThis; root.String = …` replaces the intrinsic just
- * as directly as writing `globalThis.String` does, so a local binding is
- * not a reason to discard the write — only a reason to follow it.
- *
- * Deliberately NOT `resolutionOf`. Resolving asks whether a name is a
- * global this file writes, and answering that runs the very scan this
- * helper serves; routing the alias through it made the two call each
- * other until the stack ran out (round 10, the second time this cycle
- * has been built — see round 9's note below). This walk reads
- * declarators directly and calls nothing that resolves.
- *
- * It follows only an alias that CANNOT have become something else: a
- * single `const`/`let`/`var` definition, initialised with a bare name,
- * never reassigned. Anything less certain is not an alias, and an
- * uncertain one is reported as no alias at all rather than guessed at.
- */
-function globalObjectAlias(src, variableOf, start, atPos) {
-  // Termination is a VISITED SET on binding identity, not a hop count.
-  // A cap is a guess about how many aliases someone might write, and
-  // round 11 walked past an eight-deep chain to show it: the loop ran
-  // out before it reached the unbound name and reported no alias, so a
-  // replaced built-in went unseen. A chain either reaches an unbound
-  // name or comes back to a binding already on it, and both are
-  // decidable — the same correction as every arbitrary bound this guard
-  // has replaced with a question the tree can answer.
-  const seen = new Set();
-  let cur = start;
-  for (;;) {
-    if (cur?.type !== 'Identifier') return null;
-    const variable = variableOf.get(cur);
-    // Unbound: the name itself is the global object's, or it is not.
-    if (!variable) return GLOBAL_OBJECTS.includes(cur.name) ? cur : null;
-    if (seen.has(variable)) return null;
-    seen.add(variable);
-    const defs = variable.defs;
-    if (defs.length !== 1 || defs[0].type !== 'Variable') return null;
-    // A reassignment only matters if it REACHES the write being judged
-    // (round 12). `let root = globalThis; root.String = replacement;
-    // root = {};` replaces the built-in before the alias is pointed
-    // anywhere else, and refusing on the existence of a later write
-    // discarded that replacement entirely. Asked through the one
-    // write-ordering reader, so the branch-arm and lifetime reasoning
-    // every other rule gets applies here too.
-    const writes = variable.references.filter((r) => r.isWrite() && !r.init).map((r) => r.identifier);
-    if (writeReaches(src, writes, atPos)) return null;
-    const init = defs[0].node?.init;
-    // An unpacked name holds a PROPERTY of the initialiser, not the
-    // initialiser — the same distinction `bindingOf` draws for `const
-    // { end } = …`, applied here so a destructured name cannot be read
-    // as an alias of what it was unpacked from.
-    if (defs[0].node?.id?.type !== 'Identifier') return null;
-    cur = unwrapChain(init);
-  }
-}
-
-function globalWrites(src, name) {
-  const { nodes, variableOf } = astOf(src, 'globalWrites');
-  const out = [];
-  const take = (target) => {
-    for (const id of writtenIdentifiers(target)) {
-      // The write must be to the GLOBAL, not to a local that merely
-      // shares the spelling: `function f() { let String; String = {}; }`
-      // cannot touch the intrinsic. A resolved reference belongs to a
-      // local.
-      if (id.name === name && !variableOf.get(id)) out.push(id);
-    }
-  };
-  // …and THROUGH THE GLOBAL OBJECT, which is the same write by another
-  // route: `globalThis.String = …` replaces the intrinsic exactly as
-  // `String = …` does, and handing a member expression to a pattern
-  // walk yields nothing at all.
-  const throughGlobalObject = (target) => {
-    if (target?.type !== 'MemberExpression') return;
-    const host = unwrapChain(target.object);
-    // Asked of the binding DIRECTLY rather than through `isIntrinsic`,
-    // which resolves — and resolving consults this very check, so the
-    // two called each other until the stack ran out. An unbound name is
-    // the whole question here, and the scope analyser answers it without
-    // anyone having to resolve anything.
-    if (host?.type !== 'Identifier') return;
-    // …and it may be held through a STABLE ALIAS, which `globalObjectAlias`
-    // follows without resolving anything — see its own note for why that
-    // separation is load-bearing rather than stylistic.
-    if (!globalObjectAlias(src, variableOf, host, target.start)) return;
-    if (propertyName(target) === name) out.push(target.property);
-  };
-  for (const n of nodes) {
-    if (n.type === 'AssignmentExpression') {
-      take(n.left);
-      throughGlobalObject(n.left);
-    } else if (n.type === 'UpdateExpression') {
-      take(n.argument);
-      throughGlobalObject(n.argument);
-    } else if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') {
-      take(n.left);
-      throughGlobalObject(n.left);
-    }
-  }
-  return out;
-}
-
-/**
  * Resolving keeps its OWN cycle set, and never takes the caller's.
  *
  * Round 10. Every rule here carries a `seen` set to stop itself
@@ -1047,21 +978,10 @@ function resolutionOf(src, node, seen = new Set()) {
   seen.add(key);
   const bound = bindingOf(src, node);
   if (!bound.found) {
-    // A global THIS FILE WRITES is not the built-in any more. Assigning
-    // to an undeclared name creates no binding, so the scope analyser
-    // reports the reference as global and the name looked untouched —
-    // while `String = { raw: … }` has replaced it outright. Unbound
-    // means "declared elsewhere and beyond reach", which is only true
-    // while nothing here reaches it.
-    // …and it must REACH THIS USE. A write after the use cannot have
-    // affected it, and the same reaching-write reasoning every other
-    // rule here uses answers that — a whole-file scan said the built-in
-    // was untrustworthy at a line that ran before anyone touched it.
-    // Pattern targets count too: `[String] = [...]` writes the global
-    // just as `String = ...` does.
-    if (writeReaches(src, globalWrites(src, node.name), node.start)) {
-      return { state: UNRESOLVED, why: 'a global this file writes', notText: bound.notText };
-    }
+    // Whether this file has REPLACED the global is not asked here — see
+    // the module header's stated assumption. Rounds 9 through 15 each
+    // found another spelling of the replacement this check did not
+    // cover, and the list has no end.
     return { state: UNBOUND, name: node.name, notText: bound.notText };
   }
   if (writeReaches(src, bound.writes, node.start)) {
@@ -1731,8 +1651,30 @@ function oneEvaluation(src, a, b, variable) {
   const hostA = deferredHost(parents, a);
   const hostB = deferredHost(parents, b);
   if (hostA === null && hostB === null) return true;
-  if (hostA !== hostB || hostA === null || LOOPS.has(hostA.type)) return false;
+  if (hostA !== hostB || hostA === null) return false;
+  // A LOOP repeats, so sharing one gives no order — UNLESS the binding
+  // is recreated on each pass, in which case a write in one iteration
+  // cannot reach another and ordinary position order holds within the
+  // one (round 15). `bindingLivesIn` is not enough on its own here: a
+  // `var` in a loop body is written INSIDE it and is still function
+  // scoped, so freshness is the DECLARATION KIND as well as the place.
+  if (LOOPS.has(hostA.type) && !freshEachIteration(variable, hostA)) return false;
   return bindingLivesIn(variable, hostA);
+}
+
+/** Whether the binding is created afresh on each pass of `loop` — block
+ *  scoped AND declared inside it. A `var` is neither, however far inside
+ *  the loop it is written, which is the distinction that makes this a
+ *  separate question from `bindingLivesIn`. */
+function freshEachIteration(variable, loop) {
+  if (!variable || variable.defs.length === 0) return false;
+  return variable.defs.every(
+    (d) =>
+      d.type === 'Variable' &&
+      (d.parent?.kind === 'let' || d.parent?.kind === 'const') &&
+      d.name.start >= loop.start &&
+      d.name.end <= loop.end,
+  );
 }
 
 /** Whether every definition of `variable` sits inside `host`, so the
@@ -1790,7 +1732,7 @@ function writeReaches(src, writes, useAt) {
     const shared =
       useHost !== null &&
       writeHost === useHost &&
-      !LOOPS.has(useHost.type) &&
+      (!LOOPS.has(useHost.type) || freshEachIteration(variableOf.get(w), useHost)) &&
       declaredWithin(src, w, useHost);
     // A write on the OTHER ARM of a branch the use sits in never ran on
     // the way here (round 10): in `if (on) { var text = standIn; } else
@@ -2408,11 +2350,9 @@ function suspectValue(src, node, seen) {
   // ways at two sites is the shape this PR exists to remove.
   //
   // The case where a primitive DOES carry one — this file having written
-  // a prototype — is not asked here at all. Round 13 put that veto in
-  // this function and round 14 found three ways past it, one of them
-  // nothing to do with primitives; it is a fact about the FILE and is
-  // now asked once, of the file, before any value is classified. See
-  // `rewritesLanguageMachinery`.
+  // a prototype — is not asked here, or anywhere. See the module
+  // header's stated assumption for why that is a decision rather than an
+  // oversight.
   if (node.type === 'Literal') return node.regex !== undefined;
   // …and the same value written as an EXPRESSION rather than a literal
   // (round 13 again). `at(s, +1)` and `at(s, 1)` denote the same number,
@@ -2446,79 +2386,6 @@ const PRIMITIVE_RESULTS = new Set([
   'UpdateExpression',
 ]);
 
-/**
- * Whether this file REWRITES THE LANGUAGE'S OWN MACHINERY — a write to
- * any prototype property.
- *
- * ROUND 14, and this REPLACES the round-13 finder-write check rather
- * than extending it, for the reason round 12 replaced the argument
- * targeting: one round produced three separate escapes from that check,
- * and they were not three bugs. A finder installed through a `for…of`
- * left-hand side rather than an assignment. The veto reached only
- * written-out values, not a caller-provided one, though a string
- * parameter is boxed exactly as a literal is. And a replaced
- * `Array.prototype[Symbol.iterator]` making a spread hand over something
- * the array does not contain — which is not about finders at all.
- *
- * That third one is what settles the shape. Once a file may replace the
- * machinery values are read through, the escape is not a property of any
- * value and cannot be closed by classifying values more carefully:
- * `valueOf`, `Symbol.toPrimitive`, a prototype getter and a Proxy are
- * all the same move by other doors, and enumerating them is the open set
- * this guard has twice been caught depending on.
- *
- * So the question is asked ONCE, about the FILE, before any value is
- * classified: has this file written to a prototype at all. If it has,
- * nothing here can be established and every call is unknown. It is
- * deliberately blunt — it does not ask WHICH prototype, or whether the
- * value at hand could reach it, because that is the tracing whose edges
- * have no end.
- *
- * Every syntactic write counts, not just an assignment: a `for…of` or
- * `for…in` left-hand side and a destructuring target plant a method
- * exactly as `=` does. The adjacent global-write scan already reasons
- * this way, and round 14's second finding is that this one did not.
- */
-function rewritesLanguageMachinery(src) {
-  const { nodes } = astOf(src, 'rewritesLanguageMachinery');
-  const hitsAPrototype = (target) => {
-    for (let n = target; n; n = n.object) {
-      if (n.type !== 'MemberExpression') return false;
-      if (propertyName(n) === 'prototype') return true;
-      if (n.object?.type === 'MemberExpression' && propertyName(n.object) === 'prototype') {
-        return true;
-      }
-      if (n.object?.type !== 'MemberExpression') return false;
-    }
-    return false;
-  };
-  const targets = (n) => {
-    if (n.type === 'AssignmentExpression') return [n.left];
-    if (n.type === 'UpdateExpression') return [n.argument];
-    if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') return [n.left];
-    return [];
-  };
-  return nodes.some((n) =>
-    targets(n).some((t) => memberTargetsIn(t).some((m) => hitsAPrototype(m))),
-  );
-}
-
-/** Every MEMBER EXPRESSION a write target assigns into, looking through
- *  destructuring — `[X.prototype.indexOf] = […]` writes one just as
- *  `X.prototype.indexOf = …` does. */
-function memberTargetsIn(target) {
-  const out = [];
-  const walkTarget = (t) => {
-    if (!t) return;
-    if (t.type === 'MemberExpression') out.push(t);
-    else if (t.type === 'ArrayPattern') t.elements.forEach(walkTarget);
-    else if (t.type === 'ObjectPattern') t.properties.forEach((p) => walkTarget(p.value ?? p.argument));
-    else if (t.type === 'AssignmentPattern') walkTarget(t.left);
-    else if (t.type === 'RestElement') walkTarget(t.argument);
-  };
-  walkTarget(target);
-  return out;
-}
 
 /**
  * Whether every argument at a visible call is INCAPABLE OF LYING to the
@@ -2570,13 +2437,6 @@ function helperArgumentsSound(src, args, seen) {
 }
 
 function callKind(src, node, seen) {
-  // Nothing a call returns can be established in a file that has
-  // rewritten the language's own machinery, so this is asked FIRST and
-  // of every call — a direct search as much as a helper. A replaced
-  // `String.prototype.indexOf` makes an ordinary `src.indexOf('x')` lie
-  // just as readily as it makes `at(1)` lie, and round 13's veto sat
-  // inside the argument rule where the direct search never reached it.
-  if (rewritesLanguageMachinery(src)) return null;
   const callee = node.callee;
   // `s.indexOf('x')`. Its ARGUMENTS are not inspected: a number in one
   // selects or offsets the search, and the result is still wherever the
