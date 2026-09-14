@@ -115,7 +115,13 @@ library LibVpfiRecycle {
         // refId is the PERK ID, not a loanId: a perk purchase is not bound to
         // a loan, and the per-user record lives in storage rather than in the
         // event's reference slot.
-        SpendGatedPerk
+        SpendGatedPerk,
+        // #1566 closure 2 cutover PR 2 — CUSTODY-RELOCATION class (append-only
+        // enum): the RECYCLED share of a legacy packet, or of the bootstrap
+        // envelope, classified by the reconciliation epoch. Relocated custody
+        // like {RemittedCustodyRelocation} — Base-funded tokens whose typing
+        // arrived late — never absorption; the same exclusions apply.
+        LegacyReconciliation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -923,10 +929,7 @@ library LibVpfiRecycle {
         //
         // Read BEFORE the bucket write below, or this relocation would be
         // folded into the seed as if it were absorption.
-        if (s.recycleCreditedCumulative == 0) {
-            uint256 cumulative = creditedCumulative(s);
-            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
-        }
+        _seedCreditedCumulative(s);
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
         // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
@@ -937,6 +940,154 @@ library LibVpfiRecycle {
         // is non-zero".
         s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
+    }
+
+    /// @dev The bookkeeping tail of {creditCustodyRelocated} — the seed, the
+    ///      bucket credit, the relocated cumulative, the seeded flag, the
+    ///      event — for the two in-holder forms of #1566 closure 2 cutover
+    ///      PR 2 ({creditCustodyFromUnclassified}, {creditCustodyFundedInHolder}).
+    ///      It is NOT shared with {creditCustodyRelocated} itself, on
+    ///      purpose: that function inlines into `RewardRemittanceFacet` at
+    ///      its EIP-170 budget, and routing it through this helper cost that
+    ///      facet ~300 bytes of its last 700 (viaIR keeps the call). The six
+    ///      writes are the same, in the same order; keep them so.
+    ///      PRECONDITION: the caller has put `amount` of tokens behind the
+    ///      recycled row in this frame.
+    function _bookRelocatedCredit(
+        LibVaipakam.Storage storage s,
+        uint256 refId,
+        uint256 amount,
+        RecycleSource source
+    ) private {
+        (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        // Keeps the day-0 label pre-launch, unlike {credit} above (#1504).
+        // Deliberate, not an oversight: relocation is NOT absorption and
+        // writes no day-keyed accumulator, so the day here is an
+        // informational label on the event rather than an attribution that
+        // feeds `Ā` or the published per-day series. Nothing reads it as a
+        // bucket. Revisit if a consumer ever buckets relocations by day.
+        if (!active) dayId = 0;
+        // #1448 r3 — SEED the stored cumulative from the derived floor
+        // before relocating, on an in-place-upgraded Diamond whose slot is
+        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
+        // for a related reason: while the slot is 0, no counter accounts for
+        // the historical bucket, so an external checker cannot verify the
+        // bucket's composition at all. Seeding at the first relocation makes
+        // that verifiable from then on, instead of leaving a permanent
+        // unverifiable window on exactly the class this exclusion protects.
+        //
+        // Read BEFORE the bucket write below, or this relocation would be
+        // folded into the seed as if it were absorption.
+        _seedCreditedCumulative(s);
+        s.recycleBucket += amount;
+        s.recycleCustodyRelocatedCumulative += amount;
+        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
+        // first recycled event is an arrival is no longer indistinguishable
+        // from an un-seeded upgrade. Deliberately set even when the seed
+        // snapshot above wrote nothing (a genuinely empty chain): what this
+        // records is "recycled accounting has run here", not "the cumulative
+        // is non-zero".
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
+    }
+
+    /// @dev The #1448 r3 seed-before-write idiom, in one place.
+    function _seedCreditedCumulative(LibVaipakam.Storage storage s) private {
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
+    }
+
+    // ─── #1566 closure 2 cutover PR 2 — the bucket side of the epoch ─────────
+
+    /// @notice A recycled share classified out of the holder's `Unclassified`
+    ///         row: the tokens move IN-HOLDER into the recycled row (they
+    ///         were protected there at ingress; a Diamond-side relocation
+    ///         here would move tokens that are not there) and the bucket is
+    ///         credited as relocated custody, exactly as {creditCustodyRelocated}
+    ///         credits an arrival.
+    function creditCustodyFromUnclassified(uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.move(
+            s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Recycled, amount
+        );
+        _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
+    }
+
+    /// @notice The bootstrap envelope's replacement-funded recycled share:
+    ///         the caller pulled the tokens into the holder (delta-checked)
+    ///         in this frame; the recycled row and the bucket are credited
+    ///         as relocated custody, exactly as {creditCustodyRelocated}.
+    function creditCustodyFundedInHolder(uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.credit(s, LibVaipakam.RewardCustodyRow.Recycled, amount, 0);
+        _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
+    }
+
+    /// @notice A reattribution INTO the bucket by a reclassification
+    ///         (fresh → recycled). UNSPENT credit arrives with its tokens
+    ///         (PRECONDITION: the caller moved `amount` into the recycled row
+    ///         in this frame) and raises the bucket; SPENT credit arrives as
+    ///         inherited consumption — the bucket unchanged, `paidOutRecycled`
+    ///         and the recycled sequencing counter both rising by it, so the
+    ///         moved-in credit is spent at its own position and every later
+    ///         entry reads exactly as before. Both count in
+    ///         `recycleReattributedInCumulative`, the composition identity's
+    ///         term for them.
+    function creditBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _seedCreditedCumulative(s);
+        if (spent) {
+            s.paidOutRecycled += amount;
+            s.recycledOutflowSeq += amount;
+        } else {
+            s.recycleBucket += amount;
+        }
+        s.recycleReattributedInCumulative += amount;
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyReattributed(refId, amount, true, spent);
+    }
+
+    /// @notice A reattribution OUT of the bucket by a reclassification
+    ///         (recycled → fresh). UNSPENT credit leaves with its tokens —
+    ///         bounded by the UNCOMMITTED bucket (net of the outstanding
+    ///         commitments and the keeper earmark, the same reservation set
+    ///         {debitRepatriationSurplus} respects; design §5c: "absence of
+    ///         a completed outflow is not proof that the credit is free") —
+    ///         and the caller moves the tokens out of the recycled row in
+    ///         the same frame; SPENT credit leaves as a consumption the fresh
+    ///         side now carries: `paidOutRecycled` gives it back (the
+    ///         headroom aggregate takes the corrective debit), the recycled
+    ///         sequencing counter RETAINED. Credit spent by a surplus
+    ///         REPATRIATION rather than by consumption has no consumption to
+    ///         give back and refuses here (`ReconciliationRecycledConsumedShort`):
+    ///         the fresh side has no ledger that inherits a repatriation, so
+    ///         that value stays attributed where it left from. Both forms
+    ///         count in `recycleReattributedOutCumulative`.
+    function debitBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _seedCreditedCumulative(s);
+        if (spent) {
+            uint256 consumed = s.paidOutRecycled;
+            if (amount > consumed) revert IVaipakamErrors.ReconciliationRecycledConsumedShort(amount, consumed);
+            s.paidOutRecycled = consumed - amount;
+        } else {
+            uint256 bucket = s.recycleBucket;
+            uint256 reserved = s.outstandingCommitRecycled + s.recycleKeeperBudget;
+            uint256 uncommitted = bucket > reserved ? bucket - reserved : 0;
+            if (amount > uncommitted) {
+                revert IVaipakamErrors.ReconciliationExceedsUncommittedBucket(amount, uncommitted);
+            }
+            s.recycleBucket = bucket - amount;
+        }
+        s.recycleReattributedOutCumulative += amount;
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyReattributed(refId, amount, false, spent);
     }
 
     /**
@@ -962,6 +1113,12 @@ library LibVpfiRecycle {
      *         shared {RecycleSource} vocabulary, just on its own channel.
      * @custom:event-category state-change/treasury-mutation
      */
+    /// @notice #1566 closure 2 cutover PR 2 — a reclassification moved
+    ///         attribution into (`intoBucket`) or out of the bucket; `spent`
+    ///         says whether it moved as inherited consumption (no tokens)
+    ///         or as unspent credit (with its tokens, in-holder).
+    /// @custom:event-category state-change/reward-custody
+    event VpfiCustodyReattributed(uint256 indexed refId, uint256 amount, bool intoBucket, bool spent);
     event VpfiCustodyRelocated(
         uint8 indexed source,
         uint256 indexed refId,
@@ -1055,6 +1212,10 @@ library LibVpfiRecycle {
         s.recycleAccountingSeeded = true;
         s.recycleBucket = bucket - amount;
         s.recycleRepatriatedOutCumulative += amount;
+        // #1566 closure 2 cutover PR 2 — the MONOTONE sequencing counter the
+        // reconciliation FIFO reads: every bucket debit advances it, and
+        // nothing ever decrements it.
+        s.recycledOutflowSeq += amount;
         // #1566 slice 4 PR B — the token move is part of the primitive, not
         // adjacent to it in the caller: the surplus leaves the holder's
         // recycled row (measured) on an activated deployment, or the
@@ -1085,6 +1246,12 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled = outstanding - retired;
         s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
+        // #1566 closure 2 cutover PR 2 — the MONOTONE sequencing counter the
+        // reconciliation FIFO reads advances by what actually LEFT the bucket
+        // (the floor above can make a request exceed it), and nothing ever
+        // decrements it — unlike `paidOutRecycled`, which
+        // {restoreReleasedRemit} corrects downward.
+        s.recycledOutflowSeq += bucket > amount ? amount : bucket;
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // As in {creditCustodyRelocated}: an informational label, not an
         // attribution — consumption writes no day-keyed accumulator (#1504).

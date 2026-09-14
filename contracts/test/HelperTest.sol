@@ -82,6 +82,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -2398,6 +2399,27 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
+    /// (mirrors `DeployDiamond._getRewardReconciliationSelectors`).
+    function getRewardReconciliationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](11);
+        selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
+        selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
+        selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
+        selectors[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
+        selectors[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
+        selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        selectors[8] = RewardReconciliationFacet.getSideOutflow.selector;
+        selectors[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

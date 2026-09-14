@@ -6273,7 +6273,10 @@ PR C.**
 > registered buyback receiver, and the adapter every live satellite names
 > as its messenger, with the artifact's address second), the three
 > value-bearing Diamond ingresses gain it too, and the Diamond records
-> every packet under `keccak256(sourceChainId, transportMessageId)` — or,
+> every reward-budget packet — a delivery, a compensation, a stranded
+> return, a ceremony inflow; NOT the planned-surplus repatriation return,
+> which credits recycled custody only (#2204) — under
+> `keccak256(sourceChainId, transportMessageId)` — or,
 > for a transport without an id, a per-source sequence the authenticated
 > ingress allocates itself — a replayed stamp refuses whole
 > (`IngressPacketReplayed`), a second packet for a receipt already
@@ -6305,6 +6308,63 @@ PR C.**
 > reconciliation verdict), and the transport epochs PR C depends on — the
 > classification EXITS of the `Unclassified` row, in-holder under the
 > deficit split, are PR 2's; PR 1 gives it only the R4 return exit.
+
+> **LANDED — closure 2's cutover apparatus, PR 2 of 2 (the legacy
+> reconciliation epoch).** A new facet, `RewardReconciliationFacet`, hosts
+> the three entries (ADMIN, manual pause, activated): **(a) the
+> classification entry** — a packet's untyped remainder leaves the
+> `Unclassified` row for fresh (under the deficit split: the absorbed
+> portion to restitution, the excess to live), recycled (the bucket credited
+> as relocated custody) or both, IN-HOLDER, with the row's figure, the
+> global uncounted aggregate and the packet's own figures stepping down
+> exactly; cumulative per component; a rounding residual stays in the row;
+> a packet whose receipt still carries a live stranded record refuses.
+> **(b) the reclassification** — attribution moves between the two sides of
+> an already-classified entry, its total unchanged, bounded by what is
+> UNSPENT under the live-queue FIFO; unspent credit moves WITH its tokens
+> (fresh → recycled from the live row only — restitution custody is not a
+> correction's to move; recycled → fresh bounded by the uncommitted bucket),
+> spent credit moves as an inherited debit (`received` and `paid` together;
+> the destination's consumption rising — never replacement capital, an
+> authenticated ledger inherits it). **(c) the envelope import** — the
+> pre-stamp inventory as one netted aggregate every figure of which is read
+> on chain at the import, resolved whole and once (relocated measured,
+> replacement-funded delta-checked, or written down) and entered into the
+> same log, so the snapshot-keyed error path IS the packet reclassification.
+> Four things the landed shape settles differently from this section's
+> pre-PR-1 prose, each stated so it is not re-argued: **(1) the aggregate
+> wire bound is STRUCTURAL.** PR 1 protects exactly a packet's untyped part
+> into the row and keeps its per-packet remainder, so an entry can never
+> classify beyond what the packet put into the row — the third bound of
+> "three bounds, not two" is enforced by custody rather than by a check;
+> the two component caps (operator-stated for the classifiable part, fixed
+> by the first entry, their sum bounded by that part) stay, because a wrong
+> SPLIT still passes the total. **(2) The FIFO's sequencing counters are
+> NEW and MONOTONE.** Both headroom aggregates this tree keeps —
+> `rewardBudgetArmedFreshPaid` (the restitution paid-correction lowers it)
+> and `paidOutRecycled` (the released-remit restore lowers it) — are
+> decremented today, which the FIFO's soundness rule forbids; the epoch
+> therefore reads `freshOutflowSeqByEra` and `recycledOutflowSeq`, advanced
+> at the outflow sites and never decremented, and an entry's position is its
+> ORIGINAL credit position in the queue (the sum of the credits classified
+> before it), outflow measured from the queue's first entry — the form under
+> which the A-then-B example above holds. **(3) One era.** No era registry
+> exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
+> **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
+> they are a PR of their own, before PR C: the non-splittable trio ("doing
+> (2) without (1) and (3)") does not include them, their consumable read
+> (`transportEpoch(target) → eraBalance → liveHeadroom`) needs PR C's era
+> balances as its middle term, and shipping the balance without its debit
+> path is exactly what §3 calls stranding with better bookkeeping. The
+> packet-keyed transport leg counters land with the epoch that produces
+> them; the fourth door is already counted (`disposed`, written by the R4
+> return). The bucket's composition identity gains two terms
+> (`recycleReattributedIn/OutCumulative`); the pre-activation
+> recycled-bucket verdict (L4413-4422 of the pre-PR-1 text) was discharged by
+> PR B's activation gate, and the envelope's recycled share takes the
+> slice-0 disposition family here. The epoch has no finalization; the two
+> owner-only dispositions (an imported-gap shortfall, an undrainable lane)
+> are escalated, not decided.
 
 - **Role-branched custody, so the frozen column stays frozen** (review r1):
   every custody read and debit below is branched on `LibVaipakam.rewardRole`.

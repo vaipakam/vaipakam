@@ -7440,6 +7440,35 @@ library LibVaipakam {
         ///      counter for a transport that carries no message id.
         mapping(bytes32 => IngressPacket) ingressPackets;
         mapping(uint256 => uint256) ingressSequence;
+        /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
+        ///      epoch. The classification log (append-only; the order is the
+        ///      immutable thing), the two MONOTONE outflow sequencing
+        ///      counters the FIFO spent-ness reads — `freshOutflowSeqByEra`
+        ///      advanced by every fresh outflow charge, `recycledOutflowSeq`
+        ///      by every bucket consumption or surplus repatriation; NEVER
+        ///      decremented, unlike the headroom aggregates
+        ///      (`rewardBudgetArmedFreshPaid`, `paidOutRecycled`) that take
+        ///      registered corrective debits (design §5c) — each queue's base
+        ///      (the sequencing counter's value when the queue's first entry
+        ///      landed) and cumulative original-credit position, the
+        ///      per-entry replay guard, the envelopes, and the two
+        ///      reattribution cumulatives that keep the bucket's composition
+        ///      identity stated: `bucket == credited + relocated +
+        ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
+        ///      (+ the released-remit correction).
+        ReconciliationEntry[] reconciliationLog;
+        mapping(uint64 => uint256) freshOutflowSeqByEra;
+        uint256 recycledOutflowSeq;
+        mapping(uint64 => uint256) freshQueueBaseByEra;
+        mapping(uint64 => bool) freshQueueOpenByEra;
+        mapping(uint64 => uint256) freshQueuePosByEra;
+        uint256 recycledQueueBase;
+        bool recycledQueueOpen;
+        uint256 recycledQueuePos;
+        mapping(bytes32 => bool) reconciliationEntryUsed;
+        mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
+        uint256 recycleReattributedInCumulative;
+        uint256 recycleReattributedOutCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7541,6 +7570,73 @@ library LibVaipakam {
         uint256 freshShare;
         uint256 recycledShare;
         uint256 unclassified;
+        /// @dev #1566 closure 2 cutover PR 2 — the packet's reconciliation
+        ///      figures, appended. `protectedCumulative` is everything the
+        ///      packet ever put into the `Unclassified` row; `classifiedFresh`
+        ///      / `classifiedRecycled` are its classification exits, by
+        ///      component (the total is derived, never kept alone — design
+        ///      §5c); `disposed` its NON-classification exits (the R4 return).
+        ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
+        ///      + disposed == protectedCumulative`. `freshCap` / `recycledCap`
+        ///      are the operator's authenticated component caps for the
+        ///      classifiable part, fixed by the first entry and immutable
+        ///      after (`capsFixed`), their sum bounded by that part.
+        uint256 protectedCumulative;
+        uint256 classifiedFresh;
+        uint256 classifiedRecycled;
+        uint256 disposed;
+        uint256 freshCap;
+        uint256 recycledCap;
+        bool capsFixed;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
+    ///         reconciliation epoch's classification log: what a
+    ///         classification (or the bootstrap envelope's import) put on
+    ///         each side, and where it stands in each side's FIFO queue.
+    /// @dev    `key` is the packet's ingress stamp, or the envelope's
+    ///         snapshot id. `freshPos` / `recycledPos` are the entry's
+    ///         ORIGINAL positions in the two queues — the sum of the credits
+    ///         classified before it — and never change (the ORDER is the
+    ///         immutable thing, design §5c); a reclassification records the
+    ///         shift it imposes on every LATER entry of that queue in
+    ///         `freshShift` / `recycledShift` (unspent credit moved OUT
+    ///         subtracts, credit moved IN adds), so an entry's effective
+    ///         position is its recorded one plus the shifts of every entry
+    ///         before it. The credits are the CURRENT attribution on each
+    ///         side. `era` keys the fresh queue; it is 0 until slice 4 PR C's
+    ///         era registry assigns real ids.
+    struct ReconciliationEntry {
+        bytes32 key;
+        uint64 era;
+        uint64 landedAt;
+        uint256 freshCredit;
+        uint256 recycledCredit;
+        uint256 freshPos;
+        uint256 recycledPos;
+        int256 freshShift;
+        int256 recycledShift;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
+    ///         pre-stamp inventory as one bounded aggregate, its netting
+    ///         figures all read on chain at the import, and the disposition
+    ///         of every unit of it (relocated, replacement-funded, or
+    ///         written down). Its log entry (`entryIndex`) is what the
+    ///         snapshot-keyed error path reclassifies.
+    struct LegacyEnvelope {
+        uint64 importedAt;
+        uint256 rawUncounted;
+        uint256 holderUncounted;
+        uint256 diamondReserved;
+        uint256 returnedCumulative;
+        uint256 netTotal;
+        uint256 relocatedFresh;
+        uint256 relocatedRecycled;
+        uint256 replacedFresh;
+        uint256 replacedRecycled;
+        uint256 writtenDown;
+        uint256 entryIndex;
     }
 
     /// @notice #1434 P2-w2 — one zeroed day's compensation state on a

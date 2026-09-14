@@ -431,6 +431,56 @@ interface IVaipakamErrors {
     /// @param requested  The amount asked from the row.
     /// @param held       What the record holds in the row.
     error RewardCustodyUnclassifiedHeldShort(bytes32 receiptKey, uint256 requested, uint256 held);
+    // ─── #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch ────
+    /// @notice An entry id was already applied; an operator retry is refused
+    ///         rather than consuming a later packet's balance.
+    error ReconciliationEntryReplayed(bytes32 entryId);
+    /// @notice No packet was recorded under this stamp.
+    error ReconciliationPacketUnknown(bytes32 packetHash);
+    /// @notice The packet's receipt still carries a live stranded-recovery
+    ///         record: its value is reserved for the R4 return and is not
+    ///         classifiable.
+    error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
+    /// @notice The stated component caps exceed the packet's classifiable
+    ///         part (what it holds in the row plus what was classified).
+    error ReconciliationCapsExceedBudget(bytes32 packetHash, uint256 capsSum, uint256 budget);
+    /// @notice The packet's caps were fixed by an earlier entry and this one
+    ///         states different ones.
+    error ReconciliationCapsFixed(bytes32 packetHash, uint256 freshCap, uint256 recycledCap);
+    /// @notice A component's cumulative classification would pass its cap.
+    /// @param side 0 fresh, 1 recycled.
+    error ReconciliationComponentCapExceeded(bytes32 packetHash, uint8 side, uint256 cumulative, uint256 cap);
+    /// @notice The entry asks for more than the packet still holds in the row.
+    error ReconciliationExceedsPacketRemainder(bytes32 packetHash, uint256 requested, uint256 remainder);
+    /// @notice A row figure cannot cover the exit.
+    /// @param figure 0 the row's uncounted figure, 1 its returned figure,
+    ///        2 the global uncounted aggregate.
+    error ReconciliationFigureShort(uint8 figure, uint256 requested, uint256 available);
+    /// @notice No log entry at this index.
+    error ReconciliationEntryUnknown(uint256 index);
+    /// @notice A reclassification asks for more than the entry's credit on
+    ///         the source side.
+    error ReconciliationExceedsCredit(uint256 index, uint256 requested, uint256 credit);
+    /// @notice The unspent fresh credit a correction moves is bounded by the
+    ///         live row: restitution-held custody moves only through its own
+    ///         dispositions, never through a correction.
+    error ReconciliationExceedsLiveRow(uint256 requested, uint256 live);
+    /// @notice The received side cannot give back what the correction moves.
+    error ReconciliationReceivedShort(uint256 requested, uint256 received);
+    /// @notice The paid side cannot inherit the debit the correction moves.
+    error ReconciliationPaidShort(uint256 requested, uint256 paid);
+    /// @notice The recycled consumption cannot give back the debit the
+    ///         correction moves.
+    error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
+    /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
+    error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice The envelope under this snapshot id was already imported.
+    error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
+    /// @notice The stated dispositions do not resolve the envelope exactly.
+    error LegacyEnvelopeMismatch(bytes32 snapshotId, uint256 stated, uint256 netTotal);
+    /// @notice The envelope nets to nothing: there is no pre-stamp inventory
+    ///         to import.
+    error LegacyEnvelopeEmpty(bytes32 snapshotId);
     /// @notice #1566 slice 4 PR B — a canonical chain must have armed
     ///         per-receipt recovery attribution before activation: arming
     ///         retires the legacy pooled recovery position, and a recovery

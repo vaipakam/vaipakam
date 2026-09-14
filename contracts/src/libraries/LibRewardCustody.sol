@@ -566,15 +566,29 @@ library LibRewardCustody {
         uint256 amount
     ) internal returns (uint256 toLive, uint256 toRestitution) {
         if (amount == 0) return (0, 0);
+        (toLive, toRestitution) = freshSplit(s, amount);
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        s.rewardBudgetArmedFreshReceived = received + amount;
+        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
+        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
+        emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
+    }
+
+    /// @notice The §5c deficit split, in ONE place: of a fresh credit of
+    ///         `amount`, what the standing deficit (`paid − received`)
+    ///         absorbs goes to restitution, only the excess to live backing.
+    ///         Read by every fresh credit — the ingress, the funding writer,
+    ///         and the reconciliation epoch's classification and
+    ///         reclassification into fresh (#1566 closure 2 cutover PR 2).
+    function freshSplit(
+        LibVaipakam.Storage storage s,
+        uint256 amount
+    ) internal view returns (uint256 toLive, uint256 toRestitution) {
         uint256 received = s.rewardBudgetArmedFreshReceived;
         uint256 paid = s.rewardBudgetArmedFreshPaid;
         uint256 deficit = paid > received ? paid - received : 0;
         toRestitution = amount < deficit ? amount : deficit;
         toLive = amount - toRestitution;
-        s.rewardBudgetArmedFreshReceived = received + amount;
-        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
-        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
-        emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
     }
 
     /**
@@ -737,6 +751,7 @@ library LibRewardCustody {
         s.rewardCustodyUnclassifiedUncounted += amount;
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         p.unclassified += amount;
+        p.protectedCumulative += amount;
         emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
     }
 
@@ -768,7 +783,11 @@ library LibRewardCustody {
         if (sr.packetHash == bytes32(0)) sr.packetHash = h;
         s.strandedRecoveryReservedHeld += got;
         s.rewardCustodyUnclassifiedUncounted += got;
-        if (h != bytes32(0)) s.ingressPackets[h].unclassified += got;
+        if (h != bytes32(0)) {
+            LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+            p.unclassified += got;
+            p.protectedCumulative += got;
+        }
         emit RewardCustodyUnclassifiedCredited(h, PACKET_KIND_COMPENSATION, got);
     }
 
@@ -782,6 +801,7 @@ library LibRewardCustody {
         s.rewardCustodyUnclassifiedReturned += amount;
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         p.unclassified += amount;
+        p.protectedCumulative += amount;
         emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
     }
 
@@ -811,9 +831,137 @@ library LibRewardCustody {
         // it). A record whose receipt predates the stamp has no packet and
         // no per-packet figure to step.
         bytes32 h = sr.packetHash;
-        if (h != bytes32(0)) s.ingressPackets[h].unclassified -= amount;
+        if (h != bytes32(0)) {
+            LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+            p.unclassified -= amount;
+            // The fourth door (#1566 closure 2 cutover PR 2, design §5c): a
+            // repatriation exhausts the packet's classifiable remainder in
+            // the same act, recorded as a NON-classification exit.
+            p.disposed += amount;
+        }
         releaseFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, to, amount);
         emit RewardCustodyUnclassifiedReleased(h, to, amount);
+    }
+
+    // ─── The legacy reconciliation epoch (#1566 closure 2 cutover PR 2) ──────
+    //
+    // The classification EXITS of the `Unclassified` row and the custody
+    // side of a reclassification, in-holder, under the deficit split
+    // (design §5c, "classification is an IN-HOLDER reattribution —
+    // unclassified → fresh, recycled, OR restitution"). The row's figures
+    // step down EXACTLY, the way the R4 return steps them down, so
+    // `Unclassified == uncounted + returned` holds after every exit; the
+    // packet's per-component exits accumulate so its identity
+    // `unclassified + classifiedFresh + classifiedRecycled + disposed ==
+    // protectedCumulative` holds too. The bucket side of a recycled exit is
+    // `LibVpfiRecycle`'s (it owns the bucket's counters); the entry logic —
+    // caps, bounds, the FIFO — is the reconciliation facet's.
+
+    /// @notice A classification's step-down: the packet's remainder and the
+    ///         row figure it belongs to (uncounted for a delivery or
+    ///         compensation, returned for a stranded return or ceremony
+    ///         inflow) fall by the entry's total, the packet's components
+    ///         rise by their shares, and — for a delivery or compensation —
+    ///         the global uncounted aggregate falls too (design §5c step 1;
+    ///         a different counter from the holder figure, which the R4
+    ///         returns have already let diverge). Every figure is exact:
+    ///         a shortfall names itself rather than saturating.
+    function takeFromUnclassified(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 freshShare,
+        uint256 recycledShare
+    ) internal {
+        uint256 total = freshShare + recycledShare;
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (total > p.unclassified) {
+            revert IVaipakamErrors.ReconciliationExceedsPacketRemainder(h, total, p.unclassified);
+        }
+        p.unclassified -= total;
+        p.classifiedFresh += freshShare;
+        p.classifiedRecycled += recycledShare;
+        if (p.kind <= PACKET_KIND_COMPENSATION) {
+            uint256 have = s.rewardCustodyUnclassifiedUncounted;
+            if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(0, total, have);
+            s.rewardCustodyUnclassifiedUncounted = have - total;
+            uint256 aggregate = s.rewardBudgetFreshUncounted;
+            if (total > aggregate) revert IVaipakamErrors.ReconciliationFigureShort(2, total, aggregate);
+            s.rewardBudgetFreshUncounted = aggregate - total;
+        } else {
+            uint256 have = s.rewardCustodyUnclassifiedReturned;
+            if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(1, total, have);
+            s.rewardCustodyUnclassifiedReturned = have - total;
+        }
+    }
+
+    /// @notice Credit `amount` as FRESH out of `from` (the `Unclassified` row
+    ///         for a classification, the `Recycled` row for a
+    ///         reclassification into fresh): the received side rises and the
+    ///         tokens move in-holder under the deficit split — the absorbed
+    ///         portion to restitution, only the excess to live backing.
+    ///         The in-holder form of {creditFreshIngress}, same split.
+    function creditFreshFromRow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        uint256 amount
+    ) internal returns (uint256 toLive, uint256 toRestitution) {
+        if (amount == 0) return (0, 0);
+        (toLive, toRestitution) = freshSplit(s, amount);
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        s.rewardBudgetArmedFreshReceived = received + amount;
+        move(s, from, LibVaipakam.RewardCustodyRow.LiveFresh, toLive);
+        move(s, from, LibVaipakam.RewardCustodyRow.Restitution, toRestitution);
+        emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
+    }
+
+    /// @notice A reclassification's UNSPENT fresh credit leaving for `to`
+    ///         (the `Recycled` row): the received side falls by exactly
+    ///         `amount` and the tokens move from the LIVE row — never from
+    ///         restitution, whose custody moves only through its own
+    ///         dispositions (design §5c, "a correction is not a back door
+    ///         out of the restitution position"). The caller bounds `amount`
+    ///         by the live row; the move names the row if it cannot cover.
+    function debitFreshFromLive(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow to,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        if (amount > received) revert IVaipakamErrors.ReconciliationReceivedShort(amount, received);
+        s.rewardBudgetArmedFreshReceived = received - amount;
+        move(s, LibVaipakam.RewardCustodyRow.LiveFresh, to, amount);
+    }
+
+    /// @notice A corrected SPENT fresh split moves its historical debit to
+    ///         the recycled side's consumed accounting: `received` and
+    ///         `paid` fall together (the headroom aggregate takes the
+    ///         registered corrective debit), the live row unchanged, no
+    ///         custody moved — the tokens left long ago. The FRESH
+    ///         sequencing counter is RETAINED (design §5c, "the ordering
+    ///         counter only ever grows"); the recycled side's rises with
+    ///         the consumption it inherits ({LibVpfiRecycle}).
+    function inheritFreshDebitAsRecycled(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        if (amount > received) revert IVaipakamErrors.ReconciliationReceivedShort(amount, received);
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        if (amount > paid) revert IVaipakamErrors.ReconciliationPaidShort(amount, paid);
+        s.rewardBudgetArmedFreshReceived = received - amount;
+        s.rewardBudgetArmedFreshPaid = paid - amount;
+    }
+
+    /// @notice The reverse: a corrected SPENT recycled split's debit is
+    ///         inherited by the fresh side — `received` and `paid` rise
+    ///         together, the live row unchanged, and the fresh sequencing
+    ///         counter of `era` advances by the consumption it now carries
+    ///         (the moved-in credit sits at the entry's original position
+    ///         and is spent there, so later entries read exactly as before).
+    function inheritRecycledDebitAsFresh(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+        if (amount == 0) return;
+        s.rewardBudgetArmedFreshReceived += amount;
+        s.rewardBudgetArmedFreshPaid += amount;
+        s.freshOutflowSeqByEra[era] += amount;
     }
 
     // ─── Cross-facet entry (every facet but RewardCustodyFacet and the vault

@@ -11,6 +11,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
@@ -75,16 +76,19 @@ contract RewardCustodyInvariant is SetupTest {
 
         handler = new RewardCustodyHandler(address(diamond), vpfi, address(this));
         AccessControlFacet(address(diamond)).grantRole(LibAccessControl.ADMIN_ROLE, address(handler));
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.PAUSER_ROLE, address(handler));
 
         targetContract(address(handler));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(handler));
-        bytes4[] memory sel = new bytes4[](6);
+        bytes4[] memory sel = new bytes4[](8);
         sel[0] = RewardCustodyHandler.fund.selector;
         sel[1] = RewardCustodyHandler.claim.selector;
         sel[2] = RewardCustodyHandler.absorb.selector;
         sel[3] = RewardCustodyHandler.feeInflow.selector;
         sel[4] = RewardCustodyHandler.surplus.selector;
         sel[5] = RewardCustodyHandler.untypedIngress.selector;
+        sel[6] = RewardCustodyHandler.classify.selector;
+        sel[7] = RewardCustodyHandler.reclassify.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
@@ -134,6 +138,29 @@ contract RewardCustodyInvariant is SetupTest {
         );
     }
 
+    /// #1566 closure 2 cutover PR 2 — every packet's identity holds under
+    /// every interleaving of protection, classification, reclassification
+    /// and the other flows: `unclassified + classifiedFresh +
+    /// classifiedRecycled + disposed == protectedCumulative`.
+    function invariant_PacketIdentityHolds() public view {
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        uint256 n = handler.packets();
+        for (uint256 i = 0; i < n; ++i) {
+            (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, , , ) =
+                recon.getPacketReconciliation(handler.packetAt(i));
+            assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
+        }
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the two sequencing counters the FIFO
+    /// reads never fall: whatever the last action was (a reclassification
+    /// included), each is at least what it read at that action's start.
+    function invariant_OutflowSequencingCountersAreMonotone() public view {
+        (uint256 freshSeq, uint256 recycledSeq, , ) = RewardReconciliationFacet(address(diamond)).getSideOutflow(0);
+        assertGe(freshSeq, handler.freshSeqAtActionStart(), "fresh sequencing counter never falls");
+        assertGe(recycledSeq, handler.recycledSeqAtActionStart(), "recycled sequencing counter never falls");
+    }
+
     /// Reward flows never touch the Diamond's own balance: it holds exactly
     /// what the surplus debits released into it.
     function invariant_DiamondBalanceHoldsOnlyWhatSurplusReleasedIntoIt() public view {
@@ -164,6 +191,15 @@ contract RewardCustodyHandler is Test {
     uint256 public payouts;
     uint256 public surplusReleased;
     uint64 internal nextLoan = 1;
+    /// @dev #1566 closure 2 cutover PR 2 — the untyped packets this handler
+    ///      landed (zero transport id → the per-source sequence stamps them,
+    ///      and this handler is the only source-8453 ingress), the caps it
+    ///      fixed per packet, and the sequencing counters at the start of
+    ///      the current action (the monotonicity invariant's baseline).
+    bytes32[] internal packetHashes;
+    uint256 internal seqStamped;
+    uint256 public freshSeqAtActionStart;
+    uint256 public recycledSeqAtActionStart;
 
     constructor(address diamond_, VPFIToken vpfi_, address minter_) {
         diamond = diamond_;
@@ -176,8 +212,22 @@ contract RewardCustodyHandler is Test {
         vpfi.mint(to, amount);
     }
 
-    function fund(uint256 seed) external {
+    function packets() external view returns (uint256) {
+        return packetHashes.length;
+    }
+
+    function packetAt(uint256 i) external view returns (bytes32) {
+        return packetHashes[i];
+    }
+
+    function _start() internal {
         calls++;
+        (freshSeqAtActionStart, recycledSeqAtActionStart, , ) =
+            RewardReconciliationFacet(diamond).getSideOutflow(0);
+    }
+
+    function fund(uint256 seed) external {
+        _start();
         uint256 amount = bound(seed, 1, 50_000e18);
         _mint(address(this), amount);
         vpfi.approve(diamond, amount);
@@ -187,7 +237,7 @@ contract RewardCustodyHandler is Test {
     /// A fresh claimant with one payable entry; the claim is paid from the
     /// holder or refused for want of backing — never from the Diamond.
     function claim(uint256 seed) external {
-        calls++;
+        _start();
         address user = address(uint160(uint256(keccak256(abi.encode("claimant", seed)))));
         TestMutatorFacet mut = TestMutatorFacet(diamond);
         uint256 id = mut.pushRewardEntry(user, nextLoan++, LibVaipakam.RewardSide.Lender, 100e18, 1);
@@ -202,7 +252,7 @@ contract RewardCustodyHandler is Test {
 
     /// A reward absorption: live-fresh → recycled, in-holder.
     function absorb(uint256 seed) external {
-        calls++;
+        _start();
         uint256 live = RewardCustodyFacet(diamond).rewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh);
         uint256 amount = bound(seed, 1, live + 1e18); // may exceed the row: must refuse, never floor
         try TestMutatorFacet(diamond).creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, amount) {} catch {
@@ -212,7 +262,7 @@ contract RewardCustodyHandler is Test {
 
     /// A user fee pulled into the Diamond, then relocated into the holder.
     function feeInflow(uint256 seed) external {
-        calls++;
+        _start();
         uint256 amount = bound(seed, 1, 1_000e18);
         uint256 before = vpfi.balanceOf(diamond);
         _mint(diamond, amount);
@@ -224,7 +274,7 @@ contract RewardCustodyHandler is Test {
     /// the fresh share is credited live, the remainder is protected into the
     /// `Unclassified` row — nothing of it stays in the Diamond.
     function untypedIngress(uint256 seed) external {
-        calls++;
+        _start();
         uint256 amount = bound(seed, 2, 10_000e18);
         uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
         _mint(diamond, amount);
@@ -232,15 +282,70 @@ contract RewardCustodyHandler is Test {
         days_[0] = 1;
         try RewardRemittanceFacet(diamond).onRewardBudgetReceived(
             address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0)
-        ) {} catch {
+        ) {
+            packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
+        } catch {
             refusals++;
         }
     }
 
+    /// #1566 closure 2 cutover PR 2 — classify a random share of a random
+    /// landed packet's remainder, under the pause; the caps are the
+    /// packet's classifiable part split at random on the first entry and
+    /// restated after (read back from the packet).
+    function classify(uint256 seed) external {
+        _start();
+        if (packetHashes.length == 0) return;
+        bytes32 h = packetHashes[seed % packetHashes.length];
+        RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
+        (, uint256 remainder, uint256 cf, uint256 cr, , uint256 fc, uint256 rc, bool fixed_) =
+            recon.getPacketReconciliation(h);
+        if (remainder == 0) return;
+        if (!fixed_) {
+            uint256 budget = remainder + cf + cr;
+            fc = bound(uint256(keccak256(abi.encode(seed, "cap"))), 0, budget);
+            rc = budget - fc;
+        }
+        uint256 freshRoom = fc > cf ? fc - cf : 0;
+        uint256 recycledRoom = rc > cr ? rc - cr : 0;
+        uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "f"))), 0, freshRoom);
+        uint256 recycled = bound(uint256(keccak256(abi.encode(seed, "r"))), 0, recycledRoom);
+        if (fresh + recycled > remainder) recycled = remainder - fresh;
+        if (fresh + recycled == 0) return;
+        AdminFacet(diamond).pause();
+        try recon.classifyLegacyPacket(h, fresh, recycled, fc, rc, keccak256(abi.encode("entry", calls))) {}
+        catch {
+            refusals++;
+        }
+        AdminFacet(diamond).unpause();
+    }
+
+    /// #1566 closure 2 cutover PR 2 — move a random amount between the sides
+    /// of a random entry, either direction, under the pause.
+    function reclassify(uint256 seed) external {
+        _start();
+        RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
+        (uint256 entries, , ) = recon.getReconciliationTotals();
+        if (entries == 0) return;
+        uint256 index = seed % entries;
+        bool freshToRecycled = uint256(keccak256(abi.encode(seed, "dir"))) % 2 == 0;
+        LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(index);
+        uint256 credit = freshToRecycled ? e.freshCredit : e.recycledCredit;
+        if (credit == 0) return;
+        uint256 amount = bound(uint256(keccak256(abi.encode(seed, "amt"))), 1, credit);
+        AdminFacet(diamond).pause();
+        try recon.reclassifyReconciliationEntry(index, freshToRecycled, amount, keccak256(abi.encode("re", calls))) {}
+        catch {
+            refusals++;
+        }
+        AdminFacet(diamond).unpause();
+    }
+
+
     /// A repatriation surplus debit, released into the Diamond (the raw
     /// mutator's destination); beyond the fundable slice it must refuse.
     function surplus(uint256 seed) external {
-        calls++;
+        _start();
         uint256 bucket = ConfigFacet(diamond).getRecycleBucket();
         uint256 amount = bound(seed, 1, bucket + 1e18);
         try TestMutatorFacet(diamond).debitRepatriationSurplusRaw(amount) {

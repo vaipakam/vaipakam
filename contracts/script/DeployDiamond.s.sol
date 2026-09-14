@@ -82,6 +82,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -273,6 +274,8 @@ contract DeployDiamond is Script {
         RewardRemittanceLensFacet rewardRemittanceLensFacet = new RewardRemittanceLensFacet();
         // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.
         RewardCustodyFacet rewardCustodyFacet = new RewardCustodyFacet();
+        // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
+        RewardReconciliationFacet rewardReconciliationFacet = new RewardReconciliationFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -307,7 +310,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](78);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](79);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -374,6 +377,11 @@ contract DeployDiamond is Script {
         cuts[77] = _buildCut(
             address(rewardCustodyFacet),
             _getRewardCustodySelectors()
+        );
+        // Slot 78: #1566 closure 2 cutover PR 2 — the reconciliation facet.
+        cuts[78] = _buildCut(
+            address(rewardReconciliationFacet),
+            _getRewardReconciliationSelectors()
         );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
@@ -1028,6 +1036,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardCompensationDispatchFacet", address(rewardCompensationDispatchFacet));
         Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
         Deployments.writeFacet("rewardCustodyFacet",      address(rewardCustodyFacet));
+        Deployments.writeFacet("rewardReconciliationFacet", address(rewardReconciliationFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1147,6 +1156,7 @@ contract DeployDiamond is Script {
         console.log("RewardRemittanceLensFacet:", address(rewardRemittanceLensFacet));
         console.log("RewardCompensationDispatchFacet:", address(rewardCompensationDispatchFacet));
         console.log("RewardCustodyFacet:   ", address(rewardCustodyFacet));
+        console.log("RewardReconciliationFacet:", address(rewardReconciliationFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
         console.log("RiskAccessFacet:      ", address(riskAccessFacet));
@@ -3095,6 +3105,26 @@ contract DeployDiamond is Script {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
+    function _getRewardReconciliationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](11);
+        s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
+        s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
+        s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
+        s[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
+        s[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
+        s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        s[8] = RewardReconciliationFacet.getSideOutflow.selector;
+        s[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
