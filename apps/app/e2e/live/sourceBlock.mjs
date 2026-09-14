@@ -1287,7 +1287,7 @@ export function bindingOf(src, node) {
     (d) =>
       !alwaysRunsBefore(src, d.node, node) &&
       !definitelyAfter(src, d.node, node) &&
-      !excludedByBranch(src, d.node, node) &&
+      !excludedByBranch(src, d.node, node, variable) &&
       !(certain && certain.node.start > d.node.end),
   );
   const initialised = uncertain
@@ -1704,12 +1704,44 @@ function deferredHost(parents, n) {
  * when the binding is fresh for a shared activation, or when both sit in
  * straight-line top-level code that runs once — and in no other case.
  */
-function excludedByBranch(src, write, use, shared) {
+function excludedByBranch(src, write, use, variable) {
   const { parents } = astOf(src, 'excludedByBranch');
-  const fresh =
-    Boolean(shared) ||
-    (deferredHost(parents, write) === null && deferredHost(parents, use) === null);
-  return fresh && mutuallyExclusive(parents, write, use);
+  return mutuallyExclusive(parents, write, use) && oneEvaluation(src, write, use, variable);
+}
+
+/**
+ * Whether `a` and `b` necessarily run within ONE evaluation, so ordinary
+ * position reasoning holds between them.
+ *
+ * Either both sit in straight-line top-level code, which runs once, or
+ * they share a non-loop activation whose own binding this is — a binding
+ * declared OUTSIDE that activation outlives it, so the first call's
+ * write is there for the second.
+ *
+ * ROUND 14 made this decide for itself rather than take the answer as a
+ * parameter, and the parameter was the defect. `bindingOf` did not pass
+ * it, so a `var` local to a function — the mutually exclusive case one
+ * function deep — fell through to the top-level test and was refused.
+ * A fact a caller must remember to supply is a fact half the callers
+ * will not supply, which is the fifth-time-at-a-sibling-site pattern
+ * arriving through the parameter list instead of through a copy.
+ */
+function oneEvaluation(src, a, b, variable) {
+  const { parents } = astOf(src, 'oneEvaluation');
+  const hostA = deferredHost(parents, a);
+  const hostB = deferredHost(parents, b);
+  if (hostA === null && hostB === null) return true;
+  if (hostA !== hostB || hostA === null || LOOPS.has(hostA.type)) return false;
+  return bindingLivesIn(variable, hostA);
+}
+
+/** Whether every definition of `variable` sits inside `host`, so the
+ *  binding is created afresh on each activation of it. */
+function bindingLivesIn(variable, host) {
+  if (!variable) return false;
+  return variable.defs.every(
+    (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
+  );
 }
 
 /**
@@ -1727,7 +1759,7 @@ function excludedByBranch(src, write, use, shared) {
  */
 function writeReaches(src, writes, useAt) {
   if (writes.length === 0) return false;
-  const { nodes, parents } = astOf(src, 'writeReaches');
+  const { nodes, parents, variableOf } = astOf(src, 'writeReaches');
   const deferred = (n) => {
     for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
       if (inGuardedSlot(DEFERRED, p, c)) return true;
@@ -1774,7 +1806,7 @@ function writeReaches(src, writes, useAt) {
     //
     // It holds only within ONE EVALUATION — see `excludedByBranch`, which
     // both callers of this reasoning now share.
-    if (useNode && excludedByBranch(src, w, useNode, shared)) return false;
+    if (useNode && excludedByBranch(src, w, useNode, variableOf.get(w))) return false;
     // An assignment evaluates its RIGHT side before it writes (round
     // 27): in `end = s.slice(start, end).length` the bound use sits
     // inside the value being computed, so this write cannot have
@@ -1827,11 +1859,7 @@ function mutuallyExclusive(parents, a, b) {
 /** Whether the binding the write targets is DECLARED inside `host`. */
 function declaredWithin(src, write, host) {
   const { variableOf } = astOf(src, 'declaredWithin');
-  const variable = variableOf.get(write);
-  if (!variable) return false;
-  return variable.defs.every(
-    (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
-  );
+  return bindingLivesIn(variableOf.get(write), host);
 }
 
 /** Whether the use sits inside the VALUE an assignment is computing, so
@@ -2318,10 +2346,17 @@ function candidateValues(src, node, seen) {
       return out;
     }
     case 'AssignmentExpression': {
-      const right = candidateValues(src, node.right, seen);
+      if (node.operator === '=') return candidateValues(src, node.right, seen);
       // A LOGICAL assignment may not assign at all, and then evaluates
-      // to the left operand it already held.
-      if (node.operator === '=') return right;
+      // to the left operand it already held — so both are candidates.
+      // EVERY OTHER compound operator computes, and hands back what it
+      // computed (round 14): `counter.value += 1` is a number however
+      // suspect the property read on its left is, and treating it as a
+      // two-outcome choice refused a valid offset while the identical
+      // `counter.value + 1` was accepted. Same defect class as `+1` one
+      // round earlier, in the neighbouring branch.
+      if (!LOGICAL_ASSIGNMENTS.has(node.operator)) return [node];
+      const right = candidateValues(src, node.right, seen);
       const left = candidateValues(src, node.left, seen);
       return right && left ? [...left, ...right] : null;
     }
@@ -2367,23 +2402,17 @@ function suspectValue(src, node, seen) {
     const r = resolutionOf(src, node);
     return r.state === RESOLVED ? suspectValue(src, r.value, seen) : !r.fromCaller;
   }
-  // A PRIMITIVE cannot carry a finder that lies — UNLESS THIS FILE PUTS
-  // ONE ON A PROTOTYPE (round 13). A primitive is boxed on property
-  // access, so `Number.prototype.indexOf = () => 320` makes `at(1)`
-  // return a fixed bound, and round 12 asserted flatly that a number
-  // "carries no such method at all". It does if the file gives it one.
+  // A PRIMITIVE cannot carry a finder that lies. A REGULAR EXPRESSION is
+  // refused as an object written out: it carries no `indexOf` either,
+  // but the receiver rule refuses it (#2174) and one value answered two
+  // ways at two sites is the shape this PR exists to remove.
   //
-  // This is the same mechanism as a built-in the file WRITES, which this
-  // guard already refuses one level up: assigning to a global replaces
-  // it, and assigning to a prototype replaces what every value of that
-  // type answers. Asked the same way too — does this file write it —
-  // rather than by reasoning about which prototype a value would reach.
-  //
-  // A REGULAR EXPRESSION stays refused as an object written out: it
-  // carries no `indexOf` either, but the receiver rule refuses it
-  // (#2174) and one value answered two ways at two sites is the shape
-  // this PR exists to remove.
-  if (finderPlantedOnAPrototype(src)) return true;
+  // The case where a primitive DOES carry one — this file having written
+  // a prototype — is not asked here at all. Round 13 put that veto in
+  // this function and round 14 found three ways past it, one of them
+  // nothing to do with primitives; it is a fact about the FILE and is
+  // now asked once, of the file, before any value is classified. See
+  // `rewritesLanguageMachinery`.
   if (node.type === 'Literal') return node.regex !== undefined;
   // …and the same value written as an EXPRESSION rather than a literal
   // (round 13 again). `at(s, +1)` and `at(s, 1)` denote the same number,
@@ -2396,8 +2425,18 @@ function suspectValue(src, node, seen) {
   // yields a string. A TAGGED template is absent on purpose — its tag
   // returns whatever it likes.
   if (PRIMITIVE_RESULTS.has(node.type)) return false;
+  // An arithmetic compound assignment hands back what it computed, and
+  // every such operator yields a number or a string.
+  if (node.type === 'AssignmentExpression' && !LOGICAL_ASSIGNMENTS.has(node.operator)) {
+    return node.operator === '=';
+  }
   return true;
 }
+
+/** The assignment operators that may NOT assign, and then evaluate to
+ *  the left operand they already held. Every other compound operator
+ *  computes and hands back a primitive. */
+const LOGICAL_ASSIGNMENTS = new Set(['&&=', '||=', '??=']);
 
 /** Expression forms whose result is a primitive whatever the operands. */
 const PRIMITIVE_RESULTS = new Set([
@@ -2408,25 +2447,77 @@ const PRIMITIVE_RESULTS = new Set([
 ]);
 
 /**
- * Whether this file assigns a FINDER onto anything — which is how a
- * primitive acquires one (`Number.prototype.indexOf = …`).
+ * Whether this file REWRITES THE LANGUAGE'S OWN MACHINERY — a write to
+ * any prototype property.
  *
- * Deliberately whole-file and deliberately blunt: it asks whether such
- * an assignment EXISTS, not which values it could reach. Working out
- * that a given `1` boxes to the `Number` whose prototype was written is
- * the tracing round 12 removed, and it would have the same unbounded
- * edges. The cost of the blunt version is that a file assigning any
- * `.indexOf` loses the primitive exemption entirely — which is a refused
- * region, and no file in this tree does it.
+ * ROUND 14, and this REPLACES the round-13 finder-write check rather
+ * than extending it, for the reason round 12 replaced the argument
+ * targeting: one round produced three separate escapes from that check,
+ * and they were not three bugs. A finder installed through a `for…of`
+ * left-hand side rather than an assignment. The veto reached only
+ * written-out values, not a caller-provided one, though a string
+ * parameter is boxed exactly as a literal is. And a replaced
+ * `Array.prototype[Symbol.iterator]` making a spread hand over something
+ * the array does not contain — which is not about finders at all.
+ *
+ * That third one is what settles the shape. Once a file may replace the
+ * machinery values are read through, the escape is not a property of any
+ * value and cannot be closed by classifying values more carefully:
+ * `valueOf`, `Symbol.toPrimitive`, a prototype getter and a Proxy are
+ * all the same move by other doors, and enumerating them is the open set
+ * this guard has twice been caught depending on.
+ *
+ * So the question is asked ONCE, about the FILE, before any value is
+ * classified: has this file written to a prototype at all. If it has,
+ * nothing here can be established and every call is unknown. It is
+ * deliberately blunt — it does not ask WHICH prototype, or whether the
+ * value at hand could reach it, because that is the tracing whose edges
+ * have no end.
+ *
+ * Every syntactic write counts, not just an assignment: a `for…of` or
+ * `for…in` left-hand side and a destructuring target plant a method
+ * exactly as `=` does. The adjacent global-write scan already reasons
+ * this way, and round 14's second finding is that this one did not.
  */
-function finderPlantedOnAPrototype(src) {
-  const { nodes } = astOf(src, 'finderPlantedOnAPrototype');
-  return nodes.some(
-    (n) =>
-      n.type === 'AssignmentExpression' &&
-      n.left?.type === 'MemberExpression' &&
-      FINDERS.has(propertyName(n.left)),
+function rewritesLanguageMachinery(src) {
+  const { nodes } = astOf(src, 'rewritesLanguageMachinery');
+  const hitsAPrototype = (target) => {
+    for (let n = target; n; n = n.object) {
+      if (n.type !== 'MemberExpression') return false;
+      if (propertyName(n) === 'prototype') return true;
+      if (n.object?.type === 'MemberExpression' && propertyName(n.object) === 'prototype') {
+        return true;
+      }
+      if (n.object?.type !== 'MemberExpression') return false;
+    }
+    return false;
+  };
+  const targets = (n) => {
+    if (n.type === 'AssignmentExpression') return [n.left];
+    if (n.type === 'UpdateExpression') return [n.argument];
+    if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') return [n.left];
+    return [];
+  };
+  return nodes.some((n) =>
+    targets(n).some((t) => memberTargetsIn(t).some((m) => hitsAPrototype(m))),
   );
+}
+
+/** Every MEMBER EXPRESSION a write target assigns into, looking through
+ *  destructuring — `[X.prototype.indexOf] = […]` writes one just as
+ *  `X.prototype.indexOf = …` does. */
+function memberTargetsIn(target) {
+  const out = [];
+  const walkTarget = (t) => {
+    if (!t) return;
+    if (t.type === 'MemberExpression') out.push(t);
+    else if (t.type === 'ArrayPattern') t.elements.forEach(walkTarget);
+    else if (t.type === 'ObjectPattern') t.properties.forEach((p) => walkTarget(p.value ?? p.argument));
+    else if (t.type === 'AssignmentPattern') walkTarget(t.left);
+    else if (t.type === 'RestElement') walkTarget(t.argument);
+  };
+  walkTarget(target);
+  return out;
 }
 
 /**
@@ -2479,6 +2570,13 @@ function helperArgumentsSound(src, args, seen) {
 }
 
 function callKind(src, node, seen) {
+  // Nothing a call returns can be established in a file that has
+  // rewritten the language's own machinery, so this is asked FIRST and
+  // of every call — a direct search as much as a helper. A replaced
+  // `String.prototype.indexOf` makes an ordinary `src.indexOf('x')` lie
+  // just as readily as it makes `at(1)` lie, and round 13's veto sat
+  // inside the argument rule where the direct search never reached it.
+  if (rewritesLanguageMachinery(src)) return null;
   const callee = node.callee;
   // `s.indexOf('x')`. Its ARGUMENTS are not inspected: a number in one
   // selects or offsets the search, and the result is still wherever the

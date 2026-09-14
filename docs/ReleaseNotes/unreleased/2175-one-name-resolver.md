@@ -254,6 +254,39 @@ neighbouring test instead. It is one shared piece of reasoning now, which
 is the fifth time on this change that one rule turned out to be answered
 at one site and not at its sibling.
 
+The next review produced three separate ways past that first rule, and
+they were not three faults. One installed the replacement through a loop
+rather than an assignment. One slipped past because the check only looked
+at values written out at the call, while a value handed in from outside is
+wrapped for a property access exactly as a written-out one is. And one
+replaced not a search at all, but the machinery by which a list is read
+out — so a list written in plain sight handed over something it does not
+contain.
+
+That third settles the shape. Once a file may replace the machinery
+values are read THROUGH, the escape stops being a property of any
+particular value, and no amount of classifying values more carefully will
+close it: there are several other pieces of that machinery, and
+enumerating them is the open-ended list this change has now twice been
+caught depending on.
+
+So the question is asked once, about the file, before anything else: has
+this file rewritten any of the language's own machinery. If it has,
+nothing in it can be established and every search is unknown — including
+an ordinary direct one, which the previous placement could never have
+reached, though a replaced text search makes it lie just as readily.
+
+Two smaller corrections came with that review. The branch rule was taking
+a fact from whoever called it rather than working it out, and the caller
+that needed it most was not supplying it — so a name declared inside a
+function, on the arm of a branch the reader was not on, was refused where
+the same shape at the top level was accepted. It determines that for
+itself now. And an assignment that computes something — adding one to a
+counter, say — was being read as though it might hand back either side,
+which is true only of the three that may decline to assign at all. It
+hands back what it computed, and that is a simple value whatever it was
+computed from.
+
 This note ENUMERATES the behaviour changes rather than counting them, and
 that is a correction rather than a preference: a running total beside a
 list is a second place the same fact is recorded, and this one was wrong

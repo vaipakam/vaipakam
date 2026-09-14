@@ -2523,6 +2523,66 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(reached, sliceCallsIn(reached).at(-1))).toBe(true);
   });
 
+  // Round 14. Three findings were escapes from the round-13 prototype
+  // veto, and they are answered by replacing it rather than extending it.
+  it('applies the branch rule to a var local to a function', () => {
+    // The definition and the use share one fresh activation, so the arms
+    // really are exclusive. `excludedByBranch` now determines that for
+    // itself — it used to take the fact as a parameter, and the caller
+    // that needed it most did not pass one.
+    const code =
+      "function region(text, on) { var end = text.indexOf('e');" +
+      ' if (on) { var end = 320; } else { return text.slice(0, end); } }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  it('refuses everything in a file that rewrites the language', () => {
+    // A prototype write reaches values by routes no classification of
+    // values can cover, so it is asked once, of the file, before any
+    // value is classified.
+    const byAssignment =
+      'const s = f();\nString.prototype.indexOf = () => 320;\n' +
+      "const r = s.slice(0, s.indexOf('e'));";
+    expect(countsCharacters(byAssignment, sliceCallsIn(byAssignment).at(-1))).toBe(true);
+    // …installed through a for-of left-hand side rather than an `=`.
+    const byLoop =
+      'const s = f();\nfor (Number.prototype.indexOf of [() => 320]) {}\n' +
+      "const at = recv => recv.indexOf('e');\nconst r = s.slice(0, at(1));";
+    expect(countsCharacters(byLoop, sliceCallsIn(byLoop).at(-1))).toBe(true);
+    // …reaching a CALLER-PROVIDED value, which is boxed exactly as a
+    // written-out one is.
+    const fromCaller =
+      'String.prototype.indexOf = () => 320;\n' +
+      "const at = recv => recv.indexOf('e');\n" +
+      'export function region(s) { return s.slice(0, at(s)); }';
+    expect(countsCharacters(fromCaller, sliceCallsIn(fromCaller).at(-1))).toBe(true);
+    // …and a replaced ARRAY ITERATOR, which is not about finders at all
+    // and is why this is a question about the file rather than the value.
+    const iterator =
+      'const s = f();\n' +
+      'Array.prototype[Symbol.iterator] = function* () { yield { indexOf: () => 320 }; };\n' +
+      "const at = recv => recv.indexOf('e');\nconst r = s.slice(0, at(...[1]));";
+    expect(countsCharacters(iterator, sliceCallsIn(iterator).at(-1))).toBe(true);
+  });
+
+  it('reads an arithmetic compound assignment as the value it computes', () => {
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
+    const region = (expr) =>
+      lead + `export function region(s) { return s.slice(0, at(s, ${expr})); }`;
+    // `+=` computes and hands back a number, however suspect its left
+    // operand is — the same value `counter.value + 1` denotes.
+    for (const expr of ['counter.value += 1', 'counter.value + 1']) {
+      const code = region(expr);
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(false);
+    }
+    // A LOGICAL assignment may not assign at all, so both operands are
+    // still candidates and a suspect one still refuses.
+    for (const expr of ['counter.value ||= fake', 'counter.value = fake']) {
+      const code = region(expr);
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(true);
+    }
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
