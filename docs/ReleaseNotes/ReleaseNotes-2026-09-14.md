@@ -34,10 +34,13 @@ the figure or written down to what the address backs; and the
 deployment's whole facet routing is the one a complete refresh or deploy
 recorded — so the custody surface cannot be switched on ahead of the reward paths
 that read it, short of an administrator recording a partial routing as if
-it were complete. From the activation, the canonical chain pays fresh rewards only out of
-what has been funded into the address minus what has been paid, while
-recycled rewards keep paying from the recycled runway, which is backed
-separately.
+it were complete. From the facet refresh itself — before the activation, not only after
+it — the canonical chain pays fresh rewards only out of what has been
+funded into the address minus what has been paid, while recycled rewards
+keep paying from the recycled runway, which is backed separately; and
+since nothing can be funded until the activation, a canonical chain
+refuses fresh rewards in the window between the refresh and the
+ceremony, which is why that window is meant to be spent paused.
 Every payout leaves the address by its fresh and recycled parts; an
 ordinary remittance leaves by the same two parts and is charged against
 the delivered ledger by its fresh share, while a redispatch funded from
