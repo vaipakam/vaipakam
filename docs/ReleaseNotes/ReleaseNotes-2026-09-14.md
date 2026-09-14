@@ -299,10 +299,10 @@ side in the same act (refused above the pool's lifetime cap), so a
 canonical chain that has not been funded refuses claims and remittances
 rather than paying them from other value; a funding that lands against a
 paid-over-received deficit closes that deficit into a separate restitution
-position and only the excess becomes headroom — a position with two
-recorded exits, a correction of an evidenced accounting error or a release
-to the treasury for a genuine deficit, and one that a demoted compensation
-gives back in full. The reward token cannot be rotated while custody or any
+position and only the excess becomes headroom — a position with two recorded exits — a correction of an evidenced
+accounting error, or a release to the treasury for a genuine deficit —
+each an administrator-only action taken under the platform's manual
+pause, and one that a demoted compensation gives back in full. The reward token cannot be rotated while custody or any
 of the old token remains at the address. The public backing snapshot gains
 a versioned form that names the address's balance and attributions; the
 mesh watcher reads only that form — a chain without it is reported as
@@ -315,7 +315,8 @@ wallet is paid instead; absorptions re-attribute inside the address; user
 fees and relocated custody move into it as they are credited; a
 repatriation surplus leaves it; each outbound remittance names the custody
 it draws on and is refused beyond the headroom before anything is approved.
-Overage — value above any entitlement — gains a disposition to the treasury.
+Overage — value above any entitlement — gains a disposition to the
+treasury, likewise administrator-only and taken under the manual pause.
 Reward-role changes are frozen from the first custody attribution until the
 era registry lands, and a mirror's source is never rebound directly. The
 activation is its own operator script with direct and staged forms; the
@@ -326,7 +327,7 @@ a pre-attribution return still rest in the platform's balance, for the
 cutover change that follows. Refs #1566, #1349, #1956.
 <!-- assembled-fragment: 1566-slice-4b-custody-cutover.md sha256=465b3f601b06670e5adda1c15c5dcbbecca55758cd3c83e0a9e0ff25cf0a691e -->
 
-# A live driver can no longer be added without saying what it means
+## Thread — A live driver can no longer be added without saying what it means (PR #2184, issue #2099)
 
 The batch that runs the live drives reads each one's exit code and turns
 it into a verdict. Two of those verdicts are easy to tell apart — the
@@ -431,7 +432,7 @@ to verdict: the same code still means the same thing. What has changed is
 what the runner says about it, which was the point.
 <!-- assembled-fragment: 2099-live-driver-verdicts.md sha256=c0ce03ad987fc2bdbd72c1c44f31285fd0190431a2310e042c323daa3bcaf51b -->
 
-# A confirmation that could not be obtained is not a failed write
+## Thread — A confirmation that could not be obtained is not a failed write (PR #2187, issue #2107)
 
 When one of the live drives sends a transaction, it reads the state
 afterwards to check the transaction did what it was for. The reading is
@@ -459,7 +460,7 @@ few times — is how a signature that genuinely is still live eventually
 gets waved past. It also turned a whole run red for something that was
 never a product fault.
 
-## What changed
+### What changed
 
 The check now asks its question of a machine that is demonstrably far
 enough along. Each attempt asks the machine how far it has got, ignores
@@ -491,7 +492,7 @@ nothing left to wait for, and a check that kept asking until it heard
 what it wanted would be a way of sitting out real faults rather than a
 way of avoiding false ones.
 
-## Where it applies
+### Where it applies
 
 Three places, all of them cleanup paths that revoke something the run
 created: two in the signed-offer drive (the cancellation the run drives
@@ -513,7 +514,7 @@ reason, after an earlier review round. What was missing was that it was
 one drive's private solution rather than something the others could use.
 It is now shared, and the three places above are the first users.
 
-## Two more, found in review
+### Two more, found in review
 
 Both were invisible — neither would have shown up as an error, only as
 the wrong verdict.
@@ -562,7 +563,7 @@ would mean adding a defence against something no run has ever seen, and
 this codebase has a costly recent lesson about exactly that. The limit is
 written down instead.
 
-## And three more, from the round after
+### And three more, from the round after
 
 The recognition of "broken in a way every machine agrees on" was named
 one case too narrowly. It covered a reply that was empty; review
@@ -600,7 +601,7 @@ as what it is — the verification did not complete, and here is precisely
 why — with the error named rather than swallowed, and without the claim
 about funds that nobody established.
 
-## The round after that, where two of these stopped being lists
+### The round after that, where two of these stopped being lists
 
 Recognising "broken in a way every machine agrees on" had now been
 attempted twice — first as a handful of named cases, then as a family
@@ -640,7 +641,7 @@ time, so the limit covers steps nobody has written yet — and the timer
 is cleaned up when the attempt wins, which matters because a live run
 would otherwise sit at the end refusing to finish.
 
-## Round four, where the recognising stopped entirely
+### Round four, where the recognising stopped entirely
 
 Recognising which failures are pointless to retry was attempted in four
 consecutive rounds, and review broke it in all four — each time by
@@ -676,7 +677,7 @@ stated plainly rather than implied — no new request is made once time is
 up, but one already in flight cannot be called back, and runs to its own
 timeout.
 
-## Round seven, which corrected round three
+### Round seven, which corrected round three
 
 The round that moved making-sense-of-a-reply out of the retrying rested
 on an argument: a reply that arrived arrived everywhere, so trying again
@@ -702,7 +703,7 @@ a fault in the code rather than in the network went the same way: the
 cause is printed, the reader draws the conclusion, and the report says
 plainly that this is what it is doing.
 
-## Round eight, on what a receipt is actually evidence of
+### Round eight, on what a receipt is actually evidence of
 
 Three more, all the same shape as everything above: saying more than was
 established.
@@ -731,7 +732,7 @@ one. They now print what was actually read and describe it as at or above
 — an unexpected figure being visible is the point of reading it.
 <!-- assembled-fragment: 2107-write-confirmed-at-its-own-block.md sha256=b392c8fc89a495944a7a4fc0920f9a0d6070aa89ded3da88b93cfa59b77114e0 -->
 
-# A page that ran out of time now says so
+## Thread — A page that ran out of time now says so (PR #2185, issue #2109)
 
 The sweep that walks every screen of the deployed app prints one line per
 screen. When a screen fails to load, the line ends with "DID NOT LOAD".
@@ -783,7 +784,7 @@ mention a timeout — an infrastructure excuse for a real defect, and the
 one direction that matters.
 <!-- assembled-fragment: 2109-navigation-timeout-says-so.md sha256=ae22ef34f64deeff5eecefe06f59472019f539d9d8de2f2f89e0dc9567af6630 -->
 
-# One answer to "what does this name hold, and can I trust it here"
+## Thread — One answer to "what does this name hold, and can I trust it here" (PR #2177, issue #2175)
 
 The checks that keep the live drives' source regions honest repeatedly
 need to know what a name stands for. Seven separate rules were working
