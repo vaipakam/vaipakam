@@ -46,9 +46,11 @@ ordinary remittance leaves by the same two parts and is charged against
 the delivered ledger by its fresh share, while a redispatch funded from
 the recovery position is debited from that position — through it alone,
 by the full redispatched amount — and is not charged against the
-delivered ledger again, its original outflow having been charged already. The mesh watcher
-checks the address's balance against its attributions exactly, and treats
-a balance it cannot read as a critical finding rather than as zero. Six review rounds
+delivered ledger again, its original outflow having been charged already. Where custody has moved onto the address, the mesh watcher checks the
+address's balance against its attributions exactly and treats a balance
+it cannot read as a critical finding rather than as zero; before the
+activation it keeps applying the older relation to the platform's own
+balance. Six review rounds
 shaped it, and what they added is in the entry: the restitution position's
 two exits, the release that reconciles a position a moved figure left
 over-backed, the complete-cut record, and the expiry clock reading the
@@ -342,10 +344,14 @@ recycled runway, which is backed separately — a
 redispatch funded from the recovery position draws on that position, not
 on this headroom, and is not refused by it; a funding that lands against a
 paid-over-received deficit closes that deficit into a separate restitution
-position and only the excess becomes headroom — a position with two recorded exits — a correction of an evidenced
-accounting error, or a release to the treasury for a genuine deficit —
-each an administrator-only action taken under the platform's manual
-pause, and one from which a demoted compensation gives back what it still
+position and only the excess becomes headroom — a position with two recorded exits — a correction of what the
+administrator attests to be an accounting error, which lowers the paid
+side and creates headroom by the same act, or a release to the treasury
+for what the administrator attests to be a genuine deficit — each an
+administrator-only action taken under the platform's manual pause and
+recorded under a disposition reference the administrator supplies, the
+cause being that attestation and its off-chain record rather than
+anything the platform verifies, and one from which a demoted compensation gives back what it still
 holds — the live headroom and the restitution part alike — while whatever
 was already paid out before the demotion stays paid and leaves the return
 short by that much. The reward token cannot be rotated while custody or any
