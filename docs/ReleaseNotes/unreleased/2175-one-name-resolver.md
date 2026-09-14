@@ -126,12 +126,44 @@ words. A name holding a regular expression and a regular expression
 written out are the same question, and were being answered by two pieces
 of code.
 
-Beyond those five, no behaviour changes. The rules that were correct are
-correct in the same cases; they now say why in terms anyone can check.
+Review then found three more, and all three are the same shape as the
+ones before them: a rule that had been written at one site and not at its
+sibling. A name holding a stand-in was being accepted where the identical
+stand-in written out at the call was refused — one question, two answers.
+A built-in replaced through a stable second name for the language's own
+global object was not seen as replaced, though replacing it directly had
+been caught for two rounds. And a search written inside a function the
+helper merely CREATES, and never calls, was being attributed to the
+helper's own result, so an ordinary argument was refused on the strength
+of code that does not run.
 
-Three behaviour changes where a first draft claimed one is itself worth
-recording. None was aimed at; each follows from every rule resolving
-names the same way, which is the whole point of the change. That is
-exactly the kind that goes unmentioned unless somebody checks, and the
-reason to check is that a reader cannot tell a deliberate widening from
+Fixing the first of those exposed a defect in the consolidation itself,
+and it is worth stating because it is the risk that comes with having one
+answer instead of seven. Each rule keeps a record of what it has already
+looked at, so that a name defined in terms of itself is refused instead of
+followed forever — and resolving a name had been borrowing whichever
+rule's record was to hand. Two rules that each resolve the SAME name while
+judging one thing therefore shared that record, and the second read the
+first's entry as a loop. A plain parameter came back "defined in terms of
+itself", and a correct region was refused. Resolving keeps its own record
+now; the answer depends on the name and the file and on nothing a caller
+happens to have looked at first.
+
+Alongside those, a genuine loosening. A value assigned on the arm of a
+branch that the use excludes cannot have been assigned by the time the
+use runs, and counting it had erased a parameter's provenance and refused
+a correct region. Only the two constructs where the arms truly cannot
+both run are treated this way; a switch falls through, and a catch runs
+because its try block got part of the way, so neither qualifies.
+
+This note ENUMERATES the behaviour changes rather than counting them, and
+that is a correction rather than a preference: a running total beside a
+list is a second place the same fact is recorded, and this one was wrong
+on three consecutive reviews. None of the changes was aimed at. Each
+follows from every rule resolving names the same way, which is the point
+of the change — and that is exactly the kind that goes unmentioned unless
+somebody checks, because a reader cannot tell a deliberate widening from
 an accidental one unless the note says which.
+
+Everything else behaves as it did. The rules that were correct are
+correct in the same cases; they now say why in terms anyone can check.

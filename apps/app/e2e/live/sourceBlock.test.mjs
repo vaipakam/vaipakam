@@ -2271,10 +2271,16 @@ describe('#2175 — one resolver, three answers', () => {
   // Only the arguments reaching a parameter the helper SEARCHES THROUGH
   // are inspected. Checking every argument refused ordinary ones — a
   // numeric search offset is not a stand-in for the source.
+  // The source text arrives from the CALLER here, which is how a drive
+  // is actually handed it — and, since round 10, the only shape that
+  // makes this fixture about what it claims. `const s = f()` would now
+  // be refused for its own reason (the call's return is not established
+  // text), which would have proved nothing about WHICH arguments the
+  // rule judges.
   it('does not judge arguments the helper never searches through', () => {
     const code =
-      "const s = f();\nconst at = (text, from) => text.indexOf('e', from);\n" +
-      'const r = s.slice(0, at(s, 1));';
+      "const at = (text, from) => text.indexOf('e', from);\n" +
+      'export function region(s) { return s.slice(0, at(s, 1)); }';
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
@@ -2290,12 +2296,12 @@ describe('#2175 — one resolver, three answers', () => {
   });
 
   it('lets a spread destroy the mapping only from where it appears', () => {
-    const lead = "const s = f();\nconst at = (text, from) => text.indexOf('e', from);\n";
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
     // After every searched parameter: the first argument is still named.
-    const after = lead + 'const r = s.slice(0, at(s, ...[1]));';
+    const after = lead + 'export function region(s) { return s.slice(0, at(s, ...[1])); }';
     expect(countsCharacters(after, sliceCallsIn(after).at(-1))).toBe(false);
     // At the searched parameter: nothing can be attributed to it.
-    const before = lead + 'const r = s.slice(0, at(...[s], 1));';
+    const before = lead + 'export function region(s) { return s.slice(0, at(...[s], 1)); }';
     expect(countsCharacters(before, sliceCallsIn(before).at(-1))).toBe(true);
   });
 
@@ -2313,6 +2319,64 @@ describe('#2175 — one resolver, three answers', () => {
       'const s = f();\nglobalThis.String = { raw: String.prototype.slice };\n' +
       'const r = String.raw.call(s, 0, 320);';
     expect(sliceCallsIn(code).length).toBeGreaterThan(0);
+  });
+
+  // Round 10. Four more findings, and three of them are the SAME two
+  // mistakes this PR has now been shown four times each: a rule applied
+  // at one site and not its sibling, and a question answered about the
+  // wrong unit.
+  it('judges a name holding a call the way it judges the call', () => {
+    // `at(make())` was refused and `const fake = make(); at(fake)` was
+    // not — one question, two answers, which is the shape #2175 exists
+    // to remove.
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const fake = make();\nconst r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  it('sees a built-in replaced through an alias of the global object', () => {
+    const code =
+      'const s = f();\nconst root = globalThis;\n' +
+      'root.String = { raw: String.prototype.slice };\n' +
+      'const r = String.raw.call(s, 0, 320);';
+    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
+  });
+
+  it('ignores a finder inside a closure the helper only creates', () => {
+    // The nested arrow is never called, so it selects no argument for
+    // inspection and both result arms are source-relative.
+    const code =
+      'const s = f();\n' +
+      "const at = text => (() => text.indexOf('x')) ? s.indexOf('a') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(1));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  it('does not let the other arm of a branch erase caller provenance', () => {
+    // The `else` runs only when the `if` did not, so the assignment in
+    // it never happened here and `text` is still the caller's.
+    const kept =
+      'function region(text, on) { if (on) { var text = standIn; }' +
+      " else { return text.slice(0, text.indexOf('e')); } }";
+    expect(countsCharacters(kept, sliceCallsIn(kept).at(-1))).toBe(false);
+    // …and the write still counts when the use is not on the other arm.
+    const reached =
+      'function region(text, on) { if (on) { var text = standIn; }' +
+      " return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(reached, sliceCallsIn(reached).at(-1))).toBe(true);
+  });
+
+  it('resolves a name once per question, not once per file', () => {
+    // Two rules each resolve the argument, and they used to share the
+    // record of having done so — so the second read the first's entry
+    // as a cycle and reported a plain parameter as defined in terms of
+    // itself.
+    const code =
+      "const at = (text, from) => text.indexOf('e', from);\n" +
+      'export function region(s) { return s.slice(0, at(s, 1)); }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
   // A LITERAL is text only when it is a STRING. A regular expression is

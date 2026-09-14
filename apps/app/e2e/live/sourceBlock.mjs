@@ -916,10 +916,59 @@ const RESOLVED = 'resolved';
 const UNRESOLVED = 'unresolved';
 const UNBOUND = 'unbound';
 
-/** Whether this file ASSIGNS to an undeclared name — which creates no
- *  binding, so the scope analyser still calls every reference global. */
-// The names that denote the global object itself.
+/** The node types that are a function — the thing a helper may CREATE
+ *  rather than BE, which is why a search inside one says nothing about
+ *  which of the helper's own parameters it looks through. */
+const FUNCTIONS = new Set([
+  'ArrowFunctionExpression',
+  'FunctionExpression',
+  'FunctionDeclaration',
+]);
+
+/** The names that denote the global object itself. */
 const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
+
+/**
+ * Follow a name back to the GLOBAL OBJECT it holds, if it holds one.
+ *
+ * `const root = globalThis; root.String = …` replaces the intrinsic just
+ * as directly as writing `globalThis.String` does, so a local binding is
+ * not a reason to discard the write — only a reason to follow it.
+ *
+ * Deliberately NOT `resolutionOf`. Resolving asks whether a name is a
+ * global this file writes, and answering that runs the very scan this
+ * helper serves; routing the alias through it made the two call each
+ * other until the stack ran out (round 10, the second time this cycle
+ * has been built — see round 9's note below). This walk reads
+ * declarators directly and calls nothing that resolves.
+ *
+ * It follows only an alias that CANNOT have become something else: a
+ * single `const`/`let`/`var` definition, initialised with a bare name,
+ * never reassigned. Anything less certain is not an alias, and an
+ * uncertain one is reported as no alias at all rather than guessed at.
+ */
+function globalObjectAlias(variableOf, start) {
+  let cur = start;
+  for (let hop = 0; hop < 8; hop += 1) {
+    if (cur?.type !== 'Identifier') return null;
+    const variable = variableOf.get(cur);
+    // Unbound: the name itself is the global object's, or it is not.
+    if (!variable) return GLOBAL_OBJECTS.includes(cur.name) ? cur : null;
+    const defs = variable.defs;
+    if (defs.length !== 1 || defs[0].type !== 'Variable') return null;
+    // A reassignment anywhere makes the name's value a question of
+    // ordering, which this walk deliberately does not reason about.
+    if (variable.references.some((r) => r.isWrite() && !r.init)) return null;
+    const init = defs[0].node?.init;
+    // An unpacked name holds a PROPERTY of the initialiser, not the
+    // initialiser — the same distinction `bindingOf` draws for `const
+    // { end } = …`, applied here so a destructured name cannot be read
+    // as an alias of what it was unpacked from.
+    if (defs[0].node?.id?.type !== 'Identifier') return null;
+    cur = unwrapChain(init);
+  }
+  return null;
+}
 
 function globalWrites(src, name) {
   const { nodes, variableOf } = astOf(src, 'globalWrites');
@@ -946,7 +995,10 @@ function globalWrites(src, name) {
     // the whole question here, and the scope analyser answers it without
     // anyone having to resolve anything.
     if (host?.type !== 'Identifier') return;
-    if (!GLOBAL_OBJECTS.includes(host.name) || variableOf.get(host)) return;
+    // …and it may be held through a STABLE ALIAS, which `globalObjectAlias`
+    // follows without resolving anything — see its own note for why that
+    // separation is load-bearing rather than stylistic.
+    if (!globalObjectAlias(variableOf, host)) return;
     if (propertyName(target) === name) out.push(target.property);
   };
   for (const n of nodes) {
@@ -964,6 +1016,21 @@ function globalWrites(src, name) {
   return out;
 }
 
+/**
+ * Resolving keeps its OWN cycle set, and never takes the caller's.
+ *
+ * Round 10. Every rule here carries a `seen` set to stop itself
+ * recursing, and resolving used to borrow it — so two rules that each
+ * resolve the SAME name within one judgement shared the record of
+ * having done so, and the second read the first's entry as a cycle. A
+ * plain parameter came back "defined in terms of itself", which made a
+ * correct region look like a character count.
+ *
+ * Resolving is pure and depends on nothing but the name and the file,
+ * so there is no answer a caller's history could usefully change — only
+ * one it can corrupt. The recursion below carries the private set
+ * instead, which is the only chain a cycle can actually form along.
+ */
 function resolutionOf(src, node, seen = new Set()) {
   if (!node || typeof node.type !== 'string') return { state: UNRESOLVED, why: 'absent' };
   if (node.type !== 'Identifier') return { state: RESOLVED, value: node };
@@ -1014,8 +1081,8 @@ function resolutionOf(src, node, seen = new Set()) {
 /** Follow a STABLE alias to what it holds — one hop or many, refusing
  *  the moment a write reaches it or the chain cannot be followed.
  *  The thin form of `resolutionOf` for callers that only want a value. */
-function resolveAlias(src, node, seen = new Set()) {
-  const r = resolutionOf(src, node, seen);
+function resolveAlias(src, node) {
+  const r = resolutionOf(src, node);
   return r.state === RESOLVED ? r.value : null;
 }
 
@@ -1619,6 +1686,18 @@ function writeReaches(src, writes, useAt) {
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
   const useHost = useNode ? host(useNode) : null;
   return writes.some((w) => {
+    // A write on the OTHER ARM of a branch the use sits in never ran on
+    // the way here (round 10): in `if (on) { var text = standIn; } else
+    // { return text.slice(0, text.indexOf('e')); }` the `else` is
+    // reached only when the `if` was not, so the assignment is not a
+    // possible value of `text` there — and treating it as one erased
+    // the parameter's provenance and refused a correct bound.
+    //
+    // Answered HERE rather than at the one caller that reported it,
+    // because "did this write reach this use" is this function's whole
+    // question and every caller asks it — which is also what the
+    // coverage entry's single-reader claim is for.
+    if (useNode && mutuallyExclusive(parents, w, useNode)) return false;
     if (keyPrecedesStaticValue(parents, w, useNode)) return true;
     const writeHost = host(w);
     // A LOOP repeats, so even one body gives no order; only a shared
@@ -1643,6 +1722,44 @@ function writeReaches(src, writes, useAt) {
     if (useHost !== null) return true;
     return w.start < useAt || writeHost !== null;
   });
+}
+
+/**
+ * Slots of one construct that CANNOT BOTH RUN.
+ *
+ * Deliberately only two entries, and the omissions are the point. A
+ * `switch` falls through, so two cases are not exclusive. A `catch`
+ * runs because its `try` block threw PART WAY — statements before the
+ * throw did run, so the block and the handler are not exclusive either.
+ * Reading "these are alternatives" off the grammar would have swept
+ * both in, and both would have been wrong in the direction that
+ * certifies a window nobody can see.
+ */
+const EXCLUSIVE_SLOTS = {
+  IfStatement: ['consequent', 'alternate'],
+  ConditionalExpression: ['consequent', 'alternate'],
+};
+
+/** The exclusive slot `node` occupies in each construct above it. */
+function exclusiveSlots(parents, node) {
+  const out = new Map();
+  for (let c = node, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    const slots = EXCLUSIVE_SLOTS[p.type];
+    if (!slots) continue;
+    const name = slots.find((s) => holds(p[s], c));
+    if (name) out.set(p, name);
+  }
+  return out;
+}
+
+/** Whether two nodes sit on arms of one branch that cannot both run. */
+function mutuallyExclusive(parents, a, b) {
+  const mine = exclusiveSlots(parents, a);
+  for (const [construct, slot] of exclusiveSlots(parents, b)) {
+    const other = mine.get(construct);
+    if (other && other !== slot) return true;
+  }
+  return false;
 }
 
 /** Whether the binding the write targets is DECLARED inside `host`. */
@@ -1842,7 +1959,7 @@ export function kindOf(src, node, seen = new Set()) {
       // UNRESOLVED, which covers the round-7 case of a name written to
       // after it was declared (`let end = s.indexOf('x'); end = start +
       // 320;` had the window inheriting the declaration's kind).
-      const r = resolutionOf(src, node, seen);
+      const r = resolutionOf(src, node);
       if (r.state !== RESOLVED || r.notText) return null;
       return kindOf(src, r.value, seen);
     }
@@ -1975,7 +2092,7 @@ export function isBoundedRegion(src, node, seen = new Set()) {
     const key = `regionFn:${node.callee.name}@${node.callee.start}`;
     if (seen.has(key)) return false;
     seen.add(key);
-    const fn = resolutionOf(src, node.callee, seen);
+    const fn = resolutionOf(src, node.callee);
     return fn.state === RESOLVED &&
       fn.value.type === 'ArrowFunctionExpression' &&
       fn.value.body.type !== 'BlockStatement'
@@ -2012,7 +2129,7 @@ export function isBoundedRegion(src, node, seen = new Set()) {
   seen.add(key);
   // Only a value this can follow is a region. An UNBOUND name is some
   // other file's, and an UNRESOLVED one may hold the whole source.
-  const r = resolutionOf(src, node, seen);
+  const r = resolutionOf(src, node);
   return r.state === RESOLVED ? isBoundedRegion(src, r.value, seen) : false;
 }
 
@@ -2155,7 +2272,22 @@ function candidateValues(src, node, seen) {
  */
 function suspectValue(src, node, seen) {
   if (!node) return true;
-  if (node.type === 'Identifier') return suspectReceiver(src, node, seen);
+  // A NAME is judged by the receiver rule AND by what it resolves to,
+  // with the same closed list a written-out value gets. Delegating only
+  // to the receiver rule made `const fake = make(); at(fake)` pass while
+  // the identical `at(make())` was refused — one question answered
+  // differently at two sites, for the fourth time on this PR.
+  //
+  // Note this is the ARGUMENT rule, not the receiver rule: a truncation
+  // whose receiver is a name holding a call's result is still ordinary
+  // (`const src = read(); src.slice(…)`), because there the name carries
+  // the file's convention. Here a visible call is handing a value over,
+  // and nothing about that value has been established.
+  if (node.type === 'Identifier') {
+    if (suspectReceiver(src, node, seen)) return true;
+    const r = resolutionOf(src, node);
+    return r.state === RESOLVED ? suspectValue(src, r.value, seen) : !r.fromCaller;
+  }
   if (node.type === 'Literal') return typeof node.value !== 'string';
   if (node.type === 'TemplateLiteral') return false;
   return true;
@@ -2204,7 +2336,17 @@ function helperArgumentsSound(src, fn, args, seen) {
 function searchedParameters(src, fn) {
   const { variableOf } = astOf(src, 'searchedParameters');
   const used = new Set();
+  // A nested function the helper merely CREATES does not run when the
+  // helper is called, so a finder inside one says nothing about the
+  // helper's own result. Walking every descendant attributed those to
+  // the helper and refused ordinary arguments.
+  const nested = new Set();
+  walk(fn.body, (n, parent) => {
+    if (FUNCTIONS.has(n.type) && n !== fn) nested.add(n);
+    if (parent && nested.has(parent)) nested.add(n);
+  });
   walk(fn.body, (n) => {
+    if (nested.has(n)) return;
     if (n.type !== 'CallExpression') return;
     const callee = unwrapChain(n.callee);
     if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return;
@@ -2264,7 +2406,7 @@ function helperKind(src, callee, args, seen) {
   const key = `fn:${callee.name}@${callee.start}`;
   if (seen.has(key)) return null;
   seen.add(key);
-  const held = resolutionOf(src, callee, seen);
+  const held = resolutionOf(src, callee);
   if (held.state !== RESOLVED) return null;
   const fn = held.value;
   if (fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
@@ -2323,7 +2465,7 @@ function suspectReceiver(src, node, seen) {
   // these suites pass source text around, and refusing it would refuse
   // nearly every real region. UNRESOLVED IS suspect: a name written to
   // before the use may hold anything by the time the search runs.
-  const r = resolutionOf(src, node, seen);
+  const r = resolutionOf(src, node);
   if (r.state === UNBOUND) return false;
   if (r.notText) return true;
   // ANY unresolved receiver is suspect, not just a reassigned one. A
@@ -2456,7 +2598,7 @@ function isTextNeedle(src, node, seen = new Set()) {
   // reassigned before the use is not what it was declared as (round 24):
   // `let needle = 'x'; needle = 320;` leaves `.length` undefined and the
   // end coerces to zero.
-  const r = resolutionOf(src, node, seen);
+  const r = resolutionOf(src, node);
   if (r.notText) return false;
   if (r.state === UNBOUND) return true;
   if (r.state === UNRESOLVED) return Boolean(r.fromCaller);
