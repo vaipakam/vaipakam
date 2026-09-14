@@ -90,6 +90,7 @@ import {
   addressOf,
   blockedSync,
   LiveSetupError,
+  navFailureReason,
   requireSiteUrl,
   SITE,
   visit,
@@ -138,6 +139,17 @@ const VIEWPORTS = {
 };
 
 const PROBE_ONLY = process.env.UX_SWEEP_PROBE_ONLY === '1';
+
+/**
+ * How long a route gets to load before the sweep gives up on it.
+ *
+ * NAMED so the row that reports a timeout can cite the budget rather
+ * than leave the reader to infer it from the elapsed figure (#2109). The
+ * two differ in what they tell you: `45002ms` says how long this attempt
+ * took, which is only meaningful once you know what it was allowed.
+ */
+const NAV_BUDGET_MS = 45_000;
+
 
 /** Chain-scoped surfaces — the subset worth re-sweeping on a second
  *  network (VPFI availability, vault, faucet, book/desk market data,
@@ -390,7 +402,7 @@ function pathOf(url) {
  *  so the link should come from the page itself). */
 async function resolveLoanDetailRoute(page) {
   try {
-    await page.goto(`${SITE}/positions`, { waitUntil: 'load', timeout: 45_000 });
+    await page.goto(`${SITE}/positions`, { waitUntil: 'load', timeout: NAV_BUDGET_MS });
     await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
     const href = await page
       .$$eval('a[href^="/positions/"]', (as) => as.map((a) => a.getAttribute('href'))[0] ?? null)
@@ -657,7 +669,7 @@ for (const pass of session.passes) {
     let servedPath = null;
     let landedPath = null;
     try {
-      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: NAV_BUDGET_MS });
       httpStatus = resp?.status() ?? null;
       servedPath = pathOf(resp?.url());
       // Let data views settle: brief idle wait, tolerant of the polls.
@@ -805,7 +817,11 @@ for (const pass of session.passes) {
               ? ` (${httpError})`
               : redirectedTo !== null
                 ? ` (redirected to ${redirectedTo})`
-                : '')),
+                : // The NAVIGATION case had no parenthetical at all, so a
+                  // timeout printed bare and read as a broken route
+                  // (#2109). Its two siblings above have said why since
+                  // they were written; this one never did.
+                  ` (${navFailureReason(navError, NAV_BUDGET_MS)})`)),
     );
     sink = null;
   }

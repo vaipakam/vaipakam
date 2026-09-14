@@ -70,6 +70,28 @@ export function trackBrowser(browser) {
 }
 
 /**
+ * Why a navigation failed, in a few words fit for a one-line row.
+ *
+ * A TIMEOUT is the case worth naming: `live-ux-sweep` reported it as a
+ * bare "DID NOT LOAD", which reads as a broken route, and the run's own
+ * output already carried the evidence that it was not — the same routes
+ * loading in other passes (#2109). An expired deadline means the sweep
+ * OBSERVED NOTHING about that route; a broken route is something it
+ * observed. Those are opposite claims and the row said the second.
+ *
+ * Anything else is reported as itself, first line only. Guessing a
+ * category for an error this does not recognise would be the same defect
+ * in a new place.
+ */
+export function navFailureReason(navError, budgetMs) {
+  if (navError === null) return null;
+  const firstLine = navError.split('\n')[0].trim();
+  return /timeout/i.test(firstLine) && /exceed/i.test(firstLine)
+    ? `navigation timed out — no load within the ${budgetMs / 1000}s budget, so this route was NOT OBSERVED`
+    : `navigation failed: ${firstLine.slice(0, 120)}`;
+}
+
+/**
  * Synchronous BLOCKED exit, for the pre-browser precondition checks
  * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
  * run before any browser exists and cannot await.
