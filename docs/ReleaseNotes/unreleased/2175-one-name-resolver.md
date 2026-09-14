@@ -41,9 +41,12 @@ stated while the two situations shared one response.
 Making the states visible immediately showed one caller answering
 permissively: a receiver whose value could not be determined was being
 trusted, when the whole purpose of that rule is to catch a stand-in
-pretending to be text. A parameter is exempt — its value arrives from the
-caller, which is how these drives are handed their source — and
-everything else unresolved is now refused.
+pretending to be text. Two kinds of name are exempt, and both for the
+same reason: a plain parameter, whose value arrives from whoever called
+the function, and an imported name, whose value belongs to another file.
+Neither can be read here, and both are how these drives are ordinarily
+handed their source. Everything else whose value cannot be determined is
+now refused.
 
 That exemption was first written by matching on the REASON the lookup
 failed, and review caught it immediately — which is worth recording,
@@ -65,6 +68,16 @@ is refused, whatever the helper's body would have said. Working out what
 each parameter holds at each call is a larger analysis and is not
 attempted here; the narrower question has an answer and is asked instead.
 
+That limit needed widening twice more before it held. Every form the
+language offers for passing a value along — selecting between two,
+spreading a list, assigning, awaiting, discarding all but the last of a
+series — is somewhere the inspection can stop one step short of the
+value, and each was found separately. They are now listed in one place so
+there is a single thing to check rather than one more each time. The
+inspection also refuses an argument whose value could not be worked out
+AND does not come from outside the file: the exemption describes a value
+that cannot be seen, and such a name satisfies neither half of that.
+
 There is a SECOND behaviour change, and an earlier draft of this note
 said there was not. Because every rule now follows a name the same way, a
 small helper reached through a second name is recognised where before it
@@ -75,5 +88,21 @@ change rather than being aimed at, which is exactly why it needed
 stating; a reader checking whether this note was complete would have
 found it and been right to mind.
 
-Beyond those two, no behaviour changes. The rules that were correct are
+A THIRD followed, found the same way, and this one corrects an
+over-strictness rather than widening a judgement. Where a name is
+declared twice — once by unpacking and once plainly — the old rule
+refused it because one of the two declarations was an unpacking, even
+when the plain one is the declaration that stands where the name is used.
+It now reads the declaration that actually stands, so a name provably
+holding the beginning of the text is accepted as such. The old answer was
+not conservative, it was wrong.
+
+Beyond those three, no behaviour changes. The rules that were correct are
 correct in the same cases; they now say why in terms anyone can check.
+
+Three behaviour changes where a first draft claimed one is itself worth
+recording. None was aimed at; each follows from every rule resolving
+names the same way, which is the whole point of the change. That is
+exactly the kind that goes unmentioned unless somebody checks, and the
+reason to check is that a reader cannot tell a deliberate widening from
+an accidental one unless the note says which.

@@ -2151,6 +2151,49 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
+  // Round 5. Every form the grammar offers for passing a value along is
+  // somewhere this inspection can stop one step short — found three
+  // rounds running, one form at a time, so they are pinned together.
+  it('sees a stand-in through every value-forwarding form', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      ['an await', 'const r = s.slice(start, at(await { indexOf: () => start + 320 }));'],
+      ['an assignment', 'let f2;\nconst r = s.slice(start, at((f2 = { indexOf: () => start + 320 })));'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // A LITERAL is text only when it is a STRING. A regular expression is
+  // an object written out, and reading the node type alone called every
+  // literal unknown — the `/x/` stand-in this guard has had an open
+  // case about since #2174.
+  it('refuses a regular expression written out as a stand-in', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const fake = /x/;\nfake.indexOf = () => start + 320;\n' +
+      'const r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // The exemption describes a value that CANNOT BE SEEN. A name whose
+  // value could not be worked out and which does not come from outside
+  // the file satisfies neither half — and forwarding one through a
+  // second helper had reopened the defaulted-parameter case.
+  it('refuses an unestablished local forwarded through a helper', () => {
+    const code =
+      'const s = f();\n' +
+      'function outer(fake = { indexOf: () => 320 }) {\n' +
+      "  const at = recv => recv.indexOf('end');\n" +
+      '  return s.slice(0, at(fake));\n' +
+      '}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
   // The resolver FOLLOWS CHAINS, so asking it only for a state answers a
   // different question than "is this name the built-in". A local that
   // aliases something unbound resolved through to an unbound name and

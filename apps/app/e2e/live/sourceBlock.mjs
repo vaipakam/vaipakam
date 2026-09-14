@@ -2023,13 +2023,39 @@ function visiblyNotText(src, node, seen) {
   if (node?.type === 'SequenceExpression') {
     return visiblyNotText(src, node.expressions.at(-1), seen);
   }
+  // An ASSIGNMENT evaluates to the value assigned, and an AWAIT to what
+  // the promise settles to — both forward a value through rather than
+  // being one. Every wrapper the grammar offers for passing a value
+  // along is a place this walk can stop too early, which is the same
+  // finding for the third time; they are enumerated here together so
+  // there is one list to check rather than one per round.
+  if (node?.type === 'AssignmentExpression') return visiblyNotText(src, node.right, seen);
+  if (node?.type === 'AwaitExpression') return visiblyNotText(src, node.argument, seen);
+  if (node?.type === 'ParenthesizedExpression') return visiblyNotText(src, node.expression, seen);
+  if (node?.type === 'TSAsExpression' || node?.type === 'TSNonNullExpression') {
+    return visiblyNotText(src, node.expression, seen);
+  }
   const r = resolutionOf(src, node, new Set(seen));
   // A DECLARED function or class is known not to be text WITHOUT being
   // resolved — a declaration has no initialiser to follow, so it comes
   // back unresolved carrying that fact. Requiring RESOLVED first threw
   // the fact away and accepted `function fake() {}` as an argument.
   if (r.notText) return true;
-  return r.state === RESOLVED && NOT_TEXT.has(r.value.type);
+  // An UNESTABLISHED LOCAL defeats the exemption too, and this is the
+  // second ground rather than a kind of not-text. The exemption says
+  // "the value arrives from outside and cannot be seen"; a name whose
+  // value this could NOT work out and which does NOT arrive from
+  // outside satisfies neither half, so vouching for it was the
+  // permissive answer — and it let a defaulted parameter through a
+  // second helper after the direct form had been closed.
+  if (r.state === UNRESOLVED && !r.fromCaller) return true;
+  if (r.state !== RESOLVED) return false;
+  // A LITERAL is text only when it is a STRING. A regular expression is
+  // an object written out — the `/x/` stand-in this guard has had an
+  // open case about — and a number, boolean or null is not text either.
+  // Reading the node type alone called every literal unknown.
+  if (r.value.type === 'Literal') return typeof r.value.value !== 'string';
+  return NOT_TEXT.has(r.value.type);
 }
 
 function callKind(src, node, seen) {
