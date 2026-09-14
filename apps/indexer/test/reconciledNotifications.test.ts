@@ -148,11 +148,43 @@ describe('planReconciledNotifications', () => {
     // defect, and both holders knowing their position ended, with the pass
     // declining to say how, beats them knowing nothing because it could not
     // say everything. `loan_ended` asserts only the ending.
+    // Holders supplied, because PRODUCTION ALWAYS SUPPLIES THEM (#2190 r8
+    // `4008583624`). Omitting them took the stored-column fallback, a path
+    // the repair never reaches — so this case passed while saying nothing
+    // about the behaviour it is named for.
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 14, 'settled');
-    const n = await planAndWrite(h, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000);
+    const n = await planAndWrite(h, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000, {
+      lender: LENDER,
+      borrower: BORROWER,
+    });
     expect(n).toBe(2);
     expect(rowsFor(h, 14).every((r) => r.kind === 'loan_ended')).toBe(true);
+  });
+
+  it('reaches NOBODY once both position tokens are burned, which is the common settled case', async () => {
+    // #2190 r8 `4008583624`, pinned because it is a LIMITATION rather than a
+    // bug to fix here, and an unpinned limitation drifts into a silent one.
+    //
+    // `Settled` is normally reached by both parties claiming, which burns
+    // both position NFTs — so the production `ownerOf` reads return null for
+    // both sides and the notice has nobody it can substantiate. The rule
+    // that produces that (an unsubstantiated side is never written to) is
+    // the right rule: the alternative is addressing the one message a holder
+    // gets to whoever the stale column names.
+    //
+    // Fixing it properly needs a source that can say who HELD a position
+    // that no longer exists — claim/participant history — which is #2195.
+    // Until then the release note and the functional spec say when the
+    // message is and is not sent, rather than promising it unconditionally.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 15, 'settled');
+    const n = await planAndWrite(h, [{ loanId: 15, to: 'settled' }], 500, 1_700_000_000, {
+      lender: null,
+      borrower: null,
+    });
+    expect(n).toBe(0);
+    expect(rowsFor(h, 15)).toHaveLength(0);
   });
 
   it('writes nothing for a status it does not recognise', async () => {

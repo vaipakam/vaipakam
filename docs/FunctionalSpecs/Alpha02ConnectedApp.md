@@ -326,6 +326,15 @@ The app uses chain reads and indexed reads for different jobs.
   not available, since the unanswerable case and the legitimately-empty case
   are the same answer, so waiting for one would leave the other's record
   wrong permanently.
+- **A position that finished the ordinary way therefore reaches nobody**, and
+  the platform states this rather than promising a message it does not send.
+  The undifferentiated finished state is reached by both parties taking what
+  is theirs, which destroys the holdings the question of ownership is asked
+  about — so for the commonest case there is no holder to establish. The
+  record is corrected regardless. Relaxing the rule to use the last name the
+  platform stored is not the remedy, since avoiding exactly that is why
+  ownership is asked of the chain; the remedy is a record of who HELD a
+  position that no longer exists, which is a separate capability.
 - Such a message is SHOWN as a correction, not merely recorded as one. Its
   headline states the outcome, and a line beneath it says the platform
   found this by checking and cannot tell when it happened. A surface that

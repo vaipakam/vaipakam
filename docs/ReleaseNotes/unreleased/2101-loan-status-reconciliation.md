@@ -131,6 +131,17 @@ claim. That was the wrong half of the trade: knowing your position ended,
 from a platform declining to say how, is better than hearing nothing because
 it could not say everything.
 
+That message carries a limit worth stating plainly, because the case it
+misses is the ordinary one. The platform works out who to tell by asking the
+chain who holds the position — and a loan reaches that undifferentiated
+finished state precisely BY both sides taking what was theirs, which destroys
+the very thing ownership is asked about. So for a loan that finished the
+normal way there is nobody the platform can establish, and nobody is told.
+The record is still corrected. Falling back to the last name on a stale list
+is exactly what asking the chain exists to prevent, so the answer is not to
+relax that; it is a record of who HELD a position that no longer exists,
+which the platform does not keep yet and which is raised separately.
+
 Who receives them is asked of the chain, not of the platform's own record of
 who holds what. The same gap that swallowed the ending could equally have
 swallowed a transfer of the position, so that record is untrustworthy for
