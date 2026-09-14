@@ -35,6 +35,10 @@ import {
   RECONCILE_BUDGET_SHARED_TICK,
 } from '../src/chainIndexer';
 import { reconcileAfterScan } from '../src/loanReconcile';
+import {
+  notificationInsertStatement,
+  planReconciledNotifications,
+} from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -269,6 +273,12 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        terminalNotificationStatements: async (loanId, to) => {
+          const rows = await planReconciledNotifications(
+            h.d1 as never, CHAIN, [{ loanId, to }], 100, 1_700_000_000,
+          );
+          return rows.map((r) => notificationInsertStatement(h.d1 as never, r));
+        },
       },
       { maxRows: 5, minRows: 1 },
     );
@@ -289,6 +299,13 @@ describe('reconcileAfterScan against a real database', () => {
     expect(row.collateral_amount).toBe('250');
     expect(hasListing(h, 21)).toBe(false);
     expect(hasIntent(h, 21)).toBe(false);
+    // And the inbox rows rode the SAME transaction — written afterwards
+    // they could be lost for good, since the repaired row leaves the live
+    // set the rotation selects from (#2190 r4).
+    const notif = h.db
+      .prepare('SELECT COUNT(*) AS n FROM notifications WHERE chain_id = ? AND loan_id = ?')
+      .get(CHAIN, 21) as { n: number };
+    expect(notif.n).toBe(2);
   });
 
   it('leaves a loan the chain still calls running completely untouched', async () => {
@@ -310,6 +327,7 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        terminalNotificationStatements: async () => [],
       },
       { maxRows: 5, minRows: 1 },
     );

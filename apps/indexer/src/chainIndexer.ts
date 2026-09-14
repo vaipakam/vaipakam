@@ -73,7 +73,8 @@ import {
 } from './marketSummary';
 import {
   materializeNotifications,
-  materializeReconciledNotifications,
+  notificationInsertStatement,
+  planReconciledNotifications,
 } from './notifications';
 import {
   applyRewardLoopLedger,
@@ -710,6 +711,23 @@ async function runLoanReconcilePass(input: {
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId),
+        // The holders of a ghost position got NO terminal inbox row: the
+        // event was missed for good, so the event materializer never saw
+        // one, and the correction is the only chance left to keep the
+        // promise the notification surface makes. These ride the repair's
+        // own transaction — written afterwards they could be lost for good,
+        // since the repaired row leaves the live set the rotation selects
+        // from (#2190 r4 `4007360360`).
+        terminalNotificationStatements: async (loanId, to) => {
+          const rows = await planReconciledNotifications(
+            env.DB,
+            chainId,
+            [{ loanId, to }],
+            Number(head),
+            Math.floor(Date.now() / 1000),
+          );
+          return rows.map((r) => notificationInsertStatement(env.DB, r));
+        },
       },
       budget,
     );
@@ -717,20 +735,6 @@ async function runLoanReconcilePass(input: {
       console.warn(
         `[chainIndexer] reconciled chain ${chainId}: ` +
           report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
-      );
-      // The holders of a ghost position got NO terminal inbox row: the
-      // event was missed for good, so the event materializer never saw it,
-      // and the correction is the only chance left to keep the promise the
-      // notification surface makes. Rows say they came from a repair and
-      // are dated to when the platform found out, because when the loan
-      // actually ended is not something this pass can know (#2190 r2
-      // `4006071734`). Fail-open inside.
-      await materializeReconciledNotifications(
-        env.DB,
-        chainId,
-        report.repaired,
-        Number(head),
-        Math.floor(Date.now() / 1000),
       );
     }
     // A row whose chain read failed is NOT silently dropped. If a deployed
@@ -741,6 +745,17 @@ async function runLoanReconcilePass(input: {
       console.warn(
         `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
           `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+      );
+    }
+    // A failing WRITE with a succeeding read points at D1, not the RPC, so
+    // it is reported separately rather than folded into `unread`. The row
+    // is untouched — the repair is one transaction — so the rotation
+    // returns to it.
+    if (report.writeFailed.length > 0) {
+      console.error(
+        `[chainIndexer] reconcile could not WRITE ${report.writeFailed.length} repair(s) ` +
+          `on chain ${chainId}: ${report.writeFailed.join(', ')} — rows untouched, ` +
+          `retried next rotation`,
       );
     }
     // A DISAGREEMENT NOBODY CAN REPAIR is the quietest failure this pass

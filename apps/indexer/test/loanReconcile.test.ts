@@ -56,6 +56,8 @@ function fakeDeps(
    *  reason: a fake that cleared separately could not represent the
    *  all-or-nothing property the batch gives. */
   const sideTablesCleared: number[] = [];
+  /** Loan ids whose repair write should throw. */
+  const writeFails = new Set<number>();
   let pointer = 0;
   let lapEnd = 0;
   const deps: ReconcileDeps = {
@@ -95,6 +97,7 @@ function fakeDeps(
     },
     async writeRepair(_c, loanId, repair) {
       calls.writes += 1;
+      if (writeFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
       // The deletes are NOT conditional on the compare-and-set winning —
       // the chain reported this loan ended, and that is what licenses
       // clearing them. Recorded first so the order matches the batch.
@@ -122,6 +125,7 @@ function fakeDeps(
     calls,
     rows,
     sideTablesCleared,
+    writeFails,
     get pointer() { return pointer; },
     get lapEnd() { return lapEnd; },
   };
@@ -468,5 +472,42 @@ describe('the lap terminates on a chain that keeps appending loans', () => {
     expect(first.wrappedLap).toBe(false);
     const second = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 1, minRows: 1 });
     expect(second.wrappedLap).toBe(true);
+  });
+});
+
+describe('a failing write does not discard the repairs that landed', () => {
+  it('keeps the earlier repairs, and names the one that failed', async () => {
+    // #2190 r4 `4007262520`. Letting the write throw meant the caller's
+    // catch returned zero for the WHOLE pass: the earlier rows were
+    // corrected in D1 but their count never reached the result, so the
+    // `loan.updated` broadcast never fired — and those rows are no longer
+    // live, so no later pass can rediscover them to report.
+    const rows: ReconcileRow[] = [8, 9, 10].map((loan_id) => ({
+      loan_id,
+      status: 'active',
+    }));
+    const f = fakeDeps(rows, { 8: 2, 9: 1, 10: 1 }, 0);
+    f.writeFails.add(9);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.repaired.map((x) => x.loanId)).toEqual([8, 10]);
+    expect(r.writeFailed).toEqual([9]);
+    // The failed row is untouched — the repair is one transaction — so the
+    // rotation returns to it.
+    expect(rows.find((x) => x.loan_id === 9)?.status).toBe('active');
+  });
+
+  it('distinguishes a failed WRITE from a failed READ', async () => {
+    // A failing write with a succeeding read points at D1; a failing read
+    // points at the RPC. Folding them together would send an operator to
+    // the wrong place.
+    const rows: ReconcileRow[] = [
+      { loan_id: 8, status: 'active' },
+      { loan_id: 9, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 8: new Error('rate limited'), 9: 1 }, 0);
+    f.writeFails.add(9);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unread).toEqual([8]);
+    expect(r.writeFailed).toEqual([9]);
   });
 });

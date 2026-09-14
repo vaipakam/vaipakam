@@ -139,12 +139,23 @@ discovered.
 
 And it cannot say why an ending was missed in the first place.
 
-The correction and the tidying are a single write, which either happens
-completely or not at all. That is not a refinement: a
+The correction, the tidying and the messages to the two holders are a single
+write, which either happens completely or not at all. That is not a refinement: a
 correction that landed on its own would take the record out of the set the
 rotation looks at, so nothing would ever come back to finish the job, and a
 service killed mid-way leaves no failure to report either. Committing them
-together is the only version with no window.
+together is the only version with no window. The messages were the last
+thing still written afterwards, and they had the same flaw: a failure there
+left the position corrected and the two people with money in it told nothing,
+permanently.
+
+One failure it survives rather than prevents: if the write for one record
+fails while others in the same turn succeed, the successful ones stand and
+are reported, and the failed one is left exactly as it was for the next turn.
+An earlier version threw the whole turn away, which quietly discarded
+corrections that had already been made — and because a corrected record
+leaves the set being checked, nothing would ever have gone back to account
+for them.
 
 ## Not included
 

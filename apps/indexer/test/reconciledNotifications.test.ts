@@ -5,12 +5,19 @@
  * Without these the holders of a ghost position get no terminal row at all —
  * the event was missed for good, so the event materializer never sees it.
  * The cases below are mostly about what the rows DO NOT claim: the repair
- * cannot know when the loan ended, so nothing here is dated to the ending.
+ * cannot know when the loan ended, so nothing here is dated to the ending,
+ * and it cannot always say HOW it ended, so sometimes it says nothing.
+ *
+ * The rows are PLANNED here and committed through the same statement the
+ * repair folds into its own transaction — writing them afterwards was the
+ * defect #2190 r4 `4007360360` caught, since a repaired row leaves the live
+ * set and no later pass can rediscover it to try again.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  materializeReconciledNotifications,
+  notificationInsertStatement,
+  planReconciledNotifications,
   RECONCILED_EVENT_KIND,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
@@ -41,18 +48,33 @@ function seedLoan(h: SqliteD1, loanId: number, status: string, saleVehicle = 0) 
     .run(CHAIN, loanId, status, LENDER, BORROWER, LENDER, BORROWER, saleVehicle);
 }
 
+/** Plan the rows and commit them the way the repair does — in one batch —
+ *  so these cases exercise the same statements the transaction carries. */
+async function planAndWrite(
+  h: SqliteD1,
+  repaired: Array<{ loanId: number; to: string }>,
+  observedBlock: number,
+  nowSec: number,
+): Promise<number> {
+  const rows = await planReconciledNotifications(
+    h.d1 as never, CHAIN, repaired, observedBlock, nowSec,
+  );
+  if (rows.length === 0) return 0;
+  const results = await (h.d1 as { batch(s: unknown[]): Promise<Array<{ meta?: { changes?: number } }>> })
+    .batch(rows.map((r) => notificationInsertStatement(h.d1 as never, r)));
+  return results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+}
+
 const rowsFor = (h: SqliteD1, loanId: number) =>
   h.db
     .prepare('SELECT * FROM notifications WHERE chain_id = ? AND loan_id = ? ORDER BY recipient')
     .all(CHAIN, loanId) as Array<Record<string, unknown>>;
 
-describe('materializeReconciledNotifications', () => {
+describe('planReconciledNotifications', () => {
   it('gives BOTH holders a terminal row they would otherwise never get', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 8, 'defaulted');
-    const n = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 8, to: 'defaulted' }], 500, 1_700_000_000,
-    );
+    const n = await planAndWrite(h, [{ loanId: 8, to: 'defaulted' }], 500, 1_700_000_000);
     expect(n).toBe(2);
     const rows = rowsFor(h, 8);
     expect(rows.map((r) => r.recipient)).toEqual([LENDER, BORROWER]);
@@ -62,9 +84,7 @@ describe('materializeReconciledNotifications', () => {
   it('does not claim an event it never saw, nor a time it cannot know', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 9, 'repaid');
-    await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 9, to: 'repaid' }], 777, 1_700_000_042,
-    );
+    await planAndWrite(h, [{ loanId: 9, to: 'repaid' }], 777, 1_700_000_042);
     const [row] = rowsFor(h, 9);
     // Provenance, not a fabricated event name — and NOT null, which already
     // means "cron-derived calendar row".
@@ -81,14 +101,10 @@ describe('materializeReconciledNotifications', () => {
   it('is idempotent, so a re-run cannot double-notify a holder', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 10, 'repaid');
-    const first = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 10, to: 'repaid' }], 500, 1_700_000_000,
-    );
+    const first = await planAndWrite(h, [{ loanId: 10, to: 'repaid' }], 500, 1_700_000_000);
     // A DIFFERENT observed block on the re-run: the dedup key must not move
     // with the head, or the same holder gets the same news twice.
-    const second = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 10, to: 'repaid' }], 900, 1_700_000_500,
-    );
+    const second = await planAndWrite(h, [{ loanId: 10, to: 'repaid' }], 900, 1_700_000_500);
     expect(first).toBe(2);
     expect(second).toBe(0);
     expect(rowsFor(h, 10)).toHaveLength(2);
@@ -99,9 +115,7 @@ describe('materializeReconciledNotifications', () => {
     // event path applies.
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 11, 'repaid', 1);
-    const n = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 11, to: 'repaid' }], 500, 1_700_000_000,
-    );
+    const n = await planAndWrite(h, [{ loanId: 11, to: 'repaid' }], 500, 1_700_000_000);
     expect(n).toBe(0);
     expect(rowsFor(h, 11)).toHaveLength(0);
   });
@@ -112,9 +126,7 @@ describe('materializeReconciledNotifications', () => {
     // financial outcome (#2190 r4).
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 13, 'internal_matched');
-    await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 13, to: 'internal_matched' }], 500, 1_700_000_000,
-    );
+    await planAndWrite(h, [{ loanId: 13, to: 'internal_matched' }], 500, 1_700_000_000);
     expect(rowsFor(h, 13).every((r) => r.kind === 'internal_matched')).toBe(true);
   });
 
@@ -126,9 +138,7 @@ describe('materializeReconciledNotifications', () => {
     // meaning "ended, and this pass cannot say how".
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 14, 'settled');
-    const n = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000,
-    );
+    const n = await planAndWrite(h, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000);
     expect(n).toBe(0);
     expect(rowsFor(h, 14)).toHaveLength(0);
   });
@@ -136,9 +146,7 @@ describe('materializeReconciledNotifications', () => {
   it('writes nothing for a status it does not recognise', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 12, 'repaid');
-    const n = await materializeReconciledNotifications(
-      h.d1 as never, CHAIN, [{ loanId: 12, to: 'something_new' }], 500, 1_700_000_000,
-    );
+    const n = await planAndWrite(h, [{ loanId: 12, to: 'something_new' }], 500, 1_700_000_000);
     expect(n).toBe(0);
   });
 });

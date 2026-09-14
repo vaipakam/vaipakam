@@ -577,23 +577,29 @@ export const RECONCILED_EVENT_KIND = 'Reconciled';
  * chain-ordered feed — correct here, since the news is now: a two-month-old
  * default buried two months back in the feed would be no notification at all.
  *
- * Fail-open like every other notification writer: derived data must never
- * fail a scan whose authoritative writes already landed.
+ * PLANNED, NOT WRITTEN, and that is the fix for #2190 r4 `4007360360`. An
+ * earlier version wrote these rows AFTER the repair had committed, so a
+ * failed insert — or an isolate that died in between — left the position
+ * corrected and the inbox permanently silent: the row is no longer live, so
+ * no later pass can rediscover the repair and try again. The caller now
+ * commits these statements in the SAME transaction as the repair, which is
+ * the same answer round 3 reached for the side tables and for the same
+ * reason.
  */
-export async function materializeReconciledNotifications(
+export async function planReconciledNotifications(
   db: D1Database,
   chainId: number,
   repaired: ReadonlyArray<{ loanId: number; to: string }>,
   observedBlock: number,
   nowSec: number,
-): Promise<number> {
-  if (repaired.length === 0) return 0;
+): Promise<NotifRow[]> {
+  if (repaired.length === 0) return [];
   const partiesByLoan = await loadLoanParties(
     db,
     chainId,
     repaired.map((r) => r.loanId),
   );
-  if (partiesByLoan === null) return 0;
+  if (partiesByLoan === null) return [];
 
   const rows: NotifRow[] = [];
   /** Repaired loans whose outcome this pass cannot label honestly. */
@@ -640,13 +646,34 @@ export async function materializeReconciledNotifications(
         `guessed outcome`,
     );
   }
-  if (rows.length === 0) return 0;
-  try {
-    return await insertNotificationRows(db, rows);
-  } catch (err) {
-    console.error('[notifications] reconciled insert failed', err);
-    return 0;
-  }
+  return rows;
+}
+
+/** The INSERT for one planned inbox row, for a caller that must commit it
+ *  inside a transaction of its own. `INSERT OR IGNORE`, like the batched
+ *  writer, so a replay writes nothing twice. */
+export function notificationInsertStatement(
+  db: D1Database,
+  r: NotifRow,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO notifications
+         (chain_id, recipient, kind, loan_id, event_kind,
+          block_number, log_index, created_at, dedup_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      r.chainId,
+      r.recipient,
+      r.kind,
+      r.loanId,
+      r.eventKind,
+      r.blockNumber,
+      r.logIndex,
+      r.createdAt,
+      r.dedupKey,
+    );
 }
 
 /**

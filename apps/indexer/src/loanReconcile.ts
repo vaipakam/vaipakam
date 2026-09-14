@@ -186,6 +186,11 @@ export interface ReconcileReport {
   repaired: { loanId: number; from: string; to: string }[];
   /** Loan ids whose chain read failed this tick. Retried next rotation. */
   unread: number[];
+  /** Loan ids whose repair WRITE threw. The row is untouched (the write is
+   *  one transaction), so the rotation returns to it — but it is named
+   *  rather than folded into `unread`, because a failing write with a
+   *  succeeding read points at D1 rather than at the RPC. */
+  writeFailed: number[];
   /** Loan ids whose repair the compare-and-set declined because another
    *  writer had already terminalized the row. Not a failure — the other
    *  write is the better-informed one — but not a repair either. */
@@ -220,8 +225,8 @@ export interface ReconcileDeps {
   /** `getLoanDetails(id)`, reduced. ONE subrequest, and it carries the
    *  money as well as the status precisely so a repair needs no second. */
   readChainLoan(chainId: number, loanId: number): Promise<ChainLoanRead>;
-  /** ONE transaction: the compare-and-set on the loan row PLUS the scan's
-   *  side-table deletes. Returns whether the loan row actually changed — a
+  /** ONE transaction: the compare-and-set on the loan row, the scan's
+   *  side-table deletes, AND the inbox rows the repair owes. Returns whether the loan row actually changed — a
    *  compare-and-set that matched nothing is not a repair and must not be
    *  reported as one, but its side tables are cleared either way (see the
    *  module header). Atomic because a status that lands without its cleanup
@@ -327,6 +332,7 @@ export async function reconcileChainLoans(
     examined: [],
     repaired: [],
     unread: [],
+    writeFailed: [],
     superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
     wrappedLap: wrapped,
@@ -349,11 +355,25 @@ export async function reconcileChainLoans(
     // The amounts come from the SAME read as the status, so they are the
     // same block's post-image and cannot describe a different moment than
     // the status they are written beside.
-    const changed = await deps.writeRepair(chainId, row.loan_id, {
-      status: to,
-      principal: onchain.principal,
-      collateralAmount: onchain.collateralAmount,
-    });
+    // PER-ROW, so one failing write cannot discard the repairs that already
+    // committed (#2190 r4 `4007262520`). Letting it propagate meant the
+    // caller's catch returned zero for the whole pass: the earlier rows
+    // were corrected in D1 but their count never reached the result, so the
+    // `loan.updated` broadcast never fired — and because those rows are no
+    // longer live, no later pass can rediscover them to report. A write
+    // that throws is recorded like a read that failed, and the loop
+    // continues.
+    let changed: boolean;
+    try {
+      changed = await deps.writeRepair(chainId, row.loan_id, {
+        status: to,
+        principal: onchain.principal,
+        collateralAmount: onchain.collateralAmount,
+      });
+    } catch {
+      report.writeFailed.push(row.loan_id);
+      continue;
+    }
     // REPORTED ONLY IF THE ROW CHANGED. The compare-and-set exists
     // because the scan may terminalize this row from its own event
     // first; when it does, the CAS matches nothing and the stored status
@@ -427,6 +447,15 @@ export interface ScanReconcileContext {
    *  tables a repair clears must be one list, and importing it here would
    *  make the scan module and this one mutually dependent. */
   closedLoanSideTableStatements(loanId: number): D1PreparedStatement[];
+  /** The inbox rows a repair to `to` owes this loan's holders, as
+   *  STATEMENTS for the same transaction as the write. Async because it
+   *  needs the loan's parties; returns `[]` when there is nothing honest to
+   *  say. See `planReconciledNotifications` for why they cannot be written
+   *  afterwards (#2190 r4 `4007360360`). */
+  terminalNotificationStatements(
+    loanId: number,
+    to: string,
+  ): Promise<D1PreparedStatement[]>;
 }
 
 export async function reconcileAfterScan(
@@ -553,9 +582,19 @@ export async function reconcileAfterScan(
           chainId,
           loanId,
         );
+      // The inbox rows go in the SAME batch. Written afterwards they could
+      // be lost for good: the repair takes the row out of the live set the
+      // rotation selects from, so nothing would ever come back to write
+      // them (#2190 r4 `4007360360`). Planning them needs a read, which is
+      // why it happens here rather than inside the batch.
+      const notifications = await ctx.terminalNotificationStatements(
+        loanId,
+        repair.status,
+      );
       const results = await ctx.db.batch([
         update,
         ...ctx.closedLoanSideTableStatements(loanId),
+        ...notifications,
       ]);
       // The FIRST result is the loan row's, and only it decides whether
       // this was a repair. The deletes run regardless — see the module
