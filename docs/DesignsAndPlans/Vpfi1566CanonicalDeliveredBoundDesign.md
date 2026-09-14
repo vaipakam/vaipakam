@@ -5999,7 +5999,12 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > the first in-place rollout is two runs — facets only while the live pause
 > code counts no transitions, then the migrations under a pause taken on the
 > new code — and the completion report treats an unreadable pause slot or a
-> live auto-pause window as not live (review r28). Simulations neither create nor erase
+> live auto-pause window as not live (review r28). The legacy seed carries
+> the pause epoch and requires the manual pause exactly as the rebase does;
+> the refresh always sends pause() first (cuts protected by order; the
+> on-chain cut gate is #2179); a bootstrap run demands no migration answer;
+> and a Diamond-as-treasury receives custody NFT sweeps through a pinned,
+> single-use inbound (review r29). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

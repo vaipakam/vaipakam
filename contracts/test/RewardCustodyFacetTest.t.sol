@@ -574,6 +574,57 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      figure was established at: lifting and re-applying the pause
     ///      moves the transition count, and the stale epoch is refused ON
     ///      CHAIN, whatever tooling paired it with the fresh pause.
+    /// @dev Codex #2158 r29 P1 — the legacy seed is bound to the pause the
+    ///      same way as the rebase: manual pause required, stale epoch
+    ///      refused ON CHAIN.
+    function test_Seed_RequiresTheManualPauseAndTheLiveEpoch() public {
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
+        _rep().seedArmedFreshPaid(1 ether, 0);
+        _pause();
+        uint64 established = _epoch();
+        AdminFacet(address(diamond)).unpause();
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshSeedStalePauseEpoch.selector, established, _epoch())
+        );
+        _rep().seedArmedFreshPaid(1 ether, established);
+        assertFalse(_rep().armedFreshPaidSeeded(), "guard still open");
+        _rep().seedArmedFreshPaid(1 ether, _epoch());
+        assertTrue(_rep().armedFreshPaidSeeded());
+    }
+
+    /// @dev Codex #2158 r29 P2 — with the Diamond itself as the configured
+    ///      treasury, the NFT sweeps deliver through a pinned, single-use
+    ///      inbound the receiver hooks accept; anything unpinned is still
+    ///      refused.
+    function test_Sweep_DeliversNftsToADiamondTreasury() public {
+        address holder = _bind();
+        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        address alice = makeAddr("alice");
+
+        MockRentableNFT721 nft = new MockRentableNFT721();
+        nft.mint(alice, 1);
+        vm.prank(alice);
+        nft.transferFrom(alice, holder, 1);
+        _custody().sweepERC721FromRewardCustody(holder, address(nft), 1);
+        assertEq(nft.ownerOf(1), address(diamond), "recovered into the Diamond treasury");
+
+        ERC1155Mock units = new ERC1155Mock();
+        address predicted = _nextHolderAddress();
+        units.mint(predicted, 7, 3);
+        _pause();
+        address successor = _custody().replaceRewardCustodyHolder();
+        assertEq(successor, predicted);
+        _custody().sweepERC1155FromRewardCustody(successor, address(units), 7, 3);
+        assertEq(units.balanceOf(address(diamond), 7), 3, "recovered into the Diamond treasury");
+
+        // Unpinned inbound NFTs are still refused by the Diamond.
+        nft.mint(alice, 2);
+        vm.prank(alice);
+        vm.expectRevert();
+        nft.safeTransferFrom(alice, address(diamond), 2);
+    }
+
     function test_Rebase_RefusesAStalePauseEpoch() public {
         _becomeCanonical();
         _pause();
@@ -707,13 +758,14 @@ contract RewardCustodyFacetTest is SetupTest {
     }
 
     function test_Seed_RefusesToPushPaidAboveTheCap() public {
+        _pause();
         uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
         vm.expectRevert(
             abi.encodeWithSelector(IVaipakamErrors.ArmedFreshSeedExceedsCap.selector, cap + 1, cap)
         );
-        _rep().seedArmedFreshPaid(cap + 1);
+        _rep().seedArmedFreshPaid(cap + 1, _epoch());
         assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
-        _rep().seedArmedFreshPaid(cap);
+        _rep().seedArmedFreshPaid(cap, _epoch());
         (, uint256 paid) = _custody().armedFreshLedger();
         assertEq(paid, cap, "exactly the cap is accepted");
     }
@@ -738,7 +790,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
         // The stale additive path can no longer double-count on top.
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        _rep().seedArmedFreshPaid(300 ether);
+        _rep().seedArmedFreshPaid(300 ether, _epoch());
         (uint256 paid,) = _lens().getDeliveredFreshBound();
         assertEq(paid, 300 ether, "the absolute total stands");
     }
@@ -746,9 +798,9 @@ contract RewardCustodyFacetTest is SetupTest {
     function test_Rebase_StillAvailableAfterTheSeederRan() public {
         _becomeMirror();
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
-        _rep().seedArmedFreshPaid(400 ether);
+        _pause(); // the seed is bound to the manual pause too (Codex #2158 r29 P1)
+        _rep().seedArmedFreshPaid(400 ether, _epoch());
         assertTrue(_rep().armedFreshPaidSeeded());
-        _pause();
         // Closure 2 widened the paid history: the reconciled total is 650.
         _custody().rebaseArmedFreshPaid(650 ether, _epoch());
         (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
@@ -795,8 +847,8 @@ contract RewardCustodyFacetTest is SetupTest {
     function test_Rebase_Unconfigured_RefusesToCloseOverAnExistingPaidCounter() public {
         // A seeded-but-unconfigured chain: consuming the guard with a zero
         // total would leave the seeded paid figure without its baseline.
-        _rep().seedArmedFreshPaid(300 ether);
         _pause();
+        _rep().seedArmedFreshPaid(300 ether, _epoch());
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,

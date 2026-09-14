@@ -755,7 +755,11 @@ contract DeployDiamond is Script {
         //     paused window are the same "armed, not merely present" rule the
         //     migration itself follows, so no window exists in which the
         //     Diamond is live with an unseeded marker.
-        RewardReporterFacet(diamond).seedArmedFreshPaid(0);
+        // A fresh deploy has nothing to import; the epoch is the constructor's
+        // manual pause, still in force (Codex #2158 r27/r29 P1).
+        (,,, uint64 pauseEpoch) =
+            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        RewardReporterFacet(diamond).seedArmedFreshPaid(0, pauseEpoch);
         console.log("P1-b: fresh deployment marked seeded (0).");
 
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
@@ -779,10 +783,8 @@ contract DeployDiamond is Script {
         //     neither counter (`max(0, 0)`; the received side is rewritten
         //     only on `Canonical`).
         address rewardCustodyHolder = RewardCustodyFacet(diamond).bindRewardCustodyHolder();
-        // A fresh deploy has nothing to import; the epoch is the constructor's
-        // manual pause, still in force (Codex #2158 r27 P1).
-        (,,, uint64 pauseEpoch) =
-            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        // Same epoch as the seed above: neither the bind nor the seed is a
+        // pause transition.
         RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0, pauseEpoch);
         console.log("Reward custody holder bound:", rewardCustodyHolder);
         console.log("Slice 4: fresh deployment marked rebased (0).");

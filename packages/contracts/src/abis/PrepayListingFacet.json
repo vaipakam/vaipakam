@@ -489,6 +489,22 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshSeedStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -2422,6 +2438,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyInboundNotDelivered",
+    "inputs": []
   },
   {
     "type": "error",

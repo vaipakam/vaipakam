@@ -415,7 +415,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
+        _armCustodyInbound(s, treasury, token, tokenId, 1);
         RewardCustodyHolder(holder).releaseERC721(token, treasury, tokenId);
+        _requireCustodyInboundConsumed(s, treasury);
         address owner = IERC721(token).ownerOf(tokenId);
         if (owner != treasury) {
             revert IVaipakamErrors.RewardCustodyErc721NotDelivered(token, tokenId, owner);
@@ -450,7 +452,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         _requireConstructedHere(s, holder);
         uint256 holderBefore = IERC1155(token).balanceOf(holder, id);
         uint256 before = IERC1155(token).balanceOf(treasury, id);
+        _armCustodyInbound(s, treasury, token, id, amount);
         RewardCustodyHolder(holder).releaseERC1155(token, treasury, id, amount);
+        _requireCustodyInboundConsumed(s, treasury);
         uint256 received = IERC1155(token).balanceOf(treasury, id) - before;
         _requireDebited(holder, holderBefore, IERC1155(token).balanceOf(holder, id), amount);
         emit RewardCustodyERC1155Swept(holder, token, treasury, id, amount, received);
@@ -833,6 +837,37 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyMoveUnverified(amount, credited);
         }
         _requireDebited(from, fromBefore, IERC20(token).balanceOf(from), amount);
+    }
+
+    /// @dev When the configured treasury is this Diamond, its receiver hooks
+    ///      accept only a pinned, single-use inbound (Codex #2158 r29 P2):
+    ///      arm the exact token, id and amount right before the release so
+    ///      the recovery lands, while the Diamond stays closed to every other
+    ///      NFT. An external treasury needs no pin.
+    function _armCustodyInbound(
+        LibVaipakam.Storage storage s,
+        address treasury,
+        address token,
+        uint256 id,
+        uint256 amount
+    ) private {
+        if (treasury != address(this)) return;
+        s.rewardCustodyInboundToken = token;
+        s.rewardCustodyInboundId = id;
+        s.rewardCustodyInboundAmount = amount;
+    }
+
+    /// @dev The pin must have been consumed by the delivery — a token that
+    ///      never called the hook left it armed, and a stale pin must not
+    ///      outlive the sweep that armed it.
+    function _requireCustodyInboundConsumed(LibVaipakam.Storage storage s, address treasury) private {
+        if (treasury != address(this)) return;
+        if (s.rewardCustodyInboundToken != address(0)) {
+            s.rewardCustodyInboundToken = address(0);
+            s.rewardCustodyInboundId = 0;
+            s.rewardCustodyInboundAmount = 0;
+            revert IVaipakamErrors.RewardCustodyInboundNotDelivered();
+        }
     }
 
     /// @dev The source-side rule of EVERY release from a holder, in one place

@@ -351,7 +351,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector);
         RewardCustodyFacet(diamond).rebaseArmedFreshPaid(1, 0); // consumed: any epoch
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        RewardReporterFacet(diamond).seedArmedFreshPaid(1);
+        RewardReporterFacet(diamond).seedArmedFreshPaid(1, 0); // consumed: any epoch
         vm.stopPrank();
     }
 

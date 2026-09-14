@@ -114,7 +114,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///      block so no window exists where historical delivered funding is
 ///      spendable again.
 interface IArmedFreshPaidSeed {
-    function seedArmedFreshPaid(uint256 amount) external;
+    function seedArmedFreshPaid(uint256 amount, uint64 pauseEpoch) external;
 
     function armedFreshPaidSeeded() external view returns (bool);
 }
@@ -362,9 +362,17 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // (idempotent) and is then LEFT paused for a fresh Unpauser decision
         // — this script restores service only where it found the Diamond
         // live.
-        (bool manuallyPaused,,,) =
-            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
-        if (!manuallyPaused) AdminFacet(diamond).pause();
+        // ALWAYS sent, as the first transaction (Codex #2158 r29 P1): a run
+        // that had to start under the manual pause used to skip it, so an
+        // Unpauser acting after forge's pre-send simulation would have let
+        // the cuts execute live. `pause()` is idempotent on the flag; on the
+        // new pause code it counts one transition, which is why every
+        // migration below passes the operator's epoch PLUS ONE. It protects
+        // the cuts by transaction ORDER only — an unpause between two of the
+        // sequential transactions can still expose a mixed facet set for the
+        // rest of the run; the irreversible steps, by contrast, are gated on
+        // chain (manual pause + epoch) and refuse in that case.
+        AdminFacet(diamond).pause();
 
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
@@ -997,7 +1005,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // `armedFreshPaidSeeded()` read above, and every other failure
             // must abort while the Diamond is still PAUSED — which a plain
             // reverting call does.
-            IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed);
+            // The seed is bound to the pause epoch like the rebase (Codex
+            // #2158 r29 P1): the operator's epoch, plus this run's own pause
+            // transition above. The contract re-checks it.
+            IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed, pauseEpoch + 1);
             console.log("P1-b: seeded armed-fresh paid history:", seed);
         }
 
@@ -1131,8 +1142,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     total
                 );
             } else {
-                // The contract re-checks the epoch itself (r27 P1).
-                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total, pauseEpoch);
+                // The operator's epoch plus this run's own pause transition;
+                // the contract re-checks it (r27 P1).
+                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total, pauseEpoch + 1);
                 console.log("slice-4: rebased armed-fresh paid side to total:", total);
             }
         }

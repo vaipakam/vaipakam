@@ -156,9 +156,14 @@
 #   FIRST ROLLOUT = TWO RUNS. Until this refresh has cut the new pause code
 #   in, the live Diamond counts no transitions (the count reads zero), so a
 #   pause made under the old code cannot be pinned. On such a chain the run
-#   cuts facets ONLY and defers the migrations; then pause again (counted
-#   now), establish the answer under that pause, state its epoch, and run
-#   again for that chain — the facets are current and the migrations run.
+#   cuts facets ONLY and defers the migrations — and demands NO migration
+#   answer for that chain on that run; then pause again (counted now),
+#   establish the answer under that pause, state its epoch, and run again
+#   for that chain — the facets are current and the migrations run. The
+#   refresh always sends pause() as its first transaction (protecting the
+#   cuts by transaction order; the irreversible migrations are gated on
+#   chain), and both migrations — the older seed as well as the rebase —
+#   carry the epoch and are refused on chain if it is stale.
 #
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
@@ -574,6 +579,7 @@ for slug in $CHAINS; do
         fi ;;
     esac
   fi
+  bootstrap=0
   if [ "$already_seeded" != "true" ] || [ "$already_rebased" != "true" ]; then
     [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, note the pause epoch this pre-flight then reports, and re-run. Nothing has been sent"
     [ -n "$pause_epoch" ] || fail "chain '$slug': the pause epoch could not be read from the pause slot -- refusing to consume a migration answer whose pause cannot be pinned"
@@ -585,6 +591,7 @@ for slug in $CHAINS; do
       # new code, carries the answer and its epoch.
       info "$slug: BOOTSTRAP — pause transitions are not counted on this Diamond yet (old pause code): this run cuts facets ONLY and leaves it paused; then pause again (counted now), establish the seed / total / no-history answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_${pfx}, and run again for the migrations"
       bootstrap_chains="${bootstrap_chains:+$bootstrap_chains }$slug"
+      bootstrap=1
     else
       epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"; epoch_val="${!epoch_var:-}"
       [ -n "$epoch_val" ] || fail "chain '$slug': a paid-side migration is DUE -- set \$$epoch_var to the pause EPOCH at which you established the seed / total / no-history answer under the manual pause (the live epoch right now is $pause_epoch; it is the pause library's transition count, bytes 17..24 of its storage slot). Refusing to pair an answer with a pause it was not taken under. Nothing has been sent"
@@ -593,7 +600,12 @@ for slug in $CHAINS; do
       info "$slug: manually paused ✓ at the stated pause epoch $epoch_val (the refresh and the rebase re-check it)"
     fi
   fi
-  if [ "$already_seeded" = "true" ]; then
+  if [ "$bootstrap" -eq 1 ]; then
+    # No migration runs on a bootstrap chain, so no answer is consumed and
+    # none is demanded (Codex #2158 r29 P1): the real answers are required
+    # on the second run, established under the counted pause.
+    info "$slug: P1-b seed answer not needed on this bootstrap run (the migration is deferred; establish it under the counted pause for the second run)"
+  elif [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
   elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
     fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
@@ -631,7 +643,9 @@ for slug in $CHAINS; do
   rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
   total_val="${!total_var:-}"
   rnohist_val="${!rnohist_var:-}"
-  if [ "$already_rebased" = "true" ]; then
+  if [ "$bootstrap" -eq 1 ]; then
+    info "$slug: slice-4 rebase answer not needed on this bootstrap run (the migration is deferred; establish it under the counted pause for the second run)"
+  elif [ "$already_rebased" = "true" ]; then
     info "$slug: slice-4 paid-side rebase already run ✓ (migration will be skipped)"
   elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
     fail "chain '$slug': both \$$total_var and \$$rnohist_var are set — they are mutually exclusive; state ONE answer for this chain"

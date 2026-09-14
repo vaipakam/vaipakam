@@ -31,6 +31,10 @@ else could ever move it, so an administrator can recover a single-token NFT or
 multi-token units from any platform-constructed holder to the treasury only —
 and a single-token recovery is reported only after the token reads as owned by
 the treasury, so a token that did not move is refused rather than reported.
+When the platform itself is the configured treasury, its receiver accepts
+exactly the token, id and amount a custody sweep has pinned for that one
+delivery and nothing else, so recovery works in that configuration while the
+platform stays closed to every other inbound NFT.
 The sweeps act only on holders the platform itself
 constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
@@ -88,9 +92,10 @@ history — is bound to the pause it was established under: the platform now
 counts every pause-state transition (a count a lift-and-reapply moves even
 inside one block, where a timestamp could not tell the two apart), the
 operator states the count at which the answer was established under the
-manual pause, and the rebase itself refuses a stated count that is no longer
-the live one, so no tooling can pair a stale answer with whatever pause
-happens to be in force. The multi-chain pre-flight refuses to proceed for a
+manual pause, and the rebase — and the older seed alike, which is now bound
+to the manual pause and its epoch exactly the same way — refuses a stated
+count that is no longer the live one, so no tooling can pair a stale answer
+with whatever pause happens to be in force. The multi-chain pre-flight refuses to proceed for a
 chain with a migration due unless the platform is already under its manual
 pause (read directly, so a manual pause beside a watcher's automatic window
 counts) at the stated count, the refresh refuses again before its first
@@ -103,10 +108,16 @@ chain whose pause state cannot be read afterwards, or that sits under an
 automatic pause window, is reported as not live rather than as restored. On
 the first in-place rollout of this change the platform does not yet count
 pause transitions, so no pause made before it can be pinned: that run cuts
-the facets only and defers the migrations, and a second run — after pausing
-again under the new code and establishing the answer under that pause —
-carries them, so no migration is ever sealed against a pause that could not
-be shown continuous. The
+the facets only and defers the migrations, demanding no migration answer for
+that run, and a second run — after pausing again under the new code and
+establishing the answer under that pause — carries them, so no migration is
+ever sealed against a pause that could not be shown continuous. The refresh
+always sends its pause as the very first transaction, so the facet cuts run
+under it by transaction order; an unpause slipped between two of its
+transactions could still expose a mixed facet set for the rest of the run,
+which is why the irreversible steps, not the cuts, are the ones the platform
+gates on chain — gating the cuts themselves on chain is tracked separately
+as #2179. The
 pre-flight also checks, before any broadcast, that the signer can perform the
 post-refresh holder binding wherever one will be needed. The
 refresh also decides a deferral from what it reads rather than by calling

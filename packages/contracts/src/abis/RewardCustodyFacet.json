@@ -740,6 +740,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyInboundNotDelivered",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyMoveUnverified",
     "inputs": [
       {
