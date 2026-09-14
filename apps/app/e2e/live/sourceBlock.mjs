@@ -918,20 +918,24 @@ const UNBOUND = 'unbound';
 
 /** Whether this file ASSIGNS to an undeclared name — which creates no
  *  binding, so the scope analyser still calls every reference global. */
-function globalIsAssigned(src, name) {
-  const { nodes, variableOf } = astOf(src, 'globalIsAssigned');
-  // The assignment must be to the GLOBAL, not to a local that merely
-  // shares the spelling. `function f() { let String; String = {}; }`
-  // cannot touch the intrinsic, and matching on the name alone marked
-  // an untouched built-in as unreadable everywhere else — this rule
-  // reaching one step past its own question, which is the pattern this
-  // PR keeps finding.
-  const global = (id) => id?.type === 'Identifier' && id.name === name && !variableOf.get(id);
-  return nodes.some(
-    (n) =>
-      (n.type === 'AssignmentExpression' && global(n.left)) ||
-      (n.type === 'UpdateExpression' && global(n.argument)),
-  );
+function globalWrites(src, name) {
+  const { nodes, variableOf } = astOf(src, 'globalWrites');
+  const out = [];
+  const take = (target) => {
+    for (const id of writtenIdentifiers(target)) {
+      // The write must be to the GLOBAL, not to a local that merely
+      // shares the spelling: `function f() { let String; String = {}; }`
+      // cannot touch the intrinsic. A resolved reference belongs to a
+      // local.
+      if (id.name === name && !variableOf.get(id)) out.push(id);
+    }
+  };
+  for (const n of nodes) {
+    if (n.type === 'AssignmentExpression') take(n.left);
+    else if (n.type === 'UpdateExpression') take(n.argument);
+    else if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') take(n.left);
+  }
+  return out;
 }
 
 function resolutionOf(src, node, seen = new Set()) {
@@ -948,7 +952,13 @@ function resolutionOf(src, node, seen = new Set()) {
     // while `String = { raw: … }` has replaced it outright. Unbound
     // means "declared elsewhere and beyond reach", which is only true
     // while nothing here reaches it.
-    if (globalIsAssigned(src, node.name)) {
+    // …and it must REACH THIS USE. A write after the use cannot have
+    // affected it, and the same reaching-write reasoning every other
+    // rule here uses answers that — a whole-file scan said the built-in
+    // was untrustworthy at a line that ran before anyone touched it.
+    // Pattern targets count too: `[String] = [...]` writes the global
+    // just as `String = ...` does.
+    if (writeReaches(src, globalWrites(src, node.name), node.start)) {
       return { state: UNRESOLVED, why: 'a global this file writes', notText: bound.notText };
     }
     return { state: UNBOUND, name: node.name, notText: bound.notText };
@@ -1082,6 +1092,23 @@ function memberName(member) {
  *                  it cannot hold source text;
  *   - `writes`   — the write references, for the ordering rule.
  */
+/**
+ * Whether a definition can put a value into the name at all.
+ *
+ * Not the same as carrying an initialiser: `for (var text of values)`
+ * supplies the iteration value with none, and an empty `var text;`
+ * supplies nothing while having the same shape as one that does.
+ */
+function canSupply(src, def) {
+  if (def.type === 'Parameter' || def.type === 'ImportBinding') return true;
+  if (def.node?.init) return true;
+  const { parents } = astOf(src, 'canSupply');
+  for (let c = def.node, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if ((p.type === 'ForOfStatement' || p.type === 'ForInStatement') && p.left === c) return true;
+  }
+  return false;
+}
+
 export function bindingOf(src, node) {
   const { variableOf, parents } = astOf(src, 'bindingOf');
   const variable = variableOf.get(node);
@@ -1108,9 +1135,15 @@ export function bindingOf(src, node) {
   // the value still comes entirely from the caller — and requiring
   // EVERY definition to be a parameter let that empty redeclaration
   // erase the provenance and refuse a correct region.
-  const supplying = defs.filter(
-    (d) => d.node?.init || d.type === 'Parameter' || d.type === 'ImportBinding',
-  );
+  // …and it must be able to REACH this use. A definition later in the
+  // same function cannot have supplied the value at an earlier line, and
+  // the reaching-write reasoning every other rule here uses answers
+  // that — `definitelyAfter` cannot, because it refuses to order
+  // anything inside a function at all.
+  const supplying = defs.filter((d) => {
+    if (d.type === 'Parameter' || d.type === 'ImportBinding') return true;
+    return canSupply(src, d) && writeReaches(src, [d.name], node.start);
+  });
   const fromCaller =
     supplying.length > 0 &&
     supplying.every(
@@ -1681,12 +1714,20 @@ const CLASS_MEMBERS = new Set(['PropertyDefinition', 'MethodDefinition']);
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
-  const out = new Set();
+  return new Set(writtenIdentifiers(target).map((id) => id.name));
+}
+
+/** The same walk, returning the identifier NODES. One pattern reader,
+ *  two shapes of answer — a caller that needs positions gets them here
+ *  rather than writing the walk again, which is how this file has ended
+ *  up with two answers to one question more than once. */
+function writtenIdentifiers(target) {
+  const out = [];
   const visit = (n) => {
     if (!n || typeof n.type !== 'string') return;
     switch (n.type) {
       case 'Identifier':
-        out.add(n.name);
+        out.push(n);
         return;
       case 'ArrayPattern':
         n.elements.forEach(visit);
@@ -2027,103 +2068,113 @@ export function isAnchored(src, node, seen = new Set()) {
 }
 
 /**
- * Whether an expression is VISIBLY not a piece of text — written out as
- * an object, an array, a function or a class, or a name that resolves to
- * one. Deliberately not the inverse of "is text": a value this cannot
- * read is not visibly anything, and says nothing either way.
+ * Every value an argument can FORWARD, or null when that set cannot be
+ * established.
+ *
+ * This answers one question only — *what does this expression hand
+ * over* — and it is separate on purpose. Rounds 2 through 7 folded it
+ * together with "is that value a stand-in" behind a single boolean, and
+ * the muddle was exactly the one this whole change exists to remove:
+ * two facts behind one name, so no caller could tell a value known not
+ * to be text from a value nobody could read. They are two functions now.
+ *
+ * Every form the grammar offers for passing a value along appears here,
+ * because each is a place the walk can stop one step short of the value
+ * — found five rounds running, one form at a time.
  */
-function visiblyNotText(src, node, seen) {
-  // A SPREAD is a wrapper, not a value. `at(...[{ indexOf: … }])` puts
-  // the stand-in fully in view behind one, and testing the wrapper
-  // accepted it. An array written out is read through; anything else
-  // spread is a value this cannot establish, and is refused.
-  if (node?.type === 'SpreadElement') {
-    const held = resolutionOf(src, node.argument, new Set(seen));
-    if (held.state !== RESOLVED || held.value.type !== 'ArrayExpression') return true;
-    return held.value.elements.some((el) => el && visiblyNotText(src, el, seen));
-  }
-  // A CHOICE is not a value either. `at(flag ? {…} : {…})` puts a
-  // stand-in in each branch, and testing the wrapper accepted both —
-  // the same mistake as the spread, one node type along. Any branch
-  // that is visibly not text condemns the call, because any branch may
-  // be the one that runs.
-  if (node?.type === 'ConditionalExpression') {
-    return (
-      visiblyNotText(src, node.consequent, seen) || visiblyNotText(src, node.alternate, seen)
-    );
-  }
-  if (node?.type === 'LogicalExpression') {
-    return visiblyNotText(src, node.left, seen) || visiblyNotText(src, node.right, seen);
-  }
-  // A sequence evaluates to its LAST expression; the earlier ones are
-  // discarded, so only the last can reach the helper.
-  if (node?.type === 'SequenceExpression') {
-    return visiblyNotText(src, node.expressions.at(-1), seen);
-  }
-  // An ASSIGNMENT evaluates to the value assigned, and an AWAIT to what
-  // the promise settles to — both forward a value through rather than
-  // being one. Every wrapper the grammar offers for passing a value
-  // along is a place this walk can stop too early, which is the same
-  // finding for the third time; they are enumerated here together so
-  // there is one list to check rather than one per round.
-  // An OPTIONAL CHAIN is wrapped too, and this file has had a helper for
-  // unwrapping one since round 26 of #2170 — it simply was not used in
-  // this list. Fourth round on this category, and the first where the
-  // answer was already sitting in the file.
-  if (node?.type === 'ChainExpression') return visiblyNotText(src, node.expression, seen);
-  if (node?.type === 'AssignmentExpression') {
-    // A LOGICAL assignment (`||=`, `&&=`, `??=`) may not assign at all,
-    // and then it evaluates to the LEFT operand it already held. Reading
-    // only the right side saw the harmless half of
-    // `fake ||= 'text'` and passed the stand-in through.
-    if (node.operator !== '=') {
-      return visiblyNotText(src, node.left, seen) || visiblyNotText(src, node.right, seen);
+function candidateValues(src, node, seen) {
+  if (!node) return null;
+  switch (node.type) {
+    case 'ChainExpression':
+    case 'ParenthesizedExpression':
+    case 'TSAsExpression':
+    case 'TSNonNullExpression':
+      return candidateValues(src, node.expression, seen);
+    case 'AwaitExpression':
+      return candidateValues(src, node.argument, seen);
+    // A sequence evaluates to its LAST expression; the rest are discarded.
+    case 'SequenceExpression':
+      return candidateValues(src, node.expressions.at(-1), seen);
+    case 'AssignmentExpression': {
+      const right = candidateValues(src, node.right, seen);
+      // A LOGICAL assignment may not assign at all, and then evaluates
+      // to the left operand it already held.
+      if (node.operator === '=') return right;
+      const left = candidateValues(src, node.left, seen);
+      return right && left ? [...left, ...right] : null;
     }
-    return visiblyNotText(src, node.right, seen);
+    case 'ConditionalExpression': {
+      const yes = candidateValues(src, node.consequent, seen);
+      const no = candidateValues(src, node.alternate, seen);
+      return yes && no ? [...yes, ...no] : null;
+    }
+    case 'LogicalExpression': {
+      const left = candidateValues(src, node.left, seen);
+      const right = candidateValues(src, node.right, seen);
+      return left && right ? [...left, ...right] : null;
+    }
+    default:
+      return [node];
   }
-  if (node?.type === 'AwaitExpression') return visiblyNotText(src, node.argument, seen);
-  if (node?.type === 'ParenthesizedExpression') return visiblyNotText(src, node.expression, seen);
-  if (node?.type === 'TSAsExpression' || node?.type === 'TSNonNullExpression') {
-    return visiblyNotText(src, node.expression, seen);
+}
+
+/**
+ * Whether a value would be a SUSPECT RECEIVER — a stand-in wearing a
+ * search-shaped property, rather than a piece of source text.
+ *
+ * The other half of the split. For a NAME this is the receiver rule
+ * itself, unchanged and shared; for an expression written out it is a
+ * closed list of what text may look like, with everything else refused
+ * because knowing the expression is not knowing its value.
+ */
+function suspectValue(src, node, seen) {
+  if (!node) return true;
+  if (node.type === 'Identifier') return suspectReceiver(src, node, seen);
+  if (node.type === 'Literal') return typeof node.value !== 'string';
+  if (node.type === 'TemplateLiteral') return false;
+  return true;
+}
+
+/**
+ * Whether the arguments at a visible call can be trusted for the
+ * parameters the helper actually SEARCHES THROUGH.
+ *
+ * Round 8, and this replaces five rounds of checking every argument
+ * against a widening predicate. That was wrong in both directions: it
+ * refused `at(s, 1)`, whose numeric second argument is an ordinary
+ * search offset, while saying nothing about which parameter a stand-in
+ * would actually land on. The question was always narrower — WHICH
+ * parameter does the body use as a finder receiver, and what is passed
+ * for THAT one.
+ */
+function helperArgumentsSound(src, fn, args, seen) {
+  const supplied = args ?? [];
+  // A SPREAD destroys the positional mapping entirely: nothing here can
+  // say which value lands on which parameter, so nothing can be trusted.
+  if (supplied.some((a) => a?.type === 'SpreadElement')) return false;
+  const params = fn.params.map((p) => (p.type === 'Identifier' ? p.name : null));
+  // A parameter this cannot name is a parameter this cannot map.
+  if (params.some((p) => p === null)) return false;
+  const searched = searchedParameters(src, fn, params);
+  for (const [i, name] of params.entries()) {
+    if (!searched.has(name)) continue;
+    const values = candidateValues(src, supplied[i], seen);
+    if (!values || values.some((v) => suspectValue(src, v, seen))) return false;
   }
-  const r = resolutionOf(src, node, new Set(seen));
-  // A DECLARED function or class is known not to be text WITHOUT being
-  // resolved — a declaration has no initialiser to follow, so it comes
-  // back unresolved carrying that fact. Requiring RESOLVED first threw
-  // the fact away and accepted `function fake() {}` as an argument.
-  if (r.notText) return true;
-  // An UNESTABLISHED LOCAL defeats the exemption too, and this is the
-  // second ground rather than a kind of not-text. The exemption says
-  // "the value arrives from outside and cannot be seen"; a name whose
-  // value this could NOT work out and which does NOT arrive from
-  // outside satisfies neither half, so vouching for it was the
-  // permissive answer — and it let a defaulted parameter through a
-  // second helper after the direct form had been closed.
-  if (r.state === UNRESOLVED && !r.fromCaller) return true;
-  if (r.state !== RESOLVED) return false;
-  // A PROPERTY READ is not an established value either, and unwrapping
-  // an optional chain is not enough on its own — `holder?.fake` and
-  // `holder.fake` both leave a member expression, and #2170 round 37
-  // settled that what a property holds when a line runs is not a
-  // question this can answer. RESOLVED means "here is the expression",
-  // which for a member expression is not the same as knowing its value,
-  // so it defeats the exemption on the unestablished ground.
-  if (r.value.type === 'MemberExpression') return true;
-  // A CALL WRITTEN AT THE ARGUMENT is the same: knowing the call is not
-  // knowing what it returns. Asked of the ORIGINAL node rather than the
-  // resolved value, because a NAME that holds a call's result is how
-  // every one of these drives receives its source (`const src = read()`)
-  // and refusing that would refuse nearly everything — the name carries
-  // the file's convention, an inline call carries nothing.
-  const written = node?.type === 'ChainExpression' ? node.expression : node;
-  if (written?.type === 'CallExpression' || written?.type === 'NewExpression') return true;
-  if (written?.type === 'TaggedTemplateExpression') return true;
-  // A LITERAL is text only when it is a STRING. A regular expression is
-  // an object written out — the `/x/` stand-in this guard has had an
-  // open case about — and a number, boolean or null is not text either.
-  // Reading the node type alone called every literal unknown.
-  if (r.value.type === 'Literal') return typeof r.value.value !== 'string';
-  return NOT_TEXT.has(r.value.type);
+  return true;
+}
+
+/** The parameter names a helper's body uses as a FINDER RECEIVER. */
+function searchedParameters(src, fn, params) {
+  const used = new Set();
+  walk(fn.body, (n) => {
+    if (n.type !== 'CallExpression') return;
+    const callee = unwrapChain(n.callee);
+    if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return;
+    const object = unwrapChain(callee.object);
+    if (object?.type === 'Identifier' && params.includes(object.name)) used.add(object.name);
+  });
+  return used;
 }
 
 function callKind(src, node, seen) {
@@ -2167,18 +2218,6 @@ function callKind(src, node, seen) {
  */
 function helperKind(src, callee, args, seen) {
   if (callee.type !== 'Identifier') return null;
-  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2 of #2175).
-  // A helper's receiver is a parameter, and a parameter is exempt from
-  // the stand-in check on the grounds that its value arrives from the
-  // caller — which is sound only while the caller is out of sight. Here
-  // it is not: `at({ indexOf: () => start + 320 })` hands the helper a
-  // stand-in in plain view, and the exemption then vouched for it.
-  //
-  // Substituting arguments for parameters properly is dataflow, and
-  // this does not attempt it. It asks the bounded question instead: is
-  // any argument a value that is visibly NOT TEXT? If so the call is
-  // refused, whatever the helper's body would have said.
-  if (args?.some((a) => visiblyNotText(src, a, seen))) return null;
   const key = `fn:${callee.name}@${callee.start}`;
   if (seen.has(key)) return null;
   seen.add(key);
@@ -2192,6 +2231,12 @@ function helperKind(src, callee, args, seen) {
   // then to zero, so the region is empty and was being certified as
   // anchored. The body's kind is the promise's kind, not the call's.
   if (fn.async) return null;
+  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2), but only
+  // the ones that reach a parameter the body SEARCHES THROUGH (round 8).
+  // A helper's receiver is a parameter and a parameter is exempt from
+  // the stand-in check — sound while the caller is out of sight, and not
+  // when it is in plain view.
+  if (!helperArgumentsSound(src, fn, args, seen)) return null;
   return kindOf(src, fn.body, seen);
 }
 
@@ -2259,6 +2304,13 @@ function suspectReceiver(src, node, seen) {
   // plain parameter until round 1 of #2175 found them.
   if (r.state === UNRESOLVED) return !r.fromCaller;
   const t = r.value.type;
+  // A LITERAL is text only when it is a STRING — a regular expression is
+  // an object written out, and a number or boolean is not text either.
+  // This lives HERE, in the receiver rule, rather than in a predicate
+  // beside it: it is the same question about the same thing, and a name
+  // holding a regexp and a regexp written out should not be answered by
+  // two different pieces of code (round 8).
+  if (t === 'Literal') return typeof r.value.value !== 'string';
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
   // read as a search until round 13.

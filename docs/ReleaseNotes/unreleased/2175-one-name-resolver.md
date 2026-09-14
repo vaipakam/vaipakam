@@ -107,6 +107,25 @@ over is no longer treated as the built-in: assigning to a name that was
 never declared creates nothing to see, so the name looked untouched while
 it had been replaced outright.
 
+The check on what a caller hands a helper went through five revisions
+before it found its shape, and the last one is the only one worth
+describing. Each earlier version asked the same crude question of EVERY
+argument — is this visibly not a piece of text — which was wrong twice
+over: it condemned an ordinary numeric search offset passed alongside the
+text, and it never asked which parameter a stand-in would actually land
+on. The question was always narrower. Which parameter does the helper
+search THROUGH, and what was passed for that one. It asks that now, and
+the two things it had been confusing — what an expression hands over, and
+whether that value is a stand-in — are two separate readings with two
+separate names, which is the same correction this whole change is about.
+
+One consequence of separating them is worth recording: the rule about
+what counts as a piece of text now lives in one place, with the rule
+about receivers, instead of being written twice in slightly different
+words. A name holding a regular expression and a regular expression
+written out are the same question, and were being answered by two pieces
+of code.
+
 Beyond those five, no behaviour changes. The rules that were correct are
 correct in the same cases; they now say why in terms anyone can check.
 

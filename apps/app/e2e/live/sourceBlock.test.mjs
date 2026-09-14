@@ -2237,6 +2237,47 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
+  // Round 8. Both of the rules this PR added for writes were wrong in
+  // BOTH directions — too strict where the write could not reach the
+  // use, too loose where the write was shaped differently — and the
+  // reaching-write reasoning every other rule here uses answers both.
+  it('asks whether a write can reach the use, not merely whether one exists', () => {
+    // Globals: a write AFTER the use cannot have affected it…
+    expect(sliceCallsIn("const s = f();\nconst t = String.raw`x`;\nString = {};")).toEqual([]);
+    // …a write through a PATTERN counts just as a plain one does…
+    const destructured =
+      'const s = f();\n[String] = [{ raw: String.prototype.slice }];\n' +
+      'const r = String.raw.call(s, 0, 320);';
+    expect(sliceCallsIn(destructured).length).toBeGreaterThan(0);
+    // …and a local sharing the spelling is still not the global.
+    expect(sliceCallsIn('function f() { let String; String = {}; }\nconst t = String.raw`x`;')).toEqual([]);
+  });
+
+  it('asks which definitions can supply the value AT the use', () => {
+    // A loop target supplies without an initialiser, so the value no
+    // longer comes only from the caller.
+    const loop =
+      'const s = f();\nfunction region(text, values) { for (var text of values) {} ' +
+      "return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(loop, sliceCallsIn(loop).at(-1))).toBe(true);
+
+    // A redeclaration AFTER the use cannot have supplied it.
+    const later =
+      'const s = f();\nfunction region(text) { ' +
+      "const r = text.slice(0, text.indexOf('e')); var text = { indexOf: () => 320 }; return r; }";
+    expect(countsCharacters(later, sliceCallsIn(later).at(-1))).toBe(false);
+  });
+
+  // Only the arguments reaching a parameter the helper SEARCHES THROUGH
+  // are inspected. Checking every argument refused ordinary ones — a
+  // numeric search offset is not a stand-in for the source.
+  it('does not judge arguments the helper never searches through', () => {
+    const code =
+      "const s = f();\nconst at = (text, from) => text.indexOf('e', from);\n" +
+      'const r = s.slice(0, at(s, 1));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
