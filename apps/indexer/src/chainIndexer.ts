@@ -52,6 +52,7 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import { isRevert } from '@vaipakam/lib/contractRevert';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -694,24 +695,44 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, m
  * the claim burn, so those columns are stale for exactly the same reason the
  * status was (#2190 r5 `4007360368`).
  *
- * `null` for a side means NOT SUBSTANTIATED — a burned token reverts, and so
- * does any other failure. The caller withholds that side's notice rather
- * than falling back to a possibly-wrong address: telling the wrong person
- * their position ended, while the real holder hears nothing, is worse than
- * the silence this whole notification exists to end.
+ * THREE answers, not two (#2190 r6 `4007752763`). An address is a holder.
+ * `'burned'` is the chain's authoritative "this token no longer exists",
+ * which happens when the missed window also contained that side's CLAIM —
+ * the claim event was missed too, so the index still names a holder for a
+ * claim already taken, and `/claimables` goes on offering it. `null` is
+ * NOTHING ESTABLISHED: the read failed to arrive.
+ *
+ * Collapsing the last two, which an earlier version did, forces a choice
+ * between two harms — clearing a live holder's claim on a transport blip,
+ * or never clearing a taken one. The distinction comes from
+ * `@vaipakam/lib`'s `isRevert`, which the connected app's Claim Center has
+ * always used for exactly this decision; the indexer disagreeing with it
+ * would be worse than either answer.
+ *
+ * A side that is `null` or `'burned'` gets no notice: there is nobody
+ * substantiated to tell. Telling the wrong person their position ended,
+ * while the real holder hears nothing, is worse than the silence this whole
+ * notification exists to end.
  *
  * Reads are pinned to the same safe head as the rest of the repair, and are
  * made only for a loan that IS being repaired — rare by construction. Two
  * subrequests per repaired loan; the reconcile budget constants account for
  * them.
  */
+/** An address, `'burned'` (authoritatively gone), or `null` (unknown). */
+type HolderRead = string | 'burned' | null;
+
+/** What the indexer already stores for "no holder" — the same value the
+ *  Transfer handler writes on a burn. */
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
 async function resolveCurrentHolders(
   client: PublicClient,
   diamond: Address,
   head: bigint,
   tokenIds: { lender: string; borrower: string },
-): Promise<{ lender: string | null; borrower: string | null }> {
-  const one = async (tokenId: string): Promise<string | null> => {
+): Promise<{ lender: HolderRead; borrower: HolderRead }> {
+  const one = async (tokenId: string): Promise<HolderRead> => {
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
@@ -723,9 +744,10 @@ async function resolveCurrentHolders(
         blockNumber: head,
       })) as string;
       return owner.toLowerCase();
-    } catch {
-      // Burned, or unreadable. Either way this side is not substantiated.
-      return null;
+    } catch (err) {
+      // A REVERT is the chain answering "no such token" — burned. Anything
+      // else never reached an answer.
+      return isRevert(err) ? 'burned' : null;
     }
   };
   const [lender, borrower] = await Promise.all([
@@ -802,6 +824,14 @@ async function runLoanReconcilePass(input: {
           // The refreshed owners are written too, not just used: the
           // staleness is real and fixing only the notice would leave every
           // other holder-keyed surface reading the wrong address.
+          // A burned side is written as the ZERO ADDRESS, not skipped: the
+          // missed window that hid the terminal can equally have hidden
+          // that side's CLAIM, and leaving the old holder in place keeps
+          // the claim-candidate route offering a claim already taken
+          // (#2190 r6 `4007752763`). `null` still COALESCEs, because
+          // nothing was established and clearing a live holder on a
+          // transport blip would hide a real claim — the opposite harm.
+          const ownerWrite = (h: HolderRead) => (h === 'burned' ? ZERO_ADDRESS : h);
           if (holders.lender || holders.borrower) {
             statements.push(
               env.DB.prepare(
@@ -811,8 +841,8 @@ async function runLoanReconcilePass(input: {
                         updated_at = ?
                   WHERE chain_id = ? AND loan_id = ?`,
               ).bind(
-                holders.lender,
-                holders.borrower,
+                ownerWrite(holders.lender),
+                ownerWrite(holders.borrower),
                 Math.floor(Date.now() / 1000),
                 chainId,
                 loanId,
@@ -825,7 +855,11 @@ async function runLoanReconcilePass(input: {
             [{ loanId, to }],
             Number(head),
             Math.floor(Date.now() / 1000),
-            holders,
+            // A burned side has nobody to tell, exactly like an unread one.
+            {
+              lender: holders.lender === 'burned' ? null : holders.lender,
+              borrower: holders.borrower === 'burned' ? null : holders.borrower,
+            },
           );
           // The notices self-gate on the compare-and-set having won; the
           // owner refresh above does not, for the same reason the side-table

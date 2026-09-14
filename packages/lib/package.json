@@ -60,6 +60,10 @@
     "./notificationProvenance": {
       "types": "./src/notificationProvenance.ts",
       "default": "./src/notificationProvenance.ts"
+    },
+    "./contractRevert": {
+      "types": "./src/contractRevert.ts",
+      "default": "./src/contractRevert.ts"
     }
   },
   "scripts": {

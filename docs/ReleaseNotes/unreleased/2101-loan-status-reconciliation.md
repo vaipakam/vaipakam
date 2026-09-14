@@ -132,6 +132,16 @@ out of it. Where a holder cannot be established at all, no message is sent
 for that side rather than one sent to a guess, and the refreshed holder is
 written back so every other screen stops showing the wrong name too.
 
+There are three possible answers there, not two, and the third one matters.
+A side may have a holder; it may have NONE, because that party already took
+what was theirs and the record of them doing so was lost in the same gap; or
+the question may simply not have been answered. The first two are recorded —
+including the emptiness, which is what stops the platform going on offering
+something already taken — while the third changes nothing, because clearing
+a real holder on a moment's connection trouble would hide something that IS
+theirs. The rule for telling those apart is now one rule, shared with the
+claims screen that has always applied it.
+
 They also arrive as NEW rather than as something already read. The inbox
 decides what is unread by position in the chain's order, and a message
 carrying no position of its own has to be placed deliberately — placed

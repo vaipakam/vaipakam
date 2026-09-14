@@ -9,26 +9,20 @@
  * (chain-only candidate synthesis). Lives in its own module so both can
  * import it without a hooks ⇄ claimables cycle.
  */
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  ContractFunctionZeroDataError,
-  type PublicClient,
-} from 'viem';
+import { type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { LIVE_STATUS_TO_INDEXED } from '../lib/types';
 import type { IndexedLoan, IndexedLoanStatus } from './indexer';
 
 /** True when a failed read is a contract REVERT / empty-data (an
  *  authoritative "no" — e.g. no such loan, a burned position NFT, or a
- *  not-claimable side) rather than a transport error. */
-export function isRevert(e: unknown): boolean {
-  return (
-    e instanceof BaseError &&
-    (e.walk((x) => x instanceof ContractFunctionRevertedError) !== null ||
-      e.walk((x) => x instanceof ContractFunctionZeroDataError) !== null)
-  );
-}
+ *  not-claimable side) rather than a transport error.
+ *
+ *  Re-exported for this module's existing callers; the DEFINITION moved to
+ *  `@vaipakam/lib` when the indexer's #2101 repair needed the same rule for
+ *  the same decision, and two surfaces answering it differently would be
+ *  worse than either answer (#2190 r6). */
+export { isRevert } from '@vaipakam/lib/contractRevert';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 

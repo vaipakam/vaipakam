@@ -282,6 +282,14 @@ The app uses chain reads and indexed reads for different jobs.
   established, that side receives no message rather than one addressed to a
   guess — and the holder the platform does establish is recorded, so other
   surfaces stop naming the wrong one.
+- Asking who holds a position has THREE answers, and the platform keeps
+  them apart. There is a holder; there is definitively no holder, because
+  that party already took what was theirs and the record of it was lost in
+  the same gap; or the question went unanswered. The first two are recorded
+  — the emptiness included, since that is what stops the platform offering
+  something already taken — and the third changes nothing, because clearing
+  a real holder on a moment's connection trouble would hide what is theirs.
+  The same rule distinguishes them everywhere it is asked.
 - Such a message is SHOWN as a correction, not merely recorded as one. Its
   headline states the outcome, and a line beneath it says the platform
   found this by checking and cannot tell when it happened. A surface that
