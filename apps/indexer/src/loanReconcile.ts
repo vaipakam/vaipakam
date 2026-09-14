@@ -228,12 +228,24 @@ export interface ReconcileOptions {
   /**
    * Rows to examine when the counts DISAGREE.
    *
-   * Bounded because the tick's budget is: free-tier Workers cap at 50
-   * subrequests per invocation and `chainIndexer` reserves ~38 for a
-   * single-chain backfill, so the headroom on the legacy inline path is
-   * single-digit. A sweep that read every active row — nine on one chain
-   * the day this was written — would recreate the dropped-event condition
-   * the round-robin exists to prevent.
+   * Bounded because free-tier Workers cap at 50 subrequests per invocation
+   * and the scan already spends ~38 of them on a single-chain backfill. A
+   * pass that read every active row — nine on one chain the day this was
+   * written — would recreate the dropped-event condition the round-robin
+   * exists to prevent.
+   *
+   * DO NOT TUNE THIS AGAINST AN IMAGINED SURPLUS. An earlier version of
+   * this note called the legacy inline path's headroom "single-digit",
+   * which is not a small number, it is a wrong one: counted properly that
+   * invocation also carries the backing snapshot (~4) and the OpenSea
+   * republish sweep (up to 35 — 5 rows x 7 calls each), reaching ~77
+   * against a cap of 50 before this pass is added at all. That is #2194,
+   * which predates this pass and is not fixable from here. The one-row
+   * budget the legacy caller passes MINIMISES what this adds to an
+   * invocation that is already over; it does not fit inside a surplus,
+   * because there is none. The roomier budget belongs to the DO path,
+   * whose invocation this scan has to itself — see
+   * `RECONCILE_BUDGET_OWN_INVOCATION` in `chainIndexer.ts`.
    */
   maxRows?: number;
   /**

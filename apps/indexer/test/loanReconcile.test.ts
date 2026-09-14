@@ -292,8 +292,10 @@ describe('reconcileChainLoans', () => {
   });
 
   it('costs exactly one chain call when nothing is wrong and the budget is minimal', async () => {
-    // The tick has single-digit subrequest headroom beside the backfill,
-    // so the healthy-case cost is the number that matters.
+    // The healthy case is the cost that matters, because it is the one
+    // paid on every tick forever. Deliberately not phrased as fitting a
+    // headroom: on the legacy inline path there is none to fit into
+    // (#2194), and on the DO path this scan has the invocation to itself.
     const rows: ReconcileRow[] = [{ loan_id: 1, status: 'active' }];
     const f = fakeDeps(rows, { 1: 0 }, 1);
     await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5, minRows: 1 });
