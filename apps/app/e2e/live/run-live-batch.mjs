@@ -41,7 +41,12 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { driversOnDisk, THREE_VERDICT_DRIVERS } from './verdictContract.mjs';
+import {
+  driversOnDisk,
+  THREE_VERDICT_DRIVERS,
+  TWO_VERDICT_DRIVERS,
+  undeclaredDrivers,
+} from './verdictContract.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,14 +72,31 @@ const scripts = driversOnDisk(HERE);
 // missing entry in this file invented. Warning here also means a driver
 // added without registering is visible on the run that first includes it,
 // not on whichever later run happens to hit its BLOCKED path.
-const unregistered = scripts.filter((s) => !THREE_VERDICT_DRIVERS.has(s));
-if (unregistered.length) {
+//
+// A DELIBERATE OPT-OUT IS NOT AN OVERSIGHT, and this used to report both
+// the same way (#2099 round 1). A driver recorded in
+// `TWO_VERDICT_DRIVERS` has had the decision made and written down; the
+// operator does not need to be told to go and register it, and telling
+// them lands the same annotation on its ordinary FAIL rows as on a
+// driver nobody has looked at. Only the UNDECLARED are asked about.
+const undeclared = undeclaredDrivers(scripts);
+if (undeclared.length) {
   console.log(
-    `\nNOTE: ${unregistered.length} driver(s) are not registered in` +
-      ` THREE_VERDICT_DRIVERS, so a BLOCKED exit from them will be reported` +
-      ` as FAIL:\n` +
-      unregistered.map((s) => `  ${s}`).join('\n') +
-      `\n  → if they honour the three-verdict contract, add them to that set.`,
+    `\nNOTE: ${undeclared.length} driver(s) are declared nowhere, so a BLOCKED` +
+      ` exit from them will be reported as FAIL:\n` +
+      undeclared.map((s) => `  ${s}`).join('\n') +
+      `\n  → if they honour the three-verdict contract, add them to` +
+      ` THREE_VERDICT_DRIVERS; if they deliberately do not, record the reason` +
+      ` in TWO_VERDICT_DRIVERS.`,
+  );
+}
+
+const optedOut = scripts.filter((s) => TWO_VERDICT_DRIVERS.has(s));
+if (optedOut.length) {
+  console.log(
+    `\nNOTE: ${optedOut.length} driver(s) deliberately speak two verdicts only,` +
+      ` so any exit 2 from them is a FAIL by decision, not by omission:\n` +
+      optedOut.map((s) => `  ${s} — ${TWO_VERDICT_DRIVERS.get(s)}`).join('\n'),
   );
 }
 
@@ -109,22 +131,28 @@ for (const script of scripts) {
 
 console.log('\n━━━ live batch summary ━━━');
 for (const r of results) {
-  const unmigrated = r.verdict === 'FAIL' && !r.honoursContract;
+  // A DECLARED opt-out is not an unknown (#2099 round 1). Its exit 2 is
+  // a FAIL by decision, and annotating it "may be infrastructure" would
+  // hedge a row that somebody deliberately made unambiguous.
+  const undeclared =
+    r.verdict === 'FAIL' && !r.honoursContract && !TWO_VERDICT_DRIVERS.has(r.script);
   console.log(
     `${r.verdict.padEnd(7)}  ${r.script}` +
       (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : '') +
       // Do not let this row be read as a confirmed product defect.
-      (unmigrated ? '  (unregistered driver — may be infrastructure)' : ''),
+      (undeclared ? '  (undeclared driver — may be infrastructure)' : ''),
   );
 }
-const unmigratedFails = results.filter((r) => r.verdict === 'FAIL' && !r.honoursContract);
-if (unmigratedFails.length) {
+const undeclaredFails = results.filter(
+  (r) => r.verdict === 'FAIL' && !r.honoursContract && !TWO_VERDICT_DRIVERS.has(r.script),
+);
+if (undeclaredFails.length) {
   console.log(
-    `\n${unmigratedFails.length} FAIL(s) came from drivers not registered in` +
-      ` THREE_VERDICT_DRIVERS, so BLOCKED could not be distinguished from` +
-      ` FAIL for them — an unreachable site or RPC looks identical to a` +
-      ` regression. Read those drives' output before treating them as` +
-      ` defects, and register them if they honour the contract.`,
+    `\n${undeclaredFails.length} FAIL(s) came from drivers declared nowhere, so` +
+      ` BLOCKED could not be distinguished from FAIL for them — an unreachable` +
+      ` site or RPC looks identical to a regression. Read those drives' output` +
+      ` before treating them as defects, then declare them: register them if` +
+      ` they honour the contract, or record the reason they do not.`,
   );
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');

@@ -4,10 +4,11 @@
  * `run-live-batch.mjs` classifies a driver's exit code against this, and
  * the classification is only honest if the lists are right: an exit 2
  * from a driver in `THREE_VERDICT_DRIVERS` is reported as BLOCKED ("this
- * drive could not verify anything"), and from any other driver as
- * `FAIL (exit 2)`. Reading a BLOCKED off a driver that never agreed to
- * mean that by exiting 2 asserts something about a surface nobody
- * checked, which is why membership is opt-in and stays opt-in.
+ * drive DID NOT COMPLETE, so its surfaces are not fully reviewed"), and
+ * from any other driver as `FAIL (exit 2)`. Reading a BLOCKED off a
+ * driver that never agreed to mean that by exiting 2 asserts something
+ * about a surface nobody checked, which is why membership is opt-in and
+ * stays opt-in.
  *
  * WHY THIS IS ITS OWN MODULE (#2099). The lists lived in the runner,
  * which executes the whole batch on import — so nothing could read them
@@ -30,7 +31,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Drivers that IMPLEMENT the three-verdict contract — 0 pass, 1 fail,
- * 2 blocked (a precondition failed, so the drive could not verify).
+ * 2 blocked (a precondition failed, so the drive did not complete).
  *
  * NOTE what BLOCKED does and does not say. It means the drive did not
  * complete, so its surfaces are not fully reviewed. It does NOT mean the

@@ -2,8 +2,16 @@
  * The batch runner classifies each driver's exit code against a
  * hand-maintained list, and a driver missing from it has its BLOCKED
  * reported as a product FAIL — "this drive found a defect" said about a
- * drive that could not even start. The operator reading that row cannot
+ * drive that did not complete. The operator reading that row cannot
  * tell, and goes looking for a bug the list invented.
+ *
+ * BLOCKED means the drive did not complete, NOT that it observed
+ * nothing: a driver can pass every scenario for one role and then hit a
+ * setup failure on the next, keeping those results and its report while
+ * still exiting 2. Saying "verified nothing" of such a run erases work
+ * somebody deliberately preserved, and sends the operator to re-review
+ * surfaces that were checked (#2069 r13, restated here after this file
+ * got it wrong on its first draft).
  *
  * The runner has warned about this at startup for a year. A warning was
  * not enough, and the reason is WHERE it printed: on a batch run, which

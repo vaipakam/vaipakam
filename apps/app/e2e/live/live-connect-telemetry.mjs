@@ -175,6 +175,32 @@ page.on('websocket', (ws) => {
 });
 
 let failed = false;
+
+/**
+ * BLOCKED, unless this drive has already found something.
+ *
+ * `blockedSync` exits 2 the moment it is called, and several of the
+ * preconditions below sit AFTER the load-phase telemetry checks. So a
+ * run that caught a real beacon leak on load and then could not open the
+ * connect window would have exited 2 — reported as "could not verify",
+ * hiding a product defect the same run had already established (#2099
+ * round 1).
+ *
+ * A finding outranks a later precondition failure. Nothing observed is
+ * lost by saying FAIL, whereas everything observed is lost by saying
+ * BLOCKED, so the asymmetry decides it: the reason is printed either
+ * way, and only the verdict changes.
+ */
+const blockOrFail = (why) => {
+  if (!failed && steps.every((s) => s.verdict !== 'FAIL')) blockedSync(why);
+  console.error(`\nBLOCKED-after-FAIL: ${why}`);
+  console.error(
+    'live-connect-telemetry: FAIL — reporting the defect already found rather than' +
+      ' the precondition that stopped the rest of the run',
+  );
+  process.exit(1);
+};
+
 try {
   console.log(`live-connect-telemetry — ${SITE}`);
 
@@ -211,7 +237,7 @@ try {
   const modalText = await page.locator('body').innerText();
   const offersCoinbase = /coinbase/i.test(modalText);
   if (!offersCoinbase) {
-    blockedSync('the connect modal offers no Coinbase connector; nothing to initialize');
+    blockOrFail('the connect modal offers no Coinbase connector; nothing to initialize');
   }
   // "Other Wallets" IS the WalletConnect entry — ConnectKit labels it
   // that way whenever `showQrModal: false`. Keying on the product name
@@ -248,7 +274,7 @@ try {
   // reading below would be measuring nothing at all — the exact false
   // pass this drive exists to avoid.
   if (!popup) {
-    blockedSync('the Coinbase SDK never opened its connect window; nothing was initialized to measure');
+    blockOrFail('the Coinbase SDK never opened its connect window; nothing was initialized to measure');
   }
   const popupUrl = popup.url();
   // EXACT host (Codex #1894 r1). `includes('coinbase.com')` accepts
@@ -260,10 +286,10 @@ try {
   try {
     popupHost = new URL(popupUrl).host;
   } catch {
-    blockedSync(`the connector opened an unparseable URL: ${popupUrl}`);
+    blockOrFail(`the connector opened an unparseable URL: ${popupUrl}`);
   }
   if (popupHost !== 'keys.coinbase.com') {
-    blockedSync(`the connector opened ${popupHost}, not keys.coinbase.com`);
+    blockOrFail(`the connector opened ${popupHost}, not keys.coinbase.com`);
   }
   step('Coinbase SDK initializes', 'PASS', popupHost);
 
