@@ -1186,18 +1186,33 @@ export async function runChainIndexerForChain(
     // because the rotation only ever selects live rows.
     //
     // `head` is the resolved safe head on both paths. In the ordinary quiet
-    // case the two are equal and nothing changes; in the regressed case
-    // this is the only safe one. D1 still reflects everything up to the
-    // cursor, which is at or above `head`, so reading at `head` cannot see
-    // state the index has not caught up to.
-    const quietReconciledIds = await runLoanReconcilePass({
-      env,
-      chain,
-      chainId,
-      diamond,
-      head,
-      budget: reconcileBudget,
-    });
+    // case the two are equal and nothing changes.
+    //
+    // A REGRESSED HEAD SKIPS THE PASS ENTIRELY rather than reading at the
+    // older block (#2190 r8 `4008583627`). Pinning the status read to `head`
+    // (`9b29d525f`) fixed the direction that could invent a terminal, and
+    // left a second one: `head` also drives WHO the notice goes to and where
+    // the row sorts in the feed. With `lastBlock > head`, D1 already reflects
+    // ownership transfers and claim burns processed through the cursor, so a
+    // terminal predating `head` could be repaired correctly and its one
+    // notice addressed to the holder as of the older block — the exact harm
+    // `4007360368` established, reintroduced by the clock rather than by the
+    // column. The two reads must agree on a block, and only `head` is safe
+    // for the status, so when the cursor is ahead of it there is no block
+    // that satisfies both. A regression is transient; the next tick with a
+    // recovered head does the work, and the rotation loses nothing but a
+    // turn.
+    const quietReconciledIds =
+      lastBlock > head
+        ? []
+        : await runLoanReconcilePass({
+            env,
+            chain,
+            chainId,
+            diamond,
+            head,
+            budget: reconcileBudget,
+          });
     const quietCal = await sweepCalendarNotifications(
       env.DB,
       chainId,

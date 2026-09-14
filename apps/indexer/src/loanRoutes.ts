@@ -610,7 +610,7 @@ export async function handleClaimables(
               WHERE e.chain_id = loans.chain_id AND e.loan_id = loans.loan_id
                 AND e.kind = '${claimKind}' AND e.actor = ?
            )
-         ORDER BY COALESCE(terminal_at, updated_at) DESC, loan_id DESC
+         ORDER BY (terminal_at IS NULL) ASC, terminal_at DESC, loan_id DESC
          LIMIT ?`,
       )
         .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
@@ -628,10 +628,26 @@ export async function handleClaimables(
     ]) {
       byId.set(r.loan_id, r);
     }
+    // A ROW WITH NO TERMINAL TIME IS OF UNKNOWN AGE, AND RANKS AS UNKNOWN —
+    // never as `updated_at`, which is when this service last WROTE the row
+    // (#2190 r8 `4008583615`). `2ca88cc7f` stopped the reconciliation repair
+    // fabricating a terminal time, and the fallback here quietly restored
+    // the same claim through a different column: a repair bumps
+    // `updated_at` to now, so a loan that ended in July sorted to the top of
+    // a CAPPED list and pushed genuinely recent claims out of it. Fixing the
+    // column I was writing and not the claim the reader makes is what let
+    // this survive the first fix.
+    //
+    // Unknown-age rows therefore sort AFTER every row with a real terminal
+    // time, rather than above them. They are not hidden — nothing else
+    // competes for the cap when a wallet's claimables are all of unknown age
+    // — but an unknown may not displace something known to be recent. Must
+    // stay in step with the SQL's `ORDER BY` above, which does the same.
     const merged = [...byId.values()].sort((a, b) => {
-      const ra = a.terminal_at ?? a.updated_at;
-      const rb = b.terminal_at ?? b.updated_at;
-      return rb - ra || b.loan_id - a.loan_id;
+      if ((a.terminal_at == null) !== (b.terminal_at == null)) {
+        return a.terminal_at == null ? 1 : -1;
+      }
+      return (b.terminal_at ?? 0) - (a.terminal_at ?? 0) || b.loan_id - a.loan_id;
     });
     const truncated = merged.length > CLAIM_CANDIDATES_CAP;
     const rows = truncated ? merged.slice(0, CLAIM_CANDIDATES_CAP) : merged;

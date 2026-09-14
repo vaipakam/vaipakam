@@ -256,6 +256,15 @@ The app uses chain reads and indexed reads for different jobs.
   the list of positions with something to claim — so recording the moment
   of discovery there would present a months-old ending as fresh and push
   genuinely recent ones out of a bounded list. Empty is what is true.
+- **A position whose ending has no known time ranks as unknown, not as
+  recent.** Leaving the time empty is only half of that promise: a surface
+  that then falls back to when the platform last WROTE the record makes the
+  same false claim by another route, since a correction writes the record
+  the moment it makes it. Wherever positions are ordered by how recently
+  they ended, the ones with no known ending time come after all the ones
+  that have one. They are not hidden — where nothing else competes they are
+  all that is listed — but an unknown may never displace something known to
+  be recent from a limited list.
 - A record the chain has no loan for is not a running loan. Asking about an
   unknown position returns an empty answer whose state is indistinguishable
   from "running", so the platform tests that the position exists at all

@@ -206,6 +206,27 @@ that ended in July would have presented as freshly ended and pushed genuinely
 recent ones out of a limited list. The time is now left empty, which is what
 is true.
 
+Leaving it empty turned out to be only half the job. The list of positions
+with something to claim, finding no ending time, fell back to when the
+record was last written — and a correction writes the record at the moment
+it makes it, so the July loan arrived at the top of that list anyway. Fixing
+the field being written and not the claim being made is how the same defect
+survived its own fix. So the ordering now treats an unknown ending as
+unknown: positions with no known ending time come after every position that
+has one. They are not hidden — where nothing else is competing they are the
+whole list — but an ending nobody can date may not push a genuinely recent
+one out of a limited one.
+
+The correction also stands down entirely when the chain briefly reports a
+settled point BEHIND where the service has already read. That sounds like an
+edge and is not: the same point decides which holder the platform believes
+owns the position, so acting on the older one could correct a record
+perfectly and send its one message to whoever held it at that earlier moment
+— the precise mistake the chain-sourced recipients exist to prevent,
+arriving by the clock instead of by the record. There is no single point that
+is safe for both questions when they disagree, so the turn is skipped and
+the next one does the work.
+
 Two answers it treats as neither running nor ended. A record for a loan the
 chain has never heard of — one indexed once from something later undone —
 reads, through the chain's own interface, exactly like a running loan; those
