@@ -40,6 +40,7 @@
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import type { PushHints } from './pushHints';
 import {
+  RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
   isRetryableScanSkip,
   runChainIndexerForChain,
@@ -449,7 +450,18 @@ export class ChainIngestDO {
           await this.clearLoopState();
           return;
         }
-        const result = await runChainIndexerForChain(resolved, chain);
+        // DO PATH — this scan owns its invocation's subrequest budget: the
+        // cron's other passes (`captureBackingSnapshot`,
+        // `sweepUnpublishedListings`) run in the SCHEDULED invocation, not
+        // this one. So the #2101 repair gets the roomier allowance and its
+        // rotation turns faster here than on the legacy inline path. That
+        // difference is a property of the deployment's ingest config, not a
+        // hidden tuning knob.
+        const result = await runChainIndexerForChain(
+          resolved,
+          chain,
+          RECONCILE_BUDGET_OWN_INVOCATION,
+        );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with

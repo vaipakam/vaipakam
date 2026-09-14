@@ -43,7 +43,7 @@ import {
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { reconcileAfterScan } from './loanReconcile';
+import { reconcileAfterScan, type ReconcileOptions } from './loanReconcile';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -303,7 +303,12 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
 
   const results: ChainIndexerResult[] = [];
   try {
-    const r = await runChainIndexerForChain(env, chain);
+    // LEGACY INLINE PATH — this scan shares one 50-subrequest invocation
+    // with `captureBackingSnapshot` (~4) and `sweepUnpublishedListings`
+    // (~6) on top of the scan's own ~38, so the repair takes the minimum
+    // that still turns the rotation. The alternative to a slower repair is
+    // a scan whose own subrequests get refused, which is strictly worse.
+    const r = await runChainIndexerForChain(env, chain, RECONCILE_BUDGET_SHARED_TICK);
     results.push(r);
   } catch (err) {
     console.error(`[chainIndexer] chain ${chain.id} failed`, err);
@@ -615,9 +620,26 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
   return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
 }
 
+/**
+ * How many rows the #2101 repair pass may examine on THIS invocation.
+ *
+ * It is a parameter rather than a constant because the answer depends on
+ * what else shares the invocation, and only the caller knows that. The
+ * legacy inline cron path shares its 50-subrequest budget with
+ * `captureBackingSnapshot` and `sweepUnpublishedListings`; the DO path does
+ * not, because the scan runs inside the Durable Object's own invocation.
+ *
+ * The DEFAULT is the tight one on purpose. A future caller that forgets to
+ * pass anything gets the budget that cannot overrun the scan, not the one
+ * that can.
+ */
+export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 5, minRows: 1 };
+
 export async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
+  reconcileBudget: ReconcileOptions = RECONCILE_BUDGET_SHARED_TICK,
 ): Promise<ChainIndexerResult> {
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
@@ -1093,9 +1115,17 @@ export async function runChainIndexerForChain(
     // mid-backfill there are unapplied events between cursor and head,
     // and repairing from head state would jump that queue.
     //
-    // Budget: ONE extra subrequest in the healthy case (the chain's own
-    // active count), and at most `maxRows` status reads when the counts
-    // disagree. No head read and no identity read — this scan has both.
+    // Budget, stated exactly because getting it wrong here starves the SCAN
+    // and recreates the dropped-event condition the whole round-robin
+    // exists to prevent: `1 + minRows` subrequests in the healthy case (the
+    // chain's active count, plus the rows examined whether or not the counts
+    // agree — that is the point of `minRows`), and `1 + maxRows` at worst.
+    // No head read and no identity read: this scan has both already. D1
+    // queries are not in this count — the rotation pointer and the row
+    // selection go over the binding, not the subrequest budget.
+    //
+    // The numbers come from the CALLER, because only the caller knows what
+    // shares its invocation. See `RECONCILE_BUDGET_SHARED_TICK`.
     try {
       const report = await reconcileAfterScan(
         {
@@ -1116,7 +1146,7 @@ export async function runChainIndexerForChain(
           clearClosedLoanSideTables: (loanId) =>
             _clearClosedLoanSideTables(env, chainId, loanId),
         },
-        { maxRows: 5, minRows: 1 },
+        reconcileBudget,
       );
       if (report.repaired.length > 0) {
         console.warn(

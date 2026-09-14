@@ -244,6 +244,14 @@ The app uses chain reads and indexed reads for different jobs.
 - If that clearing itself fails, the affected loans are named in the
   operator's log rather than silently left — the record has already ended,
   so the rotation will not return to it.
+- How fast the correction works through the records depends on the
+  deployment's ingest configuration, and the platform states this rather
+  than implying a single pace. Where the chain reading has its own capacity
+  the correction examines several records a turn; where it shares capacity
+  with the other scheduled work it examines one. Every record is still
+  reached either way. The pace is never raised at the cost of the chain
+  reading itself, because a reading that starts being refused drops the
+  announcements the correction exists to recover from.
 - A position the platform publishes as open must be one it can still
   substantiate as open. Where it cannot, the surfaces that count and the
   surfaces that list must not answer the same question differently

@@ -26,7 +26,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { processLoanLogs } from '../src/chainIndexer';
+import {
+  processLoanLogs,
+  RECONCILE_BUDGET_OWN_INVOCATION,
+  RECONCILE_BUDGET_SHARED_TICK,
+} from '../src/chainIndexer';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -185,5 +189,44 @@ describe('ending a listing or an intent is NOT a close', () => {
     await run(h, [log('SwapToRepayIntentCancelled', 10)]);
     expect(hasIntent(h, 10)).toBe(false);
     expect(hasListing(h, 10)).toBe(true);
+  });
+});
+
+/**
+ * The repair pass's subrequest budget, which is a property of the INVOCATION
+ * rather than of the pass — so it is the caller's to set, and the numbers
+ * are asserted here rather than left in a comment.
+ *
+ * Free-tier Workers cap at 50 subrequests per invocation. On the legacy
+ * inline cron path one invocation carries the scan (~38), the retained-
+ * reserve backing snapshot (~4) and the OpenSea republish sweep (~6) — 48,
+ * so the repair has 2. On the DO path the scan runs inside the Durable
+ * Object's own invocation and the other two stay in the scheduled one, so
+ * the headroom is the full ~12.
+ *
+ * The pass spends `1 + maxRows` at worst: one `getActiveLoansCount` plus one
+ * `getLoanDetails` per row examined.
+ */
+describe('reconcile budget', () => {
+  it('fits the legacy tick, where the scan shares its invocation', () => {
+    const worst = 1 + (RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0);
+    expect(worst).toBeLessThanOrEqual(2);
+    // And it still turns: a budget of zero rows would make the rotation a
+    // no-op that only ever asks the chain for a total.
+    expect(RECONCILE_BUDGET_SHARED_TICK.minRows).toBeGreaterThanOrEqual(1);
+  });
+
+  it('fits the DO invocation, which the other passes do not share', () => {
+    const worst = 1 + (RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0);
+    expect(worst).toBeLessThanOrEqual(12);
+  });
+
+  it('never lets the shared-tick budget exceed the own-invocation one', () => {
+    // The relationship, not just the values: if someone raises the tight one
+    // to match the roomy one, the constants have stopped meaning what their
+    // names say and the legacy path is the one that pays.
+    expect(RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0).toBeLessThanOrEqual(
+      RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0,
+    );
   });
 });

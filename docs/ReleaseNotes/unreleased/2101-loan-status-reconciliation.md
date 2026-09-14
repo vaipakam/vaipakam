@@ -58,7 +58,19 @@ that only wakes on a mismatch is one that can be quietly satisfied. And it
 examines only a few records per turn because the scheduled work has a hard
 ceiling on how many outside requests it may make, most of which the
 existing scan has already spoken for. In the ordinary case the whole thing
-costs three requests.
+costs two of them: one to ask the chain its total, one to read the single
+record it examines anyway.
+
+How many it may spend when the totals DO disagree depends on how the
+deployment ingests, and that is worth stating rather than leaving to be
+inferred. Where the reading of the chain runs on its own, the correction may
+examine up to five records per turn. Where it shares its slot with the other
+scheduled work — the reserve snapshot and the marketplace republish — there
+is room for one, and it takes one. The alternative to a correction that
+works through the records more slowly is a reading of the chain whose own
+requests start being refused, which would drop the very announcements this
+exists to recover from. Either way every record is reached; the difference
+is how many turns it takes.
 
 ## What it will not do
 
