@@ -1406,7 +1406,7 @@ try {
     throw new Error(`cancel tx ${cancelTxHash} mined but reverted`);
   }
   cancelBlock = receipt.blockNumber;
-  // (a) the ledger poisoned to the ceiling — the revocation itself.
+  // (a) the ledger at or above its ceiling — the revocation itself.
   // Confirmed from a node at or after the cancel's own block: an
   // unpinned read here answered the PRE-cancel value on a live batch
   // and read as a failed revocation (#2107).
@@ -1418,8 +1418,9 @@ try {
     record(
       '6. cancelSignedOffer on-chain (no cooldown)',
       'PASS',
-      `tx ${cancelTxHash} (block ${cancelBlock}); ledger poisoned to the ` +
-        `ceiling ${ceiling} at block ${ledger.blockNumber} — the signature is dead`,
+      `tx ${cancelTxHash} (block ${cancelBlock}); ledger reads ${ledger.value} at ` +
+        `block ${ledger.blockNumber}, at or above the ceiling ${ceiling} — the ` +
+        `signature is dead`,
     );
   } else if (ledger.unconfirmed) {
     // NOT a failure of the revocation, and deliberately not recorded as
@@ -1438,8 +1439,9 @@ try {
       '6. cancelSignedOffer on-chain (no cooldown)',
       'OBSERVED',
       `tx ${cancelTxHash} (block ${cancelBlock}) emitted SignedOfferCancelled for ` +
-        `${orderHash} with status success — the revocation executed. The ledger ` +
-        `confirmation of it did not complete: ${ledger.why}. Cleanup re-verifies below.`,
+        `${orderHash} with status success, so the transaction was included and did ` +
+        `not revert. Whether the ledger now reflects that is UNKNOWN — its ` +
+        `confirmation did not complete: ${ledger.why}. Cleanup re-verifies below.`,
     );
   } else {
     throw new Error(
@@ -2061,13 +2063,17 @@ try {
           record(
             'cleanup: signed order',
             'PASS',
-            `ledger already reads the ceiling for ${orderHash} — order not fillable`,
+            cancelBlock !== null
+              ? `ledger reads ${ledger.value} at block ${ledger.blockNumber}, at or ` +
+                `above the ceiling ${ceiling} for ${orderHash} — order not fillable`
+              : `ledger already reads at or above the ceiling ${ceiling} for ` +
+                `${orderHash} — order not fillable`,
           );
         } else if (ledger.unconfirmed) {
           // A cancel from step 6 is on chain with status success, and
           // no attempt could confirm its effect. Sending a SECOND
           // cancelSignedOffer here would spend gas on a revocation that
-          // has already happened — the same waste the nonce-settle gate
+          // was already mined — the same waste the nonce-settle gate
           // above exists to avoid — and would likely revert, which this
           // block reports as an order that may still be fillable. So it
           // is not sent, and the gap is stated instead of papered over.
@@ -2075,8 +2081,9 @@ try {
             'cleanup: signed order',
             'FAIL',
             `CANCEL SENT, EFFECT UNCONFIRMED — tx ${cancelTxHash} (block ${cancelBlock}) ` +
-              `emitted SignedOfferCancelled for ${orderHash} with status success, so the ` +
-              `revocation executed; the ledger confirmation did not complete. ${ledger.why}. ` +
+              `emitted SignedOfferCancelled for ${orderHash} with status success, so it ` +
+              `was included and did not revert; whether the ledger reflects that is ` +
+              `UNKNOWN — its confirmation did not complete. ${ledger.why}. ` +
               `No second cancel was sent (it would duplicate one already mined). ` +
               `Re-read signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a ` +
               `synced node — expect at least the ceiling ${ceiling}.`,
@@ -2106,8 +2113,9 @@ try {
             record(
               'cleanup: direct on-chain cancel',
               'PASS',
-              `order ${orderHash} — tx ${hash} (receipt success, ledger at ceiling ` +
-                `at block ${after.blockNumber})`,
+              `order ${orderHash} — tx ${hash} (receipt success, ledger reads ` +
+                `${after.value} at block ${after.blockNumber}, at or above the ` +
+                `ceiling ${ceiling})`,
             );
           } else if (after.unconfirmed) {
             // Not thrown — a throw lands in the catch below, whose
@@ -2118,8 +2126,9 @@ try {
               'cleanup: direct on-chain cancel',
               'FAIL',
               `CANCEL SENT, EFFECT UNCONFIRMED — cancelSignedOffer tx ${hash} mined at ` +
-                `block ${receipt.blockNumber} with status success, so the revocation ` +
-                `executed; the ledger confirmation did not complete. ${after.why}. Re-read ` +
+                `block ${receipt.blockNumber} with status success, so it was included and ` +
+                `did not revert; whether the ledger reflects that is UNKNOWN — its ` +
+                `confirmation did not complete. ${after.why}. Re-read ` +
                 `signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a synced ` +
                 `node — expect at least the ceiling ${ceiling}.`,
             );

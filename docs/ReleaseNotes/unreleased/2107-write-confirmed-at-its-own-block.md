@@ -44,10 +44,13 @@ the second one's words. (An earlier draft called it "nobody would
 answer"; a later round showed that was itself a claim the run cannot
 make, since a rejected call is an answer. See the final section.)
 Where it comes up, the report says what IS known — the transaction was
-included and succeeded, so the thing it was for did happen — and
-separately that the confirmation of its effect could not be obtained,
-along with how to check by hand. It does not say the order may still be
-fillable, because that is not something the run found out.
+included and did not fail — and then says the effect is unknown, along
+with how to check by hand. It stops there deliberately. Inclusion is
+evidence toward the effect and not proof of it: if it were proof, the
+reading being missing would not matter, and there would be nothing to
+check. So the report does not say the order may still be fillable, and
+equally does not say it is safely revoked. Neither is something the run
+found out.
 
 A wrong answer, by contrast, is decided on a single reading and not
 retried. At or after the transaction's own point in the chain there is
@@ -67,10 +70,10 @@ answer as a failed revocation.
 The rate-desk cleanup gained one more distinction along the way. Its
 closing summary used to say every offer it swept was verified cancelled.
 An offer whose cancellation was sent and could not be confirmed is not
-that — and it is not an offer left live with funds held either, since
-the cancellation was included successfully. It is now counted
-separately, and the summary declines to claim it in either direction
-rather than rounding it to whichever is nearer.
+that — and it is not established as an offer left live with funds held
+either, since the cancellation was included without failing. It is now
+counted separately, and the summary declines to claim it in either
+direction rather than rounding it to whichever is nearer.
 
 One drive in this family already did the right thing, for the same
 reason, after an earlier review round. What was missing was that it was
@@ -217,9 +220,13 @@ idea, so it is gone. Every failure to get an answer is now retried, and
 nothing tries to judge which ones are futile.
 
 Two things make that safe rather than a step backwards. The part that
-genuinely must never be retried — making sense of a reply that did
-arrive — is no longer a matter of recognition at all; it sits outside
-the retrying, as of the previous round, and that is untouched. And what
+must never be retried — making sense of a reply that did arrive — is no
+longer a matter of recognition at all; it sits outside the retrying, as
+of the previous round, and that is untouched. *(The next round overturned
+that half: making sense of a reply IS worth trying again, because one
+machine can hand back a broken reply where the next hands back a good
+one. It is retried now, and still without recognition. See the last
+section.)* And what
 the recognising was really protecting was a sentence: the report used to
 end by saying no machine would answer. That was the false part. A
 rejected call *is* an answer, from every machine. The report now states
@@ -261,3 +268,31 @@ why it stopped. A companion sentence that declared a rejected call to be
 a fault in the code rather than in the network went the same way: the
 cause is printed, the reader draws the conclusion, and the report says
 plainly that this is what it is doing.
+
+## Round eight, on what a receipt is actually evidence of
+
+Three more, all the same shape as everything above: saying more than was
+established.
+
+The largest is a habit that had crept through every one of these reports.
+Where the confirming reading could not be got, they each said the
+transaction was included and succeeded, *so the thing it was for
+happened* — and then went on to say the confirmation was missing. Those
+two cannot both be load-bearing. If inclusion proved the effect, the
+missing reading would not matter and there would be nothing left to
+check; the fact that the reading exists at all is an admission that it
+does not. Inclusion without failure is strong evidence and it is not
+proof. Every one of those reports now says what the receipt shows and
+then says the effect is unknown, in those words.
+
+The second is the same point one step along: a sweep was declining to
+call an offer live because its cancellation had been included. Declining
+to call it live is right; the reason given was not. It is now declined
+because nothing was established either way.
+
+The third is smaller and is a mismatch between a rule and a sentence. The
+test for "this can no longer be taken" was deliberately loosened to
+accept a figure at or above the expected one, since either way nothing
+rests. The reports kept saying the figure had been set *to* the expected
+one. They now print what was actually read and describe it as at or above
+— an unexpected figure being visible is the point of reading it.

@@ -1407,10 +1407,12 @@ try {
         const stillLive = [];
         // Ids whose cancel MINED SUCCESSFULLY and whose effect no
         // attempt could confirm (#2107). Deliberately not `stillLive`: a
-        // successful `cancelOffer` receipt is evidence the escrow was
-        // released, so calling these live would be as wrong as calling
-        // them clean. They are their own list precisely so the sweep
-        // verdict below can decline to claim either.
+        // receipt with status success is evidence toward the escrow
+        // having been released — not proof of it, which is exactly why
+        // the getter is read — so calling these live would be as
+        // unsupported as calling them clean. They are their own list
+        // precisely so the sweep verdict below can decline to claim
+        // either.
         const unconfirmedCancels = [];
         for (const id of sweepIds) {
           try {
@@ -1448,8 +1450,9 @@ try {
                 'cleanup: direct on-chain cancel',
                 'FAIL',
                 `CANCEL SENT, EFFECT UNCONFIRMED — cancelOffer tx ${hash} for offer #${id} ` +
-                  `mined at block ${receipt.blockNumber} with status success, so the ` +
-                  `cancel executed; the verification did not complete. ${after.why}. ` +
+                  `mined at block ${receipt.blockNumber} with status success, so it was ` +
+                  `included and did not revert; whether the offer is actually cancelled is ` +
+                  `UNKNOWN — the verification did not complete. ${after.why}. ` +
                   `Re-read getOffer(${id}).creator on ${DIAMOND} against a synced node — ` +
                   `expect the zero address.`,
               );
