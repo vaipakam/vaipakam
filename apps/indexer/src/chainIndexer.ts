@@ -892,17 +892,29 @@ export async function runChainIndexerForChain(
     // pass as first placed might never have fired for the case that
     // motivated it.
     //
-    // `lastBlock` IS the safe head on this path (`scanFrom > head` means
-    // the cursor has reached it), so reads pin to the same safe block the
-    // scanned path uses, and D1 reflects everything up to it — the two
-    // properties the placement argument rests on. Before the calendar
-    // sweep, for the reason the scanned path states.
+    // PINNED TO `head`, NOT `lastBlock`, and the difference is not
+    // cosmetic (#2190 r4 `4007262512`). I wrote `lastBlock` reasoning that
+    // `scanFrom > head` means the cursor has reached the safe head — but it
+    // means `lastBlock >= head`, and the branch is ALSO the one the
+    // `HEAD_BEHIND_CURSOR_WARN` case above lands in, where a lagging or
+    // mis-pointed replica reports a head BELOW our cursor. Passing
+    // `lastBlock` there asks the repair to trust a block above the
+    // currently resolved safe head, which is exactly the unpinned read this
+    // whole pass was restructured to avoid: a terminal at that height can
+    // still be reorged away, and the live→terminal write is irreversible
+    // because the rotation only ever selects live rows.
+    //
+    // `head` is the resolved safe head on both paths. In the ordinary quiet
+    // case the two are equal and nothing changes; in the regressed case
+    // this is the only safe one. D1 still reflects everything up to the
+    // cursor, which is at or above `head`, so reading at `head` cannot see
+    // state the index has not caught up to.
     const quietReconciled = await runLoanReconcilePass({
       env,
       chain,
       chainId,
       diamond,
-      head: lastBlock,
+      head,
       budget: reconcileBudget,
     });
     const quietCal = await sweepCalendarNotifications(
@@ -4206,10 +4218,20 @@ export async function processLoanLogs(
     )
       .bind(terminal, Number(blockNumber), now, now, chainId, loanId)
       .run();
-    if ((r.meta?.changes ?? 0) > 0) {
-      statusUpdates++;
-      await _clearClosedLoanSideTables(env, chainId, loanId);
-    }
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    // CLEANUP RUNS WHETHER OR NOT THE UPDATE CHANGED A ROW (#2190 r4
+    // `4007191882`). Guarding it on `changes > 0` made it unreachable on a
+    // REPLAY: an isolate that dies after this UPDATE commits but before the
+    // cleanup leaves the cursor unadvanced, so the event is re-processed —
+    // and the re-processed UPDATE matches zero rows, because the row is
+    // already terminal, so the guard skipped the cleanup permanently and
+    // the closed loan kept publishing a stale listing or swap action.
+    //
+    // Unconditional is also the rule the repair path settled on for the
+    // same reason: what licenses clearing the side tables is the loan being
+    // closed, not this particular writer having been the one to close it.
+    // The deletes are idempotent.
+    await _clearClosedLoanSideTables(env, chainId, loanId);
   }
 
   // Rate Desk (#1129) — propagate the sale-vehicle flag from the initiating

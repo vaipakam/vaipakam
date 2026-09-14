@@ -106,6 +106,33 @@ describe('materializeReconciledNotifications', () => {
     expect(rowsFor(h, 11)).toHaveLength(0);
   });
 
+  it('labels an internal match as a match, not as a repayment', async () => {
+    // `internal_matched` has its own kind; mapping it to `loan_repaid`
+    // tells the holder the loan was fully repaid, which is a different
+    // financial outcome (#2190 r4).
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 13, 'internal_matched');
+    await materializeReconciledNotifications(
+      h.d1 as never, CHAIN, [{ loanId: 13, to: 'internal_matched' }], 500, 1_700_000_000,
+    );
+    expect(rowsFor(h, 13).every((r) => r.kind === 'internal_matched')).toBe(true);
+  });
+
+  it('writes NOTHING for a settled loan rather than calling it repaid', async () => {
+    // On-chain `Settled` says the claims are done, not how the loan ended —
+    // a repayment, a default and a forced sale all reach it. Telling a
+    // holder their loan was "fully repaid" when it may have been
+    // liquidated is an unsupported financial claim, and there is no kind
+    // meaning "ended, and this pass cannot say how".
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 14, 'settled');
+    const n = await materializeReconciledNotifications(
+      h.d1 as never, CHAIN, [{ loanId: 14, to: 'settled' }], 500, 1_700_000_000,
+    );
+    expect(n).toBe(0);
+    expect(rowsFor(h, 14)).toHaveLength(0);
+  });
+
   it('writes nothing for a status it does not recognise', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 12, 'repaid');

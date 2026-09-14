@@ -216,7 +216,17 @@ The app uses chain reads and indexed reads for different jobs.
 - That correction only ever moves a record from running to ended, and
   only on the chain's word. A source that is behind reports the loan
   still running, which matches the record and changes nothing, so being
-  out of date can cause a correction to be missed but never invented. A
+  out of date can cause a correction to be missed but never invented.
+  **That direction is necessary and not sufficient, and the platform must
+  not rest on it alone.** The correction cannot be undone by the same
+  mechanism — a record it has ended is no longer one the check looks at —
+  so a reading that is WRONG rather than merely old is permanent. The
+  chain state a correction relies on must therefore be read at a point the
+  chain treats as settled, never at whatever the source last saw and never
+  at a point derived from how far the index itself has read. Without that,
+  a reorganisation or a momentarily non-canonical answer can report an
+  ending that then disappears, leaving an open loan recorded as closed with
+  nothing that would ever revisit it. A
   record that already shows an ending is left to the event path, which
   can tell a forced sale from an ordinary default where the chain's own
   status cannot — a record corrected from the chain may therefore name

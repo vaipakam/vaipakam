@@ -524,14 +524,30 @@ async function loadLoanParties(
   return partiesByLoan;
 }
 
-/** The row status a repair writes → the inbox kind both holders get. Only
- *  the statuses `decideRepair` can produce appear here; anything else
- *  writes no row rather than a guessed one. */
+/**
+ * The row status a repair writes → the inbox kind both holders get.
+ *
+ * ONLY WHERE THE OUTCOME IS SUBSTANTIATED (#2190 r4 `4007360351`). A first
+ * version mapped `settled` and `internal_matched` to `loan_repaid`, whose
+ * copy tells the holder the loan was fully repaid. For an internal match
+ * that is simply the wrong label when the right one already exists; for
+ * `settled` it is an unsupported financial claim, because on-chain
+ * `Settled` says the claims are done and NOT how the loan ended — a
+ * repair, default or forced sale all reach it.
+ *
+ * So `settled` maps to nothing at all, and that is deliberate rather than
+ * an omission: there is no kind meaning "ended, and this pass cannot say
+ * how", inventing the copy for one is a user-facing wording decision rather
+ * than a reconciliation change, and an on-chain `Settled` means both sides
+ * have already acted on the position. Telling someone their loan was
+ * "fully repaid" when it may have been liquidated is the worse of the two
+ * silences. The skipped loans are logged so the gap is visible rather than
+ * implied.
+ */
 const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
   repaid: 'loan_repaid',
   defaulted: 'loan_defaulted',
-  settled: 'loan_repaid',
-  internal_matched: 'loan_repaid',
+  internal_matched: 'internal_matched',
 };
 
 /** Marks a row derived by the #2101 repair rather than by an event. The
@@ -580,9 +596,14 @@ export async function materializeReconciledNotifications(
   if (partiesByLoan === null) return 0;
 
   const rows: NotifRow[] = [];
+  /** Repaired loans whose outcome this pass cannot label honestly. */
+  const unlabelled: number[] = [];
   for (const { loanId, to } of repaired) {
     const kind = RECONCILED_STATUS_NOTIF_KIND[to];
-    if (!kind) continue;
+    if (!kind) {
+      unlabelled.push(loanId);
+      continue;
+    }
     const parties = partiesByLoan.get(loanId);
     // A sale-vehicle loan is bookkeeping, not a position anyone holds —
     // the same exclusion the event path applies.
@@ -610,6 +631,14 @@ export async function materializeReconciledNotifications(
         dedupKey,
       });
     }
+  }
+  if (unlabelled.length > 0) {
+    console.warn(
+      `[notifications] chain ${chainId}: repaired loan(s) ${unlabelled.join(', ')} ` +
+        `reached a state this pass cannot label (on-chain Settled says the claims ` +
+        `are done, not how the loan ended) — no inbox row written rather than a ` +
+        `guessed outcome`,
+    );
   }
   if (rows.length === 0) return 0;
   try {

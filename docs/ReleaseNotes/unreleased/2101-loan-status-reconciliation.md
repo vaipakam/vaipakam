@@ -20,11 +20,19 @@ defaulted or been repaid.
 
 ## What now happens
 
-Once per scheduled tick, for one chain in rotation, the index asks the
-chain how many loans it considers running and compares that to its own
-count. If they differ it examines a handful of its records; if they agree
-it still examines one. Where the chain says a loan has ended and the
-record says otherwise, the record is corrected.
+On each scheduled tick the index asks the chain how many loans it considers
+running and compares that to its own count. If the two differ it examines a
+handful of its records; if they agree it still examines one. Where the chain
+says a loan has ended and the record says otherwise, the record is
+corrected.
+
+How many chains that covers per tick depends on how the service takes in
+data. As currently configured every chain is serviced on every tick, so the
+check reaches all of them. On the fallback arrangement one chain is taken
+per tick in turn, and the wait before a given chain comes round grows with
+the number of chains. The distinction is stated because it decides how long
+a wrong record can survive, which is the figure an operator would actually
+want.
 
 A correction is the whole record, not just the word "ended". The same
 question that returns the loan's state also returns the money still
@@ -68,8 +76,8 @@ the service is currently configured — the correction may examine up to five
 records per turn. Where it shares a slot with the other scheduled work, it
 examines one.
 
-That second case deserves a plain statement rather than a reassuring one.
-The shared slot is not merely tight: counted properly, the work already
+That second case — the shared slot — deserves a plain statement rather than
+a reassuring one. It is not merely tight: counted properly, the work already
 scheduled into it can exceed what the platform allows, before this
 correction is added at all. That is a separate fault, raised on its own, not
 something this change introduced or repairs; taking the smallest possible
@@ -107,12 +115,19 @@ announcement nobody saw.
 ## What it will not do
 
 It only ever moves a record from "running" to an ending, and only when the
-chain says so. That direction is what makes it safe to run at all against
-records about money: a machine that is behind reports the loan as still
-running, which matches the record, so nothing is written. Being out of
-date can only cause a repair to be missed, never invented — there is no
-sequence of events here that closes a loan which is genuinely open,
-because "it has ended" is never the out-of-date answer.
+chain says so. A machine that is behind reports the loan as still running,
+which matches the record, so nothing is written: being out of date can cause
+a correction to be missed, never invented.
+
+That one-way direction is necessary and it is NOT on its own sufficient, and
+an earlier draft of this note said otherwise. A correction cannot be undone
+by the same check — a record it has ended is no longer one the check looks
+at — so a reading that is wrong rather than merely old is permanent. What
+actually makes it safe is that the chain is always read at a point the chain
+itself treats as settled, never at whatever a machine last saw. Without
+that, a momentary reorganisation could report an ending that then
+disappears, leaving a genuinely open loan recorded as closed with nothing
+that would ever come back to it.
 
 It also refuses to touch a record that has already ended, leaving
 corrections between one ending and another to the event path, which knows
