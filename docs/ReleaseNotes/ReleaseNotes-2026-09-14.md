@@ -1,32 +1,51 @@
 # Release Notes — 2026-09-14
 
-One entry, and a long one, because it is the first of the three slice-4
-changes of the #1566 design and it lands the whole custody-holder lifecycle
-at once: the holder itself, its replacement ceremony, the recoveries for
-value that reaches a holder by no protocol path, and the paid-side rebase
-that chains carrying history need before the cutover. No protocol flow
-moves reward value through it yet — no payout, gate or funding path reads
-the holder, and no writer can fund it — which is why it could be reviewed
-to convergence and merged ahead of the change that will; what CAN move
-configured reward tokens that have already reached a holder are the
-administrator-only paths the entry below describes: the paused
-replacement, the recovery from a retired predecessor, and the sweep of the
-unattributed remainder. What it does settle is the shape of
-the irreversible steps around the holder, and the safeguard each one
-carries differs, so they are worth stating separately. Replacing the holder
-and sweeping its unattributed remainder to the treasury require the
-platform's manual pause. The paid-side rebase and the older seed require
-that manual pause and also refuse a stale pause-transition count — a count
-the platform now keeps — so no tooling can pair a stale operator answer
-with whatever pause happens to be in force. The administrator-only
-recoveries of a foreign token, native currency, an NFT or predecessor VPFI
-carry no pause gate at all; each is verified at both ends of the move
-instead. The in-place refresh that carries all of this pauses as its first
-transaction, simulates every chain before broadcasting to any, and restores
-service only through an unpause that checks, by that same count, that
-nothing else touched the pause meanwhile. The one gate this change
-deliberately leaves off chain — pausing the facet cuts themselves — is
-tracked as #2179.
+Six entries. The first two are the #1566 slice-4 pair, and they belong
+together: the first lands the whole custody-holder lifecycle dark — the
+holder itself, its replacement ceremony, the recoveries for value that
+reaches a holder by no protocol path, and the paid-side rebase that chains
+carrying history need — and the second switches reward custody onto it.
+The dark change settles the shape of the irreversible steps around the
+holder, and the safeguard each one carries differs, so they are worth
+stating separately. Replacing the holder and sweeping its unattributed
+remainder to the treasury require the platform's manual pause. The
+paid-side rebase and the older seed require that manual pause and also
+refuse a stale pause-transition count — a count the platform now keeps —
+so no tooling can pair a stale operator answer with whatever pause happens
+to be in force. The administrator-only recoveries of a foreign token,
+native currency, an NFT or predecessor VPFI carry no pause gate at all;
+each is verified at both ends of the move instead. The in-place refresh
+that carries all of this pauses as its first transaction, simulates every
+chain before broadcasting to any, and restores service only through an
+unpause that checks, by that same count, that nothing else touched the
+pause meanwhile. The one gate this change deliberately leaves off chain —
+pausing the facet cuts themselves — is tracked as #2179.
+
+The cutover is behind a per-chain activation rather than a facet cut, and
+the activation refuses until several things are true at once: the
+operator holds the manual pause and names the pause count the figures were
+taken under, the paid-side migration has run, every position the address
+must back is backed exactly, and the deployment's whole facet routing is
+the one a complete refresh or deploy recorded — so the custody surface can
+never be switched on ahead of the reward paths that read it. From the
+activation, the canonical chain pays only what has been funded into the
+address minus what has been paid, every payout and remittance leaves the
+address by its fresh and recycled parts, and the mesh watcher checks the
+address's balance against its attributions exactly. Six review rounds
+shaped it, and what they added is in the entry: the restitution position's
+two exits, the release that reconciles a position a moved figure left
+over-backed, the complete-cut record, and the expiry clock reading the
+address rather than the platform's own balance.
+
+The remaining four entries are the day's work on the live-drive tooling —
+the scripts that exercise the deployed app and testnet after a deploy.
+Each is about a verdict that had been silently wrong: a drive that did not
+finish is now reported as unreviewed rather than as passed or failed; a
+write whose confirmation could not be read from a lagging endpoint is no
+longer reported as a failed write; a screen whose opening timed out now
+says so instead of hiding among the other ways a screen fails to load; and
+the seven rules that each worked out what a name holds now share one
+resolver that answers in three states, including "could not tell".
 
 ## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #2158)
 
@@ -250,3 +269,860 @@ through its signers and reconcile the record afterwards. The multi-chain
 refresh wrapper carries the rebase figure per chain, exactly as it carries the
 older seed, and refuses to run a chain whose figure is not stated. Refs #1566, #1349, #1956.
 <!-- assembled-fragment: 1566-slice-4a-custody-holder.md sha256=403958adcc79b6de5191e7a4f7db78ec1bb39cc4961f7c2ea3af57fcaecee3f8 -->
+
+## #1566 slice 4 PR B — reward custody moves onto the dedicated address (PR #2186)
+
+The first slice-4 change bound a dedicated custody address per deployment
+and left it dark. This change switches reward custody onto it: once a
+chain's operator runs the activation ceremony — under the manual pause,
+bound to the pause count the figures were established at, and only when
+every position the address must back is backed exactly (the recycled
+runway, the recovery position, the overage quarantine and, on a mirror, the
+imported delivered headroom; a zero position takes no answer, a non-zero
+one refuses without one) — every reward read and debit goes through the
+address's attribution rows instead of the platform's own token balance. A
+single-chain deployment with no reward role never activates and behaves
+exactly as before, and a detached deployment waits for the era registry
+that gives its inbound packets a rule. Backing a position ahead of the
+activation waits for the paid-side migration whose result the figures
+depend on, and a position that a moved figure leaves over-backed before the
+activation can be released back to the platform's own balance, by at most
+the excess, so nothing is stranded at the address. Activation and the
+backing of a position also require the deployment's whole facet routing —
+every installed facet and every function it serves — to be the one a
+complete refresh or deploy recorded, so a partial refresh can never switch
+custody onto the address while a reward path that does not know it is
+still installed or a required one has been removed. The canonical chain now bounds reward payouts by what
+has actually been funded minus what has been paid, where funding is one
+explicit administrator transfer into the address that credits the received
+side in the same act (refused above the pool's lifetime cap), so a
+canonical chain that has not been funded refuses claims and remittances
+rather than paying them from other value; a funding that lands against a
+paid-over-received deficit closes that deficit into a separate restitution
+position and only the excess becomes headroom — a position with two
+recorded exits, a correction of an evidenced accounting error or a release
+to the treasury for a genuine deficit, and one that a demoted compensation
+gives back in full. The reward token cannot be rotated while custody or any
+of the old token remains at the address. The public backing snapshot gains
+a versioned form that names the address's balance and attributions; the
+mesh watcher reads only that form — a chain without it is reported as
+unverified rather than judged by the older relation — and alarms exactly,
+with no tolerance, when the address's balance stops covering its
+attributions where custody has moved. Payouts leave the address by
+their fresh and recycled components in one step, into a vault or a wallet,
+and a failure after the tokens moved rolls the whole leg back before the
+wallet is paid instead; absorptions re-attribute inside the address; user
+fees and relocated custody move into it as they are credited; a
+repatriation surplus leaves it; each outbound remittance names the custody
+it draws on and is refused beyond the headroom before anything is approved.
+Overage — value above any entitlement — gains a disposition to the treasury.
+Reward-role changes are frozen from the first custody attribution until the
+era registry lands, and a mirror's source is never rebound directly. The
+activation is its own operator script with direct and staged forms; the
+multi-chain refresh wrapper reports an unactivated chain as not ordinary
+completion and runs the ceremony only when opted in. Stated as not in this
+change: a delivery's unattributed remainder, a quarantined compensation and
+a pre-attribution return still rest in the platform's balance, for the
+cutover change that follows. Refs #1566, #1349, #1956.
+<!-- assembled-fragment: 1566-slice-4b-custody-cutover.md sha256=465b3f601b06670e5adda1c15c5dcbbecca55758cd3c83e0a9e0ff25cf0a691e -->
+
+# A live driver can no longer be added without saying what it means
+
+The batch that runs the live drives reads each one's exit code and turns
+it into a verdict. Two of those verdicts are easy to tell apart — the
+drive passed, or the drive found a defect — and the third is the one that
+matters here: the drive did not finish, so its surfaces were not fully
+reviewed.
+
+That third verdict needs stating carefully, and an earlier draft of this
+note got it wrong. It does NOT mean the drive saw nothing. A drive can
+check every screen for one kind of user, hit a setup failure on the next,
+keep everything it already established, write its report, and still end
+on that verdict so the run is not called clean. Describing that as
+"verified nothing" throws away work the drive deliberately preserved, and
+sends whoever reads it back over ground already covered.
+
+A driver only gets that third reading if it appears on a list, and the
+list is kept by hand while the drives themselves are discovered by
+looking in a directory. That is deliberate. A drive that never agreed to
+mean "I did not finish" by exiting the way it does should not have that
+read into it, so being on the list is something each drive opts into.
+
+What was missing was not the opting in. It was any way to tell a drive
+that opted OUT from one nobody had got to yet, and any consequence for
+the second. The runner printed a warning naming unlisted drives — but it
+printed it during a batch run, which happens before a release and not
+when someone proposes a change. So a drive could be added, reviewed,
+merged, and run for weeks with its "did not finish" reported as "found a
+defect".
+
+The row is not silent about it — it carries a note saying the drive is
+undeclared and the result may be infrastructure, and the summary repeats
+that. An earlier draft of this note said the reader had no way to know,
+which was an overstatement worth correcting rather than quietly dropping.
+What is wrong is the VERDICT ITSELF: a row saying a defect was found,
+hedged, is still a row saying a defect was found, and a hedge asks the
+reader to discount a verdict instead of giving them the right one.
+
+Now there are two lists: the drives that speak the third verdict, and the
+drives that deliberately do not, each with its reason written down. A
+drive in neither fails a check that runs on every proposed change, and
+the failure names it and says what to do about it. The reason is required
+too — an opt-out without one is an oversight wearing the clothes of a
+decision. The runner tells the two apart in its own output as well: a
+drive that opted out is reported with its reason, and no longer carries
+the "might be infrastructure" hedge that belongs on a drive nobody has
+classified.
+
+Be precise about that check's force, because the workflow it runs in says
+in its own header not to overstate it, and an earlier draft of this note
+did exactly that. The suite it belongs to is visible on every change and
+is meant to be treated as blocking by reviewers, but it is not one of the
+checks that mechanically prevents a merge. So this closes the gap of
+nobody NOTICING — which is what actually went wrong, a warning that
+printed only during a release run — and not the gap of somebody
+overriding a red check on purpose. Making it mechanical is a separate
+decision about which checks are required, and belongs to whoever owns
+that list.
+
+One drive turned out to be in exactly the gap this describes, and listing
+it needed two fixes to the drive first — which is the most useful thing
+this change found.
+
+It ended each of four checks with the third verdict, and all four turned
+out to be wrong. Three rounds of review reached that from three
+directions: a defect found early and then buried by a later check; a
+defect reported as an incompletion because the check that ended the run
+came FIRST, before anything had been recorded; and finally the last two,
+on evidence that needed no judgement.
+
+None of those four checks is a precondition. Each of them runs only after
+a page has been served, and each asks whether what was served is right:
+is the connector offered, did clicking it open anything, did what opened
+go where it must. Something served, a question asked of it, the answer
+wrong — that is finding a defect, not failing to start.
+
+What settled it was not an argument about definitions but the drive
+contradicting itself. It already recorded a missing WalletConnect entry
+as a defect, and a WalletConnect connection that never opened as a
+defect. The Coinbase halves of those exact two questions were being
+reported as "did not finish". One drive, one kind of fact, two different
+verdicts, a few lines apart. All four report a defect now.
+
+The drive still reports "did not finish" — through the shared machinery
+that every drive uses, for an unreachable site or a missing credential or
+no browser at all. Those are the real preconditions, and none of them is
+a check written in the drive itself.
+
+Adding a drive to that list without reading it is the same mistake as
+leaving one off: it puts a claim into the runner's output that the drive
+never made.
+
+The lists moved out of the runner to make any of this possible. The
+runner starts every drive the moment it is loaded, so nothing could read
+its lists without launching browsers against the live site, which is why
+a warning printed during a run was the only guard that could exist.
+
+An earlier draft of this note ended by saying the runner behaves exactly
+as before. That was true when it was written and stopped being true two
+paragraphs above, once the runner learned to tell a deliberate opt-out
+from an oversight. What has not changed is the translation from exit code
+to verdict: the same code still means the same thing. What has changed is
+what the runner says about it, which was the point.
+<!-- assembled-fragment: 2099-live-driver-verdicts.md sha256=c0ce03ad987fc2bdbd72c1c44f31285fd0190431a2310e042c323daa3bcaf51b -->
+
+# A confirmation that could not be obtained is not a failed write
+
+When one of the live drives sends a transaction, it reads the state
+afterwards to check the transaction did what it was for. The reading is
+the part that went wrong.
+
+The chain is reached through a public endpoint that is really several
+machines behind one address. The receipt saying the transaction was
+included can come from one of them while the reading a moment later is
+served by another that has not caught up. What comes back is then the
+state as it was BEFORE the transaction — which is exactly what a
+transaction that achieved nothing would leave behind. The two are
+indistinguishable to a check that just looks once and believes what it
+is told.
+
+That is not hypothetical. A batch run against the live site on
+10 September ended by announcing that a signed lending offer might still
+be fillable by anyone holding the signature, and telling the operator to
+go and revoke it by hand. The revocation had already happened. Reading
+the chain afterwards showed it exactly where it should be.
+
+This is the worst alarm to get wrong in this direction. Acting on it
+costs a second fee for a revocation that already took place. Not acting
+on it — which is what people start doing once an alarm has been wrong a
+few times — is how a signature that genuinely is still live eventually
+gets waved past. It also turned a whole run red for something that was
+never a product fault.
+
+## What changed
+
+The check now asks its question of a machine that is demonstrably far
+enough along. Each attempt asks the machine how far it has got, ignores
+it if it is behind the transaction, and otherwise reads the state as of
+exactly the point it reported. A machine too far behind removes itself
+before it can give a misleading answer, and one that falls behind
+between the two questions produces an error rather than a quiet wrong
+answer.
+
+The more important half is that there are now three possible outcomes
+where there used to be two. The state is right. The state is wrong. Or
+no attempt could get an answer it could use — which is neither, and is
+what actually happened in September. That third outcome no longer borrows
+the second one's words. (An earlier draft called it "nobody would
+answer"; a later round showed that was itself a claim the run cannot
+make, since a rejected call is an answer. See the final section.)
+Where it comes up, the report says what IS known — the transaction was
+included and did not fail — and then says the effect is unknown, along
+with how to check by hand. It stops there deliberately. Inclusion is
+evidence toward the effect and not proof of it: if it were proof, the
+reading being missing would not matter, and there would be nothing to
+check. So the report does not say the order may still be fillable, and
+equally does not say it is safely revoked. Neither is something the run
+found out.
+
+A wrong answer, by contrast, is decided on a single reading and not
+retried. At or after the transaction's own point in the chain there is
+nothing left to wait for, and a check that kept asking until it heard
+what it wanted would be a way of sitting out real faults rather than a
+way of avoiding false ones.
+
+## Where it applies
+
+Three places, all of them cleanup paths that revoke something the run
+created: two in the signed-offer drive (the cancellation the run drives
+through the screen, and the direct one its cleanup falls back to) and
+one in the rate-desk drive, which cancels the offers it posted. All
+three previously read the state once, immediately, and treated a stale
+answer as a failed revocation.
+
+The rate-desk cleanup gained one more distinction along the way. Its
+closing summary used to say every offer it swept was verified cancelled.
+An offer whose cancellation was sent and could not be confirmed is not
+that — and it is not established as an offer left live with funds held
+either, since the cancellation was included without failing. It is now
+counted separately, and the summary declines to claim it in either
+direction rather than rounding it to whichever is nearer.
+
+One drive in this family already did the right thing, for the same
+reason, after an earlier review round. What was missing was that it was
+one drive's private solution rather than something the others could use.
+It is now shared, and the three places above are the first users.
+
+## Two more, found in review
+
+Both were invisible — neither would have shown up as an error, only as
+the wrong verdict.
+
+The first: the question "how far has this machine got?" was being
+answered from a cache. The library keeps that answer for four seconds by
+default, and the check was asking again every three, so what looked like
+a series of fresh attempts was partly one answer repeated. Worse, an
+answer cached while the machine was behind could still be handed back at
+the very end, after the chain had caught up — failing the confirmation
+because the last question was never actually asked. Every attempt now
+insists on a fresh answer.
+
+The second: not every failure to read is a failure to reach. If the
+thing being read has itself broken — a function that now rejects the
+call, a reply that will not decode — every machine gives the same answer,
+and waiting out the deadline to announce that nobody would answer blames
+the network for a fault in the code. Those two specific failures were
+recognised and reported as what they are. Everything else still retries,
+deliberately: the list of ways a network call can fail has no end, so the
+short, knowable list is the one worth naming, and anything unfamiliar
+behaves exactly as it did before.
+
+*(Neither half of this survived. The part about replies that will not
+decode was replaced twice over the next two rounds and finally stopped
+being a matter of recognition at all; the part about a call being
+rejected was deleted in the round after that, along with the whole idea
+of recognising anything. The last two sections are what replaced them,
+and this is left standing because four failed attempts are the argument
+for the answer that worked.)*
+
+A third suggestion was to prove the reading came from the same chain the
+transaction is on, rather than merely from the same height — two machines
+can disagree at one height while the chain reorganises. That is true, and
+it is not fixed here, for a reason written into the code rather than left
+implied: for the two questions actually being asked, every way it can go
+wrong goes wrong in the safe direction. A reorganisation that dropped the
+transaction leaves the state looking untouched, which reports as a
+problem — correctly, because the transaction really is no longer there.
+A momentary reading from a competing branch reports the same, which is a
+false alarm that sends someone to look rather than one that tells them
+not to. And a false all-clear would need a branch on which the answer is
+already the one being hoped for — which, for "this offer can no longer be
+taken", is a branch where it cannot be taken anyway. Guarding against it
+would mean adding a defence against something no run has ever seen, and
+this codebase has a costly recent lesson about exactly that. The limit is
+written down instead.
+
+## And three more, from the round after
+
+The recognition of "broken in a way every machine agrees on" was named
+one case too narrowly. It covered a reply that was empty; review
+produced a reply that was present but the wrong size, which fails
+identically everywhere and was still being waited out. The library
+offers seventeen such errors and gives them no shared parent, so naming
+them one at a time would have added one per review round — so they were
+recognised as a family, by the pattern the library names them under,
+with a check insisting every member of that family was covered.
+
+*(That is not how this ends. The very next round found failures that
+decode a reply wrongly and do not carry the pattern's name at all, and
+the section below replaces this fix rather than extending it. It is
+described here as it happened because the two failed attempts are the
+argument for what finally worked.)*
+
+The deadline was a promise the check did not quite keep. It waited a
+fixed interval between attempts regardless of how much time was left,
+so a run could sleep past its own deadline and then begin a fresh
+attempt — and an attempt is not quick, since each network call has its
+own timeout and retries. A ninety-second bound could overshoot by tens
+of seconds, or return an answer the caller had been told could not
+arrive that late. Attempts are now gated on the deadline and the wait is
+trimmed to what remains.
+
+The third is the most worth recording, because the previous round caused
+it. Making broken-everywhere failures stop being retried meant they were
+raised instead — and raising them handed them to the surrounding cleanup
+code, whose message says the position may still be live, funds may be
+held, and someone should go and cancel it by hand. That is the exact
+false alarm this whole change exists to remove, reached by a longer
+route. The transaction's own receipt said it succeeded; a checker that
+breaks afterwards does not withdraw that. Such a failure is now reported
+as what it is — the verification did not complete, and here is precisely
+why — with the error named rather than swallowed, and without the claim
+about funds that nobody established.
+
+## The round after that, where two of these stopped being lists
+
+Recognising "broken in a way every machine agrees on" had now been
+attempted twice — first as a handful of named cases, then as a family
+named by a pattern — and review broke it a third time, with failures
+that decode a reply wrongly but do not carry the pattern's name at all.
+Three attempts at one boundary is the point at which the boundary is
+wrong, not the list.
+
+So the list was not extended again. The reading was split in two
+instead: fetching the reply, which is worth trying again because a
+machine may be unreachable or behind, and making sense of the reply,
+which never is — a reply that arrived arrived everywhere. Only the
+fetching is retried now. Nothing has to be recognised for that to hold,
+because a reply that will not make sense is no longer inside the part
+that retries. What remains to be recognised is a single question: did
+the machine answer by rejecting the call? That one has been stable
+throughout and has produced no surprises.
+
+*(Two claims in that paragraph did not hold. "A reply that arrived
+arrived everywhere" is false — the last section explains why — so
+making sense of a reply IS worth trying again, and it is retried now.
+And the single remaining question was itself deleted a round later. The
+split described here is real and stayed; only the reason for it
+changed.)*
+
+The split was checked against the live chain before being trusted:
+reading the two values the two drives actually read, the old way and
+the new way, returns identical results — including for the one that
+comes back as a whole record rather than a single number.
+
+The time limit needed the same treatment. Checking the clock before
+starting an attempt still allowed the first half of that attempt to run
+long and the second half to begin after the limit had passed. Checking
+between each step would have meant a new check for every step anyone
+adds later. The attempt as a whole is now run against the remaining
+time, so the limit covers steps nobody has written yet — and the timer
+is cleaned up when the attempt wins, which matters because a live run
+would otherwise sit at the end refusing to finish.
+
+## Round four, where the recognising stopped entirely
+
+Recognising which failures are pointless to retry was attempted in four
+consecutive rounds, and review broke it in all four — each time by
+naming the case the previous attempt had missed, ending with the form
+that a plain call actually produces, which the round before had just
+added a different class for.
+
+A rule wrong four times running is not one case short. It is the wrong
+idea, so it is gone. Every failure to get an answer is now retried, and
+nothing tries to judge which ones are futile.
+
+Two things make that safe rather than a step backwards. The part that
+must never be retried — making sense of a reply that did arrive — is no
+longer a matter of recognition at all; it sits outside the retrying, as
+of the previous round, and that is untouched. *(The next round overturned
+that half: making sense of a reply IS worth trying again, because one
+machine can hand back a broken reply where the next hands back a good
+one. It is retried now, and still without recognition. See the last
+section.)* And what
+the recognising was really protecting was a sentence: the report used to
+end by saying no machine would answer. That was the false part. A
+rejected call *is* an answer, from every machine. The report now states
+the cause it actually saw and declines to say why, noting that a cause
+of that shape points at the code rather than at the network. What is
+lost is promptness in a situation no run has ever produced.
+
+The other half of the round: losing a race is not the same as stopping.
+Marking the abandoned attempt as ignorable only silences it; the attempt
+itself carried on, and once its first request came back it started a
+second one, after the answer had already been given up on. It now checks
+whether it has been abandoned before going further. The limit of that is
+stated plainly rather than implied — no new request is made once time is
+up, but one already in flight cannot be called back, and runs to its own
+timeout.
+
+## Round seven, which corrected round three
+
+The round that moved making-sense-of-a-reply out of the retrying rested
+on an argument: a reply that arrived arrived everywhere, so trying again
+could not help. Review showed the argument is wrong. The endpoint is
+several machines, and one of them can hand back an empty or truncated
+reply while the next hands back a good one — which is the very thing
+this whole change exists to cope with. Round three was right that these
+failures must not be *recognised* by name, and wrong about where to put
+them.
+
+They are simply retried now, like every other failure to get a usable
+answer. That needs no recognition either, so nothing is given back. What
+is left is one rule where there were three: try again until the time is
+up, and report what was seen without saying why.
+
+The same round caught the last piece of unearned certainty, and it was
+in a sentence written two rounds earlier to *remove* unearned certainty.
+When the checking itself broke, the report said the failure happens on
+every machine or else the drive is at fault. Neither follows from one
+bad reply. It now says only that this confirmation did not finish, and
+why it stopped. A companion sentence that declared a rejected call to be
+a fault in the code rather than in the network went the same way: the
+cause is printed, the reader draws the conclusion, and the report says
+plainly that this is what it is doing.
+
+## Round eight, on what a receipt is actually evidence of
+
+Three more, all the same shape as everything above: saying more than was
+established.
+
+The largest is a habit that had crept through every one of these reports.
+Where the confirming reading could not be got, they each said the
+transaction was included and succeeded, *so the thing it was for
+happened* — and then went on to say the confirmation was missing. Those
+two cannot both be load-bearing. If inclusion proved the effect, the
+missing reading would not matter and there would be nothing left to
+check; the fact that the reading exists at all is an admission that it
+does not. Inclusion without failure is strong evidence and it is not
+proof. Every one of those reports now says what the receipt shows and
+then says the effect is unknown, in those words.
+
+The second is the same point one step along: a sweep was declining to
+call an offer live because its cancellation had been included. Declining
+to call it live is right; the reason given was not. It is now declined
+because nothing was established either way.
+
+The third is smaller and is a mismatch between a rule and a sentence. The
+test for "this can no longer be taken" was deliberately loosened to
+accept a figure at or above the expected one, since either way nothing
+rests. The reports kept saying the figure had been set *to* the expected
+one. They now print what was actually read and describe it as at or above
+— an unexpected figure being visible is the point of reading it.
+<!-- assembled-fragment: 2107-write-confirmed-at-its-own-block.md sha256=b392c8fc89a495944a7a4fc0920f9a0d6070aa89ded3da88b93cfa59b77114e0 -->
+
+# A page that ran out of time now says so
+
+The sweep that walks every screen of the deployed app prints one line per
+screen. When a screen fails to load, the line ends with "DID NOT LOAD".
+
+Three kinds of thing can put it there, and two of them have always said
+which: the server answered with an error page, or the app sent the
+visitor somewhere else. The third is the opening itself throwing, and
+that covers more than one situation — the screen ran out of time, or the
+connection was refused, or the name would not resolve, or the browser
+went away. Whichever it was, the line said nothing at all about it. It
+read as a broken screen.
+
+In the run that prompted this, four screens reported it, and other passes
+of the same run loaded those same screens without trouble. That does not
+prove the screens are fine — a screen that hangs intermittently is a real
+problem, and one pass succeeding does not excuse another failing. It does
+mean the reader is being told something the run did not establish: the
+line says "DID NOT LOAD" and stops, so anyone reading it starts looking
+for a fault in the app, when what actually happened may be that the
+attempt ran out of time and nobody knows why.
+
+The distinction is not cosmetic. A screen that answered with an error is
+something the sweep established. A screen that ran out of time is a
+screen the sweep never finished looking at, and it cannot say whether
+that screen works. Reporting the second as though it were the first
+states a finding nobody made.
+
+That line now names the deadline that expired and says the screen is not
+fully reviewed. Not that nothing was seen — the sweep may have watched
+the page arrive, load scripts and report errors before one slow piece of
+it ran the clock out, and the counters printed on that same line say so.
+Claiming nothing was observed would contradict the numbers next to it,
+which is the same kind of overreach in the other direction.
+
+It cites the time budget rather than how long this attempt took, because
+the elapsed figure only means something once you know what the screen was
+allowed — and the budget is now written down once instead of being
+repeated wherever a page is opened.
+
+A failure the sweep does not recognise is reported as itself, in its own
+words, on one line. It is not sorted into a category it has not earned,
+which would be this same defect in a new place.
+
+Whether the deadline expired is settled by asking the failure what it is,
+at the moment it happens, rather than by reading its wording afterwards.
+The first version read the wording, which would have handed the softer
+"ran out of time" explanation to any failure whose text happened to
+mention a timeout — an infrastructure excuse for a real defect, and the
+one direction that matters.
+<!-- assembled-fragment: 2109-navigation-timeout-says-so.md sha256=ae22ef34f64deeff5eecefe06f59472019f539d9d8de2f2f89e0dc9567af6630 -->
+
+# One answer to "what does this name hold, and can I trust it here"
+
+The checks that keep the live drives' source regions honest repeatedly
+need to know what a name stands for. Seven separate rules were working
+that out independently — each asking the same underlying question, each
+deciding for itself what a missing answer meant, and each expressing "I
+could not tell" in its own way.
+
+Two things followed from that, and both were found by review rather than
+by reasoning about it.
+
+A rule added to one of the seven was absent from the other six. Unpacking
+a name from a pattern is not the same as naming a value, and one copy had
+known that for several rounds while the rest did not — so a bound taken
+apart from a search result read as though it were the search itself, and
+a region that does not exist at runtime was certified.
+
+And "I could not follow this" kept being read as "this is harmless".
+Those are opposite answers, and while they shared one blank response,
+which one a caller got depended on where the blank arrived from.
+
+There are three answers now, and they are different questions. The name
+stands for something, and here it is. The name has a binding, and what it
+holds at this point cannot be trusted — it was written to earlier, or
+unpacked from a pattern, or declared in a branch that may not have run,
+or defined in terms of itself. Or the name has no binding here at all,
+which means it belongs to another file or to the language itself.
+
+That third answer is not a kind of failure, and separating it out is half
+the point. A built-in is unbound and perfectly well understood; a local
+whose value cannot be followed is unknown and must be refused. Keeping
+them in one bucket had made a built-in look unreadable, and could as
+easily have made an unreadable local look like a built-in.
+
+Callers still decide what each answer means for their own question, and
+two of them deliberately disagree: a name from elsewhere is taken as text
+when it is being searched for, and is not taken as a bounded region when
+something is being cut from it. Both are right, and neither could be
+stated while the two situations shared one response.
+
+Making the states visible immediately showed one caller answering
+permissively: a receiver whose value could not be determined was being
+trusted, when the whole purpose of that rule is to catch a stand-in
+pretending to be text. Two kinds of name are exempt, and both for the
+same reason: a plain parameter, whose value arrives from whoever called
+the function, and an imported name, whose value belongs to another file.
+Neither can be read here, and both are how these drives are ordinarily
+handed their source. Everything else whose value cannot be determined is
+now refused.
+
+That exemption was first written by matching on the REASON the lookup
+failed, and review caught it immediately — which is worth recording,
+because it is the same mistake in miniature that the whole change exists
+to remove. Several quite different situations shared one reason with a
+plain parameter: one that supplies its own value when the caller omits
+it, one that collects the remaining arguments into a list, one taken
+apart from a pattern, and one defined inside a branch that may never have
+run. All four inherited the exemption. The rule now asks the binding a
+question of fact — does this value arrive from outside this file — which
+is true of a plain parameter and of an import and of none of the four.
+
+One more limit on that exemption followed, and it is the kind worth
+stating: it describes a value the check CANNOT SEE. Where a helper is
+called with the value in plain view — handed an object that merely has a
+search-shaped property — the exemption had been vouching for exactly what
+the check exists to catch. So a call whose argument is visibly not text
+is refused, whatever the helper's body would have said. Working out what
+each parameter holds at each call is a larger analysis and is not
+attempted here; the narrower question has an answer and is asked instead.
+
+That limit needed widening twice more before it held. Every form the
+language offers for passing a value along — selecting between two,
+spreading a list, assigning, awaiting, discarding all but the last of a
+series — is somewhere the inspection can stop one step short of the
+value, and each was found separately. They are now listed in one place so
+there is a single thing to check rather than one more each time. The
+inspection also refuses an argument whose value could not be worked out
+AND does not come from outside the file: the exemption describes a value
+that cannot be seen, and such a name satisfies neither half of that.
+
+There is a SECOND behaviour change, and an earlier draft of this note
+said there was not. Because every rule now follows a name the same way, a
+small helper reached through a second name is recognised where before it
+was not — the old code required the helper's own declaration to be the
+function itself, and a name pointing at another name is not that. This is
+a widening: regions that used to be refused now pass. It follows from the
+change rather than being aimed at, which is exactly why it needed
+stating; a reader checking whether this note was complete would have
+found it and been right to mind.
+
+A THIRD followed, found the same way, and this one corrects an
+over-strictness rather than widening a judgement. Where a name is
+declared twice — once by unpacking and once plainly — the old rule
+refused it because one of the two declarations was an unpacking, even
+when the plain one is the declaration that stands where the name is used.
+It now reads the declaration that actually stands, so a name provably
+holding the beginning of the text is accepted as such. The old answer was
+not conservative, it was wrong.
+
+A TIGHTENING joins them, found the same way and closing a window that was
+open before this change rather than introduced by it: a value reached by
+reading a property of something is no longer accepted as the text being
+searched — what a property holds when a line runs is not a question this
+can answer, which the work preceding this change had already concluded
+elsewhere.
+
+A second tightening stood here for several rounds and is now GONE, which
+is recorded rather than quietly dropped because a reader may remember it.
+It made a built-in the file itself writes over stop counting as the
+built-in. That went the way the later check for a rewritten prototype
+went, and for the same reason, described further down: the two were one
+question with no answer, and both are replaced by a stated assumption.
+
+The check on what a caller hands a helper went through five revisions
+before it was abandoned, and the abandonment is described further down —
+this paragraph records only what those revisions were reaching for, since
+a later section replaces the answer and not the question. Each version
+asked the same crude thing of EVERY argument — is this visibly not a
+piece of text — which was wrong twice over: it condemned an ordinary
+numeric search offset passed alongside the text, and it never asked which
+parameter a stand-in would actually land on. The narrower question those
+revisions settled on was which parameter the helper searches THROUGH, and
+what was passed for that one. What did survive all of it is the
+separation: what an expression hands over, and whether that value is a
+stand-in, are two readings with two names, which is the same correction
+this whole change is about.
+
+One consequence of separating them is worth recording: the rule about
+what counts as a piece of text now lives in one place, with the rule
+about receivers, instead of being written twice in slightly different
+words. A name holding a regular expression and a regular expression
+written out are the same question, and were being answered by two pieces
+of code.
+
+Review then found three more, and all three are the same shape as the
+ones before them: a rule that had been written at one site and not at its
+sibling. A name holding a stand-in was being accepted where the identical
+stand-in written out at the call was refused — one question, two answers.
+A built-in replaced through a stable second name for the language's own
+global object was not seen as replaced, though replacing it directly had
+been caught for two rounds. And a search written inside a function the
+helper merely CREATES, and never calls, was being attributed to the
+helper's own result, so an ordinary argument was refused on the strength
+of code that does not run.
+
+Fixing the first of those exposed a defect in the consolidation itself,
+and it is worth stating because it is the risk that comes with having one
+answer instead of seven. Each rule keeps a record of what it has already
+looked at, so that a name defined in terms of itself is refused instead of
+followed forever — and resolving a name had been borrowing whichever
+rule's record was to hand. Two rules that each resolve the SAME name while
+judging one thing therefore shared that record, and the second read the
+first's entry as a loop. A plain parameter came back "defined in terms of
+itself", and a correct region was refused. Resolving keeps its own record
+now; the answer depends on the name and the file and on nothing a caller
+happens to have looked at first.
+
+Alongside those, a genuine loosening. A value assigned on the arm of a
+branch that the use excludes cannot have been assigned by the time the
+use runs, and counting it had erased a parameter's provenance and refused
+a correct region. Only the two constructs where the arms truly cannot
+both run are treated this way; a switch falls through, and a catch runs
+because its try block got part of the way, so neither qualifies.
+
+The round after that found two of those very fixes reaching past their
+own question, which is worth stating as the pattern it is rather than as
+two more entries. The branch-arm rule holds only within a SINGLE
+evaluation: where the name being written outlives the function the branch
+is in, the first call's assignment is still there for the second, and the
+rule was stepping over the lifetime test standing next to it. And the
+alias walk gave up after a fixed number of steps — a guess about how many
+names someone might chain together — where the condition that actually
+ends such a walk is reaching a name declared nowhere in the file, or
+coming back to one already on the chain. Both are decidable; a number is
+not.
+
+The third finding of that round was the third in a row against one small
+piece of this: which of a helper's parameters a search actually looks
+through. Each round named a different place the search should not have
+been looking, and all three were the same question asked about the wrong
+thing. What selects an argument for inspection is not a search written
+anywhere inside the helper — it is a search whose result can BE the
+position the helper hands back. A search used only to choose between two
+outcomes that are both genuine landmarks cannot change the answer, and
+neither can one inside a function the helper never calls. That is now one
+question in one place, and the accompanying list names only what is
+provably discarded, so anything missing from it is inspected rather than
+skipped — a gap costs a refused region, never a certified one.
+
+And then the round after that removed the thing all three of those rounds
+had been about, which is the most consequential change here and the one
+worth reading if you read only one.
+
+Working out which of a helper's parameters a search actually looks
+through had produced a finding in five consecutive reviews. Each named a
+different route through a helper's body — a nested function reusing a
+name, a function created and never called, a search used only to pick
+between two outcomes, a search feeding another search's starting point, a
+helper handing its value to a second helper. Every one of those findings
+was right, every fix was correct, and not one of them ended the sequence.
+The sixth was going to exist as well.
+
+The question underneath was never which parameter a search reads. It is
+whether an argument could hand the helper a SEARCH THAT LIES — something
+shaped like a text search that answers with a fixed number instead of a
+position. Only an object can carry a method that lies. A piece of text
+can too, in principle, except that its own search is the genuine one.
+Every other simple value — a number, a true or false, nothing at all —
+carries no such method, so a helper handed one fails visibly rather than
+quietly producing a fixed window.
+
+So that is the question now, asked of every argument, with nothing traced
+through anything. It is shorter, it cannot be evaded by passing a value
+through one more helper, and it accepts the ordinary numeric offset that
+five rounds of a widening rule had refused.
+
+Two things are given up, and they are recorded rather than glossed. An
+argument that really is a stand-in, handed to a helper whose every
+possible answer is a genuine landmark regardless, is now refused — the
+previous round had established that case and made it pass. So is one
+whose search only supplies the starting point of an outer genuine search.
+Both were correct regions. Both are refused, because establishing
+otherwise needs exactly the tracing that produced five rounds of findings.
+The cost is a refused region on shapes that appear nowhere in this
+codebase; the direction is the safe one, and the alternative was a rule
+whose edges had no end.
+
+The review after that found two holes in the short rule that replaced all
+of it — and both are the very mistake this whole change exists to remove,
+made inside the rule that removed the last one.
+
+The claim that a simple value carries no search of its own is false when
+the file gives it one: a number handed a property is briefly wrapped in an
+object, so a file that attaches a search to that wrapper makes every
+number answer with whatever it likes. That is the same mechanism as
+replacing a built-in outright, which this guard already refuses one level
+up, and it is refused the same blunt way — by asking whether the file
+contains such an attachment at all, not by working out which values it
+could reach. Working that out is the tracing that had just been removed.
+
+The second is plainer and worse. The same number written two ways got two
+answers: one spelled as a bare digit was accepted, and one spelled with a
+leading plus was refused. Nothing about the value differs. Deciding from
+how something is written rather than from what it produces is the defect
+this change is named after, and it had been reintroduced in the fix for
+it. Every form whose result is a simple value whatever its parts — the
+arithmetic and comparison forms, the negations, the increments, an
+ordinary template — is now read as one. A template with a function
+attached to it is deliberately not, because that function returns
+whatever it likes.
+
+The same review found the branch rule reaching only one of the two places
+that need it. A name given its value where it is declared is not recorded
+as having been written to — the two are different things to the machinery
+underneath — so a declaration on the arm of a branch the reader is not on
+never reached the rule that would have discounted it, and was refused by a
+neighbouring test instead. It is one shared piece of reasoning now, which
+is the fifth time on this change that one rule turned out to be answered
+at one site and not at its sibling.
+
+The next review produced three separate ways past that first rule, and
+they were not three faults. One installed the replacement through a loop
+rather than an assignment. One slipped past because the check only looked
+at values written out at the call, while a value handed in from outside is
+wrapped for a property access exactly as a written-out one is. And one
+replaced not a search at all, but the machinery by which a list is read
+out — so a list written in plain sight handed over something it does not
+contain.
+
+That third settles the shape. Once a file may replace the machinery
+values are read THROUGH, the escape stops being a property of any
+particular value, and no amount of classifying values more carefully will
+close it: there are several other pieces of that machinery, and
+enumerating them is the open-ended list this change has now twice been
+caught depending on.
+
+So the question is asked once, about the file, before anything else: has
+this file rewritten any of the language's own machinery. If it has,
+nothing in it can be established and every search is unknown — including
+an ordinary direct one, which the previous placement could never have
+reached, though a replaced text search makes it lie just as readily.
+
+Two smaller corrections came with that review. The branch rule was taking
+a fact from whoever called it rather than working it out, and the caller
+that needed it most was not supplying it — so a name declared inside a
+function, on the arm of a branch the reader was not on, was refused where
+the same shape at the top level was accepted. It determines that for
+itself now. And an assignment that computes something — adding one to a
+counter, say — was being read as though it might hand back either side,
+which is true only of the three that may decline to assign at all. It
+hands back what it computed, and that is a simple value whatever it was
+computed from.
+
+And then the check itself was removed, along with an older one it turned
+out to be a second copy of. This is the third such removal here, and the
+one that names the pattern rather than being another instance of it.
+
+Both checks were answering the same question: has this file replaced
+something the language provides. Neither could. Six reviews each found
+another way to write the replacement — a key computed rather than
+spelled, three different standard functions that do it without an
+assignment, a name taken apart from a list, and several pieces of
+machinery that reach the same end without naming the thing they replace.
+A check over a list with no end is not a weaker check. It reports a
+certainty it does not have, which on something whose entire job is
+refusing unearned certainty is worse than admitting the limit.
+
+It was also never the danger. This guard exists to stop somebody writing
+a fixed-length window by mistake, and nobody rewrites the language's own
+machinery in a browser test by accident.
+
+So the assumption is now written down where the reasoning lives, and the
+suite checks it against the real files in the forms a person might
+plausibly reach for. Best effort is the right standard there and was the
+wrong standard inside the reasoning: a form the suite misses means nobody
+noticed something strange in our own files, while a form the reasoning
+missed meant a region certified as correct that was not.
+
+The check in the suite is deliberately narrower than "no prototypes
+touched". One of the drives legitimately replaces a browser method on the
+page it is driving, which has nothing to do with the searches this
+reasons about, and a rule that objected to it would be objecting to
+correct work — the failure this whole family of guards exists to avoid.
+
+One finding from that review is fixed rather than removed. A name created
+afresh on each pass of a loop cannot be affected by a later pass, so
+ordinary before-and-after reasoning holds within one pass; the rule had
+been discounting every loop unconditionally. Freshness depends on how the
+name was declared as well as where, since the older form of declaration
+is written inside the loop and still outlives it.
+
+This note ENUMERATES the behaviour changes rather than counting them, and
+that is a correction rather than a preference: a running total beside a
+list is a second place the same fact is recorded, and this one was wrong
+on three consecutive reviews. None of the changes was aimed at. Each
+follows from every rule resolving names the same way, which is the point
+of the change — and that is exactly the kind that goes unmentioned unless
+somebody checks, because a reader cannot tell a deliberate widening from
+an accidental one unless the note says which.
+
+Everything else behaves as it did. The rules that were correct are
+correct in the same cases; they now say why in terms anyone can check.
+<!-- assembled-fragment: 2175-one-name-resolver.md sha256=0acc2afcdd3a5a218241f25918ab5637b2a33ff596a5642ae5dc13d5a1df1728 -->
