@@ -1385,7 +1385,7 @@ also gets the ending in their inbox — which for a position both parties have
 already claimed is neither of them, as set out further down. They had
 received nothing: the announcement was missed, so the surface that
 turns announcements into messages never saw one, and a position could be put
-right while the two people with money in it were told nothing at all. What
+right while the people with money in it were told nothing at all. What
 those messages carefully do not do is pretend to be news of the moment. They
 say the platform found this out now, which is true; they do not carry a date
 for the ending, because the check genuinely cannot work out when it happened;
@@ -1552,14 +1552,14 @@ record published as open while every check reported perfect health.
 
 And it cannot say why an ending was missed in the first place.
 
-The correction, the tidying and the messages to the two holders are a single
+The correction, the tidying and whatever messages it owes are a single
 write, which either happens completely or not at all. That is not a refinement: a
 correction that landed on its own would take the record out of the set the
 rotation looks at, so nothing would ever come back to finish the job, and a
 service killed mid-way leaves no failure to report either. Committing them
 together is the only version with no window. The messages were the last
 thing still written afterwards, and they had the same flaw: a failure there
-left the position corrected and the two people with money in it told nothing,
+left the position corrected and whoever it could have told told nothing,
 permanently.
 
 A failure to look up the two parties is treated the same way as a failed
@@ -1570,7 +1570,7 @@ rotation next comes round.
 The messages are written only where the correction was actually made by
 this check. If another part of the service recorded the ending first — which
 is the very race the check is built to lose gracefully — it stops, rather
-than telling the two holders it discovered something it did not. And where
+than telling anyone it discovered something it did not. And where
 looking up the parties in its OWN records fails, that is treated as a
 failure rather than as "nobody to tell": the whole correction is abandoned
 instead of going through with the part that is silent, and waits for the

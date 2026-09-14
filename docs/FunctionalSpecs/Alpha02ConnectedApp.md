@@ -297,10 +297,12 @@ The app uses chain reads and indexed reads for different jobs.
   rather than implying the announcement is universal — a record put right
   silently would leave every
   open screen showing the old one.
-- Both holders of a corrected position receive the ending in their inbox.
-  Without it they receive nothing at all for that position, since the
-  message surface is built from announcements and this ending never had
-  one. Such a message states when the platform FOUND OUT, never when the
+- Every holder of a corrected position the platform can establish receives
+  the ending in their inbox — and where it can establish neither, which is
+  the ordinary outcome once both parties have claimed, nobody is written to
+  and nothing is retried. Without this message an establishable holder
+  receives nothing at all for that position, since the message surface is
+  built from announcements and this ending never had one. Such a message states when the platform FOUND OUT, never when the
   loan ended — the check cannot determine that — and is marked as derived
   from a correction rather than attributed to an announcement nobody saw. A
   bookkeeping position that no person holds produces no message.
