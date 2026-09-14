@@ -12,6 +12,7 @@ import {
   CHAIN_STATUS_TO_ROW_STATUS,
   decideRepair,
   reconcileChainLoans,
+  reconcileLoansForChain,
   type ReconcileDeps,
   type ReconcileRow,
 } from '../src/loanReconcile';
@@ -201,5 +202,58 @@ describe('reconcileChainLoans', () => {
     expect(f.calls.chainCount).toBe(1);
     expect(f.calls.statusReads).toBe(1);
     expect(f.calls.writes).toBe(0);
+  });
+});
+
+describe('reconcileLoansForChain (live deps)', () => {
+  const chain = { id: 84532, rpc: 'https://rpc.example', diamond: '0xd1a' };
+
+  it('REFUSES to write when the RPC reports a different chain', async () => {
+    // A secret pointed at the wrong network still answers, and this pass
+    // writes terminal status from what it answers — so a mis-pointed RPC
+    // would mark one chain's loans over using another chain's state.
+    let dbTouched = false;
+    const db = {
+      prepare() {
+        dbTouched = true;
+        throw new Error('the database must not be reached');
+      },
+    };
+    const r = await reconcileLoansForChain(
+      { DB: db as never },
+      chain,
+      () => ({
+        getChainId: async () => 8453, // Base, not Base Sepolia
+        readContract: async () => {
+          throw new Error('no chain read may happen either');
+        },
+      }),
+      [],
+      [],
+    );
+    expect(r).toBeNull();
+    expect(dbTouched).toBe(false);
+  });
+
+  it('checks identity BEFORE any other call', async () => {
+    const order: string[] = [];
+    await reconcileLoansForChain(
+      { DB: { prepare: () => { order.push('db'); throw new Error('stop'); } } as never },
+      chain,
+      () => ({
+        getChainId: async () => {
+          order.push('getChainId');
+          return 999;
+        },
+        readContract: async () => {
+          order.push('readContract');
+          return 0n;
+        },
+      }),
+      [],
+      [],
+    ).catch(() => {});
+    expect(order[0]).toBe('getChainId');
+    expect(order).not.toContain('readContract');
   });
 });

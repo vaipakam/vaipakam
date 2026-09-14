@@ -200,3 +200,127 @@ export async function reconcileChainLoans(
   await deps.writePointer(chainId, report.nextPointer);
   return report;
 }
+
+/**
+ * Build the live dependencies for one chain and run a pass.
+ *
+ * `maxRows` is PASSED IN, not derived from `env`. The tick's subrequest
+ * headroom depends on which ingest path is running, and the resolved
+ * `Env` does not carry `CHAIN_INGEST_DO` — `captureBackingSnapshot`
+ * records that exact trap, where a cast to reach the flag always read
+ * `undefined` and every DO-path row was stamped with the wrong cadence.
+ * The scheduler is the only place both the flag and the binding are
+ * visible, so it is the only place that can answer.
+ */
+export async function reconcileLoansForChain(
+  env: { DB: D1Database },
+  chain: { id: number; rpc: string; diamond: string },
+  createClient: (rpc: string) => {
+    getChainId(): Promise<number>;
+    readContract(args: Record<string, unknown>): Promise<unknown>;
+  },
+  metricsAbi: unknown,
+  loanAbi: unknown,
+  opts: ReconcileOptions = {},
+): Promise<ReconcileReport | null> {
+  const client = createClient(chain.rpc);
+
+  // IDENTITY BEFORE TRUST. A secret pointed at the wrong network still
+  // answers, and this pass WRITES terminal status from what it answers —
+  // so a mis-pointed RPC would mark one chain's loans over using another
+  // chain's state. `captureBackingSnapshot` refuses to store under the
+  // same condition; refusing to write is more important here, because a
+  // wrong reserve figure is a wrong number and a wrong terminal status is
+  // a position the platform stops publishing.
+  const observed = await client.getChainId();
+  if (observed !== chain.id) {
+    console.warn(
+      `[loanReconcile] RPC for chain ${chain.id} reports ${observed}; not reconciling`,
+    );
+    return null;
+  }
+
+  const deps: ReconcileDeps = {
+    async activeRowsAfter(chainId, after, limit) {
+      const rows = await env.DB.prepare(
+        `SELECT loan_id, status FROM loans
+          WHERE chain_id = ? AND status = 'active' AND loan_id > ?
+          ORDER BY loan_id ASC LIMIT ?`,
+      )
+        .bind(chainId, after, limit)
+        .all<ReconcileRow>();
+      return rows.results ?? [];
+    },
+    async countIndexedActive(chainId) {
+      const row = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM loans WHERE chain_id = ? AND status = 'active'`,
+      )
+        .bind(chainId)
+        .first<{ n: number }>();
+      return row?.n ?? 0;
+    },
+    async readChainActiveCount() {
+      const n = await client.readContract({
+        address: chain.diamond,
+        abi: metricsAbi,
+        functionName: 'getActiveLoansCount',
+      });
+      return Number(n as bigint);
+    },
+    async readChainStatus(_chainId, loanId) {
+      const d = (await client.readContract({
+        address: chain.diamond,
+        abi: loanAbi,
+        functionName: 'getLoanDetails',
+        args: [BigInt(loanId)],
+      })) as { status: number | bigint };
+      return Number(d.status);
+    },
+    async writeStatus(chainId, loanId, status) {
+      // COMPARE-AND-SET on `status = 'active'`, never an unconditional
+      // UPDATE. The chain-ingest Durable Object is the serialized writer
+      // for event-driven status, and this pass runs from the cron — two
+      // writers on one column. Guarding the write means a terminal the DO
+      // landed first simply wins, and this pass becomes a no-op rather
+      // than overwriting the DO's more specific `liquidated` with the
+      // chain enum's `defaulted`.
+      await env.DB.prepare(
+        `UPDATE loans SET status = ?, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+      )
+        .bind(status, Math.floor(Date.now() / 1000), chainId, loanId)
+        .run();
+    },
+    async readPointer(chainId) {
+      const row = await env.DB.prepare(
+        `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+      )
+        .bind(chainId, RECONCILE_CURSOR_KIND)
+        .first<{ last_block: number }>();
+      return row?.last_block ?? 0;
+    },
+    async writePointer(chainId, value) {
+      await env.DB.prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = ?, updated_at = ?`,
+      )
+        .bind(
+          chainId,
+          RECONCILE_CURSOR_KIND,
+          value,
+          Math.floor(Date.now() / 1000),
+          value,
+          Math.floor(Date.now() / 1000),
+        )
+        .run();
+    },
+  };
+
+  return reconcileChainLoans(chain.id, deps, opts);
+}
+
+/** Rotation pointer row in `indexer_cursor`, per chain. `last_block` is
+ *  repurposed as the last examined `loan_id` — the same repurposing the
+ *  round-robin pointer already makes of that column. */
+export const RECONCILE_CURSOR_KIND = 'loan_reconcile';
