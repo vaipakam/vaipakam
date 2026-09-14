@@ -4,10 +4,14 @@ One entry, and a long one, because it is the first of the three slice-4
 changes of the #1566 design and it lands the whole custody-holder lifecycle
 at once: the holder itself, its replacement ceremony, the recoveries for
 value that reaches a holder by no protocol path, and the paid-side rebase
-that chains carrying history need before the cutover. Nothing in it moves
-reward value yet — no payout, gate or funding path reads the holder, and no
-writer can fund it — which is why it could be reviewed to convergence and
-merged ahead of the change that will. What it does settle is the shape of
+that chains carrying history need before the cutover. No protocol flow
+moves reward value through it yet — no payout, gate or funding path reads
+the holder, and no writer can fund it — which is why it could be reviewed
+to convergence and merged ahead of the change that will; what CAN move
+configured reward tokens that have already reached a holder are the
+administrator-only paths the entry below describes: the paused
+replacement, the recovery from a retired predecessor, and the sweep of the
+unattributed remainder. What it does settle is the shape of
 the irreversible steps around the holder, and the safeguard each one
 carries differs, so they are worth stating separately. Replacing the holder
 and sweeping its unattributed remainder to the treasury require the
