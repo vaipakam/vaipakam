@@ -356,10 +356,11 @@ const diamondRead = (functionName, args) => {
  * Two things are deliberate. The block is PINNED: an unpinned read
  * after a receipt is the #2107 race, where a load-balanced endpoint
  * serves the receipt from a node that has the block and the call from
- * one that has not. And it returns UNDECODED bytes, so that decoding
- * happens outside the retry boundary — a reply that arrived and will
- * not decode came from a node that answered, so no number of retries
- * changes it (round 3).
+ * one that has not. And it returns UNDECODED bytes, with decoding handed
+ * to `confirmWrite` separately — which keeps a malformed reply
+ * distinguishable from a failure to reach anything, and lets the retry
+ * cover it, since one backend can serve `0x` where the next serves good
+ * data (round 7 corrected round 3 on that point).
  */
 const rawDiamondCall = async (functionName, args, blockNumber) => {
   requireAbiMember(functionName, 'function');
@@ -385,7 +386,7 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
     // the confirmation because the last request was never made.
     getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
     read: (blockNumber) => rawDiamondCall('signedOfferFilledAmount', [orderHash], blockNumber),
-    // Decoded OUTSIDE the retry — see `writeConfirm.mjs`.
+    // Decoded by `confirmWrite`, not here — see its header.
     decode: (data) =>
       decodeFunctionResult({ abi: ABI, functionName: 'signedOfferFilledAmount', data }),
     // AT OR ABOVE the ceiling, which is the drive's own definition of

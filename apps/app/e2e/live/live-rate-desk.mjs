@@ -386,10 +386,12 @@ function verifyCancelled(offerId, minBlock) {
     // returned at the deadline after the chain had caught up, failing
     // the confirmation because the last request was never made.
     getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
-    // The RAW reply — decoding happens outside the retry boundary, so a
-    // reply that arrived and will not decode is never waited out
-    // (#2107 round 3). Verified against the live Base Sepolia Diamond
-    // that this returns exactly what `readContract` did.
+    // The RAW reply; `confirmWrite` decodes it. Keeping the two apart
+    // is what lets a malformed reply be told from a failure to reach
+    // anything — and a malformed one retries, because one backend can
+    // serve `0x` where the next serves good data (#2107 round 7).
+    // Verified against the live Base Sepolia Diamond that this returns
+    // exactly what `readContract` did.
     read: async (blockNumber) => {
       const { data } = await pub.call({
         to: DIAMOND,

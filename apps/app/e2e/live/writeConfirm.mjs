@@ -148,7 +148,7 @@ export async function confirmWrite({
 
   /**
    * One attempt: ask the node its head, and if it is far enough along,
-   * fetch the RAW reply. Deliberately no decoding — see below.
+   * fetch the reply and decode it.
    *
    * `abandoned` is checked between the two requests, and it is the
    * difference between losing a race and stopping (#2107 round 4).
@@ -168,7 +168,7 @@ export async function confirmWrite({
     const head = await getBlockNumber();
     if (abandoned()) return { abandoned: true };
     if (head < minBlock) return { behind: true };
-    return { raw: await read(head), at: head };
+    return { value: decode(await read(head)), at: head };
   };
 
   for (let first = true; ; first = false) {
@@ -179,7 +179,7 @@ export async function confirmWrite({
     if (!first && now() >= deadline) return giveUp();
 
     let got = false;
-    let raw;
+    let value;
     let at;
     try {
       // The attempt RACES the remaining budget, rather than the deadline
@@ -210,7 +210,7 @@ export async function confirmWrite({
         if (outcome.abandoned) return giveUp();
         if (outcome.behind) behind += 1;
         else {
-          raw = outcome.raw;
+          value = outcome.value;
           at = outcome.at;
           got = true;
         }
@@ -240,27 +240,29 @@ export async function confirmWrite({
       // run has produced is not worth a rule that has been wrong every
       // time it was written.
       //
-      // Decoding is the part that genuinely must never be retried, and
-      // it is handled below by being OUTSIDE this boundary — structure
-      // rather than recognition, which is why that fix needs no list and
-      // this one has no list left.
+      // A FAILURE TO DECODE IS ONE OF THEM, and it took until round 7 to
+      // see why. Round 3 moved decoding outside this boundary on the
+      // argument that a reply which arrived came back from every node,
+      // so retrying could not help. That argument is false: one
+      // load-balanced backend can serve `0x` or a truncated payload
+      // while the next serves valid data — which is the very
+      // endpoint-divergence this whole helper exists for. Round 3 was
+      // right that decode failures must not be CLASSIFIED and wrong
+      // about where to put them. Retrying them needs no classification
+      // either, and it is what the uniform rule already says.
+      //
+      // So there is now ONE rule, not three: every failure to obtain a
+      // usable answer retries, and the verdict names the cause without
+      // claiming why.
       lastErr = e;
     }
 
-    // DECODING HAPPENS HERE, OUTSIDE THE RETRY, and that placement is
-    // the fix rather than an implementation detail (#2107 round 3).
-    // Rounds 2 and 3 each produced another viem error class for a reply
-    // that arrived and would not decode — first `AbiDecoding*`, then
-    // `InvalidBytesBooleanError` and friends, which do not even share
-    // the `Abi*Error` name. Classifying that set is unbounded, and two
-    // rounds of trying it is this repo's recorded signal to fix the seam
-    // instead of naming another member. Decoding is not a question about
-    // reachability at all: a reply that will not decode came back, so
-    // every node produces it, so it can never be worth a retry. Putting
-    // it outside the boundary makes that true BY CONSTRUCTION and needs
-    // no list — the same reason `accept` sits here.
+    // `accept` stays outside the catch, and it is now the ONLY thing
+    // that does. A predicate that throws — a field that moved, a shape
+    // it did not expect — is a bug in the drive rather than a failure to
+    // reach the chain, so retrying it would report the caller's mistake
+    // as an endpoint problem.
     if (got) {
-      const value = decode(raw);
       return accept(value)
         ? { ok: true, value, blockNumber: at }
         : { ok: false, unconfirmed: false, value, blockNumber: at };
@@ -304,11 +306,17 @@ export async function confirmWriteOrReport(opts) {
     return {
       ok: false,
       unconfirmed: true,
+      // NO UNIVERSAL DIAGNOSIS. An earlier version of this said "every
+      // node reproduces this or it is a fault in the drive", which is
+      // the same unearned certainty this whole change removes elsewhere
+      // (#2107 round 7): one backend can serve a malformed reply while
+      // the next serves a good one. What is actually known is that this
+      // confirmation did not complete and why it stopped — and that the
+      // write's own receipt is untouched by either.
       why:
         `THE CONFIRMATION ITSELF FAILED while reading ${opts.what ?? 'the written state'} ` +
-        `— ${first}. Every node reproduces this or it is a fault in the drive, so it is ` +
-        `not a statement about the write, which its receipt already reported as mined ` +
-        `and successful`,
+        `— ${first}. That is a statement about this confirmation, not about the write, ` +
+        `whose receipt already reported it mined and successful`,
     };
   }
 }
@@ -342,7 +350,8 @@ export function unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) {
     `COULD NOT CONFIRM ${what} at or after block ${minBlock} within ` +
     `${Math.round(timeoutMs / 1000)}s (${cause}) — no attempt produced an ` +
     `answer this could use. That says nothing about whether the write took ` +
-    `effect; if the cause above looks like a revert or a decode failure, it ` +
-    `is a contract or ABI regression rather than an endpoint problem`
+    `effect, and the cause above is reported rather than diagnosed: a revert ` +
+    `or an undecodable reply points at the contract or the ABI, a timeout or ` +
+    `a refused connection at the endpoint, and only reading it tells you which`
   );
 }

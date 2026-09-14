@@ -228,3 +228,29 @@ whether it has been abandoned before going further. The limit of that is
 stated plainly rather than implied — no new request is made once time is
 up, but one already in flight cannot be called back, and runs to its own
 timeout.
+
+## Round seven, which corrected round three
+
+The round that moved making-sense-of-a-reply out of the retrying rested
+on an argument: a reply that arrived arrived everywhere, so trying again
+could not help. Review showed the argument is wrong. The endpoint is
+several machines, and one of them can hand back an empty or truncated
+reply while the next hands back a good one — which is the very thing
+this whole change exists to cope with. Round three was right that these
+failures must not be *recognised* by name, and wrong about where to put
+them.
+
+They are simply retried now, like every other failure to get a usable
+answer. That needs no recognition either, so nothing is given back. What
+is left is one rule where there were three: try again until the time is
+up, and report what was seen without saying why.
+
+The same round caught the last piece of unearned certainty, and it was
+in a sentence written two rounds earlier to *remove* unearned certainty.
+When the checking itself broke, the report said the failure happens on
+every machine or else the drive is at fault. Neither follows from one
+bad reply. It now says only that this confirmation did not finish, and
+why it stopped. A companion sentence that declared a rejected call to be
+a fault in the code rather than in the network went the same way: the
+cause is printed, the reader draws the conclusion, and the report says
+plainly that this is what it is doing.

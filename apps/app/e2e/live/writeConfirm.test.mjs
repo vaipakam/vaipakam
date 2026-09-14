@@ -177,9 +177,9 @@ describe('confirmWrite', () => {
     // Four review rounds tried to name which viem error classes are
     // futile to retry, and each round found the one the last had missed
     // (#2107 r1-r4). The classifier is gone; nothing here decides.
-    // Decoding — the part that genuinely must never be retried — is
-    // handled by being outside the retry, which is structure rather than
-    // recognition and needs no list.
+    // Decoding is one of them, as of round 7: a malformed reply can
+    // come from one backend and not the next, so retrying it is exactly
+    // right and needs no recognition either.
     for (const err of [
       new Error('execution reverted'),
       new Error('socket hang up'),
@@ -217,7 +217,7 @@ describe('confirmWrite', () => {
     expect(r.why).toMatch(/no attempt produced an answer this could use/);
     expect(r.why).not.toMatch(/no node would answer/);
     // And it points at the right culprit without asserting it.
-    expect(r.why).toMatch(/contract or ABI regression rather than an endpoint problem/);
+    expect(r.why).toMatch(/reported rather than diagnosed/);
   });
 
   it('issues NO further request once the budget has expired', async () => {
@@ -298,30 +298,45 @@ describe('confirmWrite', () => {
     expect(clock.now()).toBe(25);
   });
 
-  it('decodes OUTSIDE the retry — a decode failure is never waited out', async () => {
-    // Rounds 2 and 3 each produced another viem error class for a reply
-    // that arrived and would not decode. Classifying that set is
-    // unbounded; taking decoding out of the retry makes "never worth a
-    // retry" true by construction, so this is the assertion that
-    // replaces the list.
-    let reads = 0;
-    await expect(
-      confirmWrite(
-        base({
-          getBlockNumber: async () => 100n,
-          read: async () => {
-            reads += 1;
-            return '0xdeadbeef';
-          },
-          decode: () => {
-            throw new Error('InvalidBytesBooleanError: bytes are not canonical');
-          },
-          // Even told that EVERYTHING is retryable, the decode must not be.
-          retryable: () => true,
-        }),
-      ),
-    ).rejects.toThrow(/InvalidBytesBooleanError/);
-    expect(reads).toBe(1);
+  it('retries a decode failure like any other — one backend is not every backend', async () => {
+    // Round 3 took decoding out of the retry, arguing that a reply which
+    // arrived came back from every node. Round 7 showed that is false:
+    // one load-balanced backend can serve `0x` or a truncated payload
+    // while the next serves valid data, which is the same divergence
+    // this helper exists for. So a decode failure retries, and — like
+    // everything else — needs no recognition to do so.
+    let attempts = 0;
+    const r = await confirmWrite(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => '0xdeadbeef',
+        decode: () => {
+          attempts += 1;
+          throw new Error('InvalidBytesBooleanError: bytes are not canonical');
+        },
+      }),
+    );
+    expect(attempts).toBeGreaterThan(1);
+    expect(r.unconfirmed).toBe(true);
+    expect(r.why).toMatch(/InvalidBytesBooleanError/);
+  });
+
+  it('confirms when a later backend decodes what an earlier one could not', async () => {
+    // The case round 3's argument said could not exist.
+    let n = 0;
+    const r = await confirmWrite(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => (++n === 1 ? '0x' : '0x64'),
+        decode: (raw) => {
+          if (raw === '0x') throw new Error('AbiDecodingZeroDataError');
+          return BigInt(raw);
+        },
+        accept: (v) => v === 100n,
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.value).toBe(100n);
   });
 
   it('hands the decoded value to accept, not the raw reply', async () => {
@@ -461,28 +476,29 @@ describe('confirmWriteOrReport', () => {
     // may still rest and tells the operator to send the cancel again. A
     // throw reaching that catch re-creates the false funds alarm this PR
     // removes, by a longer route (#2107 round 2).
-    // A DECODE failure is how this arises in production now: the reply
-    // arrived, and making sense of it failed. That happens outside the
-    // retry, so it throws at once rather than after the budget.
+    // Since round 7 the only way `confirmWrite` throws is a predicate
+    // that throws — every failure to obtain an answer, decode failures
+    // included, is retried instead. So that is what this drives.
     const r = await confirmWriteOrReport(
       base({
         what: 'the fill ledger',
         getBlockNumber: async () => 100n,
-        read: async () => '0xdeadbeef',
-        decode: () => {
-          throw new Error('InvalidBytesBooleanError: bytes are not canonical');
-        },
+        read: async () => ({}),
+        accept: (v) => v.missing.field === 1,
       }),
     );
     expect(r.ok).toBe(false);
     expect(r.unconfirmed).toBe(true);
     // The error is NAMED, not swallowed — that is what makes this more
     // informative than the catch it replaces, not less.
-    expect(r.why).toMatch(/InvalidBytesBooleanError/);
+    expect(r.why).toMatch(/Cannot read properties/);
     expect(r.why).toMatch(/THE CONFIRMATION ITSELF FAILED/);
     expect(r.why).toMatch(/the fill ledger/);
-    // And it must not read as a claim that the write did not happen.
-    expect(r.why).toMatch(/receipt already reported as mined and successful/);
+    // And it must not read as a claim that the write did not happen —
+    // nor as a claim that EVERY node would fail the same way, which an
+    // earlier version asserted and one backend can disprove (round 7).
+    expect(r.why).toMatch(/receipt already reported it mined and successful/);
+    expect(r.why).not.toMatch(/Every node reproduces this/);
   });
 
   it('reports a predicate bug the same way rather than crashing the cleanup', async () => {
@@ -569,7 +585,7 @@ describe('every confirmWrite call site reads a fresh head', () => {
     ]);
   });
 
-  it('passes cacheTime: 0 to every head read, and decodes outside the retry', () => {
+  it('passes cacheTime: 0 to every head read, and decodes separately from reading', () => {
     for (const { file, arg } of confirmWriteCalls()) {
       expect(arg?.type, `${file}: confirmWrite takes an object literal`).toBe('ObjectExpression');
 
@@ -597,10 +613,10 @@ describe('every confirmWrite call site reads a fresh head', () => {
       expect(reads, `${file}: getBlockNumber actually reads a head`).toBeGreaterThan(0);
       expect(fresh, `${file}: every head read passes cacheTime: 0`).toBe(reads);
 
-      // Decoding must sit OUTSIDE the retry, which is only true if the
-      // call site actually splits the two — a `read` that decodes puts it
-      // back inside and silently restores the seam four rounds removed
-      // (#2107 r1-r4).
+      // `read` fetches and `decode` decodes, kept apart so a malformed
+      // reply is distinguishable from a failure to reach anything. A
+      // `read` that decodes collapses the two and hides which happened
+      // (#2107 r3, r7).
       const dec = arg.properties.find((p) => named(p) === 'decode');
       expect(dec, `${file}: confirmWrite is given a separate decode`).toBeTruthy();
     }
