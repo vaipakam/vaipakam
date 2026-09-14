@@ -111,7 +111,6 @@ import {
   requireSigningRole,
   visit,
 } from './driver.mjs';
-import { rpcRetryable } from './rpcRetryable.mjs';
 import { confirmWriteOrReport } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
@@ -396,7 +395,6 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
     // direction — a ledger past its ceiling still rests nothing, so
     // failing it would be a second false alarm of the kind this fixes.
     accept: (v) => v >= ceiling,
-    retryable: rpcRetryable,
     timeoutMs: 90_000,
   });
 

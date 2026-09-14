@@ -173,45 +173,38 @@ describe('confirmWrite', () => {
     ).rejects.toThrow(TypeError);
   });
 
-  it('propagates a failure the classifier calls deterministic', async () => {
-    // A getter that reverted fails identically on every node, so
-    // retrying it to the deadline and reporting "no node would answer"
-    // would blame the endpoint for a contract or ABI regression.
-    const revert = new Error('execution reverted');
-    await expect(
-      confirmWrite(
+  it('retries EVERY failure to obtain an answer, with no taxonomy at all', async () => {
+    // Four review rounds tried to name which viem error classes are
+    // futile to retry, and each round found the one the last had missed
+    // (#2107 r1-r4). The classifier is gone; nothing here decides.
+    // Decoding — the part that genuinely must never be retried — is
+    // handled by being outside the retry, which is structure rather than
+    // recognition and needs no list.
+    for (const err of [
+      new Error('execution reverted'),
+      new Error('socket hang up'),
+      new Error('429 Too Many Requests'),
+    ]) {
+      let calls = 0;
+      const r = await confirmWrite(
         base({
           getBlockNumber: async () => 100n,
           read: async () => {
-            throw revert;
+            calls += 1;
+            throw err;
           },
-          retryable: (e) => e !== revert,
         }),
-      ),
-    ).rejects.toThrow('execution reverted');
+      );
+      expect(r.unconfirmed).toBe(true);
+      expect(calls).toBeGreaterThan(1);
+    }
   });
 
-  it('still retries a failure the classifier calls retryable', async () => {
-    let calls = 0;
-    const r = await confirmWrite(
-      base({
-        getBlockNumber: async () => 100n,
-        read: async () => {
-          calls += 1;
-          if (calls === 1) throw new Error('socket hang up');
-          return 'done';
-        },
-        retryable: () => true,
-      }),
-    );
-    expect(r.ok).toBe(true);
-    expect(calls).toBe(2);
-  });
-
-  it('retries everything when no classifier is supplied', async () => {
-    // The default must not tighten behaviour behind a caller's back —
-    // an unrecognised error is no worse off than before the classifier
-    // existed.
+  it('reports the cause it saw, and claims nothing about why', async () => {
+    // The classifier's real job was this sentence, and it is the part
+    // that survives its deletion. "no node would answer" was a claim
+    // about the endpoint that a revert disproves — a revert IS an
+    // answer, from every node.
     const r = await confirmWrite(
       base({
         getBlockNumber: async () => 100n,
@@ -220,7 +213,35 @@ describe('confirmWrite', () => {
         },
       }),
     );
+    expect(r.why).toMatch(/execution reverted/);
+    expect(r.why).toMatch(/no attempt produced an answer this could use/);
+    expect(r.why).not.toMatch(/no node would answer/);
+    // And it points at the right culprit without asserting it.
+    expect(r.why).toMatch(/contract or ABI regression rather than an endpoint problem/);
+  });
+
+  it('issues NO further request once the budget has expired', async () => {
+    // Losing the race is not stopping (#2107 round 4): a `.catch` on the
+    // loser only silences a later rejection, while the attempt carries on
+    // and starts its SECOND request after the deadline was reported.
+    let readStarted = false;
+    let releaseHead;
+    const r = await confirmWrite(
+      base({
+        timeoutMs: 50,
+        deadlineTimer: () => ({ promise: Promise.resolve(), cancel: () => {} }),
+        // Settles only after the budget has already fired.
+        getBlockNumber: () => new Promise((res) => { releaseHead = () => res(100n); }),
+        read: async () => {
+          readStarted = true;
+          return 'done';
+        },
+      }),
+    );
     expect(r.unconfirmed).toBe(true);
+    releaseHead();
+    await new Promise((res) => setTimeout(res, 5));
+    expect(readStarted).toBe(false);
   });
 
   it('asks once even with no budget at all', async () => {
@@ -440,21 +461,24 @@ describe('confirmWriteOrReport', () => {
     // may still rest and tells the operator to send the cancel again. A
     // throw reaching that catch re-creates the false funds alarm this PR
     // removes, by a longer route (#2107 round 2).
+    // A DECODE failure is how this arises in production now: the reply
+    // arrived, and making sense of it failed. That happens outside the
+    // retry, so it throws at once rather than after the budget.
     const r = await confirmWriteOrReport(
       base({
         what: 'the fill ledger',
         getBlockNumber: async () => 100n,
-        read: async () => {
-          throw new Error('execution reverted: FunctionDoesNotExist');
+        read: async () => '0xdeadbeef',
+        decode: () => {
+          throw new Error('InvalidBytesBooleanError: bytes are not canonical');
         },
-        retryable: () => false,
       }),
     );
     expect(r.ok).toBe(false);
     expect(r.unconfirmed).toBe(true);
     // The error is NAMED, not swallowed — that is what makes this more
     // informative than the catch it replaces, not less.
-    expect(r.why).toMatch(/FunctionDoesNotExist/);
+    expect(r.why).toMatch(/InvalidBytesBooleanError/);
     expect(r.why).toMatch(/THE CONFIRMATION ITSELF FAILED/);
     expect(r.why).toMatch(/the fill ledger/);
     // And it must not read as a claim that the write did not happen.
@@ -545,7 +569,7 @@ describe('every confirmWrite call site reads a fresh head', () => {
     ]);
   });
 
-  it('passes cacheTime: 0 to every head read, and a retryability classifier', () => {
+  it('passes cacheTime: 0 to every head read, and decodes outside the retry', () => {
     for (const { file, arg } of confirmWriteCalls()) {
       expect(arg?.type, `${file}: confirmWrite takes an object literal`).toBe('ObjectExpression');
 
@@ -573,12 +597,12 @@ describe('every confirmWrite call site reads a fresh head', () => {
       expect(reads, `${file}: getBlockNumber actually reads a head`).toBeGreaterThan(0);
       expect(fresh, `${file}: every head read passes cacheTime: 0`).toBe(reads);
 
-      // viem caches this action for the client's pollingInterval, which
-      // is LONGER than the retry interval, so consecutive attempts would
-      // reuse one answer. Without the classifier, a reverting getter is
-      // retried to the deadline and reported as an endpoint problem.
-      const retryable = arg.properties.find((p) => named(p) === 'retryable');
-      expect(retryable, `${file}: confirmWrite is given a retryable classifier`).toBeTruthy();
+      // Decoding must sit OUTSIDE the retry, which is only true if the
+      // call site actually splits the two — a `read` that decodes puts it
+      // back inside and silently restores the seam four rounds removed
+      // (#2107 r1-r4).
+      const dec = arg.properties.find((p) => named(p) === 'decode');
+      expect(dec, `${file}: confirmWrite is given a separate decode`).toBeTruthy();
     }
   });
 });

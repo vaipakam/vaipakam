@@ -106,12 +106,6 @@
  * @param {string}   [o.what]          names the state, for the message.
  * @param {number}   [o.timeoutMs]
  * @param {number}   [o.everyMs]
- * @param {(err: unknown) => boolean} [o.retryable]
- *        Whether asking again could give a different answer. A failure
- *        this rejects PROPAGATES instead of being retried to the
- *        deadline — see the note above it. Defaults to retrying
- *        everything; `rpcRetryable.mjs` is the viem-aware classifier the
- *        call sites pass.
  * @param {() => number} [o.now]
  * @param {(ms: number) => Promise<void>} [o.sleep]
  * @returns {Promise<
@@ -127,7 +121,6 @@ export async function confirmWrite({
   minBlock,
   getBlockNumber,
   what = 'the written state',
-  retryable = () => true,
   timeoutMs = 60_000,
   everyMs = 3_000,
   now = () => Date.now(),
@@ -149,10 +142,27 @@ export async function confirmWrite({
     why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }),
   });
 
-  /** One attempt: ask the node its head, and if it is far enough along,
-   *  fetch the RAW reply. Deliberately no decoding — see below. */
-  const attempt = async () => {
+  /**
+   * One attempt: ask the node its head, and if it is far enough along,
+   * fetch the RAW reply. Deliberately no decoding — see below.
+   *
+   * `abandoned` is checked between the two requests, and it is the
+   * difference between losing a race and stopping (#2107 round 4).
+   * Attaching a `.catch` to the loser only silences a later rejection;
+   * the attempt itself carries on, so once the head arrives it would
+   * START A SECOND REQUEST after the deadline has already been reported.
+   *
+   * BE EXACT ABOUT WHAT THIS GUARANTEES, because the honest version is
+   * narrower than "the attempt is cancelled": no NEW request is issued
+   * once the budget has expired. A request already in flight cannot be
+   * cancelled from here — viem's action API takes no abort signal, and
+   * the transport's own signal is fixed when the client is built — so it
+   * runs to that transport's timeout. What it cannot do is start another
+   * one.
+   */
+  const attempt = async (abandoned) => {
     const head = await getBlockNumber();
+    if (abandoned()) return { abandoned: true };
     if (head < minBlock) return { behind: true };
     return { raw: await read(head), at: head };
   };
@@ -179,7 +189,7 @@ export async function confirmWrite({
       const remainingNow = first ? Math.max(0, deadline - now()) : deadline - now();
       const timer = deadlineTimer(remainingNow);
       let timedOut = false;
-      const running = attempt();
+      const running = attempt(() => timedOut);
       try {
         const outcome = await Promise.race([
           running,
@@ -193,6 +203,7 @@ export async function confirmWrite({
           running.catch(() => {});
           return giveUp();
         }
+        if (outcome.abandoned) return giveUp();
         if (outcome.behind) behind += 1;
         else {
           raw = outcome.raw;
@@ -203,17 +214,32 @@ export async function confirmWrite({
         timer.cancel();
       }
     } catch (e) {
-      // A node that lacks the pinned block, a rate limit and a dropped
-      // connection are all the same thing from here — an answer not
-      // obtained — and none of them is evidence about the chain's
-      // state, so all of them retry until the deadline.
+      // EVERY failure to obtain an answer retries until the deadline,
+      // and nothing here tries to decide which ones are futile.
       //
-      // A node that ANSWERED WITH A REVERT is not: every node reverts
-      // identically, so waiting out the deadline to report "no node
-      // would answer" would blame the endpoint for a contract
-      // regression. That is what `retryable` is for, and it is now the
-      // whole of its job — see `rpcRetryable.mjs`.
-      if (!retryable(e)) throw e;
+      // Four review rounds tried. Each named the viem class that a
+      // deterministic failure arrives as, and each round found the next
+      // one the last had missed: a decode of empty data, then a decode
+      // of wrong-sized data, then decode errors not carrying the
+      // `Abi*Error` name at all, then — after the switch to a raw call —
+      // `CallExecutionError -> ExecutionRevertedError` rather than the
+      // `RawContractError` that had just been added for it. A predicate
+      // wrong in four consecutive rounds is not one class short; it is
+      // the wrong mechanism, and this repo's directive is to stop
+      // patching a seam that keeps reappearing.
+      //
+      // What the classifier bought was PROMPTNESS — a revert reported at
+      // once rather than after the budget — and an accurate sentence.
+      // The sentence is worth keeping and does not need a taxonomy, so
+      // `unconfirmedWhy` now states the cause it actually saw instead of
+      // asserting that no node would answer. Promptness in a scenario no
+      // run has produced is not worth a rule that has been wrong every
+      // time it was written.
+      //
+      // Decoding is the part that genuinely must never be retried, and
+      // it is handled below by being OUTSIDE this boundary — structure
+      // rather than recognition, which is why that fix needs no list and
+      // this one has no list left.
       lastErr = e;
     }
 
@@ -301,9 +327,18 @@ export function unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) {
     causes.push(`last error: ${String(lastErr?.message ?? lastErr).split('\n')[0].slice(0, 160)}`);
   }
   const cause = causes.length ? causes.join('; ') : 'no node answered';
+  // "no node would answer" was the old ending, and it was a claim about
+  // the endpoint that this cannot make: a getter that reverted IS an
+  // answer, from every node, and four rounds of trying to tell the two
+  // apart by error class failed (#2107 round 4). So the sentence reports
+  // the cause it actually saw and claims nothing about why — which is
+  // what the classifier was really there to protect, and the part of it
+  // that survives its deletion.
   return (
     `COULD NOT CONFIRM ${what} at or after block ${minBlock} within ` +
-    `${Math.round(timeoutMs / 1000)}s (${cause}) — this says nothing about ` +
-    `whether the write took effect, only that no node would answer for it`
+    `${Math.round(timeoutMs / 1000)}s (${cause}) — no attempt produced an ` +
+    `answer this could use. That says nothing about whether the write took ` +
+    `effect; if the cause above looks like a revert or a decode failure, it ` +
+    `is a contract or ABI regression rather than an endpoint problem`
   );
 }

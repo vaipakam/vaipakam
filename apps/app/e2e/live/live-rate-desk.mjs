@@ -102,7 +102,6 @@ import {
   requireSigningRole,
   visit,
 } from './driver.mjs';
-import { rpcRetryable } from './rpcRetryable.mjs';
 import { confirmWriteOrReport } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
@@ -401,7 +400,6 @@ function verifyCancelled(offerId, minBlock) {
     },
     decode: (data) => decodeFunctionResult({ abi: ABI, functionName: 'getOffer', data }),
     accept: (offer) => ZERO_CREATOR.test(String(offer.creator)),
-    retryable: rpcRetryable,
     timeoutMs: 90_000,
   });
 }

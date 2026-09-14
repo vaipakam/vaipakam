@@ -190,3 +190,35 @@ adds later. The attempt as a whole is now run against the remaining
 time, so the limit covers steps nobody has written yet — and the timer
 is cleaned up when the attempt wins, which matters because a live run
 would otherwise sit at the end refusing to finish.
+
+## Round four, where the recognising stopped entirely
+
+Recognising which failures are pointless to retry was attempted in four
+consecutive rounds, and review broke it in all four — each time by
+naming the case the previous attempt had missed, ending with the form
+that a plain call actually produces, which the round before had just
+added a different class for.
+
+A rule wrong four times running is not one case short. It is the wrong
+idea, so it is gone. Every failure to get an answer is now retried, and
+nothing tries to judge which ones are futile.
+
+Two things make that safe rather than a step backwards. The part that
+genuinely must never be retried — making sense of a reply that did
+arrive — is no longer a matter of recognition at all; it sits outside
+the retrying, as of the previous round, and that is untouched. And what
+the recognising was really protecting was a sentence: the report used to
+end by saying no machine would answer. That was the false part. A
+rejected call *is* an answer, from every machine. The report now states
+the cause it actually saw and declines to say why, noting that a cause
+of that shape points at the code rather than at the network. What is
+lost is promptness in a situation no run has ever produced.
+
+The other half of the round: losing a race is not the same as stopping.
+Marking the abandoned attempt as ignorable only silences it; the attempt
+itself carried on, and once its first request came back it started a
+second one, after the answer had already been given up on. It now checks
+whether it has been abandoned before going further. The limit of that is
+stated plainly rather than implied — no new request is made once time is
+up, but one already in flight cannot be called back, and runs to its own
+timeout.
