@@ -199,6 +199,9 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'outstandingRecycled:uint256',
       'paidOutRecycled:uint256',
       'keeperBudget:uint256',
+      // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE part of the
+      // arrival reservation (a quarantine the holder backs is netted out
+      // on chain), so `vpfiBalance >= this` stays the exact relation.
       'strandedRecoveryReserved:uint256',
       // #1434 P2-w5 — the Base recovery-position earmark (position
       // balance + overage quarantine), the second protocol-ledger

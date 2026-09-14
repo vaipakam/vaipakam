@@ -863,7 +863,15 @@ contract InteractionRewardsLensFacet {
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
-        strandedRecoveryReserved = s.strandedRecoveryReserved;
+        // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE reservation (the
+        // part the holder backs is netted out), which is what `unearmarked`
+        // above subtracts; identical to the raw counter on a deployment
+        // whose custody is not activated.
+        {
+            uint256 reservedAll = s.strandedRecoveryReserved;
+            uint256 held = s.strandedRecoveryReservedHeld;
+            strandedRecoveryReserved = reservedAll > held ? reservedAll - held : 0;
+        }
         recoveryPositionReserved = s.rewardBudgetRecovered
             - s.rewardBudgetRedispatched
             + s.strandedReturnOverage;

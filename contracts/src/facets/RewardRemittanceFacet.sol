@@ -858,6 +858,24 @@ contract RewardRemittanceFacet is
      *                      does not carry one. `freshShare + recycledShare`
      *                      may be LESS than `amount` (both are floored) and
      *                      may never exceed it.
+     * @param transportMessageId The transport's message id, as the adapter
+     *                      delivered it (#1566 closure 2 cutover PR 1): the
+     *                      Diamond records the packet under
+     *                      `keccak256(sourceChainId, transportMessageId)`,
+     *                      the ingress stamp the cutover's reconciliation
+     *                      entries verify against. Zero for a transport
+     *                      without one — the ingress then allocates a
+     *                      per-source sequence itself.
+     *
+     *         MIGRATION MODE (design §5c, "the freeze blocks consumers
+     *         WITHOUT blocking the packets being drained"): this receive
+     *         ingress is deliberately NOT `whenNotPaused`. Under the
+     *         manual pause every reward CONSUMER — claim, expiry and
+     *         forfeit sweeps, transports — is refused, while a packet in
+     *         flight still lands and is protected at ingress; the pause
+     *         boundary the expiry predicates already stamp keeps the
+     *         frozen interval uncredited. The receiver's own guardian
+     *         pause remains the lever to stop inbound packets at the edge.
      */
     function onRewardBudgetReceived(
         address token,
@@ -867,8 +885,9 @@ contract RewardRemittanceFacet is
         uint256 remitId,
         address remitter,
         uint256 recycledShare,
-        uint256 freshShare
-    ) external nonReentrant whenNotPaused {
+        uint256 freshShare,
+        bytes32 transportMessageId
+    ) external nonReentrant {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
             revert NotRewardRemittanceReceiver(msg.sender);
@@ -922,19 +941,40 @@ contract RewardRemittanceFacet is
         // 1 (composition known) is unchanged — an old-wire packet still
         // arrives with `freshShare = 0` and lands whole in `uncounted`, which
         // the cutover epoch (closure 2, second PR) reconciles.
+        // #1566 closure 2 cutover PR 1 — the packet under its ingress stamp,
+        // recorded BEFORE any share moves so the record describes the
+        // whole landing (a replayed stamp, or a second packet for a receipt
+        // already delivered, refuses whole).
+        bytes32 h = LibRewardCustody.callRecordIngressPacket(
+            sourceChainId,
+            transportMessageId,
+            LibRewardCustody.PACKET_KIND_BUDGET,
+            amount,
+            freshShare,
+            recycledShare,
+            remitter,
+            remitId
+        );
         uint256 counted = freshShare;
         // #1566 slice 4 PR B — on an activated deployment the counted fresh
         // share is RELOCATED from this balance into the holder and credited
         // under the §5c deficit split (live-fresh, or restitution for the
-        // part that only closes a deficit). The uncounted remainder stays in
-        // this balance, recorded as before; its protection into the
-        // holder's unclassified row is the cutover PR's.
+        // part that only closes a deficit). The uncounted remainder is
+        // recorded as before and, since closure 2's cutover PR 1, protected
+        // into the holder's `Unclassified` row below.
         if (counted != 0) {
             if (LibRewardCustody.active(s)) LibRewardCustody.callRelocateFreshIngress(counted);
             else s.rewardBudgetArmedFreshReceived += counted;
         }
         if (freshLooking > counted) {
-            s.rewardBudgetFreshUncounted += freshLooking - counted;
+            uint256 remainder = freshLooking - counted;
+            s.rewardBudgetFreshUncounted += remainder;
+            // #1566 closure 2 cutover PR 1 — PROTECTED AT INGRESS on an
+            // activated deployment: the untyped remainder is relocated
+            // (measured) into the holder's `Unclassified` row the moment it
+            // lands, instead of resting in the shared balance where a later
+            // relocation could move another owner's tokens (design §5c).
+            if (LibRewardCustody.active(s)) LibRewardCustody.callUnclassifiedIngress(h, remainder);
         }
         // #1222 M3 B2-d5 — the RECYCLED component of this delivery is
         // RELOCATED CUSTODY: the tokens are physically here and the claim
@@ -960,18 +1000,13 @@ contract RewardRemittanceFacet is
         // the remit PAYLOAD (immutable, messenger-authenticated message
         // data — never delivery-time channel config), so different
         // canonical deployments' same-numbered receipts CO-EXIST under
-        // distinct keys — no collision, no supersession ordering. Plain
-        // first-write-wins per key (CCIP executes a message once).
-        if (remitId != 0 && remitter != address(0)) {
-            bytes32 key = _receiptKey(remitter, remitId);
-            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
-            if (rec.receivedAt == 0) {
-                rec.srcChainId = SafeCast.toUint32(sourceChainId);
-                rec.receivedAt = uint64(block.timestamp);
-                rec.amount = amount;
-                rec.remitter = remitter;
-            }
-        }
+        // distinct keys — no collision, no supersession ordering. The
+        // receipt itself is written by the packet record above
+        // (`LibRewardCustody.recordIngressPacket`), ONCE per key: a second
+        // packet for a delivered receipt refuses whole there (Codex #2198
+        // r1 — the ingress used to keep the first receipt silently, on the
+        // reasoning that CCIP executes a message once; the stamp guard
+        // covers that case, the receipt guard covers a faulty remitter).
         emit RewardBudgetReceived(
             sourceChainId, token, amount, dayIds, remitId, recycledShare,
             freshShare
@@ -1061,13 +1096,19 @@ contract RewardRemittanceFacet is
      *         expiry inputs rode the remit itself (R4b).
      *
      *         In EVERY case the receipt is recorded exactly like an
-     *         ordinary delivery (first write wins), so the ACK path is
+     *         ordinary delivery (delivered once — a second packet for the
+     *         receipt refuses whole), so the ACK path is
      *         unchanged, and `rewardBudgetReceivedTotal` records the
      *         arrival. The armed-fresh counter advances only for CREDITED
      *         pools (quarantined value is recorded uncounted instead), and
      *         what was counted is stored so a demotion can move it —
      *         counted + uncounted always reconciles against what Base
      *         sent.
+     * @param transportMessageId The transport's message id (#1566 closure 2
+     *         cutover PR 1) — see {onRewardBudgetReceived}; the packet is
+     *         recorded under its ingress stamp, and a quarantine lands in
+     *         the holder's `Unclassified` row on an activated deployment.
+     *         Not `whenNotPaused`, for the same migration-mode reason.
      */
     function onCompensationBudgetReceived(
         address token,
@@ -1082,8 +1123,9 @@ contract RewardRemittanceFacet is
         uint32 lapseScheduleVersion,
         uint64 lapseWindowSeconds,
         uint64 /* dispatchCutoffGap — Base-side input (the R3 refusal);
-                  carried for symmetry + w4's gates, unused here */
-    ) external nonReentrant whenNotPaused {
+                  carried for symmetry + w4's gates, unused here */,
+        bytes32 transportMessageId
+    ) external nonReentrant {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
             revert NotRewardRemittanceReceiver(msg.sender);
@@ -1098,18 +1140,20 @@ contract RewardRemittanceFacet is
         }
 
         s.rewardBudgetReceivedTotal += amount;
-        // Receipt exactly as the ordinary ingress records it — the ACK
-        // path reads this record and nothing else.
-        if (remitId != 0 && remitter != address(0)) {
-            bytes32 rKey = _receiptKey(remitter, remitId);
-            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[rKey];
-            if (rec.receivedAt == 0) {
-                rec.srcChainId = SafeCast.toUint32(sourceChainId);
-                rec.receivedAt = uint64(block.timestamp);
-                rec.amount = amount;
-                rec.remitter = remitter;
-            }
-        }
+        bytes32 h = LibRewardCustody.callRecordIngressPacket(
+            sourceChainId,
+            transportMessageId,
+            LibRewardCustody.PACKET_KIND_COMPENSATION,
+            amount,
+            amount,
+            0,
+            remitter,
+            remitId
+        );
+        // Receipt exactly as the ordinary ingress records it — written by
+        // the packet record above, once per receipt (a second packet for a
+        // delivered receipt refuses whole); the ACK path reads that record
+        // and nothing else.
 
         address era = s.dayClockEra[dayId];
         bool stateKnown = s.broadcastV2Applied[dayId] && era != address(0);
@@ -1148,7 +1192,7 @@ contract RewardRemittanceFacet is
             }
             if (reason != 0) {
                 _quarantineCompensation(
-                    s, dayId, remitter, remitId, amount, reason
+                    s, h, dayId, remitter, remitId, amount, reason
                 );
                 return;
             }
@@ -1177,7 +1221,7 @@ contract RewardRemittanceFacet is
             s.rewardEraRotated && era == address(0)
                 && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
         ) {
-            _quarantineCompensation(s, dayId, remitter, remitId, amount, 5);
+            _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 5);
             return;
         }
         // (b) A SECOND compensation while one is already provisional: the
@@ -1190,7 +1234,7 @@ contract RewardRemittanceFacet is
         //     until the day's broadcast settles which era governs.
         LibVaipakam.DayCompensation storage dcPrior = s.dayCompensation[dayId];
         if (dcPrior.provisional) {
-            _quarantineCompensation(s, dayId, remitter, remitId, amount, 4);
+            _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 4);
             return;
         }
         // (c) A CLOCKLESS payload (zero finalizedAt) cannot settle: an
@@ -1200,7 +1244,7 @@ contract RewardRemittanceFacet is
         //     V3 broadcast that can never carry a matching clock. The
         //     token-safe mirror of the Base-side refusal (reason 6).
         if (finalizedAt == 0) {
-            _quarantineCompensation(s, dayId, remitter, remitId, amount, 6);
+            _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 6);
             return;
         }
         // (d) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
@@ -1210,7 +1254,7 @@ contract RewardRemittanceFacet is
         //     credited only to lapse at confirmation.
         if (_pastExpiry(finalizedAt, lapseScheduleVersion, lapseWindowSeconds))
         {
-            _quarantineCompensation(s, dayId, remitter, remitId, amount, 3);
+            _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 3);
             return;
         }
         _creditCompensation(
@@ -1358,6 +1402,7 @@ contract RewardRemittanceFacet is
     ///      the R4 return (w5).
     function _quarantineCompensation(
         LibVaipakam.Storage storage s,
+        bytes32 h,
         uint256 dayId,
         address remitter,
         uint256 remitId,
@@ -1366,6 +1411,13 @@ contract RewardRemittanceFacet is
     ) private {
         s.strandedRecoveryReserved += amount;
         s.rewardBudgetFreshUncounted += amount;
+        // #1566 closure 2 cutover PR 1 — on an activated deployment the
+        // quarantine is protected at ingress: relocated (measured) into the
+        // holder's `Unclassified` row, the record and the reservation told
+        // how much the holder backs; the R4 return draws it from there.
+        if (LibRewardCustody.active(s)) {
+            LibRewardCustody.callUnclassifiedQuarantine(h, _receiptKey(remitter, remitId), amount, 0);
+        }
         LibVaipakam.StrandedRecovery storage sr =
             s.strandedRecoveries[_receiptKey(remitter, remitId)];
         sr.amount += amount;
@@ -1449,11 +1501,17 @@ contract RewardRemittanceFacet is
         if (counted != 0) {
             // #1566 slice 4 PR B — on an activated deployment the credit is
             // reversed through the custody seam: the received side unwinds
-            // (saturating, as before) and what the live-fresh row still
-            // holds of it is released back to this balance, where the
-            // stranded-recovery reservation above now describes it.
+            // (saturating, as before) and what the live-fresh and
+            // restitution rows still hold of it is re-attributed IN-HOLDER
+            // into `Unclassified`, where the R4 return draws it (closure 2
+            // cutover PR 1; an earlier revision released it to this balance).
             if (LibRewardCustody.active(s)) {
-                LibRewardCustody.callUncreditFresh(counted);
+                // #1566 closure 2 cutover PR 1 — the credit's remainder is
+                // re-attributed IN-HOLDER (live first, then restitution)
+                // into `Unclassified`, where the R4 return draws it; an
+                // earlier revision released it to the Diamond's balance.
+                bytes32 rKey = _receiptKey(dc.provisionalEra, dc.remitId);
+                LibRewardCustody.callUnclassifiedQuarantine(s.receivedRemits[rKey].packetHash, rKey, 0, counted);
             } else {
                 uint256 af = s.rewardBudgetArmedFreshReceived;
                 s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;

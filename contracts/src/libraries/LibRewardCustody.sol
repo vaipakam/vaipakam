@@ -8,6 +8,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title LibRewardCustody — the ONE seam between the reward ledgers and the
@@ -579,47 +580,240 @@ library LibRewardCustody {
     /**
      * @notice Reverse a fresh credit (a provisional compensation being
      *         demoted): the received side unwinds by `amount`, saturating
-     *         as it always has, and the holder gives back what it still
+     *         as it always has, and the holder RE-ATTRIBUTES what it still
      *         holds of that credit — from the live-fresh row first, then
-     *         from the restitution row — at most `amount`, less only where
-     *         part of it was already paid out.
+     *         from the restitution row — into the `Unclassified` row, in
+     *         place, at most `amount`, less only where part of it was
+     *         already paid out.
      * @dev    Both rows give back, because the demotion re-attributes the
-     *         WHOLE credited amount to the Diamond-side stranded-recovery
-     *         reservation, which the return sender then transfers from the
-     *         Diamond's balance in full (Codex #2186 r1 P1): a demotion that
-     *         released only the live portion would leave the deficit-covering
-     *         part in the holder while the reservation described it at the
-     *         Diamond, so the return would spend unrelated ambient VPFI or
-     *         revert. The deficit the restitution portion covered re-opens
-     *         with the received unwind, exactly as it would have without
-     *         the split, and the tokens go where the reservation says they
-     *         are. Whatever was already paid out cannot come back, exactly
-     *         as before; the reservation is short by that much, as before.
+     *         WHOLE credited amount to the stranded-recovery reservation
+     *         (Codex #2186 r1 P1); the deficit the restitution portion
+     *         covered re-opens with the received unwind, exactly as it would
+     *         have without the split. Whatever was already paid out cannot
+     *         come back; the reservation is short by that much, as before.
      *         After the unwind the live row again equals `received − paid`.
-     *         The tokens are released to the DIAMOND, measured (the
-     *         quarantine custody stays where the return sender draws it
-     *         from; its move into the holder is the cutover PR's).
-     * @return returned What the holder gave back and the Diamond received.
+     *         #1566 closure 2 cutover PR 1: the tokens MOVE IN-HOLDER
+     *         (design §5c, "classification is an IN-HOLDER reattribution")
+     *         and the R4 return then draws them from the row — an earlier
+     *         revision released them to the Diamond's balance, where the
+     *         quarantine reservation was still Diamond-side.
+     * @return moved What the holder re-attributed into `Unclassified`.
      */
-    function uncreditFresh(
+    function uncreditFreshInHolder(
         LibVaipakam.Storage storage s,
         uint256 amount
-    ) internal returns (uint256 returned) {
+    ) internal returns (uint256 moved) {
         if (amount == 0) return 0;
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received > amount ? received - amount : 0;
         uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
         uint256 fromLive = amount < live ? amount : live;
-        if (fromLive != 0) {
-            releaseFromRow(s, LibVaipakam.RewardCustodyRow.LiveFresh, address(this), fromLive);
-        }
+        move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Unclassified, fromLive);
         uint256 rest = amount - fromLive;
         uint256 restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
         uint256 fromRestitution = rest < restitution ? rest : restitution;
-        if (fromRestitution != 0) {
-            releaseFromRow(s, LibVaipakam.RewardCustodyRow.Restitution, address(this), fromRestitution);
+        move(
+            s, LibVaipakam.RewardCustodyRow.Restitution, LibVaipakam.RewardCustodyRow.Unclassified, fromRestitution
+        );
+        moved = fromLive + fromRestitution;
+    }
+
+    // ─── The UNCLASSIFIED ingress attribution (#1566 closure 2 cutover PR 1) ──
+    //
+    // Design §5c: "An untyped arrival is PROTECTED AT INGRESS — actualReceived
+    // routes into an UNCLASSIFIED holder attribution the moment it lands."
+    // On an ACTIVATED deployment the three untyped arrivals PR B left
+    // Diamond-side — the uncounted remainder of a delivery, a quarantined
+    // compensation (and a demotion's unwind), and a stranded return for a
+    // receipt that predates recovery attribution — are relocated (measured)
+    // into the `Unclassified` row as they land, and every value-bearing
+    // packet is recorded under its INGRESS STAMP so the cutover's second PR
+    // can classify it per packet. The row is never spendable as fresh; its
+    // only exits here are the R4 return (a quarantine going back) — the
+    // classification exits are the second PR's.
+
+    uint8 internal constant PACKET_KIND_BUDGET = 1;
+    uint8 internal constant PACKET_KIND_COMPENSATION = 2;
+    uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
+    uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
+
+    /// @notice A value-bearing reward packet was recorded under its ingress stamp.
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketRecorded(
+        bytes32 indexed packetHash,
+        uint256 indexed sourceChainId,
+        uint8 kind,
+        uint256 actualReceived,
+        address remitter,
+        uint256 remitId
+    );
+    /// @notice Untyped value landed in (or was re-attributed into) the
+    ///         holder's `Unclassified` row for a packet.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyUnclassifiedCredited(bytes32 indexed packetHash, uint8 kind, uint256 amount);
+    /// @notice A stranded record's held value left the `Unclassified` row
+    ///         for the return sender.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyUnclassifiedReleased(bytes32 indexed packetHash, address to, uint256 amount);
+
+    /// @notice The ingress stamp: `keccak256(sourceChainId, transportMessageId)`
+    ///         for a transport that carries a message id; for one that does
+    ///         not (`transportMessageId == 0`), a monotonic per-source
+    ///         counter allocated INSIDE the authenticated ingress (design
+    ///         §5c L4130-4132) — never an operator-supplied tuple.
+    function allocatePacketHash(
+        LibVaipakam.Storage storage s,
+        uint256 sourceChainId,
+        bytes32 transportMessageId
+    ) internal returns (bytes32) {
+        if (transportMessageId != bytes32(0)) {
+            return keccak256(abi.encode(sourceChainId, transportMessageId));
         }
-        returned = fromLive + fromRestitution;
+        return keccak256(abi.encode(sourceChainId, ++s.ingressSequence[sourceChainId], "seq"));
+    }
+
+    /// @notice Record a packet as it LANDED (one record per stamp; a second
+    ///         landing under the same stamp is refused whole) and write the
+    ///         receipt it creates, if any, bound to the stamp (one packet
+    ///         per receipt; a second packet under an existing receipt is
+    ///         refused whole).
+    /// @return h The packet's stamp.
+    function recordIngressPacket(
+        LibVaipakam.Storage storage s,
+        uint256 sourceChainId,
+        bytes32 transportMessageId,
+        uint8 kind,
+        uint256 actualReceived,
+        uint256 freshShare,
+        uint256 recycledShare,
+        address remitter,
+        uint256 remitId
+    ) internal returns (bytes32 h) {
+        h = allocatePacketHash(s, sourceChainId, transportMessageId);
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt != 0) revert IVaipakamErrors.IngressPacketReplayed(h);
+        p.sourceChainId = SafeCast.toUint32(sourceChainId);
+        p.kind = kind;
+        p.arrivedAt = uint64(block.timestamp);
+        p.remitter = remitter;
+        p.remitId = remitId;
+        p.actualReceived = actualReceived;
+        p.freshShare = freshShare;
+        p.recycledShare = recycledShare;
+        // The receipt a delivery creates on a MIRROR (kinds 1 and 2) —
+        // `(srcChainId, receivedAt, amount, remitter)`, bound to the stamp —
+        // is written here with the record, so the ingress facet at EIP-170
+        // budget pays one call for both. A receipt is delivered ONCE (Codex
+        // #2198 r1): the remitter's reservation dispatches one packet, so a
+        // second packet under an existing receipt — a distinct transport
+        // message, past the stamp guard — is a faulty or compromised
+        // remitter and refuses whole (re-executable, like every ingress
+        // refusal). That is what makes every receipt-keyed figure — the
+        // stranded record's held part, the R4 return's per-packet
+        // step-down — describe exactly one packet. (The two ingresses kept
+        // the FIRST receipt silently before this PR, on the reasoning that
+        // CCIP executes a message once; the stamp guard now covers that
+        // case and this guard covers the remitter.) A stranded return
+        // (kind 3) lands on the canonical chain and creates no receipt.
+        if (remitId != 0 && remitter != address(0) && kind <= PACKET_KIND_COMPENSATION) {
+            bytes32 receiptKey = keccak256(abi.encode(remitter, remitId));
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[receiptKey];
+            if (rec.receivedAt != 0) revert IVaipakamErrors.IngressReceiptAlreadyDelivered(receiptKey);
+            rec.srcChainId = p.sourceChainId;
+            rec.receivedAt = uint64(block.timestamp);
+            rec.amount = actualReceived;
+            rec.remitter = remitter;
+            rec.packetHash = h;
+        }
+        emit IngressPacketRecorded(h, sourceChainId, kind, actualReceived, remitter, remitId);
+    }
+
+    /// @notice The uncounted remainder of a delivery, PROTECTED AT INGRESS:
+    ///         relocated (measured) from the Diamond into the `Unclassified`
+    ///         row and counted for the packet.
+    function unclassifiedIngress(LibVaipakam.Storage storage s, bytes32 h, uint256 amount) internal {
+        if (amount == 0) return;
+        relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, amount);
+        s.rewardCustodyUnclassifiedUncounted += amount;
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        p.unclassified += amount;
+        emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
+    }
+
+    /// @notice A quarantined compensation into the row — `relocate` for a
+    ///         quarantine landing (tokens at the Diamond, relocated
+    ///         measured), `uncredit` for a demotion (the credit's remainder
+    ///         re-attributed in-holder) — with the stranded record and the
+    ///         reservation told how much of them the holder now backs.
+    /// @return got What entered the row.
+    function unclassifiedQuarantine(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        bytes32 receiptKey,
+        uint256 relocate,
+        uint256 uncredit
+    ) internal returns (uint256 got) {
+        if (relocate != 0) {
+            relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, relocate);
+            got = relocate;
+        }
+        if (uncredit != 0) got += uncreditFreshInHolder(s, uncredit);
+        if (got == 0) return 0;
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
+        sr.held += got;
+        // The record's packet: a receipt is delivered once (see
+        // `recordIngressPacket`), and a demotion passes the receipt's own
+        // stamp, so every call for one receipt carries the same `h` — the
+        // landing's, or zero for a receipt that predates the stamp.
+        if (sr.packetHash == bytes32(0)) sr.packetHash = h;
+        s.strandedRecoveryReservedHeld += got;
+        s.rewardCustodyUnclassifiedUncounted += got;
+        if (h != bytes32(0)) s.ingressPackets[h].unclassified += got;
+        emit RewardCustodyUnclassifiedCredited(h, PACKET_KIND_COMPENSATION, got);
+    }
+
+    /// @notice A stranded return for a receipt that PREDATES recovery
+    ///         attribution: relocated (measured) into the row and counted as
+    ///         returned custody — attributable to no position, visible,
+    ///         never spendable as fresh.
+    function unclassifiedReturn(LibVaipakam.Storage storage s, bytes32 h, uint256 amount) internal {
+        if (amount == 0) return;
+        relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, amount);
+        s.rewardCustodyUnclassifiedReturned += amount;
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        p.unclassified += amount;
+        emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
+    }
+
+    /// @notice The R4 return's draw on the row: the stranded record's held
+    ///         value leaves the `Unclassified` row for the return sender,
+    ///         measured, and every figure that described it there steps
+    ///         down with it.
+    function releaseUnclassifiedForReturn(
+        LibVaipakam.Storage storage s,
+        bytes32 receiptKey,
+        address to,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
+        uint256 held = sr.held;
+        if (amount > held) revert IVaipakamErrors.RewardCustodyUnclassifiedHeldShort(receiptKey, amount, held);
+        sr.held = held - amount;
+        s.strandedRecoveryReservedHeld -= amount;
+        s.rewardCustodyUnclassifiedUncounted -= amount;
+        // The record's packet is THE packet — a receipt is delivered once
+        // (`recordIngressPacket` refuses a second packet under it) and a
+        // demotion re-attributes under the receipt's own stamp — so its
+        // per-packet figure was credited in lockstep with the record's held
+        // part and steps down with it EXACTLY (Codex #2198 r1: a saturating
+        // step-down here would hide a broken lockstep instead of surfacing
+        // it). A record whose receipt predates the stamp has no packet and
+        // no per-packet figure to step.
+        bytes32 h = sr.packetHash;
+        if (h != bytes32(0)) s.ingressPackets[h].unclassified -= amount;
+        releaseFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, to, amount);
+        emit RewardCustodyUnclassifiedReleased(h, to, amount);
     }
 
     // ─── Cross-facet entry (every facet but RewardCustodyFacet and the vault
@@ -673,10 +867,74 @@ library LibRewardCustody {
         _custody(abi.encodeWithSignature("custodyRelocateFreshIngress(uint256)", amount));
     }
 
-    /// @dev {uncreditFresh} through the custody facet.
-    function callUncreditFresh(uint256 amount) internal {
+    /// @dev Like {_custody}, returning the callee's data.
+    function _custodyReturning(bytes memory data) private returns (bytes memory ret) {
+        bool ok;
+        (ok, ret) = address(this).call(data);
+        if (ok) return ret;
+        if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+        assembly ("memory-safe") {
+            revert(add(ret, 0x20), mload(ret))
+        }
+    }
+
+    /// @dev {recordIngressPacket} through the custody facet.
+    function callRecordIngressPacket(
+        uint256 sourceChainId,
+        bytes32 transportMessageId,
+        uint8 kind,
+        uint256 actualReceived,
+        uint256 freshShare,
+        uint256 recycledShare,
+        address remitter,
+        uint256 remitId
+    ) internal returns (bytes32 h) {
+        bytes memory ret = _custodyReturning(
+            abi.encodeWithSignature(
+                "custodyRecordIngressPacket(uint256,bytes32,uint8,uint256,uint256,uint256,address,uint256)",
+                sourceChainId,
+                transportMessageId,
+                kind,
+                actualReceived,
+                freshShare,
+                recycledShare,
+                remitter,
+                remitId
+            )
+        );
+        h = abi.decode(ret, (bytes32));
+    }
+
+    /// @dev {unclassifiedIngress} through the custody facet.
+    function callUnclassifiedIngress(bytes32 h, uint256 amount) internal {
         if (amount == 0) return;
-        _custody(abi.encodeWithSignature("custodyUncreditFresh(uint256)", amount));
+        _custody(abi.encodeWithSignature("custodyUnclassifiedIngress(bytes32,uint256)", h, amount));
+    }
+
+    /// @dev {unclassifiedQuarantine} through the custody facet.
+    function callUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 uncredit) internal {
+        if (relocate + uncredit == 0) return;
+        _custody(
+            abi.encodeWithSignature(
+                "custodyUnclassifiedQuarantine(bytes32,bytes32,uint256,uint256)", h, receiptKey, relocate, uncredit
+            )
+        );
+    }
+
+    /// @dev {unclassifiedReturn} through the custody facet.
+    function callUnclassifiedReturn(bytes32 h, uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("custodyUnclassifiedReturn(bytes32,uint256)", h, amount));
+    }
+
+    /// @dev {releaseUnclassifiedForReturn} through the custody facet.
+    function callReleaseUnclassifiedForReturn(bytes32 receiptKey, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(
+            abi.encodeWithSignature(
+                "custodyReleaseUnclassifiedForReturn(bytes32,address,uint256)", receiptKey, to, amount
+            )
+        );
     }
 
     /// @dev {releaseFromRow} through the custody facet.

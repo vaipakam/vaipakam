@@ -104,6 +104,15 @@ import {
     RewardRemittanceReceiver,
     REMIT_RECEIVER_WIRE_GENERATION
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
+// #1566 closure 2 cutover PR 1 — the recipient port gained
+// `transportMessageId`, one interface version across the adapter and every
+// recipient; the adapter and the buyback receiver are upgraded here in the
+// same run as the reward recipients above, by the same generation probe.
+import {CcipMessenger, CCIP_MESSENGER_WIRE_GENERATION} from "../src/crosschain/CcipMessenger.sol";
+import {
+    BuybackRemittanceReceiver,
+    BUYBACK_RECEIVER_WIRE_GENERATION
+} from "../src/crosschain/BuybackRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
@@ -547,9 +556,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)"
             )
         );
+        // #1566 closure 2 cutover PR 1 — the ingress gained
+        // `transportMessageId` (the ingress stamp), so the 8-arg selector
+        // retired the same way, and so did the 12-arg compensation ingress.
+        bytes4 oldRemitIngress8 = bytes4(
+            keccak256(
+                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)"
+            )
+        );
+        bytes4 oldCompIngress12 = bytes4(
+            keccak256(
+                "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)"
+            )
+        );
         bool routed6 = loupe.facetAddress(oldRemitIngress6) != address(0);
         bool routed7 = loupe.facetAddress(oldRemitIngress7) != address(0);
-        if (routed6 || routed7) {
+        bool routed8 = loupe.facetAddress(oldRemitIngress8) != address(0);
+        bool routed12 = loupe.facetAddress(oldCompIngress12) != address(0);
+        if (routed6 || routed7 || routed8 || routed12) {
             address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
             (, , , bool isCanonicalReward, ) =
                 RewardReporterFacet(diamond).getRewardReporterConfig();
@@ -591,14 +615,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // already past B2-d5 has no 6-arg selector, and asking the cut to
             // Remove an unrouted one reverts, which would abort the whole
             // refresh over a migration that had already happened.
-            bytes4[] memory rmIngress =
-                new bytes4[]((routed6 ? 1 : 0) + (routed7 ? 1 : 0));
+            bytes4[] memory rmIngress = new bytes4[](
+                (routed6 ? 1 : 0) + (routed7 ? 1 : 0) + (routed8 ? 1 : 0) + (routed12 ? 1 : 0)
+            );
             uint256 k;
-            if (routed6) {
-                rmIngress[k] = oldRemitIngress6;
-                ++k;
-            }
-            if (routed7) rmIngress[k] = oldRemitIngress7;
+            if (routed6) rmIngress[k++] = oldRemitIngress6;
+            if (routed7) rmIngress[k++] = oldRemitIngress7;
+            if (routed8) rmIngress[k++] = oldRemitIngress8;
+            if (routed12) rmIngress[k++] = oldCompIngress12;
             IDiamondCut.FacetCut[] memory rmIngressCut =
                 new IDiamondCut.FacetCut[](1);
             rmIngressCut[0] = IDiamondCut.FacetCut({
@@ -608,8 +632,36 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             });
             IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
             console.log(
-                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a)"
+                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover) and the 12-arg onCompensationBudgetReceived"
             );
+        }
+        // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
+        // ingress gained the same parameter, and the Diamond-releasing
+        // `custodyUncreditFresh` retired with the in-holder unwind. Both are
+        // Removed only where routed (an unrouted Remove reverts the cut).
+        {
+            bytes4 oldStranded8 = bytes4(
+                keccak256("onStrandedReturnReceived(address,uint256,uint256,uint32,address,uint256,uint256,uint256)")
+            );
+            bytes4 oldUncredit = bytes4(keccak256("custodyUncreditFresh(uint256)"));
+            bool routedS8 = loupe.facetAddress(oldStranded8) != address(0);
+            bool routedU = loupe.facetAddress(oldUncredit) != address(0);
+            if (routedS8 || routedU) {
+                bytes4[] memory rmCutover = new bytes4[]((routedS8 ? 1 : 0) + (routedU ? 1 : 0));
+                uint256 j;
+                if (routedS8) rmCutover[j++] = oldStranded8;
+                if (routedU) rmCutover[j++] = oldUncredit;
+                IDiamondCut.FacetCut[] memory rmCutoverCut = new IDiamondCut.FacetCut[](1);
+                rmCutoverCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmCutover
+                });
+                IDiamondCut(diamond).diamondCut(rmCutoverCut, address(0), "");
+                console.log(
+                    "cutover PR 1: removed retired 8-arg onStrandedReturnReceived / custodyUncreditFresh selectors"
+                );
+            }
         }
 
         // ─── #1434 P2-w6 (#1662 r4) — retire the UNATTRIBUTED recovery
@@ -836,6 +888,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             if (rrecvArt != liveReceiver) {
                 _probeUpgradeReturnReceiver(rrecvArt);
             }
+        }
+        {
+            // #1566 closure 2 cutover PR 1 — the adapter and every recipient
+            // are ONE interface version (`transportMessageId` on the
+            // recipient port): the CCIP adapter and the buyback receiver are
+            // upgraded here, in the same run as the reward recipients above,
+            // so no adapter ever calls a recipient with the other shape.
+            // Codex #2198 r1 — LIVE config first, the artifact second, the
+            // same rule as every probe above (see the helper).
+            _probeUpgradeTransportSatellites(diamond);
         }
 
         // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
@@ -1528,7 +1590,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(
                 "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
                 gen,
-                "-> 3) impl:",
+                "-> 4) impl:",
                 newImpl
             );
         }
@@ -1550,7 +1612,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(
                 "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
                 gen,
-                "-> 3) impl:",
+                "-> 4) impl:",
                 newImpl
             );
         }
@@ -1595,10 +1657,119 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(
                 "P2-w5: upgraded VpfiReturnReceiver (wire gen",
                 gen,
+                "-> 3) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 — the adapter's generation probe. The
+    ///      CCIP router is a constructor immutable of the implementation, so
+    ///      the new implementation is built with the router the live proxy
+    ///      reports (`getRouter`), never with an operator-typed one.
+    function _probeUpgradeCcipMessenger(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < CCIP_MESSENGER_WIRE_GENERATION) {
+            address router = CcipMessenger(proxy).getRouter();
+            address newImpl = address(new CcipMessenger(router));
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeAddress(".ccipMessengerImpl", newImpl);
+            console.log(
+                "cutover PR 1: upgraded CcipMessenger (wire gen",
+                gen,
                 "-> 2) impl:",
                 newImpl
             );
         }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 — the buyback receiver's generation probe.
+    function _probeUpgradeBuybackReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < BUYBACK_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new BuybackRemittanceReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeBuybackRemittanceReceiverImpl(newImpl);
+            console.log(
+                "cutover PR 1: upgraded BuybackRemittanceReceiver (wire gen",
+                gen,
+                "-> 2) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 (Codex #2198 r1) — the buyback
+    ///      receiver and the CCIP adapter, LIVE-config-over-artifact like
+    ///      every probe above (#1660 r9). An artifact-only read skipped a
+    ///      live receiver whose artifact key was missing or stale, and the
+    ///      adapter upgraded just before would then have called it with the
+    ///      five-argument shape — every buyback delivery failing until the
+    ///      artifact was repaired and the refresh rerun.
+    ///
+    ///      The buyback receiver: the Diamond's registered one first, then
+    ///      a distinct artifact address (a dark-but-deployed proxy meets
+    ///      current code). The adapter has no register of its own on the
+    ///      Diamond — the Diamond names its satellites and each satellite
+    ///      names the adapter it trusts (`messenger()`) — so the adapter
+    ///      every LIVE satellite calls through is probed, then the
+    ///      artifact's. Each probe is idempotent on the generation constant,
+    ///      so one adapter named by five satellites is upgraded once and
+    ///      read four times. No adapter anywhere (no live satellite names
+    ///      one, no artifact) is a hard stop: every chain has one, and a
+    ///      refresh that upgraded the recipients without it would leave the
+    ///      adapter calling them with the old shape.
+    function _probeUpgradeTransportSatellites(address diamond) private {
+        address liveBuyback = TreasuryFacet(diamond).getBuybackRemittanceReceiver();
+        address buybackArt = _readAddrOptional(".buybackRemittanceReceiver");
+        _probeUpgradeBuybackReceiver(liveBuyback);
+        if (buybackArt != liveBuyback) _probeUpgradeBuybackReceiver(buybackArt);
+
+        (address liveMsgr, , , , ) =
+            RewardReporterFacet(diamond).getRewardReporterConfig();
+        (, address liveSender, address liveReceiver, ) =
+            RepatriationFacet(diamond).getRepatriationPosition();
+        address[6] memory adapters = [
+            _satelliteMessenger(liveMsgr),
+            _satelliteMessenger(
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver()
+            ),
+            _satelliteMessenger(liveSender),
+            _satelliteMessenger(liveReceiver),
+            _satelliteMessenger(liveBuyback),
+            _readAddrOptional(".ccipMessenger")
+        ];
+        bool any;
+        for (uint256 i = 0; i < adapters.length; ++i) {
+            if (adapters[i] == address(0)) continue;
+            any = true;
+            _probeUpgradeCcipMessenger(adapters[i]);
+        }
+        require(
+            any,
+            "cutover PR 1: refresh needs the CCIP adapter (a live satellite's messenger() or .ccipMessenger)"
+        );
+    }
+
+    /// @dev The adapter a satellite trusts — `messenger()` on every
+    ///      recipient and on the return sender; zero when the satellite is
+    ///      unset or does not answer the selector.
+    function _satelliteMessenger(address satellite) private view returns (address) {
+        if (satellite == address(0)) return address(0);
+        (bool ok, bytes memory ret) =
+            satellite.staticcall(abi.encodeWithSignature("messenger()"));
+        if (!ok || ret.length != 32) return address(0);
+        return abi.decode(ret, (address));
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {

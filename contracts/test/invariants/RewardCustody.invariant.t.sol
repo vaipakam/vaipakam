@@ -11,6 +11,8 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
+import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
@@ -75,17 +77,33 @@ contract RewardCustodyInvariant is SetupTest {
         AccessControlFacet(address(diamond)).grantRole(LibAccessControl.ADMIN_ROLE, address(handler));
 
         targetContract(address(handler));
-        bytes4[] memory sel = new bytes4[](5);
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(handler));
+        bytes4[] memory sel = new bytes4[](6);
         sel[0] = RewardCustodyHandler.fund.selector;
         sel[1] = RewardCustodyHandler.claim.selector;
         sel[2] = RewardCustodyHandler.absorb.selector;
         sel[3] = RewardCustodyHandler.feeInflow.selector;
         sel[4] = RewardCustodyHandler.surplus.selector;
+        sel[5] = RewardCustodyHandler.untypedIngress.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
     function _custody() internal view returns (RewardCustodyFacet) {
         return RewardCustodyFacet(address(diamond));
+    }
+
+    /// #1566 closure 2 cutover PR 1 — the `Unclassified` row is auditable
+    /// like every other: it equals its two figures (untyped remainders and
+    /// quarantines held, pre-attribution returns held), under every
+    /// interleaving of untyped deliveries with the other flows.
+    function invariant_UnclassifiedRowEqualsItsFigures() public view {
+        (uint256 uncountedHeld, uint256 returnedHeld, ) =
+            RewardRemittanceLensFacet(address(diamond)).getUnclassifiedPosition();
+        assertEq(
+            _custody().rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified),
+            uncountedHeld + returnedHeld,
+            "Unclassified row == uncounted held + returned held"
+        );
     }
 
     /// The attribution rows never describe more than the holder holds.
@@ -141,6 +159,7 @@ contract RewardCustodyHandler is Test {
     ///      its identity.
     address internal immutable minter;
     uint256 public calls;
+    uint256 public nextRemit;
     uint256 public refusals;
     uint256 public payouts;
     uint256 public surplusReleased;
@@ -198,6 +217,24 @@ contract RewardCustodyHandler is Test {
         uint256 before = vpfi.balanceOf(diamond);
         _mint(diamond, amount);
         TestMutatorFacet(diamond).creditInflowRawWithBefore(LibVpfiRecycle.RecycleSource.NotificationFee, 1, amount, before);
+    }
+
+    /// An untyped delivery as the receiver presents it (the handler is the
+    /// registered receiver): the tokens are forwarded to the Diamond first,
+    /// the fresh share is credited live, the remainder is protected into the
+    /// `Unclassified` row — nothing of it stays in the Diamond.
+    function untypedIngress(uint256 seed) external {
+        calls++;
+        uint256 amount = bound(seed, 2, 10_000e18);
+        uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
+        _mint(diamond, amount);
+        uint256[] memory days_ = new uint256[](1);
+        days_[0] = 1;
+        try RewardRemittanceFacet(diamond).onRewardBudgetReceived(
+            address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0)
+        ) {} catch {
+            refusals++;
+        }
     }
 
     /// A repatriation surplus debit, released into the Diamond (the raw

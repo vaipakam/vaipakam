@@ -682,7 +682,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
             1,
             uint64(60 days),
             uint64(1 days)
-        );
+        , bytes32(0));
     }
 
     function _armIngress() internal {

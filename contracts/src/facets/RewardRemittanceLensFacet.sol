@@ -566,4 +566,39 @@ contract RewardRemittanceLensFacet {
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().strandedReturnShortfall[remitId];
     }
+
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing reward packet
+    ///         as it LANDED, by its ingress stamp
+    ///         `keccak256(sourceChainId, transportMessageId)` (or the
+    ///         per-source sequence a transport without an id fell back to).
+    ///         `unclassified` is what the packet still holds in the holder's
+    ///         `Unclassified` row. An unknown stamp reads as all zeros
+    ///         (`arrivedAt == 0`).
+    function getIngressPacket(
+        bytes32 packetHash
+    ) external view returns (LibVaipakam.IngressPacket memory) {
+        return LibVaipakam.storageSlot().ingressPackets[packetHash];
+    }
+
+    /// @notice #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress
+    ///         attribution's figures, the way every custody row is
+    ///         auditable: `uncountedHeld + returnedHeld` equals the holder's
+    ///         `Unclassified` row, and `reservedHeld` is the part of the
+    ///         stranded-recovery reservation whose tokens are in the holder
+    ///         (the Diamond's backing position subtracts only the rest).
+    /// @return uncountedHeld Untyped delivery remainders and quarantined
+    ///         compensation held in the row, net of R4 returns.
+    /// @return returnedHeld  Stranded returns for receipts that predate
+    ///         recovery attribution, held in the row.
+    /// @return reservedHeld  The held part of `strandedRecoveryReserved`.
+    function getUnclassifiedPosition()
+        external
+        view
+        returns (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uncountedHeld = s.rewardCustodyUnclassifiedUncounted;
+        returnedHeld = s.rewardCustodyUnclassifiedReturned;
+        reservedHeld = s.strandedRecoveryReservedHeld;
+    }
 }

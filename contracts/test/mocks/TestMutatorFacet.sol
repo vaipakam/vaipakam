@@ -2176,7 +2176,8 @@ contract TestMutatorFacet {
             receivedAt: uint64(block.timestamp),
             amount: amount,
             remitter: remitter,
-            classification: 0
+            classification: 0,
+            packetHash: bytes32(0)
         });
     }
 

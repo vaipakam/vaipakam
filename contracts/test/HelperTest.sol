@@ -2349,7 +2349,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](41);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2379,7 +2379,7 @@ contract HelperTest {
         selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
         selectors[25] = RewardCustodyFacet.custodyMove.selector;
         selectors[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
-        selectors[27] = RewardCustodyFacet.custodyUncreditFresh.selector;
+        selectors[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
         selectors[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
@@ -2392,6 +2392,12 @@ contract HelperTest {
         // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
         selectors[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
         selectors[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
+        // #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress attribution's
+        // Diamond-internal entry points (the quarantine one took slot 27).
+        selectors[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
+        selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
+        selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
+        selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2402,7 +2408,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](37);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2435,6 +2441,10 @@ contract HelperTest {
             .selector;
         selectors[25] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1566 closure 2 cutover PR 1 — the ingress-stamped packet record and
+        // the UNCLASSIFIED attribution's figures.
+        selectors[35] = RewardRemittanceLensFacet.getIngressPacket.selector;
+        selectors[36] = RewardRemittanceLensFacet.getUnclassifiedPosition.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
         selectors[27] =

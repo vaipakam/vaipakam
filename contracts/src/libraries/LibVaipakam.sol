@@ -7421,6 +7421,25 @@ library LibVaipakam {
         ///      by any cut in between, of a facet or of a single selector.
         uint32 rewardCustodyCutoverVersion;
         bytes32 rewardCustodyCutoverRouting;
+        /// @dev #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress
+        ///      attribution's own figures, so the `Unclassified` row stays
+        ///      auditable the way every other row is (rows equal figures):
+        ///      `rewardCustodyUnclassifiedUncounted` is what the row holds
+        ///      of untyped delivery remainders and quarantined compensation
+        ///      (net of R4 returns); `rewardCustodyUnclassifiedReturned` is
+        ///      what it holds of stranded returns for receipts that predate
+        ///      recovery attribution. Invariant: their sum equals the row.
+        ///      `strandedRecoveryReservedHeld` is the part of
+        ///      `strandedRecoveryReserved` whose tokens are in the holder —
+        ///      the Diamond's backing position subtracts only the rest.
+        uint256 rewardCustodyUnclassifiedUncounted;
+        uint256 rewardCustodyUnclassifiedReturned;
+        uint256 strandedRecoveryReservedHeld;
+        /// @dev #1566 closure 2 cutover PR 1 — every value-bearing reward
+        ///      packet by its ingress stamp, and the per-source fallback
+        ///      counter for a transport that carries no message id.
+        mapping(bytes32 => IngressPacket) ingressPackets;
+        mapping(uint256 => uint256) ingressSequence;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7486,6 +7505,42 @@ library LibVaipakam {
         uint256 dayId;
         uint64 reservedAt;
         uint8 reason;
+        /// @dev #1566 closure 2 cutover PR 1 — how much of `amount` is HELD
+        ///      in the custody holder's `Unclassified` row (a quarantine
+        ///      landed or a demotion unwound on an ACTIVATED deployment).
+        ///      The R4 return draws `held` from the row and the rest from
+        ///      the Diamond's balance (a quarantine that predates the
+        ///      activation). Appended: a mapped struct grows at its end.
+        uint256 held;
+        /// @dev The ingress stamp of the packet whose value this record
+        ///      holds in the row (first binding wins), so the R4 return
+        ///      steps that packet's `unclassified` figure down — not the
+        ///      receipt's, which may be bound to an earlier packet.
+        bytes32 packetHash;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing reward
+    ///         packet as it LANDED, keyed by its ingress stamp
+    ///         `keccak256(sourceChainId, transportMessageId)` (design §5c:
+    ///         "identity is the ingress stamp … never an operator-supplied
+    ///         tuple"). The reconciliation entries of the cutover's second
+    ///         PR verify against this record; `unclassified` is what the
+    ///         packet still holds in the `Unclassified` row, net of returns
+    ///         and (later) classification.
+    struct IngressPacket {
+        uint32 sourceChainId;
+        /// @dev 1 = budget delivery, 2 = compensation, 3 = stranded return,
+        ///      4 = recovery-ceremony inflow (no transport packet: keyed by
+        ///      its ceremony reference).
+        uint8 kind;
+        uint64 arrivedAt;
+        address remitter;
+        uint256 remitId;
+        /// @dev The destination-observed amount, never the declared total.
+        uint256 actualReceived;
+        uint256 freshShare;
+        uint256 recycledShare;
+        uint256 unclassified;
     }
 
     /// @notice #1434 P2-w2 — one zeroed day's compensation state on a
@@ -7768,6 +7823,12 @@ library LibVaipakam {
         //   return, never its own delivery ack. Updated by the confirm /
         //   demote hook when a provisional credit settles.
         uint8 classification;
+        /// @dev #1566 closure 2 cutover PR 1 — the ingress stamp of the
+        ///      packet that created this receipt (a receipt is delivered
+        ///      once: a second packet under it is refused at the record), so
+        ///      a later demotion or R4 return can find the packet's record.
+        ///      Zero for a receipt that predates the stamp. Appended.
+        bytes32 packetHash;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

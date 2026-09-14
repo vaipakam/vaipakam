@@ -121,7 +121,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         days_[0] = 1;
         _remit().onRewardBudgetReceived(
             address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh
-        );
+        , bytes32(0));
     }
 
     function _seedPayable(address user, uint64 loanId)
@@ -252,7 +252,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         days_[0] = 1;
         _remit().onRewardBudgetReceived(
             address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0
-        ); // old wire: no split stated
+        , bytes32(0)); // old wire: no split stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(counted, 5e18, "an unstated composition counts nothing");
         assertEq(uncounted, 3e18, "...and lands whole in uncounted");

@@ -32,7 +32,7 @@ contract MockCcipRelay {
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external {
-        r.onCrossChainMessage(srcChainId, sender, payload, tokens);
+        r.onCrossChainMessage(srcChainId, sender, payload, tokens, bytes32(0));
     }
 }
 

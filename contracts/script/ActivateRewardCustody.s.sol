@@ -179,6 +179,22 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
                 "ActivateRewardCustody: this canonical chain has not armed per-receipt recovery attribution (the refresh's armRecoveryAttribution migration) -- activation would refuse after the row credits had mined; run that migration first"
             );
         }
+        // Mirrors the activation's HOLDER-WIDE check BEFORE anything is sent
+        // (Codex #2193 r6): the holder's balance in the configured token
+        // must be readable and must cover the total of every attribution —
+        // the row equalities below can all hold while this refuses.
+        {
+            (, , bool balanceKnown, uint256 held, uint256 attributed) =
+                RewardCustodyFacet(diamond).rewardCustodySnapshot();
+            require(
+                balanceKnown,
+                "ActivateRewardCustody: the holder's balance in the configured VPFI token cannot be read (unbound holder, unset or non-conforming token) -- activation would refuse after the row credits had mined"
+            );
+            require(
+                held >= attributed,
+                "ActivateRewardCustody: the holder holds less than its attributed rows -- custody left the holder; reconcile (sweep or fund) before activating"
+            );
+        }
         _requireRowAnswer("recycled", f.bucket, f.rowRecycled, a.fundRecycled, a.relocRecycled, "REWARD_CUSTODY_FUND_RECYCLED", "REWARD_CUSTODY_RELOCATE_RECYCLED");
         _requireRowAnswer("recovery", f.position, f.rowRecovery, a.fundRecovery, a.relocRecovery, "REWARD_CUSTODY_FUND_RECOVERY", "REWARD_CUSTODY_RELOCATE_RECOVERY");
         _requireRowAnswer("overage", f.overage, f.rowOverage, a.fundOverage, a.relocOverage, "REWARD_CUSTODY_FUND_OVERAGE", "REWARD_CUSTODY_RELOCATE_OVERAGE");

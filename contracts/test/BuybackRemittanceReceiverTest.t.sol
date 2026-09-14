@@ -133,7 +133,7 @@ contract BuybackRemittanceReceiverTest is Test {
             makeAddr("mirrorDiamond"),
             payload,
             _tokenAmount(address(usdc), amount)
-        );
+        , bytes32(0));
 
         // The receiver forwarded the token to the absorber + called
         // its ingress.
@@ -158,7 +158,7 @@ contract BuybackRemittanceReceiverTest is Test {
             makeAddr("mirrorDiamond"),
             payload,
             _tokenAmount(address(usdc), 1e6)
-        );
+        , bytes32(0));
     }
 
     // ─── Token-count validation ────────────────────────────────────
@@ -173,7 +173,7 @@ contract BuybackRemittanceReceiverTest is Test {
         );
         receiver.onCrossChainMessage(
             1, address(0xdead), payload, _emptyTokens()
-        );
+        , bytes32(0));
     }
 
     function test_OnCrossChainMessage_RevertWhen_TwoTokens() public {
@@ -186,7 +186,7 @@ contract BuybackRemittanceReceiverTest is Test {
         );
         receiver.onCrossChainMessage(
             1, address(0xdead), payload, _twoTokens()
-        );
+        , bytes32(0));
     }
 
     // ─── Payload validation ────────────────────────────────────────
@@ -205,7 +205,7 @@ contract BuybackRemittanceReceiverTest is Test {
         );
         receiver.onCrossChainMessage(
             1, address(0xdead), longPayload, _tokenAmount(address(usdc), 1)
-        );
+        , bytes32(0));
     }
 
     function test_OnCrossChainMessage_RevertWhen_TokenMismatch() public {
@@ -224,7 +224,7 @@ contract BuybackRemittanceReceiverTest is Test {
         );
         receiver.onCrossChainMessage(
             1, address(0xdead), payload, _tokenAmount(address(usdc), 1e6)
-        );
+        , bytes32(0));
     }
 
     function test_OnCrossChainMessage_RevertWhen_ZeroAmount() public {
@@ -233,7 +233,7 @@ contract BuybackRemittanceReceiverTest is Test {
         vm.expectRevert(BuybackRemittanceReceiver.ZeroAmount.selector);
         receiver.onCrossChainMessage(
             1, address(0xdead), payload, _tokenAmount(address(usdc), 0)
-        );
+        , bytes32(0));
     }
 
     // ─── Admin ──────────────────────────────────────────────────────

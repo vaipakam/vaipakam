@@ -412,6 +412,25 @@ interface IVaipakamErrors {
     error RewardCustodyActivationRequiresCutover(
         uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedRouting, bytes32 currentRouting
     );
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing packet arrived
+    ///         under an ingress stamp already recorded: the transport
+    ///         delivered the same message twice, or two sources collided on
+    ///         one id. The second landing is refused whole.
+    error IngressPacketReplayed(bytes32 packetHash);
+    /// @notice #1566 closure 2 cutover PR 1 (Codex #2198 r1) — a delivery or
+    ///         a compensation arrived for a receipt that has already been
+    ///         delivered: a distinct transport message, past the stamp
+    ///         guard, naming a reservation the remitter already dispatched
+    ///         once. A faulty or compromised remitter; refused whole.
+    /// @param receiptKey `keccak256(remitter, remitId)`.
+    error IngressReceiptAlreadyDelivered(bytes32 receiptKey);
+    /// @notice #1566 closure 2 cutover PR 1 — an R4 return asked the
+    ///         holder's `Unclassified` row for more than the stranded record
+    ///         holds there.
+    /// @param receiptKey `keccak256(remitter, remitId)`.
+    /// @param requested  The amount asked from the row.
+    /// @param held       What the record holds in the row.
+    error RewardCustodyUnclassifiedHeldShort(bytes32 receiptKey, uint256 requested, uint256 held);
     /// @notice #1566 slice 4 PR B — a canonical chain must have armed
     ///         per-receipt recovery attribution before activation: arming
     ///         retires the legacy pooled recovery position, and a recovery

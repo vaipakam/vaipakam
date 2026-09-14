@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -180,11 +181,37 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// @dev A stated-composition delivery on a mirror, as the receiver would
     ///      present it: the tokens are already at the Diamond.
     function _deliverFresh(uint256 fresh, uint256 recycled, uint256 remitId) internal {
+        _deliverStamped(fresh + recycled, fresh, recycled, remitId, bytes32(0));
+    }
+
+    /// @dev A delivery as the receiver presents it, with an explicit transport
+    ///      id; `amount − fresh − recycled` is the untyped remainder.
+    function _deliverStamped(uint256 amount, uint256 fresh, uint256 recycled, uint256 remitId, bytes32 id)
+        internal
+    {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
         _remit().onRewardBudgetReceived(
-            address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh
+            address(vpfi), amount, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, id
         );
+    }
+
+    /// @dev A compensation delivery for day 3 as the receiver presents it;
+    ///      `finalizedAt == 0` quarantines (state unknown), a live clock
+    ///      credits provisionally.
+    function _deliverCompensation(uint256 amount, uint256 remitId, uint64 finalizedAt, bytes32 id) internal {
+        _remit().onCompensationBudgetReceived(
+            address(vpfi), amount, 3, CHAIN_BASE, remitId, REMITTER, amount / 2, amount / 2, finalizedAt, 1,
+            uint64(7 days), uint64(24 hours), id
+        );
+    }
+
+    function _packetHash(bytes32 id) internal pure returns (bytes32) {
+        return keccak256(abi.encode(uint256(CHAIN_BASE), id));
+    }
+
+    function _unclassified() internal view returns (uint256) {
+        return _row(LibVaipakam.RewardCustodyRow.Unclassified);
     }
 
     // ─── 1. activation ───────────────────────────────────────────────────────
@@ -882,6 +909,223 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(holderBefore - _held(), claimed, "from the holder");
     }
 
+    // ─── 5b. the UNCLASSIFIED ingress attribution (closure 2 cutover PR 1) ──
+
+    /// An untyped arrival is PROTECTED AT INGRESS: on an activated deployment
+    /// the delivery's remainder — what is neither the fresh share nor the
+    /// recycled share — leaves the Diamond's balance for the holder's
+    /// `Unclassified` row the moment it lands, the figures that describe the
+    /// row move with it, and the packet is recorded under its ingress stamp
+    /// with the receipt bound to it.
+    function test_UntypedRemainder_IsProtectedIntoUnclassified_AtIngress() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("pkt-1");
+        bytes32 h = _packetHash(id);
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibRewardCustody.RewardCustodyUnclassifiedCredited(h, LibRewardCustody.PACKET_KIND_BUDGET, 1e18);
+        _deliverStamped(6e18, 3e18, 2e18, 7, id);
+
+        assertEq(_live(), 3e18, "the fresh share is live");
+        assertEq(_recycledRow(), 2e18, "the recycled share relocated");
+        assertEq(_unclassified(), 1e18, "the remainder is protected into Unclassified");
+        assertEq(_held(), 6e18, "the whole landing is in the holder");
+        assertEq(vpfi.balanceOf(address(diamond)), 4e18, "and none of it rests in the Diamond");
+        (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        assertEq(uncountedHeld, 1e18, "the row's uncounted figure");
+        assertEq(returnedHeld, 0);
+        assertEq(reservedHeld, 0);
+        (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
+        assertEq(uncounted, 1e18, "the reconciliation twin still counts it");
+
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertEq(p.kind, LibRewardCustody.PACKET_KIND_BUDGET, "kind");
+        assertEq(p.sourceChainId, CHAIN_BASE, "source");
+        assertEq(p.actualReceived, 6e18, "what landed");
+        assertEq(p.freshShare, 3e18);
+        assertEq(p.recycledShare, 2e18);
+        assertEq(p.unclassified, 1e18, "what the packet holds in the row");
+        assertEq(p.remitter, REMITTER);
+        assertEq(p.remitId, 7);
+        assertGt(p.arrivedAt, 0, "recorded");
+        LibVaipakam.ReceivedRemit memory rec = _rlens().getReceivedRemit(REMITTER, 7);
+        assertEq(rec.packetHash, h, "the receipt is bound to the stamp");
+        assertEq(rec.amount, 6e18, "the receipt is written by the record");
+        assertEq(rec.srcChainId, CHAIN_BASE);
+    }
+
+    /// The same delivery on a deployment whose custody is NOT activated is
+    /// byte-for-byte today's behaviour: the remainder stays in the Diamond's
+    /// balance, no row moves — and the packet is still recorded, since the
+    /// stamp is taken on every deployment.
+    function test_UntypedRemainder_StaysDiamondSide_WhenNotActivated() public {
+        _remit().setRewardRemittanceReceiver(address(this));
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("pkt-legacy");
+        _deliverStamped(6e18, 3e18, 2e18, 7, id);
+        assertEq(_unclassified(), 0, "no row moves");
+        assertEq(vpfi.balanceOf(address(diamond)), 10e18, "everything rests in the Diamond");
+        (uint256 received, ) = _ledger();
+        assertEq(received, 3e18, "counted Diamond-side");
+        assertEq(_cfg().getRecycleBucket(), 2e18, "the recycled share credited the bucket");
+        (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
+        assertEq(uncounted, 1e18);
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(_packetHash(id));
+        assertGt(p.arrivedAt, 0, "the packet is recorded on every deployment");
+        assertEq(p.unclassified, 0, "nothing of it is in the row");
+    }
+
+    /// The ingress stamp is the packet's identity: a second landing under the
+    /// same stamp refuses whole, and a transport without an id takes a
+    /// per-source sequence the ingress allocates itself.
+    function test_IngressPacket_ReplayRefused_AndAZeroIdTakesTheSequence() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(20e18);
+        bytes32 id = keccak256("pkt-2");
+        _deliverStamped(3e18, 3e18, 0, 7, id);
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketReplayed.selector, _packetHash(id)));
+        _deliverStamped(3e18, 3e18, 0, 8, id);
+
+        _deliverStamped(1e18, 1e18, 0, 9, bytes32(0));
+        _deliverStamped(1e18, 1e18, 0, 10, bytes32(0));
+        bytes32 h1 = keccak256(abi.encode(uint256(CHAIN_BASE), uint256(1), "seq"));
+        bytes32 h2 = keccak256(abi.encode(uint256(CHAIN_BASE), uint256(2), "seq"));
+        assertGt(_rlens().getIngressPacket(h1).arrivedAt, 0, "first sequence stamp");
+        assertGt(_rlens().getIngressPacket(h2).arrivedAt, 0, "second sequence stamp");
+        assertEq(_rlens().getIngressPacket(h1).remitId, 9);
+        assertEq(_rlens().getIngressPacket(h2).remitId, 10);
+    }
+
+    /// Codex #2198 r1 — a receipt is delivered ONCE: a second packet under an
+    /// existing receipt (a distinct transport message, past the stamp guard)
+    /// refuses whole, for a delivery and a compensation alike, so the
+    /// stranded record's packet is THE packet and every receipt-keyed figure
+    /// describes exactly one.
+    function test_IngressPacket_SecondPacketForADeliveredReceiptRefused() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(30e18);
+        bytes32 key7 = keccak256(abi.encode(REMITTER, uint256(7)));
+        _deliverStamped(3e18, 3e18, 0, 7, keccak256("pkt-a"));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key7));
+        _deliverStamped(3e18, 3e18, 0, 7, keccak256("pkt-b"));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key7));
+        _deliverCompensation(3e18, 7, 0, keccak256("pkt-c")); // a compensation naming a delivered receipt: the same
+        assertEq(
+            _rlens().getReceivedRemit(REMITTER, 7).packetHash, _packetHash(keccak256("pkt-a")), "the one binding stands"
+        );
+        assertEq(_rlens().getIngressPacket(_packetHash(keccak256("pkt-b"))).arrivedAt, 0, "a refused packet leaves no record");
+
+        // A quarantined compensation, then a second packet for its receipt:
+        // refused, so the record's held part, its packet and the packet's
+        // figure stay one and the same.
+        bytes32 idQ = keccak256("comp-q1");
+        _deliverCompensation(5e18, 11, 0, idQ); // state unknown, no clock: quarantined
+        bytes32 key11 = keccak256(abi.encode(REMITTER, uint256(11)));
+        vm.expectRevert(abi.encodeWithSelector(IngressReceiptAlreadyDelivered.selector, key11));
+        _deliverCompensation(5e18, 11, 0, keccak256("comp-q2"));
+        LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 11);
+        assertEq(sr.held, 5e18, "one packet's worth in the row");
+        assertEq(sr.packetHash, _packetHash(idQ), "bound to that packet");
+        assertEq(_rlens().getIngressPacket(_packetHash(idQ)).unclassified, 5e18, "whose figure is the record's");
+        assertEq(_unclassified(), 5e18, "the row holds exactly the quarantine");
+    }
+
+    /// A quarantined compensation lands in the row on an activated
+    /// deployment: the stranded record and the reservation say how much the
+    /// holder backs, the Diamond's backing position no longer subtracts that
+    /// part, and the versioned snapshot's reservation field reads the
+    /// Diamond-side remainder only.
+    function test_Quarantine_LandsInTheRow_AndTheBackingPositionNetsIt() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("comp-q");
+        _deliverCompensation(5e18, 11, 0, id); // state unknown, no clock: quarantined
+        assertEq(_unclassified(), 5e18, "the quarantine is in the row");
+        assertEq(_held(), 5e18);
+        assertEq(vpfi.balanceOf(address(diamond)), 5e18, "and out of the Diamond");
+        LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 11);
+        assertEq(sr.amount, 5e18, "recorded");
+        assertEq(sr.held, 5e18, "and the record knows the holder backs it");
+        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        assertEq(uncountedHeld, 5e18);
+        assertEq(reservedHeld, 5e18);
+        assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "the raw reservation is untouched");
+        (, , uint256 unearmarked, , , , uint256 diamondSide, , , , , ) = _custody().getRecycleBackingSnapshotV2();
+        assertEq(diamondSide, 0, "the snapshot's reservation is the Diamond-side part only");
+        assertEq(unearmarked, 5e18, "the backing position subtracts nothing for the held part");
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(_packetHash(id));
+        assertEq(p.kind, LibRewardCustody.PACKET_KIND_COMPENSATION);
+        assertEq(p.unclassified, 5e18);
+        assertEq(_rlens().getReceivedRemit(REMITTER, 11).packetHash, _packetHash(id));
+    }
+
+    /// A demotion re-attributes the credit's remainder IN-HOLDER — live
+    /// first, then restitution — into the row, where the record and the
+    /// reservation now describe it; nothing is released to the Diamond.
+    function test_Demotion_MovesTheCreditInHolder_IntoUnclassified() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("comp-p");
+        _deliverCompensation(5e18, 12, uint64(block.timestamp), id); // live clock: provisional credit
+        assertEq(_live(), 5e18, "credited live, provisionally");
+        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        _remit().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
+        assertEq(_live(), 0, "the credit left the live row");
+        assertEq(_unclassified(), 5e18, "and is re-attributed in the holder");
+        assertEq(_held(), 5e18, "the holder's balance did not move");
+        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
+        (uint256 received, ) = _ledger();
+        assertEq(received, 0, "the received side unwound");
+        LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 12);
+        assertEq(sr.amount, 5e18);
+        assertEq(sr.held, 5e18, "the record knows the holder backs it");
+        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        assertEq(uncountedHeld, 5e18);
+        assertEq(reservedHeld, 5e18);
+        assertEq(_rlens().getIngressPacket(_packetHash(id)).unclassified, 5e18, "the packet's record follows");
+    }
+
+    /// MIGRATION MODE (design §5c): under the manual pause the receive
+    /// ingresses still land — a delivery and a quarantine both reach the
+    /// holder — while every consumer is refused; after the unpause the claim
+    /// pays out of what landed.
+    function test_MigrationMode_PausedIngressLands_AndPausedConsumersRefuse() public {
+        _becomeMirror();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        (uint256 id, uint256 expected) = _seedPayable(alice);
+        _seedDiamond(expected + 20e18);
+        _admin().pause();
+
+        _deliverStamped(expected + 3e18, expected + 1e18, 2e18, 21, keccak256("paused-1"));
+        assertEq(_live(), expected + 1e18, "landed under the pause");
+        assertEq(_recycledRow(), 2e18);
+        assertEq(_unclassified(), 0);
+        _deliverCompensation(4e18, 22, 0, keccak256("paused-2"));
+        assertEq(_unclassified(), 4e18, "the quarantine landed under the pause too");
+
+        vm.prank(alice);
+        vm.expectRevert();
+        _claim().claimInteractionRewards();
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.expectRevert();
+        _sweeper().sweepExpiredInteractionRewards(ids);
+
+        _admin().unpause();
+        uint256 holderBefore = _held();
+        vm.prank(alice);
+        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        assertApproxEqAbs(claimed, expected, 1e6, "paid after the unpause");
+        assertEq(holderBefore - _held(), claimed, "from the holder");
+    }
+
     // ─── 6. the transports ───────────────────────────────────────────────────
 
     /// A canonical remittance names LIVE custody: refused beyond the delivered
@@ -999,10 +1243,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     // ─── 8. restitution: the unwind and the two dispositions ─────────────────
 
     /// A demotion gives back the WHOLE credit still in the holder — the live
-    /// portion first, then the restitution portion — to the Diamond, where
-    /// the stranded reservation describes it (Codex #2186 r1 P1); only what
-    /// was already paid out stays out.
-    function test_UncreditFresh_ReturnsLiveThenRestitution() public {
+    /// portion first, then the restitution portion (Codex #2186 r1 P1) —
+    /// and since closure 2's cutover PR 1 it does so IN-HOLDER: the
+    /// remainder is re-attributed into `Unclassified`, where the stranded
+    /// record and the reservation now describe it; nothing is released to
+    /// the Diamond, and only what was already paid out stays out.
+    function test_UncreditFresh_MovesLiveThenRestitution_IntoUnclassified() public {
         _becomeMirror();
         _admin().pause();
         _custody().bindRewardCustodyHolder();
@@ -1012,12 +1258,20 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+        uint256 holderBefore = _held();
+        bytes32 key = keccak256(abi.encode(REMITTER, uint256(99)));
 
         vm.prank(address(diamond)); // the Diamond-internal entry, as the demotion reaches it
-        _custody().custodyUncreditFresh(9e18);
+        _custody().custodyUnclassifiedQuarantine(bytes32(0), key, 0, 9e18);
         assertEq(_live(), 0, "live gave back all 4");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 1e18, "restitution gave back 5 of 6");
-        assertEq(vpfi.balanceOf(address(diamond)) - diamondBefore, 9e18, "the Diamond received the whole unwound credit");
+        assertEq(_unclassified(), 9e18, "the whole unwound credit is re-attributed into Unclassified");
+        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
+        assertEq(_held(), holderBefore, "the holder's balance did not move");
+        assertEq(_rlens().getStrandedRecovery(REMITTER, 99).held, 9e18, "the record knows the holder backs it");
+        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        assertEq(uncountedHeld, 9e18);
+        assertEq(reservedHeld, 9e18);
         (uint256 received, ) = _ledger();
         assertEq(received, 1e18, "received unwound");
     }
