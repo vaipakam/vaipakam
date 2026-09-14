@@ -1242,19 +1242,20 @@ the quarantine reservation from now on, so the watcher's exact balance
 relation keeps its meaning without a shape change.
 
 Every reward-budget packet — a budget delivery, a compensation, a stranded
-return, a recovery-ceremony inflow — is now recorded under an identity the
-transport itself supplies at delivery — the message id the cross-chain
-adapter passes through to every recipient, which is a change to that
-shared interface, so the adapter and all its recipients are upgraded
+return, a recovery-ceremony inflow — is now recorded under an identity:
+the message id the transport itself supplies at delivery, or, where the
+transport supplies none, one the platform's own ingress allocates in
+sequence per source. That message id is what the cross-chain adapter now
+passes through to every recipient, which is a change to that shared
+interface, so the adapter and all its recipients are upgraded
 together by the same generation probe the refresh already uses — each
 resolved from the live configuration first and the deployment record
 second, so a missing or stale record can never leave a live contract on
 the old shape. A packet delivered twice under one identity is refused
 whole, and so is a second delivery for a receipt that already exists: a
 receipt is delivered once, so every figure kept against a receipt
-describes exactly one delivery. A transport that supplies no identity has
-one allocated in sequence by the platform's own ingress; the receipt a
-delivery creates is bound to the identity. This
+describes exactly one delivery. The receipt a delivery creates is bound to
+the identity. This
 record is what the second part will reconcile against, and it is taken on
 every deployment, activated or not. One value-bearing arrival is not yet
 recorded this way: a planned-surplus repatriation return, which credits
@@ -1377,9 +1378,12 @@ read the records as they stand and neither withdraws what it has already
 said, so running afterwards meant a loan that had ended months ago could
 still be sent a "payment due" or "overdue" reminder that nothing would ever
 retract. And a correction now announces itself to anyone watching the
-position, the same way any other change does — without that, the record was
-put right while every open screen kept showing the old one until it happened
-to refresh. The announcement names the corrected loan, which sounds like a
+position, the same way any other change does — best-effort, like every
+such announcement: the correction is committed before the announcement is
+sent, so a service interruption in that interval can leave a connected
+screen stale until it polls or is refreshed, with the record already right
+— where without any announcement the record was put right while every open
+screen kept showing the old one until it happened to refresh. The announcement names the corrected loan, which sounds like a
 detail and is not: the announcement is filtered down to the people it
 concerns, and a corrected loan is by definition an OLD one that appears
 nowhere else in that tick's work. Left unnamed, the one announcement that
@@ -1456,9 +1460,11 @@ There IS a route to that same state where the message lands, and it is what
 decides the wording. When a borrower's collateral sale completes, the loan
 finishes without either side claiming — the borrower's position is released
 rather than destroyed, so there is still somebody to tell. That route also
-hands over everything owed as part of the sale, which means the one case
-where this message reaches a reader is precisely the case with nothing left
-to claim. So it says to open the position and see where it stands, rather
+hands over everything owed as part of the sale. It is not the only route
+that leaves a position in place: a lender's one-sided claim that settles a
+defaulted loan whose borrower has nothing to claim leaves that borrower's
+position too, and the same message reaches them. In every route that
+reaches a reader there is, by construction, nothing left to claim. So it says to open the position and see where it stands, rather
 than pointing at a claim that by construction does not exist. Every other
 ending keeps its own wording, because those genuinely do leave something to
 collect.
@@ -1482,9 +1488,15 @@ That one-way direction is necessary and it is NOT on its own sufficient, and
 an earlier draft of this note said otherwise. A correction cannot be undone
 by the same check — a record it has ended is no longer one the check looks
 at — so a reading that is wrong rather than merely old is permanent. What
-actually makes it safe is that the chain is always read at a point the chain
-itself treats as settled, never at whatever a machine last saw. Without
-that, a momentary reorganisation could report an ending that then
+actually makes it safe is that the chain is read at a point the chain
+itself treats as settled, never at whatever a machine last saw — on an
+endpoint that can name such a point. Where an endpoint cannot, the service
+falls back to a fixed distance behind the latest block (thirty-two blocks),
+a local heuristic rather than the chain's own settled mark, and a
+reorganisation deeper than that buffer could still make a correction
+wrong; the guarantee holds only on endpoints that name their settled point,
+and an operator who needs it should use one. Without a settled point at
+all, a momentary reorganisation could report an ending that then
 disappears, leaving a genuinely open loan recorded as closed with nothing
 that would ever come back to it.
 
@@ -1553,8 +1565,9 @@ this check. If another part of the service recorded the ending first — which
 is the very race the check is built to lose gracefully — it stops, rather
 than telling the two holders it discovered something it did not. And where
 looking up the parties in its OWN records fails, that is treated as a
-failure rather than as "nobody to tell": the whole correction is left for
-the next turn instead of going through with the part that is silent.
+failure rather than as "nobody to tell": the whole correction is left as it
+was, to be revisited on a later lap, instead of going through with the part
+that is silent.
 
 That applies to its own records and not to the chain, and the difference is
 the point. A query of its own store that fails has unambiguously failed, so
