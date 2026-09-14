@@ -262,6 +262,7 @@ describe('reconcileAfterScan against a real database', () => {
   const readTerminal = async (args: Record<string, unknown>) => {
     if (args.functionName === 'getActiveLoansCount') return 0n;
     return {
+      id: 21n,
       status: 1,
       principal: 0n,
       collateralAmount: 250n,
@@ -336,6 +337,7 @@ describe('reconcileAfterScan against a real database', () => {
           args.functionName === 'getActiveLoansCount'
             ? 1n
             : {
+                id: 22n,
                 status: 0,
                 principal: 100n,
                 collateralAmount: 200n,

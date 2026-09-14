@@ -212,8 +212,7 @@ describe('a notice is written only for a repair this pass made', () => {
     chainId: CHAIN,
     loanId: 40,
     status: 'defaulted',
-    terminalBlock: 500,
-    terminalAt: 1_700_000_000,
+    updatedAt: 1_700_000_000,
     ...over,
   });
 
@@ -227,19 +226,33 @@ describe('a notice is written only for a repair this pass made', () => {
     return results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
   }
 
-  function markTerminal(h: SqliteD1, loanId: number, block: number, at: number) {
+  /** The shape a REPAIR leaves: terminal status, terminal time UNKNOWN,
+   *  and its own `updated_at`. */
+  function markRepaired(h: SqliteD1, loanId: number, at: number) {
     h.db
       .prepare(
-        `UPDATE loans SET status = 'defaulted', terminal_block = ?, terminal_at = ?
+        `UPDATE loans SET status = 'defaulted', terminal_block = NULL,
+                          terminal_at = NULL, updated_at = ?
           WHERE chain_id = ? AND loan_id = ?`,
       )
-      .run(block, at, CHAIN, loanId);
+      .run(at, CHAIN, loanId);
+  }
+
+  /** The shape an EVENT handler leaves: a real terminal block and time. */
+  function markEventTerminal(h: SqliteD1, loanId: number, block: number, at: number) {
+    h.db
+      .prepare(
+        `UPDATE loans SET status = 'defaulted', terminal_block = ?, terminal_at = ?,
+                          updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+      .run(block, at, at, CHAIN, loanId);
   }
 
   it('writes it when the compare-and-set left this pass’s own fingerprint', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 40, 'active');
-    markTerminal(h, 40, 500, 1_700_000_000);
+    markRepaired(h, 40, 1_700_000_000);
     expect(await insertGated(h, FP())).toBe(2);
   });
 
@@ -250,8 +263,9 @@ describe('a notice is written only for a repair this pass made', () => {
     // path's own, more specific notice.
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 40, 'active');
-    // Someone else terminalized it: same status, their own block and second.
-    markTerminal(h, 40, 481, 1_699_999_000);
+    // Someone else terminalized it from an EVENT: same status, but with a
+    // real terminal block and time, which a repair never writes.
+    markEventTerminal(h, 40, 481, 1_699_999_000);
     expect(await insertGated(h, FP())).toBe(0);
     expect(rowsFor(h, 40)).toHaveLength(0);
   });

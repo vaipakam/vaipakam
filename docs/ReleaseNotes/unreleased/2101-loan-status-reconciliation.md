@@ -183,6 +183,23 @@ event would have said the former — less precise, never wrong, and much
 better than "still running". That is stated here rather than left to be
 discovered.
 
+And it cannot say WHEN the loan ended, so it does not record a time. An
+earlier version stored the moment it happened to look and called that an
+honest substitute. It is not one: that figure is published, and the list of
+positions with something to claim is ordered and capped by it, so a loan
+that ended in July would have presented as freshly ended and pushed genuinely
+recent ones out of a limited list. The time is now left empty, which is what
+is true.
+
+Two answers it treats as neither running nor ended. A record for a loan the
+chain has never heard of — one indexed once from something later undone —
+reads, through the chain's own interface, exactly like a running loan; those
+are now named in the operator's log as unresolvable rather than counted as
+running forever. And a state this build does not recognise, which a newer
+deployment could introduce, is named rather than passed over in silence: if
+such a state turns out to be an ending, quietly skipping it would leave the
+record published as open while every check reported perfect health.
+
 And it cannot say why an ending was missed in the first place.
 
 The correction, the tidying and the messages to the two holders are a single

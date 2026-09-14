@@ -894,8 +894,7 @@ async function runLoanReconcilePass(input: {
                 chainId,
                 loanId,
                 status: to,
-                terminalBlock: fingerprint.terminalBlock,
-                terminalAt: fingerprint.terminalAt,
+                updatedAt: fingerprint.updatedAt,
               }),
             ),
           );
@@ -918,6 +917,28 @@ async function runLoanReconcilePass(input: {
       console.warn(
         `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
           `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+      );
+    }
+    // A loan the chain says does NOT EXIST is an orphaned row — indexed
+    // once and never substantiable again. It is reported at error level
+    // because nothing in this pass will ever resolve it: the read
+    // succeeded, so retrying changes nothing, and it is not counted as a
+    // running loan either (#2190 r6 `4006071749`).
+    if (report.unresolvable.length > 0) {
+      console.error(
+        `[chainIndexer] reconcile chain ${chainId}: the chain has NO SUCH LOAN for ` +
+          `indexed row(s) ${report.unresolvable.join(', ')} — orphaned rows that ` +
+          `will not resolve themselves; they are not counted as running`,
+      );
+    }
+    // An on-chain status this build does not know. Refusing to guess is
+    // right; refusing silently is how a newly-appended TERMINAL member
+    // leaves rows published as active while every pass looks healthy.
+    if (report.unknownStatus.length > 0) {
+      console.error(
+        `[chainIndexer] reconcile chain ${chainId}: unrecognised LoanStatus for ` +
+          report.unknownStatus.map((u) => `loan ${u.loanId} = ${u.status}`).join(', ') +
+          ` — this build cannot project it; no status written`,
       );
     }
     // A failing WRITE with a succeeding read points at D1, not the RPC, so

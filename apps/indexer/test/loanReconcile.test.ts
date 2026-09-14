@@ -17,6 +17,7 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from '../src/loanStatusProjection';
 import {
   CHAIN_STATUS_TO_ROW_STATUS,
   decideRepair,
+  NonexistentLoanError,
   ReconcilePartialError,
   reconcileChainLoans,
   type ReconcileDeps,
@@ -39,6 +40,8 @@ type ChainStub =
   | { status: number; principal: string; collateralAmount: string };
 
 const TOKENS = { lenderTokenId: '1', borrowerTokenId: '2' };
+/** A real loan's id is its own non-zero key; the zero struct has 0. */
+const EXISTS = { id: 1n };
 
 /** The shared mutable projection, in the shape the scan's builder emits.
  *  The fake carries a REAL one rather than a placeholder so a case can see
@@ -565,5 +568,52 @@ describe('a failure after the repairs landed still reports them', () => {
     // The rows really were corrected; only the pointer failed to move.
     expect(report.repaired.map((r) => r.loanId).sort()).toEqual([8, 9]);
     expect(rows.every((r) => r.status !== 'active')).toBe(true);
+  });
+});
+
+describe('what the chain says that is neither running nor ended', () => {
+  it('does NOT read a nonexistent loan as running', async () => {
+    // #2190 r6 `4006071749`. `getLoanDetails` does not revert for an
+    // unknown id — it returns the mapping's zero struct, whose status is 0
+    // and therefore indistinguishable from Active. An orphaned row would be
+    // "confirmed running" on every pass forever, and the safety story ("a
+    // node that is behind answers Active") would silently cover a case that
+    // is not a stale read at all.
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 0 }, 0);
+    // The zero struct: id 0.
+    f.deps.readChainLoan = async () => {
+      throw new NonexistentLoanError(8);
+    };
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unresolvable).toEqual([8]);
+    // NOT `unread`: the read succeeded, so retrying changes nothing and
+    // burying it in the retry bucket would hide a row that needs a person.
+    expect(r.unread).toEqual([]);
+    expect(rows[0].status).toBe('active');
+  });
+
+  it('reports a status this build does not recognise', async () => {
+    // Refusing to guess is right; refusing SILENTLY is how a newly
+    // appended terminal member leaves rows published as active while every
+    // pass looks healthy (#2190 r6 `4005986373`).
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 42 }, 0);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unknownStatus).toEqual([{ loanId: 8, status: 42 }]);
+    expect(r.repaired).toEqual([]);
+    expect(rows[0].status).toBe('active');
+  });
+
+  it('stays quiet about the two live statuses it knows', async () => {
+    // `Active` and `FallbackPending` are known and non-terminal — normal,
+    // not a diagnostic. Reporting them would bury the real signal.
+    const rows: ReconcileRow[] = [
+      { loan_id: 8, status: 'active' },
+      { loan_id: 9, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 8: 0, 9: 4 }, 2);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unknownStatus).toEqual([]);
   });
 });

@@ -115,6 +115,15 @@ export { LOAN_STATUS_TO_INDEXER_TERMINAL as CHAIN_STATUS_TO_ROW_STATUS } from '.
  */
 const REPAIRABLE_FROM = new Set(['active', 'fallback_pending']);
 
+/** Every `LoanStatus` member this build knows — the terminal projection's
+ *  keys plus the two live ones it deliberately omits. Anything else came
+ *  from a newer deployment and is reported rather than passed over. */
+const KNOWN_CHAIN_STATUSES = new Set<number>([
+  0,
+  4,
+  ...Object.keys(LOAN_STATUS_TO_INDEXER_TERMINAL).map(Number),
+]);
+
 /**
  * The status to write, or `null` for "leave it alone".
  *
@@ -157,6 +166,21 @@ export const LIVE_ROW_STATUSES = [...REPAIRABLE_FROM];
  * corrections sit in D1 unannounced — and because a repaired row is no
  * longer live, no later pass can find them to report.
  */
+/**
+ * The chain has no such loan — the zero struct, not a revert.
+ *
+ * Thrown rather than returned so the row lands in `unresolvable` instead of
+ * being read as a running loan. It is NOT `unread`: a read that succeeded
+ * and said "this does not exist" is evidence, and the rotation returning to
+ * it forever would hide a row that needs a human.
+ */
+export class NonexistentLoanError extends Error {
+  constructor(readonly loanId: number) {
+    super(`loan ${loanId} does not exist on chain`);
+    this.name = 'NonexistentLoanError';
+  }
+}
+
 export class ReconcilePartialError extends Error {
   constructor(
     readonly report: ReconcileReport,
@@ -246,6 +270,11 @@ export interface ReconcileReport {
    *  rather than folded into `unread`, because a failing write with a
    *  succeeding read points at D1 rather than at the RPC. */
   writeFailed: number[];
+  /** Loan ids the chain says do not exist. Never retried — the read
+   *  succeeded — and never counted as running. */
+  unresolvable: number[];
+  /** Loans whose on-chain status this build does not recognise. */
+  unknownStatus: { loanId: number; status: number }[];
   /** Loan ids whose repair the compare-and-set declined because another
    *  writer had already terminalized the row. Not a failure — the other
    *  write is the better-informed one — but not a repair either. */
@@ -388,6 +417,8 @@ export async function reconcileChainLoans(
     repaired: [],
     unread: [],
     writeFailed: [],
+    unresolvable: [],
+    unknownStatus: [],
     superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
     wrappedLap: wrapped,
@@ -398,7 +429,15 @@ export async function reconcileChainLoans(
     let onchain: ChainLoanRead;
     try {
       onchain = await deps.readChainLoan(chainId, row.loan_id);
-    } catch {
+    } catch (err) {
+      if (err instanceof NonexistentLoanError) {
+        // A read that SUCCEEDED and said the loan does not exist. Separate
+        // from `unread` on purpose: this one will never resolve itself, so
+        // burying it in the retry bucket would hide a row that needs a
+        // person (#2190 r6 `4006071749`).
+        report.unresolvable.push(row.loan_id);
+        continue;
+      }
       // A read that did not happen is not evidence about the loan. The
       // row is left exactly as it is and the rotation returns to it.
       report.unread.push(row.loan_id);
@@ -406,7 +445,17 @@ export async function reconcileChainLoans(
     }
     const from = row.status;
     const to = decideRepair(from, onchain.status);
-    if (to === null) continue;
+    if (to === null) {
+      // A status OUTSIDE the known enum is not the same as a loan the chain
+      // still calls running, and silence made them look alike (#2190 r6
+      // `4005986373`). Refusing to guess is right; hiding the refusal is
+      // not — if an appended member is terminal, the row stays published as
+      // active while every pass reports perfect health.
+      if (!KNOWN_CHAIN_STATUSES.has(onchain.status)) {
+        report.unknownStatus.push({ loanId: row.loan_id, status: onchain.status });
+      }
+      continue;
+    }
     // The amounts come from the SAME read as the status, so they are the
     // same block's post-image and cannot describe a different moment than
     // the status they are written beside.
@@ -528,10 +577,10 @@ export interface ScanReconcileContext {
     loanId: number,
     to: string,
     tokenIds: { lender: string; borrower: string },
-    /** The exact terminal shape this pass's compare-and-set will write, so
-     *  the notice can self-gate on the CAS having actually won — see
+    /** The exact shape this pass's compare-and-set will write, so the
+     *  notice can self-gate on the CAS having actually won — see
      *  `RepairFingerprint`. */
-    fingerprint: { terminalBlock: number; terminalAt: number },
+    fingerprint: { updatedAt: number },
   ): Promise<D1PreparedStatement[]>;
 }
 
@@ -611,10 +660,24 @@ export async function reconcileAfterScan(
         args: [BigInt(loanId)],
         blockNumber: ctx.head,
       })) as Record<string, unknown> & {
+        id?: bigint;
         status: number | bigint;
         lenderTokenId: bigint;
         borrowerTokenId: bigint;
       };
+      // A NONEXISTENT loan does not revert — `getLoanDetails` returns the
+      // mapping's zero struct, whose `status` is 0 and therefore
+      // indistinguishable from `Active` (#2190 r6 `4006071749`). An
+      // orphaned row (say one indexed from a reorged-out `LoanInitiated`)
+      // would be "confirmed running" on every pass forever, and the safety
+      // story — "a node that is behind answers Active" — would silently
+      // cover a case that is not a stale read at all. `id` is the
+      // existence-bearing field: a real loan's id is its own non-zero key.
+      // The app's `mapLoanStructToRow` has always rejected the zero struct
+      // for this reason; this is the same rule on this side.
+      if (Number(d.id ?? 0) === 0) {
+        throw new NonexistentLoanError(loanId);
+      }
       return {
         status: Number(d.status),
         lenderTokenId: String(d.lenderTokenId),
@@ -650,6 +713,20 @@ export async function reconcileAfterScan(
       // of the live set the rotation selects from, so nothing would ever
       // come back to finish the job, and an isolate killed mid-way leaves
       // no error to report either (#2190 round 3).
+      // `terminal_block` / `terminal_at` are written as NULL, deliberately
+      // (#2190 r6 `4005830713`). An earlier version stored the safe head
+      // and the wall clock and called that "the honest substitute for a
+      // block we cannot know". It is not: those columns are published as
+      // `terminalBlock` / `terminalAt` and the claim-candidate route orders
+      // and CAPS by `terminal_at`, so a months-old repaired loan presented
+      // as newly terminal can displace genuinely recent candidates out of a
+      // bounded result. An unknown recorded as a fact is the defect this
+      // repo's own rule names; NULL says what is true.
+      //
+      // The notification's block number is a different thing and stays: it
+      // positions a row in a feed, which is not a claim about when the loan
+      // ended.
+      //
       // EVERY MUTABLE COLUMN the post-image corrects, from one shared
       // builder, plus this pass's own terminal stamp. Enumerating fields
       // here is what made "which ones" a question review got to ask three
@@ -660,19 +737,11 @@ export async function reconcileAfterScan(
         .prepare(
           `UPDATE loans
               SET status = ?, ${repair.mutable.assignments.join(', ')},
-                  terminal_block = ?, terminal_at = ?, updated_at = ?
+                  terminal_block = NULL, terminal_at = NULL, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
-        .bind(
-          repair.status,
-          ...repair.mutable.values,
-          Number(ctx.head),
-          at,
-          at,
-          chainId,
-          loanId,
-        );
+        .bind(repair.status, ...repair.mutable.values, at, chainId, loanId);
       // The inbox rows go in the SAME batch. Written afterwards they could
       // be lost for good: the repair takes the row out of the live set the
       // rotation selects from, so nothing would ever come back to write
@@ -682,7 +751,7 @@ export async function reconcileAfterScan(
         loanId,
         repair.status,
         { lender: repair.lenderTokenId, borrower: repair.borrowerTokenId },
-        { terminalBlock: Number(ctx.head), terminalAt: at },
+        { updatedAt: at },
       );
       const results = await ctx.db.batch([
         update,

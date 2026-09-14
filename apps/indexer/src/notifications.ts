@@ -752,7 +752,7 @@ export function notificationInsertStatement(
         WHERE EXISTS (
           SELECT 1 FROM loans
            WHERE chain_id = ? AND loan_id = ?
-             AND status = ? AND terminal_block = ? AND terminal_at = ?
+             AND status = ? AND terminal_at IS NULL AND updated_at = ?
         )`,
     )
     .bind(
@@ -760,8 +760,7 @@ export function notificationInsertStatement(
       onlyIfRepaired.chainId,
       onlyIfRepaired.loanId,
       onlyIfRepaired.status,
-      onlyIfRepaired.terminalBlock,
-      onlyIfRepaired.terminalAt,
+      onlyIfRepaired.updatedAt,
     );
 }
 
@@ -782,19 +781,24 @@ export function notificationInsertStatement(
  *
  * D1 offers no "did the previous statement in this batch match" primitive,
  * and splitting the batch would give back the atomicity round 3 established.
- * So the insert self-gates on the fingerprint the CAS writes. The residual
- * is stated rather than hidden: a different writer would have to have set
- * the same status, at the same block number — ours is the SAFE HEAD, while
- * an event handler uses its own log's block — within the same second. And
- * in that coincidence the notice is still substantively right; only its
- * provenance would be.
+ * So the insert self-gates on the fingerprint the CAS writes: the status,
+ * a NULL `terminal_at` — which only a repair leaves, since every event
+ * handler stamps a real one — and this pass's own `updated_at` second. The
+ * residual is stated rather than hidden: another writer would have to have
+ * set the same status, left the terminal time unknown, and done it in the
+ * same second. In that coincidence the notice is still substantively right;
+ * only its provenance would be.
  */
 export interface RepairFingerprint {
   chainId: number;
   loanId: number;
   status: string;
-  terminalBlock: number;
-  terminalAt: number;
+  /** The repair's own `updated_at`. It replaced the terminal block and time
+   *  when those stopped being written at all — a repair cannot know when a
+   *  loan ended, so it now records NULL there rather than the moment it
+   *  looked (#2190 r6 `4005830713`). `updated_at` is still this pass's own
+   *  second, which is what the gate needs. */
+  updatedAt: number;
 }
 
 /**

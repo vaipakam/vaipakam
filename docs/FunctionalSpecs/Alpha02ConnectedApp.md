@@ -251,6 +251,20 @@ The app uses chain reads and indexed reads for different jobs.
   borrower who withdraws a collateral sale keeps any swap commitment they
   made, and the reverse. The platform never disposes of a position the user
   still holds as a side effect of tidying a different one.
+- A corrected record carries NO ending time. The platform cannot determine
+  when the loan ended, and the field is published and used to order and cap
+  the list of positions with something to claim — so recording the moment
+  of discovery there would present a months-old ending as fresh and push
+  genuinely recent ones out of a bounded list. Empty is what is true.
+- A record the chain has no loan for is not a running loan. Asking about an
+  unknown position returns an empty answer whose state is indistinguishable
+  from "running", so the platform tests that the position exists at all
+  before believing it, and reports the ones it cannot substantiate instead
+  of counting them as open forever.
+- A lifecycle state the platform does not recognise is reported, never
+  passed over. Refusing to guess at an unfamiliar state is right; doing so
+  silently is how a newly introduced ENDING would leave records published
+  as open while every check reported health.
 - The correction and that clearing are ONE write: both happen or neither
   does. A correction that landed alone would take the record out of the set
   the rotation examines, so nothing would ever return to finish it — and a
