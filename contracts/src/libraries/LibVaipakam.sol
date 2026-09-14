@@ -7408,17 +7408,19 @@ library LibVaipakam {
         ///      PR C's era-registry backfill as its last step, and by nothing
         ///      else.
         bool rewardRoleChangesFrozen;
-        /// @dev #1566 slice 4 PR B (Codex #2186 r4) — the COMPLETE-cut record:
-        ///      the custody protocol version (`LibRewardCustody.CUTOVER_VERSION`)
-        ///      and the hash of the routed facet set as they stood when a
-        ///      complete facet cut (`DeployDiamond`, `RefreshAllFacetsInPlace`)
-        ///      recorded them, under the pause the cut ran under. Activation
-        ///      and every bootstrap write require both to be current, so
-        ///      custody can never be switched onto the holder while a reward
-        ///      path that does not know the holder is still routed. Re-taken
-        ///      by every complete cut; invalidated by any cut in between.
+        /// @dev #1566 slice 4 PR B (Codex #2186 r4, r5) — the COMPLETE-cut
+        ///      record: the custody protocol version
+        ///      (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the
+        ///      ROUTING — every facet address with the selectors it serves —
+        ///      as they stood when a complete facet cut (`DeployDiamond`,
+        ///      `RefreshAllFacetsInPlace`) recorded them, under the pause the
+        ///      cut ran under. Activation and every bootstrap write require
+        ///      both to be current, so custody can never be switched onto
+        ///      the holder while a reward path that does not know the holder
+        ///      is still routed. Re-taken by every complete cut; invalidated
+        ///      by any cut in between, of a facet or of a single selector.
         uint32 rewardCustodyCutoverVersion;
-        bytes32 rewardCustodyCutoverFacetSet;
+        bytes32 rewardCustodyCutoverRouting;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

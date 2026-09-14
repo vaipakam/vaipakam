@@ -3013,12 +3013,12 @@
         "internalType": "uint32"
       },
       {
-        "name": "stampedFacetSet",
+        "name": "stampedRouting",
         "type": "bytes32",
         "internalType": "bytes32"
       },
       {
-        "name": "routedFacetSet",
+        "name": "currentRouting",
         "type": "bytes32",
         "internalType": "bytes32"
       }

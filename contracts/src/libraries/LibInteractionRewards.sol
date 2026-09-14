@@ -3287,7 +3287,12 @@ library LibInteractionRewards {
                 uint256 legacyFresh
             ) = _userArmedFreshNeedWithLegs(s, e.user);
             (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
-            uint256 fundingNeed = _userClaimFundingNeedViewWith(
+            // The transfer test is {_claimTransferable} — the ONE
+            // implementation the view mirror reads too (Codex #2186 r5 P1):
+            // on an activated deployment it is the holder's rows, and a
+            // Diamond-balance test here would have held every entry's clock
+            // unstarted while the holder fully covered the claim.
+            bool transferable = _claimTransferable(
                 s,
                 e.user,
                 armedFresh,
@@ -3343,8 +3348,7 @@ library LibInteractionRewards {
                 deliveredPayable &&
                 !LibVaipakam.isSanctionedAddress(e.user) &&
                 !LibPausable.paused() &&
-                IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-                fundingNeed;
+                transferable;
 
             if (!executable) {
                 // Observed non-executable. Before the first executable
@@ -3886,28 +3890,41 @@ library LibInteractionRewards {
         if (freshNeed != 0 && freshNeed > deliveredFreshBound(s)) {
             return false;
         }
-        // #1566 slice 4 PR B — on an activated deployment the transfer test
-        // reads the HOLDER's rows, the same figures the claim's gate and its
-        // two-row payout consult: the fresh total against the live-fresh
-        // row, and the recycled upper bound against the recycled row (the
-        // predicate's documented conservative recycled side, unchanged in
-        // direction). The Diamond-balance form below is the Unconfigured
-        // column, frozen.
+        // The transfer test — the same function the authoritative clock in
+        // {sweepExpiredEntry} reads, so the two cannot disagree about where
+        // custody is (Codex #2186 r5 P1).
+        return _claimTransferable(s, e.user, armedFresh, recycledUpper, userLegs, treasuryLegs);
+    }
+
+    /// @dev ONE transfer test for the expiry clock and its view mirror
+    ///      (Codex #2186 r5 P1). #1566 slice 4 PR B — on an activated
+    ///      deployment it reads the HOLDER's rows, the same figures the
+    ///      claim's gate and its two-row payout consult: the claim's capped
+    ///      fresh total against the live-fresh row, and the recycled upper
+    ///      bound against the recycled row (the predicate's documented
+    ///      conservative recycled side, unchanged in direction). The
+    ///      Diamond-balance form is the Unconfigured column, frozen. An
+    ///      earlier revision branched only the view mirror and left the
+    ///      clock on the Diamond's balance, which on an activated chain is
+    ///      not where reward funds rest — so every observation read
+    ///      non-executable while the holder fully covered the claim, and no
+    ///      entry could ever expire.
+    function _claimTransferable(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 armedFresh,
+        uint256 recycledUpper,
+        uint256 userLegs,
+        uint256 treasuryLegs
+    ) private view returns (bool) {
         if (LibRewardCustody.active(s)) {
-            uint256 freshTotal = _userFreshTotalCapped(s, e.user, armedFresh, userLegs, treasuryLegs);
+            uint256 freshTotal = _userFreshTotalCapped(s, user, armedFresh, userLegs, treasuryLegs);
             return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh] >= freshTotal
                 && s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled] >= recycledUpper;
         }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            _userClaimFundingNeedViewWith(
-                s,
-                e.user,
-                armedFresh,
-                recycledUpper,
-                userLegs,
-                treasuryLegs
-            );
+            _userClaimFundingNeedViewWith(s, user, armedFresh, recycledUpper, userLegs, treasuryLegs);
     }
 
     /// @dev The claim's capped FRESH total, assembled from the same exact

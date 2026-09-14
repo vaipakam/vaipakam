@@ -6206,8 +6206,9 @@ PR C.**
 > Review r4: activation and every bootstrap write require the COMPLETE-CUT
 > RECORD to be current — `stampRewardCustodyCutover` (ADMIN, manual
 > pause) writes this tree's custody protocol version
-> (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the routed facet
-> set (every facet address the loupe holds, sorted), and is called only by
+> (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the ROUTING (every
+> facet address the loupe holds with the selectors it serves, both
+> sorted), and is called only by
 > the two complete-cut paths after their last cut: `DeployDiamond` after
 > its routing verification and `RefreshAllFacetsInPlace` after its last
 > cut and migration, both under the pause the cut ran under.
@@ -6222,6 +6223,18 @@ PR C.**
 > pre-flight mirrors the gate, and `stage()` / `run()` refuse an artifact
 > VPFI token that is not the Diamond's configured one (`getVPFIToken`),
 > so an approval is never serialised against a rotated-away token.
+> Review r5: the record hashes the ROUTING, not the facet-address set — a
+> Remove of one selector from a facet that keeps others leaves the loupe's
+> address list unchanged and would have let activation proceed with a
+> required claim, sweep or transport seam unrouted (a cut counter in the
+> cut facet was considered and rejected: `DiamondCutFacet` is
+> constructor-installed and never refreshed, so a counter there would not
+> be live on any existing chain); and the expiry clock's transfer test is
+> ONE function with its view mirror, `_claimTransferable` (the holder's
+> live and recycled rows when active, the Diamond's balance otherwise) —
+> the authoritative `sweepExpiredEntry` had kept the Diamond-balance test,
+> so on an activated chain with funds only in the holder no entry's clock
+> ever started.
 > The two holder invariants, the
 > recycled-row and live-row identities and the untouched Diamond balance
 > are pinned by `RewardCustodyInvariant`; the design's test list is

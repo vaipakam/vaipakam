@@ -1527,13 +1527,13 @@ contract TestMutatorFacet {
 
     /// @notice #1566 slice 4 PR B (Codex #2186 r4) test-only — write the
     ///         complete-cut record raw, so the VERSION half of the activation
-    ///         gate can be straddled (the facet-set half is straddled by a
-    ///         real cut). Production writes it only through
+    ///         gate can be straddled (the routing half is straddled by real
+    ///         cuts). Production writes it only through
     ///         {RewardCustodyFacet.stampRewardCustodyCutover}.
-    function setRewardCustodyCutoverRaw(uint32 version, bytes32 facetSet) external {
+    function setRewardCustodyCutoverRaw(uint32 version, bytes32 routing) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.rewardCustodyCutoverVersion = version;
-        s.rewardCustodyCutoverFacetSet = facetSet;
+        s.rewardCustodyCutoverRouting = routing;
     }
 
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited

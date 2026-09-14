@@ -157,14 +157,15 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         );
         // Mirrors the contract's complete-cut gate BEFORE anything is sent
         // (Codex #2186 r4 P1): activation and the bootstrap writers refuse
-        // unless the routed facet set is the one a complete refresh recorded
-        // under this tree's custody protocol version.
+        // unless the routing — every facet with its selectors — is the one a
+        // complete refresh recorded under this tree's custody protocol
+        // version.
         {
-            (uint32 stampedV, uint32 requiredV, bytes32 stampedSet, bytes32 routedSet) =
+            (uint32 stampedV, uint32 requiredV, bytes32 stampedRouting, bytes32 currentRouting) =
                 RewardCustodyFacet(diamond).rewardCustodyCutoverStatus();
             require(
-                stampedV == requiredV && stampedSet == routedSet,
-                "ActivateRewardCustody: the routed facet set is not the one a COMPLETE refresh recorded (RefreshAllFacetsInPlace / DeployDiamond) -- the custody facet was cut alone, a curated partial cut ran since, or the record is from an older tree; run the complete refresh, then activate"
+                stampedV == requiredV && stampedRouting == currentRouting,
+                "ActivateRewardCustody: the routing is not the one a COMPLETE refresh recorded (RefreshAllFacetsInPlace / DeployDiamond) -- the custody facet was cut alone, a partial cut of a facet or a selector ran since, or the record is from an older tree; run the complete refresh, then activate"
             );
         }
         // Mirrors the contract's canonical prerequisite BEFORE anything is

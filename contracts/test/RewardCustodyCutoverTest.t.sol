@@ -14,6 +14,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
@@ -102,6 +103,9 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
     function _rlens() internal view returns (RewardRemittanceLensFacet) {
         return RewardRemittanceLensFacet(address(diamond));
+    }
+    function _sweeper() internal view returns (RewardHorizonSweepFacet) {
+        return RewardHorizonSweepFacet(address(diamond));
     }
     function _facet() internal view returns (InteractionRewardsFacet) {
         return InteractionRewardsFacet(address(diamond));
@@ -247,12 +251,15 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     /// Activation and every bootstrap write require the COMPLETE-cut record
-    /// to be current (Codex #2186 r4 P1): the version this tree's consumers
-    /// implement, and the routed facet set as the complete cut left it. A cut
-    /// after the record — one selector re-routed to a mock — and a stale
-    /// version each refuse with the four values named; re-recording under
-    /// the pause, as the complete refresh does, admits the activation again;
-    /// and the record itself is taken under the manual pause only.
+    /// to be current (Codex #2186 r4 P1, r5 P1): the version this tree's
+    /// consumers implement, and the ROUTING — every facet with its selectors
+    /// — as the complete cut left it. A cut after the record refuses with the
+    /// four values named, whether it re-routes one selector to a mock or only
+    /// REMOVES one selector from a facet that keeps its others (the case an
+    /// address-only record was blind to); a stale version refuses on its own;
+    /// re-recording under the pause, as the complete refresh does, admits the
+    /// activation again; and the record itself is taken under the manual
+    /// pause only.
     function test_Activation_RequiresTheCompleteCutRecord() public {
         _becomeCanonical();
         _seedDiamond(1e18);
@@ -260,12 +267,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
         _custody().rebaseArmedFreshPaid(0, epoch);
-        (uint32 stampedV, uint32 requiredV, bytes32 stampedSet, bytes32 routedSet) =
+        (uint32 stampedV, uint32 requiredV, bytes32 stamped, bytes32 current) =
             _custody().rewardCustodyCutoverStatus();
         assertEq(stampedV, requiredV, "the build recorded this tree's version");
-        assertEq(stampedSet, routedSet, "the build recorded the routed set");
+        assertEq(stamped, current, "the build recorded the routing");
 
-        // A partial cut after the record: the routed set moves, the record does not.
+        // A partial cut after the record: the routing moves, the record does not.
         RevertingRollupForCutover mock = new RevertingRollupForCutover();
         bytes4[] memory sel = new bytes4[](1);
         sel[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
@@ -276,29 +283,49 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
             functionSelectors: sel
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-        (, , bytes32 stampedAfterCut, bytes32 routedAfterCut) = _custody().rewardCustodyCutoverStatus();
-        assertEq(stampedAfterCut, stampedSet, "a cut does not touch the record");
-        assertTrue(routedAfterCut != stampedSet, "the routed set moved");
+        (, , bytes32 stampedAfterCut, bytes32 afterReplace) = _custody().rewardCustodyCutoverStatus();
+        assertEq(stampedAfterCut, stamped, "a cut does not touch the record");
+        assertTrue(afterReplace != stamped, "the routing moved");
         vm.expectRevert(
             abi.encodeWithSelector(
-                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stampedSet, routedAfterCut
+                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stamped, afterReplace
             )
         );
         _custody().activateRewardCustody(epoch, false);
         _mut().setRecycleBucketRaw(1e18);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stampedSet, routedAfterCut
+                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stamped, afterReplace
             )
         );
         _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
 
-        // Re-recorded under the pause; then a stale VERSION refuses on its own.
+        // Re-recorded; then a REMOVE of one selector from a facet that keeps
+        // its others (the facet-address set is unchanged) refuses too.
         _custody().stampRewardCustodyCutover();
-        _mut().setRewardCustodyCutoverRaw(0, routedAfterCut);
+        sel[0] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sel
+        });
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        (, , bytes32 stampedBeforeRemove, bytes32 afterRemove) = _custody().rewardCustodyCutoverStatus();
+        assertEq(stampedBeforeRemove, afterReplace, "the record is the re-taken one");
+        assertTrue(afterRemove != afterReplace, "one removed selector moves the routing");
         vm.expectRevert(
             abi.encodeWithSelector(
-                RewardCustodyActivationRequiresCutover.selector, 0, requiredV, routedAfterCut, routedAfterCut
+                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, afterReplace, afterRemove
+            )
+        );
+        _custody().activateRewardCustody(epoch, false);
+
+        // Re-recorded; then a stale VERSION refuses on its own.
+        _custody().stampRewardCustodyCutover();
+        _mut().setRewardCustodyCutoverRaw(0, afterRemove);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyActivationRequiresCutover.selector, 0, requiredV, afterRemove, afterRemove
             )
         );
         _custody().activateRewardCustody(epoch, false);
@@ -311,6 +338,36 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().unpause();
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _custody().stampRewardCustodyCutover();
+    }
+
+    /// The expiry clock runs on holder custody (Codex #2186 r5 P1): on an
+    /// activated chain whose reward funds rest ONLY in the holder — the
+    /// Diamond's own balance is zero — the authoritative sweep observes the
+    /// claim as executable and stamps the clock on its first observation,
+    /// and the entry then expires out of the holder's rows. Before the fix
+    /// the sweep tested the Diamond's balance and never started the clock.
+    function test_ExpiryClock_RunsOnTheHolderRows_WithAnEmptyDiamondBalance() public {
+        _becomeCanonical();
+        _cfg().setRewardClaimHorizonDays(180);
+        activateRewardCustodyForTest(address(vpfi), 0);
+        (uint256 id, uint256 expected) = _seedPayable(alice);
+        fundRewardPoolForTest(address(vpfi), expected + 1e18);
+        assertEq(vpfi.balanceOf(address(diamond)), 0, "fixture: nothing rests in the Diamond's balance");
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit LibInteractionRewards.RewardEntryHorizonStamped(id, alice, uint64(block.timestamp));
+        assertEq(_sweeper().sweepExpiredInteractionRewards(ids), 0, "first observation stamps only");
+
+        uint256 swept;
+        uint256 guard = 60;
+        while (swept == 0 && guard-- > 0) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = _sweeper().sweepExpiredInteractionRewards(ids);
+        }
+        assertGt(swept, 0, "the entry expired");
+        assertEq(vpfi.balanceOf(address(diamond)), 0, "and the Diamond's balance never moved");
     }
 
     /// A bucket with tokens still in the Diamond's balance refuses activation

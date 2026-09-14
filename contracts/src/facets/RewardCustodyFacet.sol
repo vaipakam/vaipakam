@@ -1360,19 +1360,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice Record the COMPLETE facet cut (Codex #2186 r4): this tree's
-     *         custody protocol version and the hash of every facet address
-     *         the Diamond routes to, as they stand now. Activation and every
-     *         bootstrap write refuse unless this record is current, so
-     *         custody can never be switched onto the holder while a reward
-     *         path that does not know the holder is still routed.
+     * @notice Record the COMPLETE facet cut (Codex #2186 r4, r5): this
+     *         tree's custody protocol version and the hash of the ROUTING —
+     *         every facet address the Diamond routes to with the selectors
+     *         it serves — as they stand now. Activation and every bootstrap
+     *         write refuse unless this record is current, so custody can
+     *         never be switched onto the holder while a reward path that
+     *         does not know the holder is still routed, or a required seam
+     *         has been unrouted.
      * @dev    ADMIN, MANUAL pause. Called by the two complete-cut paths —
      *         `DeployDiamond` after its routing verification and
      *         `RefreshAllFacetsInPlace` after its last cut and migration,
      *         both under the pause the cut ran under — and by nothing else:
      *         no curated partial refresh records a cut, and a partial cut
-     *         after a record invalidates it (the routed set changes) until
-     *         the complete refresh runs again. What the record cannot prove
+     *         after a record — of a facet or of a single selector —
+     *         invalidates it (the routing changes) until the complete
+     *         refresh runs again. What the record cannot prove
      *         is that the caller's cut WAS complete: that is the complete
      *         refresh's own parity guard (`RefreshScriptFacetParityTest` pins
      *         its selector set to the deploy's). Read it as the refresh's
@@ -1384,20 +1387,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.stampCutover(LibVaipakam.storageSlot());
     }
 
-    /// @notice The complete-cut record beside what is routed now, for the
+    /// @notice The complete-cut record beside the routing now, for the
     ///         ceremony pre-flight and for a reader: activation and the
     ///         bootstrap writers require `stampedVersion == requiredVersion`
-    ///         and `stampedFacetSet == routedFacetSet`.
+    ///         and `stampedRouting == currentRouting`.
     function rewardCustodyCutoverStatus()
         external
         view
-        returns (uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedFacetSet, bytes32 routedFacetSet)
+        returns (uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedRouting, bytes32 currentRouting)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         stampedVersion = s.rewardCustodyCutoverVersion;
         requiredVersion = LibRewardCustody.CUTOVER_VERSION;
-        stampedFacetSet = s.rewardCustodyCutoverFacetSet;
-        (routedFacetSet, ) = LibRewardCustody.routedFacetSet();
+        stampedRouting = s.rewardCustodyCutoverRouting;
+        (currentRouting, , ) = LibRewardCustody.routing();
     }
 
     /**

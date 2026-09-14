@@ -136,60 +136,88 @@ library LibRewardCustody {
     uint32 internal constant CUTOVER_VERSION = 1;
 
     /// @notice A complete facet cut recorded the custody protocol version and
-    ///         the routed facet set it installed.
+    ///         the routing it installed.
     /// @custom:event-category state-change/reward-custody
-    event RewardCustodyCutoverStamped(uint32 version, bytes32 facetSet, uint256 facetCount);
+    event RewardCustodyCutoverStamped(uint32 version, bytes32 routing, uint256 facetCount, uint256 selectorCount);
 
-    /// @notice The routed facet set as one hash: every facet address the
-    ///         Diamond currently routes to, sorted so the order the loupe
-    ///         happens to hold them in cannot matter. Any cut that installs a
-    ///         facet at a new address — a Replace onto new bytecode, an Add of
-    ///         a new facet — changes it; a cut that only retires selectors
-    ///         from a facet that keeps others does not.
-    function routedFacetSet() internal view returns (bytes32 set, uint256 count) {
-        address[] storage addrs = LibDiamond.diamondStorage().facetAddresses;
-        count = addrs.length;
-        address[] memory sorted = new address[](count);
-        for (uint256 i = 0; i < count; ++i) {
+    /// @notice The Diamond's ROUTING as one hash: every facet address the
+    ///         Diamond routes to, with every selector it serves — facets
+    ///         sorted by address and each facet's selectors sorted, so the
+    ///         order the loupe happens to hold either in cannot matter. Any
+    ///         change to which selector reaches which bytecode changes it: a
+    ///         Replace onto new bytecode, an Add, AND a Remove of one selector
+    ///         from a facet that keeps others (Codex #2186 r5 P1 — an
+    ///         address-only hash was blind to exactly that, and a required
+    ///         claim, sweep or transport seam removed by a partial cut would
+    ///         have left a funded holder unreachable until another cut).
+    ///         Read straight from `LibDiamond` storage, the routing table
+    ///         itself, so no facet cut through the constructor-installed cut
+    ///         facet can escape it. Costs one SLOAD per routed selector; the
+    ///         calls that pay it are the once-per-chain ceremony's.
+    function routing() internal view returns (bytes32 hash, uint256 facetCount, uint256 selectorCount) {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        address[] storage addrs = ds.facetAddresses;
+        facetCount = addrs.length;
+        address[] memory facets = new address[](facetCount);
+        for (uint256 i = 0; i < facetCount; ++i) {
             address a = addrs[i];
             uint256 j = i;
-            while (j > 0 && sorted[j - 1] > a) {
-                sorted[j] = sorted[j - 1];
+            while (j > 0 && facets[j - 1] > a) {
+                facets[j] = facets[j - 1];
                 --j;
             }
-            sorted[j] = a;
+            facets[j] = a;
         }
-        set = keccak256(abi.encodePacked(sorted));
+        bytes32 acc;
+        for (uint256 i = 0; i < facetCount; ++i) {
+            bytes4[] storage stored = ds.facetFunctionSelectors[facets[i]].functionSelectors;
+            uint256 n = stored.length;
+            bytes4[] memory sels = new bytes4[](n);
+            for (uint256 k = 0; k < n; ++k) {
+                bytes4 x = stored[k];
+                uint256 j = k;
+                while (j > 0 && sels[j - 1] > x) {
+                    sels[j] = sels[j - 1];
+                    --j;
+                }
+                sels[j] = x;
+            }
+            selectorCount += n;
+            acc = keccak256(abi.encodePacked(acc, facets[i], sels));
+        }
+        hash = acc;
     }
 
     /// @notice Refuse unless the complete-cut record is CURRENT — the stamped
-    ///         version is this tree's and the stamped facet set is the one
-    ///         routed now. The gate on activation and on every bootstrap
-    ///         write. Why a record and not the ledger alone (Codex #2186 r4
-    ///         P1): the ledger figures say nothing about WHICH facets are
-    ///         routed, and a custody facet cut without the claim, sweep,
-    ///         remittance, compensation and recycle facets that read the
-    ///         holder would activate custody those stale consumers never
-    ///         debit, spending the Diamond's own balance beside a funded
-    ///         holder. The record is written only by the two complete-cut
-    ///         paths after their last cut, and any cut after it invalidates
-    ///         it until the complete refresh runs again.
+    ///         version is this tree's and the stamped routing is the routing
+    ///         now. The gate on activation and on every bootstrap write. Why
+    ///         a record and not the ledger alone (Codex #2186 r4 P1): the
+    ///         ledger figures say nothing about WHICH facets are routed, and
+    ///         a custody facet cut without the claim, sweep, remittance,
+    ///         compensation and recycle facets that read the holder would
+    ///         activate custody those stale consumers never debit, spending
+    ///         the Diamond's own balance beside a funded holder. The record
+    ///         is written only by the two complete-cut paths after their last
+    ///         cut, and any cut after it — of a facet or of a single
+    ///         selector — invalidates it until the complete refresh runs
+    ///         again.
     function requireCutover(LibVaipakam.Storage storage s) internal view {
-        (bytes32 routed, ) = routedFacetSet();
-        if (s.rewardCustodyCutoverVersion != CUTOVER_VERSION || s.rewardCustodyCutoverFacetSet != routed) {
+        (bytes32 current, , ) = routing();
+        if (s.rewardCustodyCutoverVersion != CUTOVER_VERSION || s.rewardCustodyCutoverRouting != current) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresCutover(
-                s.rewardCustodyCutoverVersion, CUTOVER_VERSION, s.rewardCustodyCutoverFacetSet, routed
+                s.rewardCustodyCutoverVersion, CUTOVER_VERSION, s.rewardCustodyCutoverRouting, current
             );
         }
     }
 
     /// @notice Record the complete cut: this tree's custody protocol version
-    ///         and the facet set routed now.
-    function stampCutover(LibVaipakam.Storage storage s) internal returns (bytes32 set, uint256 count) {
-        (set, count) = routedFacetSet();
+    ///         and the routing now.
+    function stampCutover(LibVaipakam.Storage storage s) internal returns (bytes32 hash) {
+        (bytes32 current, uint256 facetCount, uint256 selectorCount) = routing();
         s.rewardCustodyCutoverVersion = CUTOVER_VERSION;
-        s.rewardCustodyCutoverFacetSet = set;
-        emit RewardCustodyCutoverStamped(CUTOVER_VERSION, set, count);
+        s.rewardCustodyCutoverRouting = current;
+        emit RewardCustodyCutoverStamped(CUTOVER_VERSION, current, facetCount, selectorCount);
+        hash = current;
     }
 
     /// @notice One attribution row.

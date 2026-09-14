@@ -396,20 +396,21 @@ interface IVaipakamErrors {
     ///         live chain's refresh runs it), so the baseline it verifies is
     ///         the one the rebase installed.
     error RewardCustodyActivationRequiresRebase();
-    /// @notice #1566 slice 4 PR B (Codex #2186 r4) — activation, or a
-    ///         bootstrap write, was attempted on a deployment whose routed
-    ///         facet set is not the one a COMPLETE cut recorded under this
-    ///         tree's custody protocol version: the custody facet was cut
-    ///         alone, a partial cut ran after the record, or the record is
-    ///         from an older tree. The reward paths that must read the
-    ///         holder may still be stale, so custody is not switched. Run
-    ///         the complete refresh.
+    /// @notice #1566 slice 4 PR B (Codex #2186 r4, r5) — activation, or a
+    ///         bootstrap write, was attempted on a deployment whose ROUTING
+    ///         (every facet with the selectors it serves) is not the one a
+    ///         COMPLETE cut recorded under this tree's custody protocol
+    ///         version: the custody facet was cut alone, a partial cut — of a
+    ///         facet or of a single selector — ran after the record, or the
+    ///         record is from an older tree. The reward paths that must read
+    ///         the holder may still be stale or unrouted, so custody is not
+    ///         switched. Run the complete refresh.
     /// @param stampedVersion  The recorded version (zero: never recorded).
     /// @param requiredVersion This tree's `LibRewardCustody.CUTOVER_VERSION`.
-    /// @param stampedFacetSet The recorded routed-facet-set hash.
-    /// @param routedFacetSet  The routed-facet-set hash now.
+    /// @param stampedRouting  The recorded routing hash.
+    /// @param currentRouting  The routing hash now.
     error RewardCustodyActivationRequiresCutover(
-        uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedFacetSet, bytes32 routedFacetSet
+        uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedRouting, bytes32 currentRouting
     );
     /// @notice #1566 slice 4 PR B — a canonical chain must have armed
     ///         per-receipt recovery attribution before activation: arming
