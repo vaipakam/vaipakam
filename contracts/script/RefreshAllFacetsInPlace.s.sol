@@ -375,6 +375,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // sequential transactions can still expose a mixed facet set for the
         // rest of the run; the irreversible steps, by contrast, are gated on
         // chain (manual pause + epoch) and refuse in that case.
+        // The transition count BEFORE this run's own pause: the run restores
+        // service at the end only if the count then reads exactly one more —
+        // its own pause and nothing else (Codex #2158 post-cap P2). A watcher
+        // auto-pause or a Pauser's incident pause raised while the deploys
+        // and cuts broadcast moves the count further, and an unpause here
+        // would clear an incident it knows nothing about.
+        (,,, uint64 epochBeforeOurPause) =
+            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
         AdminFacet(diamond).pause();
 
         Item[] memory items = _deployItems();
@@ -1161,7 +1169,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
-        if (!wasPaused) AdminFacet(diamond).unpause();
+        if (!wasPaused) {
+            (,,, uint64 epochAtEnd) =
+                LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+            if (epochAtEnd == epochBeforeOurPause + 1) {
+                AdminFacet(diamond).unpause();
+            } else {
+                console.log(
+                    "the pause state changed during this run (a pause was raised or lifted by someone else) - "
+                    "NOT unpausing; the Diamond stays paused for a fresh decision. transitions before/after:",
+                    epochBeforeOurPause,
+                    epochAtEnd
+                );
+            }
+        }
         if (bootstrapOnly) {
             console.log("");
             console.log("BOOTSTRAP RUN COMPLETE - facets cut and every other refresh step run (proxy upgrades, role backfill, tariff migration where due); Diamond left PAUSED; ONLY the paid-side seed and rebase were NOT run.");

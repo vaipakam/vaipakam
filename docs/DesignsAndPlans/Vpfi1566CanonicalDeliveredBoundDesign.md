@@ -6013,7 +6013,9 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > everything but the two paid-side migrations (review r30). A Diamond that is
 > its own treasury has every ERC-20 the sweeps deliver credited to its tracked
 > treasury balance, and the ERC-721 sweep reads ownership before as well as
-> after the release (post-cap review). Simulations neither create nor erase
+> after the release; the native sweep refuses a Diamond-as-treasury
+> destination, and a refresh that found the chain live unpauses only if the
+> transition count shows nothing but its own pause (post-cap review). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

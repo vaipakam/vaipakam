@@ -647,6 +647,18 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(tf.getTreasuryBalance(address(vpfi)), 40 ether, "unattributed VPFI credited to the tracked balance");
     }
 
+    /// @dev Codex #2158 post-cap P2 — native currency has no claim path on a
+    ///      Diamond that is its own treasury, so the native sweep refuses that
+    ///      destination instead of stranding the value in the raw balance.
+    function test_SweepNative_RefusesADiamondTreasury() public {
+        address holder = _bind();
+        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        vm.deal(holder, 1 ether);
+        vm.expectRevert(IVaipakamErrors.RewardCustodyNativeToDiamondTreasury.selector);
+        _custody().sweepNativeFromRewardCustody(holder, 1 ether);
+        assertEq(holder.balance, 1 ether, "stays at the holder, which can still release it to an external treasury");
+    }
+
     /// @dev Codex #2158 post-cap P2 — the ERC-721 sweep refuses a token the
     ///      named holder does not own, so a token already sitting with the
     ///      treasury can never be reported as recovered from a holder.

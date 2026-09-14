@@ -344,6 +344,11 @@ interface IVaipakamErrors {
     /// @param tokenId The token.
     /// @param owner   Who the token reports as its owner.
     error RewardCustodyErc721NotAtHolder(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the native sweep
+    ///         was asked to deliver into a Diamond that is its own treasury,
+    ///         which has no tracked native balance and no native claim path;
+    ///         the currency would be stranded in the raw balance.
+    error RewardCustodyNativeToDiamondTreasury();
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

@@ -2323,6 +2323,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyNativeToDiamondTreasury",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyRecoverTargetsBoundHolder",
     "inputs": [
       {

@@ -372,6 +372,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        // A Diamond that is its own treasury has no tracked native balance and
+        // no native claim path (Codex #2158 post-cap P2): a native sweep into
+        // it would move currency out of a holder that CAN release it into a
+        // raw balance nothing can withdraw. Refused, with the reason named,
+        // rather than reported as recovered.
+        if (treasury == address(this)) revert IVaipakamErrors.RewardCustodyNativeToDiamondTreasury();
         _requireConstructedHere(s, holder);
         uint256 holderBefore = holder.balance;
         uint256 before = treasury.balance;
@@ -858,8 +864,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ///      to separate. Credited as a plain balance, not through the fee
     ///      analytics: a recovered stray asset is not revenue. Native
     ///      currency has no tracked treasury balance and no claim path on a
-    ///      Diamond-as-treasury today; that gap predates this change and is
-    ///      not hidden by it.
+    ///      Diamond-as-treasury today, so the native sweep refuses that
+    ///      destination outright rather than stranding value in it.
     function _creditDiamondTreasury(LibVaipakam.Storage storage s, address asset, uint256 amount) private {
         if (amount == 0 || s.treasury != address(this)) return;
         s.treasuryBalances[asset] += amount;
