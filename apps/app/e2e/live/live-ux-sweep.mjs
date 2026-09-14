@@ -84,13 +84,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { errors as playwrightErrors } from '@playwright/test';
 import {
   launch,
   ensureConnected,
   addressOf,
   blockedSync,
   LiveSetupError,
-  navFailureReason,
   requireSiteUrl,
   SITE,
   visit,
@@ -107,6 +107,7 @@ requireSiteUrl();
 // check silently turned into a no-op, indistinguishable from a clean
 // deployment (Codex #1859 r3 P2). What runs here is what the tests pin.
 import { BEACON_ORIGIN, isBeaconRefusalMessage, isBeaconUrl, scanBeacon } from './beaconScan.mjs';
+import { navFailureReason } from './navFailure.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -665,6 +666,7 @@ for (const pass of session.passes) {
     const started = Date.now();
     routesAttempted += 1;
     let navError = null;
+    let navTimedOut = false;
     let httpStatus = null;
     let servedPath = null;
     let landedPath = null;
@@ -680,6 +682,15 @@ for (const pass of session.passes) {
       // has happened by the time this is sampled.
       landedPath = pathOf(page.url());
     } catch (e) {
+      // CLASSIFY HERE, where the error object still exists. The row
+      // needs to know whether the deadline expired, and asking that of
+      // the message text — `/timeout/i` and `/exceed/i` — is a string
+      // test standing in for a question about a value (#2109 r1). It can
+      // also be wrong in the dangerous direction: a genuine failure
+      // whose text happens to carry those words would be handed the
+      // deliberately softer timeout wording, which is an infrastructure
+      // excuse for a real defect.
+      navTimedOut = e instanceof playwrightErrors.TimeoutError;
       navError = String(e).slice(0, 300);
     }
     // A THROW is not the only way a route can fail to load: `page.goto`
@@ -821,7 +832,7 @@ for (const pass of session.passes) {
                   // timeout printed bare and read as a broken route
                   // (#2109). Its two siblings above have said why since
                   // they were written; this one never did.
-                  ` (${navFailureReason(navError, NAV_BUDGET_MS)})`)),
+                  ` (${navFailureReason({ timedOut: navTimedOut, message: navError }, NAV_BUDGET_MS)})`)),
     );
     sink = null;
   }
