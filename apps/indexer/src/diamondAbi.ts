@@ -38,12 +38,17 @@
 import {
   OfferCancelFacetABI,
   LoanFacetABI,
+  MetricsFacetABI,
   SignedOfferFacetABI,
 } from '@vaipakam/contracts/abis';
 
 export const DIAMOND_OFFER_DETAILS_ABI = OfferCancelFacetABI;
 
 export const DIAMOND_LOAN_DETAILS_ABI = LoanFacetABI;
+
+/** `MetricsFacet.getActiveLoansCount` — the chain's own active-loan
+ *  total, read once per reconciliation pass as its cheap gate (#2101). */
+export const DIAMOND_METRICS_ABI = MetricsFacetABI;
 
 /** #1131 Rate Desk phase 3 — hosts `signedOfferFilledAmount(bytes32)`, the
  *  cumulative-fill ledger read the SignedOfferMatched handler block-pins for

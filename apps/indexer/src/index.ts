@@ -109,6 +109,9 @@ import {
 } from './offerRoutes';
 import { handleLoopClosure } from './rewardRoutes';
 import { captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
+import { createPublicClient, http } from 'viem';
+import { reconcileLoansForChain } from './loanReconcile';
+import { DIAMOND_LOAN_DETAILS_ABI, DIAMOND_METRICS_ABI } from './diamondAbi';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -202,6 +205,74 @@ export default {
           // eslint-disable-next-line no-console
           console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
         }),
+      );
+    }
+
+    // #2101 — reconcile indexed loan status against the chain for ONE
+    // chain per tick, the same rotation and the same reason as the
+    // backing snapshot above.
+    //
+    // A terminal event missed while this Worker was down, rate-limited or
+    // past its catch-up window is missed PERMANENTLY: catching the cursor
+    // up restores the cursor, not the rows. Measured on Base Sepolia on
+    // 2026-09-14 — chain 6 active, `/loans/stats` 7, `/loans/active` 9,
+    // one of the ghosts untouched since 2026-07-04. A ghost active loan
+    // is a position the platform tells the world is still open.
+    //
+    // RUNS ON BOTH PATHS, for the reason `sweepUnpublishedListings`
+    // records below: gating a repair pass off on the DO path would drop
+    // the safety net the moment an operator enables DO ingest. The
+    // two-writer hazard is closed at the source instead — the status
+    // UPDATE is `status = 'active'`-guarded, so a terminal the DO landed
+    // first wins and this becomes a no-op.
+    //
+    // THE BUDGET DIFFERS BY PATH, which is why `maxRows` is computed here
+    // rather than inside the pass: the legacy inline tick already spends
+    // ~38 subrequests on backfill plus the snapshot's handful against a
+    // 50 cap, while the DO tick only pings DOs. `captureBackingSnapshot`
+    // records why this cannot be sniffed from the resolved env — it does
+    // not carry `CHAIN_INGEST_DO`, so a cast to reach it reads undefined.
+    if (backingChains.length > 0) {
+      const t2 = controller.scheduledTime;
+      const minute2 = Number.isFinite(t2) ? Math.floor((t2 as number) / 60_000) : 0;
+      const onDoPath = doIngestEnabled(env) && Boolean(env.CHAIN_INGEST_DO);
+      const tickMinutes2 = onDoPath ? DO_PATH_CADENCE_MINUTES : 1;
+      // Offset by one from the snapshot's rotation so the two passes do
+      // not land on the same chain in the same tick and stack their
+      // subrequests.
+      const ordinal2 = Math.floor(minute2 / tickMinutes2) + 1;
+      const target2 = backingChains[Math.abs(ordinal2) % backingChains.length];
+      ctx.waitUntil(
+        reconcileLoansForChain(
+          resolved,
+          target2,
+          (rpc) =>
+            createPublicClient({
+              // No retry, for the same reason the snapshot gives: a retry
+              // doubles this pass's subrequest count inside an invocation
+              // whose budget the ingest pass already reserves.
+              transport: http(rpc, { timeout: 10_000, retryCount: 0 }),
+            }) as never,
+          DIAMOND_METRICS_ABI,
+          DIAMOND_LOAN_DETAILS_ABI,
+          { maxRows: onDoPath ? 5 : 2, minRows: 1 },
+        )
+          .then((report) => {
+            if (report && report.repaired.length > 0) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[indexer] reconciled chain ${report.chainId}: ` +
+                  report.repaired
+                    .map((r) => `loan ${r.loanId} ${r.from}->${r.to}`)
+                    .join(', '),
+              );
+            }
+          })
+          .catch((err) => {
+            // One chain's RPC blip must not wedge the tick.
+            // eslint-disable-next-line no-console
+            console.error(`[indexer] loan reconcile failed for ${target2.id}:`, err);
+          }),
       );
     }
 
