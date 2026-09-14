@@ -61,7 +61,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  * not on a pull request — so a driver could be added, reviewed, merged
  * and run for weeks with its BLOCKED reported as a product FAIL.
  *
- * Behaviour here is unchanged. The check that fails is a unit test.
+ * CLASSIFICATION here is unchanged — an exit code still becomes the same
+ * verdict it always did. REPORTING is not: a declared opt-out is named
+ * with its reason and does not carry the hedge meant for a driver nobody
+ * has classified. An earlier draft of this comment claimed the whole
+ * file was unchanged, and stayed after the reporting changed (#2099 r2,
+ * r3 — it survived the first correction because the same sentence sat in
+ * three places and only two were fixed).
+ *
+ * The check that fails is a unit test.
  */
 
 const scripts = driversOnDisk(HERE);

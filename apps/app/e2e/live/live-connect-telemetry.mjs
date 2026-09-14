@@ -65,7 +65,7 @@
 //   SITE_URL=http://localhost:4319 node e2e/live/live-connect-telemetry.mjs
 //
 // Exit: 0 pass, 1 fail, 2 blocked (setup/precondition, nothing observed).
-import { addressOf, blockedSync, launch, requireSiteUrl, SITE, visit} from './driver.mjs';
+import { addressOf, launch, requireSiteUrl, SITE, visit } from './driver.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -177,52 +177,38 @@ page.on('websocket', (ws) => {
 let failed = false;
 
 /**
- * BLOCKED, unless this drive has already found something.
+ * FAIL — an assertion against something that WAS served.
  *
- * `blockedSync` exits 2 the moment it is called, and several of the
- * preconditions below sit AFTER the load-phase telemetry checks. So a
- * run that caught a real beacon leak on load and then could not open the
- * connect window would have exited 2 — reported as "could not verify",
- * hiding a product defect the same run had already established (#2099
- * round 1).
+ * EVERY CHECK THIS DRIVE MAKES ITSELF IS ONE OF THESE, which took three
+ * review rounds to see (#2099 r1-r3). `driver.mjs` states the rule: a
+ * drive that never got a served page to assert against is BLOCKED; one
+ * that asserted against a served page and had the assertion fail is
+ * FAIL. This drive only ever reaches its own checks after a page is
+ * served, so all four are the second kind:
  *
- * A finding outranks a later precondition failure. Nothing observed is
- * lost by saying FAIL, whereas everything observed is lost by saying
- * BLOCKED, so the asymmetry decides it: the reason is printed either
- * way, and only the verdict changes.
+ *   - no Coinbase connector in the modal — the modal WAS served, and
+ *     `coinbaseWallet()` is configured unconditionally, so its absence
+ *     is a build or configuration regression;
+ *   - no window after the connector was clicked — the flow was
+ *     exercised and did not initialize;
+ *   - an unparseable popup URL, or one that is not `keys.coinbase.com`
+ *     — a window opened and went somewhere it must not, which the
+ *     comment at that check explains is how a spoofed connector would
+ *     make the zero-beacon reading meaningless.
+ *
+ * The decisive argument was the drive's own inconsistency, not taste:
+ * it already records a MISSING WALLETCONNECT ENTRY as FAIL, and a
+ * WalletConnect relay that never opens as FAIL. The Coinbase halves of
+ * those same two questions were reported as BLOCKED. One drive, one kind
+ * of fact, two verdicts.
+ *
+ * This drive still speaks BLOCKED — through the shared harness, which
+ * exits 2 for an unreachable site, a missing credential or no browser.
+ * Those are the preconditions. None of them is a check written here.
  */
-/**
- * FAIL outright — an assertion against something that WAS served.
- *
- * `driver.mjs` states the rule: a drive that never got a served page to
- * assert against is BLOCKED; one that asserted against a page that was
- * served and had the assertion fail is FAIL. The connector opening the
- * wrong host is the second of those — a window opened, and it went
- * somewhere it must not — and the surrounding comment says exactly why
- * that matters: a spoofed or broken connector satisfying the
- * precondition would make the zero-beacon reading mean nothing.
- * Reporting it as BLOCKED hides the precise defect the check exists to
- * catch (#2099 round 2).
- *
- * Distinct from `blockOrFail` below, which is for preconditions that
- * really are preconditions: no Coinbase connector in the modal, or no
- * window opened at all, are both "no eligible state to measure" — the
- * shared rule's own example of BLOCKED — rather than something served
- * failing a check.
- */
-const failNow = (why) => {
-  step('Coinbase SDK initializes', 'FAIL', why);
+const failNow = (why, stepName) => {
+  step(stepName, 'FAIL', why);
   console.error(`\nFAIL: ${why}`);
-  process.exit(1);
-};
-
-const blockOrFail = (why) => {
-  if (!failed && steps.every((s) => s.verdict !== 'FAIL')) blockedSync(why);
-  console.error(`\nBLOCKED-after-FAIL: ${why}`);
-  console.error(
-    'live-connect-telemetry: FAIL — reporting the defect already found rather than' +
-      ' the precondition that stopped the rest of the run',
-  );
   process.exit(1);
 };
 
@@ -262,7 +248,7 @@ try {
   const modalText = await page.locator('body').innerText();
   const offersCoinbase = /coinbase/i.test(modalText);
   if (!offersCoinbase) {
-    blockOrFail('the connect modal offers no Coinbase connector; nothing to initialize');
+    failNow('the connect modal offers no Coinbase connector', 'Coinbase connector offered');
   }
   // "Other Wallets" IS the WalletConnect entry — ConnectKit labels it
   // that way whenever `showQrModal: false`. Keying on the product name
@@ -299,7 +285,10 @@ try {
   // reading below would be measuring nothing at all — the exact false
   // pass this drive exists to avoid.
   if (!popup) {
-    blockOrFail('the Coinbase SDK never opened its connect window; nothing was initialized to measure');
+    failNow(
+      'the Coinbase SDK never opened its connect window after the connector was clicked',
+      'Coinbase SDK initializes',
+    );
   }
   const popupUrl = popup.url();
   // EXACT host (Codex #1894 r1). `includes('coinbase.com')` accepts
@@ -311,10 +300,10 @@ try {
   try {
     popupHost = new URL(popupUrl).host;
   } catch {
-    failNow(`the connector opened an unparseable URL: ${popupUrl}`);
+    failNow(`the connector opened an unparseable URL: ${popupUrl}`, 'Coinbase SDK initializes');
   }
   if (popupHost !== 'keys.coinbase.com') {
-    failNow(`the connector opened ${popupHost}, not keys.coinbase.com`);
+    failNow(`the connector opened ${popupHost}, not keys.coinbase.com`, 'Coinbase SDK initializes');
   }
   step('Coinbase SDK initializes', 'PASS', popupHost);
 

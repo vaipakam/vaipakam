@@ -53,17 +53,19 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // points the operator at the product during an infrastructure problem.
   'live-role-journeys.mjs',
   'live-collateral-precheck.mjs',
-  // Exits 2 through `blockedSync` when the connect modal offers no
-  // Coinbase connector, when the SDK never opens its window, or when it
-  // opens somewhere unexpected — all preconditions for measuring whether
-  // the connector phones home, none of them a product regression.
+  // Speaks BLOCKED through the SHARED HARNESS — an unreachable site, a
+  // missing credential, no browser — and through none of its own
+  // checks, which are all assertions against a page that was served.
   //
-  // Registered after CHECKING that it honours the contract, rather than
-  // on the strength of the list being one name short: it documents the
-  // contract at its head and reaches `blockedSync` at four sites.
-  // Registering a driver that never agreed to mean BLOCKED by exiting 2
-  // is the dishonesty this set exists to prevent, so membership is
-  // something to verify and not to assume (#2099).
+  // That took three review rounds to establish, and the audit comment
+  // here was wrong twice on the way (#2099 r1-r3). It first said the
+  // driver reached `blockedSync` at four sites and called all four
+  // preconditions; each round moved another one to FAIL, until none was
+  // left. Registering a driver that never agreed to mean BLOCKED by
+  // exiting 2 is the dishonesty this set exists to prevent — and a
+  // rationale that has drifted from the driver is the same failure with
+  // an extra step, since it is what the next reader will trust instead
+  // of reading the code.
   'live-connect-telemetry.mjs',
   'live-desk-i18n-capture.mjs',
   'live-dryrun-review.mjs',

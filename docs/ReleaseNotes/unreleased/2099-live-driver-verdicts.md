@@ -53,14 +53,26 @@ still printed and only the verdict changes, because nothing observed is
 lost by reporting the defect, while everything observed is lost by
 reporting the incompletion.
 
-The second fix is the same error by the opposite door. Two of that
-drive's checks are not preconditions at all: the connect window opened,
-and it went somewhere it must not have. Something was served and a check
-against it failed, which is the definition of finding a defect — and the
-comment beside one of those checks says exactly why it matters, since a
-spoofed connector satisfying the precondition would make the whole
-measurement meaningless. Reporting that as "did not finish" hides the
-precise thing the check exists to catch. Both now report a defect.
+The second fix is the same error by the opposite door, and it kept going
+until none of the drive's own checks was left on the wrong side.
+
+None of those four checks is a precondition. Each of them runs only after
+a page has been served, and each asks whether what was served is right:
+is the connector offered, did clicking it open anything, did what opened
+go where it must. Something served, a question asked of it, the answer
+wrong — that is finding a defect, not failing to start.
+
+What settled it was not an argument about definitions but the drive
+contradicting itself. It already recorded a missing WalletConnect entry
+as a defect, and a WalletConnect connection that never opened as a
+defect. The Coinbase halves of those exact two questions were being
+reported as "did not finish". One drive, one kind of fact, two different
+verdicts, a few lines apart. All four report a defect now.
+
+The drive still reports "did not finish" — through the shared machinery
+that every drive uses, for an unreachable site or a missing credential or
+no browser at all. Those are the real preconditions, and none of them is
+a check written in the drive itself.
 
 Adding a drive to that list without reading it is the same mistake as
 leaving one off: it puts a claim into the runner's output that the drive
