@@ -1,73 +1,66 @@
 /**
- * IS THIS RPC FAILURE WORTH ASKING AGAIN? (#2107 round 1)
+ * IS THIS RPC FAILURE WORTH ASKING AGAIN? (#2107 rounds 1-3)
  *
  * `writeConfirm.mjs` retries a read until its deadline and then reports
  * that no node would answer. That is the right account of a transport
  * drop, a rate limit or a node that lacks the pinned block. It is the
- * WRONG account of a getter that reverted or a payload that would not
- * decode: every node returns those identically, so waiting out the
- * deadline turns a contract or ABI regression into a report about the
- * endpoint — the same mislabelling the three-verdict change exists to
- * stop, one layer down.
+ * WRONG account of a getter that REVERTED: every node reverts
+ * identically, so waiting out the deadline turns a contract regression
+ * into a report about the endpoint — the same mislabelling the
+ * three-verdict change exists to stop, one layer down.
  *
- * WHICH SIDE IS ENUMERATED, and why that way round. The retryable side
- * is open — transport failures, proxies, rate limiters and provider
- * quirks have no closed list, and a rule whose correctness depends on
- * enumerating an open set is wrong without knowing it (the lesson
- * #1995 and #2170 both recorded). The DETERMINISTIC side is the one
- * worth naming. Anything unrecognised keeps retrying, which is exactly
- * what the code did before this existed, so an unknown error is no
- * worse off than it was.
+ * WHAT THIS NO LONGER TRIES TO DO, and why that is the whole point.
+ * The first version listed `AbiDecodingZeroDataError`; review produced
+ * `AbiDecodingDataSizeTooSmallError`. The second matched viem's
+ * `Abi*Error` NAME family; review produced `InvalidBytesBooleanError`,
+ * `SliceOffsetOutOfBoundsError` and `SizeExceedsPaddingSizeError`,
+ * which are decoding failures that do not carry that name at all. Two
+ * rounds, two shapes of the same mistake — which is this repo's
+ * recorded signal to fix the seam rather than name another member.
  *
- * AND THE ABI SIDE IS NAMED BY FAMILY, NOT BY CLASS — which is the
- * second attempt at this and the reason for the first one's failure.
- * The first listed `AbiDecodingZeroDataError`, and review immediately
- * produced `AbiDecodingDataSizeTooSmallError`, which a `0x01` reply for
- * a `uint256` raises (#2107 round 2). viem exports SEVENTEEN `Abi*Error`
- * classes and gives them no common ancestor — every one extends
- * `BaseError` directly — so an `instanceof` list is open by
- * construction and would have grown by one per review round. That is
- * the seam this repo's round-cap directive says to fix at the root
- * rather than patch again.
+ * So decoding is no longer classified: it is no longer INSIDE the retry
+ * boundary. `confirmWrite` fetches the raw reply under the retry and
+ * decodes outside it, which makes "a reply that will not decode is never
+ * worth retrying" true by construction instead of by enumeration. A
+ * decode failure propagates on the spot, and `confirmWriteOrReport`
+ * turns it into a named verdict immediately rather than ninety seconds
+ * later.
  *
- * The family is closed by viem's own naming: an error whose name
- * matches `Abi…Error` is about the shape of an ABI or of a reply
- * decoded against it, which is a function of the ABI and the bytes and
- * not of which node answered. All seventeen qualify.
+ * What is left here is ONE question — did the node answer with a revert
+ * — over classes that have been stable across all three rounds and that
+ * no round has produced a new member of. A list of one is not the shape
+ * that failed twice.
  *
- * A name test is only as good as the convention it trusts, so it is not
- * trusted silently: `rpcRetryable.test.mjs` enumerates every `Abi*Error`
- * viem actually exports and requires each to be classified
- * deterministic. If viem renames one or adds one outside the
- * convention, that fails loudly instead of the classifier quietly
- * retrying it for ninety seconds.
+ * WHICH SIDE IS ENUMERATED is still deliberate. The retryable side is
+ * open — transport failures, proxies, rate limiters and provider quirks
+ * have no closed list, and a rule whose correctness depends on
+ * enumerating an open set is wrong without knowing it (#1995, #2170).
+ * Anything unrecognised keeps retrying, exactly as the code did before
+ * any of this existed.
  *
- * It lives apart from `writeConfirm.mjs` on purpose. That module makes
- * a decision and imports nothing, so its whole contract is testable
- * without a chain; this one knows one provider's error taxonomy. Mixing
- * them would put viem inside the decision and make the decision
- * untestable without it.
+ * It lives apart from `writeConfirm.mjs` on purpose. That module makes a
+ * decision and imports nothing, so its whole contract is testable
+ * without a chain; this one knows one provider's error taxonomy.
  */
-import { ContractFunctionRevertedError } from 'viem';
-
-/** viem's ABI-shape errors, by the convention it names them under.
- *  Anchored at both ends so it cannot match a name that merely
- *  CONTAINS one — `NotAnAbiErrorAtAll` is not a member. */
-export const ABI_ERROR_NAME = /^Abi[A-Za-z]*Error$/;
+import { ContractFunctionRevertedError, RawContractError } from 'viem';
 
 /**
  * Whether asking another node could plausibly give a different answer.
  *
  * @param {unknown} err
- * @returns {boolean} false only for failures every node reproduces.
+ * @returns {boolean} false only for a revert, which every node reproduces.
  */
 export function rpcRetryable(err) {
-  // viem nests: the deterministic error is normally the cause rather
-  // than the outermost error, and `walk` is how it is reached. A plain
-  // Error has no `walk`, and an unrecognised shape retries.
+  // viem nests: the revert is normally the cause rather than the
+  // outermost error, and `walk` is how it is reached. A plain Error has
+  // no `walk`, and an unrecognised shape retries.
+  //
+  // BOTH classes, because the two read paths surface a revert
+  // differently: `readContract` raises `ContractFunctionRevertedError`,
+  // while a raw `call` carries `RawContractError`.
   const walk = typeof err?.walk === 'function' ? err.walk.bind(err) : null;
   if (!walk) return true;
   return !walk(
-    (e) => e instanceof ContractFunctionRevertedError || ABI_ERROR_NAME.test(String(e?.name ?? '')),
+    (e) => e instanceof ContractFunctionRevertedError || e instanceof RawContractError,
   );
 }

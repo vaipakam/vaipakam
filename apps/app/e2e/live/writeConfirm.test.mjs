@@ -277,6 +277,105 @@ describe('confirmWrite', () => {
     expect(clock.now()).toBe(25);
   });
 
+  it('decodes OUTSIDE the retry — a decode failure is never waited out', async () => {
+    // Rounds 2 and 3 each produced another viem error class for a reply
+    // that arrived and would not decode. Classifying that set is
+    // unbounded; taking decoding out of the retry makes "never worth a
+    // retry" true by construction, so this is the assertion that
+    // replaces the list.
+    let reads = 0;
+    await expect(
+      confirmWrite(
+        base({
+          getBlockNumber: async () => 100n,
+          read: async () => {
+            reads += 1;
+            return '0xdeadbeef';
+          },
+          decode: () => {
+            throw new Error('InvalidBytesBooleanError: bytes are not canonical');
+          },
+          // Even told that EVERYTHING is retryable, the decode must not be.
+          retryable: () => true,
+        }),
+      ),
+    ).rejects.toThrow(/InvalidBytesBooleanError/);
+    expect(reads).toBe(1);
+  });
+
+  it('hands the decoded value to accept, not the raw reply', async () => {
+    const seen = [];
+    const r = await confirmWrite(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => '0x64',
+        decode: (raw) => BigInt(raw),
+        accept: (v) => {
+          seen.push(v);
+          return v === 100n;
+        },
+      }),
+    );
+    expect(seen).toEqual([100n]);
+    expect(r.ok).toBe(true);
+    expect(r.value).toBe(100n);
+  });
+
+  it('bounds an attempt that is already in flight when the deadline passes', async () => {
+    // Gating the START of an attempt is not enough: `getBlockNumber` can
+    // consume its own transport timeout and retries, and `read` then
+    // begins after the deadline (#2107 round 3). The whole attempt races
+    // the remaining budget.
+    let readStarted = false;
+    const r = await confirmWrite(
+      base({
+        timeoutMs: 50,
+        // A budget timer that fires immediately, standing in for an
+        // attempt that outlives the deadline.
+        deadlineTimer: () => ({ promise: Promise.resolve(), cancel: () => {} }),
+        getBlockNumber: () => new Promise(() => {}), // never settles
+        read: async () => {
+          readStarted = true;
+          return 'done';
+        },
+      }),
+    );
+    expect(r.unconfirmed).toBe(true);
+    expect(readStarted).toBe(false);
+  });
+
+  it('does not let a late result win after the budget fired', async () => {
+    // The attempt resolves, but only after the timer did. Its answer
+    // must not be returned as though it arrived in time.
+    const r = await confirmWrite(
+      base({
+        timeoutMs: 50,
+        deadlineTimer: () => ({ promise: Promise.resolve(), cancel: () => {} }),
+        getBlockNumber: async () => {
+          await new Promise((res) => setTimeout(res, 5));
+          return 100n;
+        },
+        read: async () => 'done',
+      }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.unconfirmed).toBe(true);
+  });
+
+  it('cancels the budget timer when an attempt wins the race', async () => {
+    // A timer left running holds the process open, which in a live drive
+    // is a hang at exit rather than a visible failure.
+    let cancelled = 0;
+    await confirmWrite(
+      base({
+        deadlineTimer: () => ({ promise: new Promise(() => {}), cancel: () => { cancelled += 1; } }),
+        getBlockNumber: async () => 100n,
+        read: async () => 'done',
+      }),
+    );
+    expect(cancelled).toBe(1);
+  });
+
   it('gives up rather than looping forever', async () => {
     let asked = 0;
     const r = await confirmWrite(

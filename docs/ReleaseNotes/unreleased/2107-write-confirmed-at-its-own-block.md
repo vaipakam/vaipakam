@@ -148,3 +148,36 @@ breaks afterwards does not withdraw that. Such a failure is now reported
 as what it is — the verification did not complete, and here is precisely
 why — with the error named rather than swallowed, and without the claim
 about funds that nobody established.
+
+## The round after that, where two of these stopped being lists
+
+Recognising "broken in a way every machine agrees on" had now been
+attempted twice — first as a handful of named cases, then as a family
+named by a pattern — and review broke it a third time, with failures
+that decode a reply wrongly but do not carry the pattern's name at all.
+Three attempts at one boundary is the point at which the boundary is
+wrong, not the list.
+
+So the list was not extended again. The reading was split in two
+instead: fetching the reply, which is worth trying again because a
+machine may be unreachable or behind, and making sense of the reply,
+which never is — a reply that arrived arrived everywhere. Only the
+fetching is retried now. Nothing has to be recognised for that to hold,
+because a reply that will not make sense is no longer inside the part
+that retries. What remains to be recognised is a single question: did
+the machine answer by rejecting the call? That one has been stable
+throughout and has produced no surprises.
+
+The split was checked against the live chain before being trusted:
+reading the two values the two drives actually read, the old way and
+the new way, returns identical results — including for the one that
+comes back as a whole record rather than a single number.
+
+The time limit needed the same treatment. Checking the clock before
+starting an attempt still allowed the first half of that attempt to run
+long and the second half to begin after the limit had passed. Checking
+between each step would have meant a new check for every step anyone
+adds later. The attempt as a whole is now run against the remaining
+time, so the limit covers steps nobody has written yet — and the timer
+is cleaned up when the attempt wins, which matters because a live run
+would otherwise sit at the end refusing to finish.

@@ -95,7 +95,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseUnits } from 'viem';
+import { decodeFunctionResult, encodeFunctionData, parseUnits } from 'viem';
 import {
   addressOf,
   blocked,
@@ -351,26 +351,29 @@ const diamondRead = (functionName, args) => {
   return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
 };
 
-/** The same read PINNED to a block — the form `confirmWrite` requires
- *  (see `writeConfirm.mjs`). An unpinned read after a receipt is the
- *  #2107 race: a load-balanced endpoint can serve the receipt from a
- *  node that has the block and the call from one that has not. */
-const diamondReadAt = (functionName, args, blockNumber) => {
+/**
+ * The RAW reply for a pinned read — the form `confirmWrite` retries.
+ *
+ * Two things are deliberate. The block is PINNED: an unpinned read
+ * after a receipt is the #2107 race, where a load-balanced endpoint
+ * serves the receipt from a node that has the block and the call from
+ * one that has not. And it returns UNDECODED bytes, so that decoding
+ * happens outside the retry boundary — a reply that arrived and will
+ * not decode came from a node that answered, so no number of retries
+ * changes it (round 3).
+ */
+const rawDiamondCall = async (functionName, args, blockNumber) => {
   requireAbiMember(functionName, 'function');
-  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args, blockNumber });
+  const { data } = await pub.call({
+    to: DIAMOND,
+    data: encodeFunctionData({ abi: ABI, functionName, args }),
+    blockNumber,
+  });
+  // `0x` for an empty reply, so the decode below raises viem's own
+  // zero-data error rather than a TypeError about `undefined`.
+  return data ?? '0x';
 };
 
-/**
- * The ledger for `orderHash` sits at `ceiling` — confirmed from a node
- * at or after the block the revocation landed in.
- *
- * Returns `confirmWrite`'s three-state answer verbatim, because the
- * third state is the whole reason this exists: "no node would tell me"
- * must not reach the operator as "the order may still be fillable"
- * (#2107). A successful `cancelSignedOffer` receipt IS the revocation;
- * this read is the confirmation of it, and failing to obtain the
- * confirmation is a weaker fact than failing the confirmation.
- */
 const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
   confirmWriteOrReport({
     what: `signedOfferFilledAmount(${orderHash}) at or above the ceiling ${ceiling}`,
@@ -382,7 +385,10 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
     // returned at the deadline after the chain had caught up, failing
     // the confirmation because the last request was never made.
     getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
-    read: (blockNumber) => diamondReadAt('signedOfferFilledAmount', [orderHash], blockNumber),
+    read: (blockNumber) => rawDiamondCall('signedOfferFilledAmount', [orderHash], blockNumber),
+    // Decoded OUTSIDE the retry — see `writeConfirm.mjs`.
+    decode: (data) =>
+      decodeFunctionResult({ abi: ABI, functionName: 'signedOfferFilledAmount', data }),
     // AT OR ABOVE the ceiling, which is the drive's own definition of
     // "not fillable" and the predicate the cleanup read already used.
     // Step 6 asked for exact equality; the two are the same value in

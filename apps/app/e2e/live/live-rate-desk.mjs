@@ -87,7 +87,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pad, parseUnits, toEventSelector } from 'viem';
+import { decodeFunctionResult, encodeFunctionData, pad, parseUnits, toEventSelector } from 'viem';
 import {
   addressOf,
   blockedSync,
@@ -387,14 +387,19 @@ function verifyCancelled(offerId, minBlock) {
     // returned at the deadline after the chain had caught up, failing
     // the confirmation because the last request was never made.
     getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
-    read: (blockNumber) =>
-      pub.readContract({
-        address: DIAMOND,
-        abi: ABI,
-        functionName: 'getOffer',
-        args: [offerId],
+    // The RAW reply — decoding happens outside the retry boundary, so a
+    // reply that arrived and will not decode is never waited out
+    // (#2107 round 3). Verified against the live Base Sepolia Diamond
+    // that this returns exactly what `readContract` did.
+    read: async (blockNumber) => {
+      const { data } = await pub.call({
+        to: DIAMOND,
+        data: encodeFunctionData({ abi: ABI, functionName: 'getOffer', args: [offerId] }),
         blockNumber,
-      }),
+      });
+      return data ?? '0x';
+    },
+    decode: (data) => decodeFunctionResult({ abi: ABI, functionName: 'getOffer', data }),
     accept: (offer) => ZERO_CREATOR.test(String(offer.creator)),
     retryable: rpcRetryable,
     timeoutMs: 90_000,

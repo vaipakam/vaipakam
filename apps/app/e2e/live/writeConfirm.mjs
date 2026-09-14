@@ -122,6 +122,7 @@
  */
 export async function confirmWrite({
   read,
+  decode = (raw) => raw,
   accept,
   minBlock,
   getBlockNumber,
@@ -131,30 +132,75 @@ export async function confirmWrite({
   everyMs = 3_000,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  deadlineTimer = (ms) => {
+    let id;
+    const promise = new Promise((r) => {
+      id = setTimeout(r, ms);
+    });
+    return { promise, cancel: () => clearTimeout(id) };
+  },
 }) {
   const deadline = now() + timeoutMs;
   let behind = 0; // attempts dropped because the node's head was behind
   let lastErr = null;
+  const giveUp = () => ({
+    ok: false,
+    unconfirmed: true,
+    why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }),
+  });
+
+  /** One attempt: ask the node its head, and if it is far enough along,
+   *  fetch the RAW reply. Deliberately no decoding — see below. */
+  const attempt = async () => {
+    const head = await getBlockNumber();
+    if (head < minBlock) return { behind: true };
+    return { raw: await read(head), at: head };
+  };
 
   for (let first = true; ; first = false) {
     // Every attempt AFTER the first is gated on the deadline. The cap on
     // the wait below is not enough on its own: a wait trimmed to land
     // exactly on the deadline would otherwise be followed by a full
     // attempt starting at it.
-    if (!first && now() >= deadline) {
-      return { ok: false, unconfirmed: true, why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) };
-    }
+    if (!first && now() >= deadline) return giveUp();
+
     let got = false;
-    let value;
+    let raw;
     let at;
     try {
-      const head = await getBlockNumber();
-      if (head < minBlock) {
-        behind += 1;
-      } else {
-        value = await read(head);
-        at = head;
-        got = true;
+      // The attempt RACES the remaining budget, rather than the deadline
+      // being checked between awaits. Checking between them is per-await
+      // and grows with every await added: #2107 round 2 gated the start
+      // of an attempt, and round 3 pointed out that `getBlockNumber` can
+      // consume its own transport timeout and retries, so `read` still
+      // begins after the deadline. Racing bounds the whole attempt,
+      // including awaits nobody has written yet, and makes the budget a
+      // promise about ELAPSED TIME rather than about attempt count.
+      const remainingNow = first ? Math.max(0, deadline - now()) : deadline - now();
+      const timer = deadlineTimer(remainingNow);
+      let timedOut = false;
+      const running = attempt();
+      try {
+        const outcome = await Promise.race([
+          running,
+          timer.promise.then(() => {
+            timedOut = true;
+          }),
+        ]);
+        if (timedOut) {
+          // The loser may still reject later; nothing is listening, and
+          // an unhandled rejection would take the process down.
+          running.catch(() => {});
+          return giveUp();
+        }
+        if (outcome.behind) behind += 1;
+        else {
+          raw = outcome.raw;
+          at = outcome.at;
+          got = true;
+        }
+      } finally {
+        timer.cancel();
       }
     } catch (e) {
       // A node that lacks the pinned block, a rate limit and a dropped
@@ -162,38 +208,38 @@ export async function confirmWrite({
       // obtained — and none of them is evidence about the chain's
       // state, so all of them retry until the deadline.
       //
-      // A failure every node reproduces is not. A getter that reverted
-      // or return data that would not decode is a contract or ABI
-      // regression, and waiting out the deadline to report "no node
-      // would answer" would blame the endpoint for it — the same
-      // mislabelling this helper exists to stop. It propagates.
+      // A node that ANSWERED WITH A REVERT is not: every node reverts
+      // identically, so waiting out the deadline to report "no node
+      // would answer" would blame the endpoint for a contract
+      // regression. That is what `retryable` is for, and it is now the
+      // whole of its job — see `rpcRetryable.mjs`.
       if (!retryable(e)) throw e;
       lastErr = e;
     }
 
-    // `accept` is evaluated OUTSIDE that catch on purpose. A predicate
-    // that throws — a shape it did not expect, a field that moved — is a
-    // bug in the drive, and swallowing it here would retry it to the
-    // deadline and then report "no node would answer", which blames the
-    // endpoint for the caller's mistake. It propagates instead.
+    // DECODING HAPPENS HERE, OUTSIDE THE RETRY, and that placement is
+    // the fix rather than an implementation detail (#2107 round 3).
+    // Rounds 2 and 3 each produced another viem error class for a reply
+    // that arrived and would not decode — first `AbiDecoding*`, then
+    // `InvalidBytesBooleanError` and friends, which do not even share
+    // the `Abi*Error` name. Classifying that set is unbounded, and two
+    // rounds of trying it is this repo's recorded signal to fix the seam
+    // instead of naming another member. Decoding is not a question about
+    // reachability at all: a reply that will not decode came back, so
+    // every node produces it, so it can never be worth a retry. Putting
+    // it outside the boundary makes that true BY CONSTRUCTION and needs
+    // no list — the same reason `accept` sits here.
     if (got) {
+      const value = decode(raw);
       return accept(value)
         ? { ok: true, value, blockNumber: at }
         : { ok: false, unconfirmed: false, value, blockNumber: at };
     }
 
     // The deadline is checked AFTER an attempt, so a zero budget still
-    // asks once — and the wait is capped to what is left of it, so the
-    // loop cannot sleep past the deadline and then start a whole further
-    // attempt. That attempt is not free: viem's HTTP transport times out
-    // at 10 s and retries, so an unbounded one can carry a nominal 90 s
-    // confirmation tens of seconds beyond it, or return a success the
-    // caller was told could not arrive that late (#2107 round 2). The
-    // budget is a promise about elapsed time, not about attempt count.
+    // asks once — and the wait is capped to what is left of it.
     const remaining = deadline - now();
-    if (remaining <= 0) {
-      return { ok: false, unconfirmed: true, why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) };
-    }
+    if (remaining <= 0) return giveUp();
     await sleep(Math.min(everyMs, remaining));
   }
 }

@@ -6,8 +6,9 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   HttpRequestError,
+  RawContractError,
 } from 'viem';
-import { ABI_ERROR_NAME, rpcRetryable } from './rpcRetryable.mjs';
+import { rpcRetryable } from './rpcRetryable.mjs';
 
 /**
  * The classifier is deliberately lopsided — it names the deterministic
@@ -27,49 +28,55 @@ describe('rpcRetryable', () => {
     expect(rpcRetryable(reverted)).toBe(false);
   });
 
-  it('refuses a decode of empty return data', () => {
-    const zero = new AbiDecodingZeroDataError();
-    expect(rpcRetryable(new BaseError('call failed', { cause: zero }))).toBe(false);
+  it('refuses a revert carried as RawContractError, the raw-call shape', () => {
+    // The two read paths surface a revert differently: `readContract`
+    // raises ContractFunctionRevertedError, a raw `call` carries
+    // RawContractError. The drives use the raw call now, so this is the
+    // shape that actually reaches the classifier in production.
+    const raw = new RawContractError({ data: '0x' });
+    expect(rpcRetryable(new BaseError('call failed', { cause: raw }))).toBe(false);
   });
 
-  it('refuses a decode of malformed NON-empty data', () => {
-    // `0x01` for a `uint256`. The first version of this classifier named
-    // AbiDecodingZeroDataError alone and retried this one for 90 s
-    // (#2107 round 2) — which is why the rule is now by family.
-    const small = new AbiDecodingDataSizeTooSmallError({
-      data: '0x01',
-      params: [],
-      size: 1,
-    });
-    expect(rpcRetryable(new BaseError('call failed', { cause: small }))).toBe(false);
-  });
-
-  it('refuses EVERY Abi*Error viem exports, not a hand-kept list', () => {
-    // The rule tests a NAME, so it is only as good as viem's naming
-    // convention — and this is what stops that being trusted silently.
-    // A renamed or newly added error outside the convention fails here
-    // instead of being quietly retried to the deadline.
-    const names = Object.keys(viem).filter((n) => /^Abi[A-Za-z]*Error$/.test(n));
-    expect(names.length).toBeGreaterThan(10); // an empty sweep proves nothing
-    expect(names).toContain('AbiDecodingZeroDataError');
-    expect(names).toContain('AbiDecodingDataSizeTooSmallError');
-    for (const name of names) {
-      // viem assigns `name` in the constructor and each of these takes
-      // different arguments, so the sweep carries the name on a real
-      // BaseError rather than constructing seventeen shapes.
-      const carrier = new BaseError('call failed');
-      carrier.name = name;
-      expect(rpcRetryable(carrier), `${name} must not be retried`).toBe(false);
-      expect(ABI_ERROR_NAME.test(name), `${name} matches the family rule`).toBe(true);
+  it('RETRIES every decoding failure — they are no longer its problem', () => {
+    // This is the inverse of what two earlier revisions asserted, and
+    // the inversion is the fix (#2107 round 3). Naming decode failures
+    // here failed twice: first as a class list (AbiDecodingZeroDataError,
+    // then AbiDecodingDataSizeTooSmallError), then as viem's `Abi*Error`
+    // name family (which InvalidBytesBooleanError and
+    // SliceOffsetOutOfBoundsError escape entirely).
+    //
+    // `confirmWrite` now fetches raw bytes under the retry and decodes
+    // OUTSIDE it, so a decode failure can never be waited out no matter
+    // what this says — which is why this may safely say nothing. The
+    // guarantee moved from a list to a boundary; `writeConfirm.test.mjs`
+    // holds the assertion that matters.
+    const decodeFailures = [
+      new AbiDecodingZeroDataError(),
+      new AbiDecodingDataSizeTooSmallError({ data: '0x01', params: [], size: 1 }),
+      ...['InvalidBytesBooleanError', 'SliceOffsetOutOfBoundsError', 'SizeExceedsPaddingSizeError']
+        .filter((n) => typeof viem[n] === 'function')
+        .map((n) => {
+          const carrier = new BaseError('decode failed');
+          carrier.name = n;
+          return carrier;
+        }),
+    ];
+    expect(decodeFailures.length).toBeGreaterThan(3); // an empty sweep proves nothing
+    for (const e of decodeFailures) {
+      expect(rpcRetryable(new BaseError('call failed', { cause: e }))).toBe(true);
     }
   });
 
-  it('does not match a name that merely contains the pattern', () => {
-    for (const name of ['NotAnAbiDecodingError', 'AbiDecodingZeroDataErrorish', 'Abi', 'Error']) {
-      const carrier = new BaseError('x');
-      carrier.name = name;
-      expect(rpcRetryable(carrier), `${name} is not an ABI error`).toBe(true);
-    }
+  it('the escapees from the retired name rule really do exist in viem', () => {
+    // The round-3 finding rested on these being real exports, so it is
+    // checked rather than taken on trust — and the check records which
+    // ones. `PositionOutOfBoundsError`, also named in that finding, is
+    // NOT exported by the installed viem; the other three are, which is
+    // enough for the finding to stand.
+    expect(typeof viem.InvalidBytesBooleanError).toBe('function');
+    expect(typeof viem.SliceOffsetOutOfBoundsError).toBe('function');
+    expect(typeof viem.SizeExceedsPaddingSizeError).toBe('function');
+    expect(/^Abi[A-Za-z]*Error$/.test('InvalidBytesBooleanError')).toBe(false);
   });
 
   it('retries a transport failure', () => {
