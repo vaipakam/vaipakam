@@ -888,13 +888,24 @@ function reflectApplyTruncator(src, call) {
  *                pattern, declared in a branch that may not have run,
  *                or defined in terms of itself.
  *   UNBOUND    — it has no binding in this file at all, so it is a
- *                global or an import.
+ *                GLOBAL. An IMPORT is NOT this state and saying so was
+ *                wrong: the scope analyser binds an import, so it comes
+ *                back UNRESOLVED with no value to follow. What the two
+ *                share is the separate FACT below, not a state.
  *
  * UNBOUND is NOT a kind of failure, and separating it out is half the
  * point: `String.raw` is unbound and perfectly well understood, while a
  * local whose value cannot be followed is unknown and must be refused.
  * Collapsing the two made an intrinsic look unreadable (round 36) and,
  * the other way round, made an unreadable local look intrinsic.
+ *
+ * Alongside the state, the result carries FACTS that hold regardless of
+ * it — whether the value ARRIVES FROM OUTSIDE this file (a plain
+ * parameter or an import), and whether it is KNOWN NOT TO BE TEXT (a
+ * function or class declaration, which has no initialiser to follow yet
+ * is perfectly well understood). A fact is not a state: a caller that
+ * demands a state before reading a fact throws the fact away, which is
+ * how a declared function slipped past the visibility check.
  *
  * Callers still decide what each state MEANS for their own question —
  * an unbound name is text to the needle rule and not-suspect to the
@@ -1993,6 +2004,24 @@ function visiblyNotText(src, node, seen) {
     const held = resolutionOf(src, node.argument, new Set(seen));
     if (held.state !== RESOLVED || held.value.type !== 'ArrayExpression') return true;
     return held.value.elements.some((el) => el && visiblyNotText(src, el, seen));
+  }
+  // A CHOICE is not a value either. `at(flag ? {…} : {…})` puts a
+  // stand-in in each branch, and testing the wrapper accepted both —
+  // the same mistake as the spread, one node type along. Any branch
+  // that is visibly not text condemns the call, because any branch may
+  // be the one that runs.
+  if (node?.type === 'ConditionalExpression') {
+    return (
+      visiblyNotText(src, node.consequent, seen) || visiblyNotText(src, node.alternate, seen)
+    );
+  }
+  if (node?.type === 'LogicalExpression') {
+    return visiblyNotText(src, node.left, seen) || visiblyNotText(src, node.right, seen);
+  }
+  // A sequence evaluates to its LAST expression; the earlier ones are
+  // discarded, so only the last can reach the helper.
+  if (node?.type === 'SequenceExpression') {
+    return visiblyNotText(src, node.expressions.at(-1), seen);
   }
   const r = resolutionOf(src, node, new Set(seen));
   // A DECLARED function or class is known not to be text WITHOUT being

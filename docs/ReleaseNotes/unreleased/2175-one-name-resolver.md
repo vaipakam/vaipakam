@@ -65,5 +65,15 @@ is refused, whatever the helper's body would have said. Working out what
 each parameter holds at each call is a larger analysis and is not
 attempted here; the narrower question has an answer and is asked instead.
 
-No other behaviour changes. The rules that were correct are correct in
-the same cases; they now say why in terms anyone can check.
+There is a SECOND behaviour change, and an earlier draft of this note
+said there was not. Because every rule now follows a name the same way, a
+small helper reached through a second name is recognised where before it
+was not — the old code required the helper's own declaration to be the
+function itself, and a name pointing at another name is not that. This is
+a widening: regions that used to be refused now pass. It follows from the
+change rather than being aimed at, which is exactly why it needed
+stating; a reader checking whether this note was complete would have
+found it and been right to mind.
+
+Beyond those two, no behaviour changes. The rules that were correct are
+correct in the same cases; they now say why in terms anyone can check.

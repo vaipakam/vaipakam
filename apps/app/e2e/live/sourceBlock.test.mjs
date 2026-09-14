@@ -1992,17 +1992,29 @@ describe('#2175 — one resolver, three answers', () => {
   // directions on purpose, and that is the case that cannot be
   // expressed at all while "no binding" and "cannot be trusted" share
   // one falsy answer.
-  it('reads an unbound name as text for a needle and as no region for a bound', () => {
-    // A needle named by an import: taken as text, so stepping past it
-    // is a landmark and the region is accepted.
-    const needle =
-      "import { LANDMARK } from './fixture.mjs';\n" +
-      'const s = f();\n' +
-      "const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);";
+  it('reads a GLOBAL as text for a needle and as no region for a bound', () => {
+    // A genuinely unbound name — no declaration anywhere in the file.
+    const needle = "const s = f();\nconst r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);";
     expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(false);
 
     // The same unboundness in a RECEIVER position is not a bounded
     // region, so a one-argument slice off it is reported.
+    const region = 'const r = block.slice(40);';
+    expect(countsCharacters(region, sliceCallsIn(region).at(-1))).toBe(true);
+  });
+
+  // An IMPORT is NOT unbound, and an earlier revision of this block said
+  // it was. The scope analyser binds it, so it comes back UNRESOLVED
+  // with no value to follow — what it shares with a plain parameter is
+  // the separate FACT that the value arrives from outside this file, not
+  // a state. The two rules disagree here for that reason, not because
+  // of the state.
+  it('reads an IMPORT through the arrives-from-outside fact, not through a state', () => {
+    const needle =
+      "import { LANDMARK } from './fixture.mjs';\nconst s = f();\n" +
+      'const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);';
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(false);
+
     const region = "import { block } from './fixture.mjs';\nconst r = block.slice(40);";
     expect(countsCharacters(region, sliceCallsIn(region).at(-1))).toBe(true);
   });
@@ -2117,6 +2129,22 @@ describe('#2175 — one resolver, three answers', () => {
         "const at = recv => recv.indexOf('end');\n" +
           'const r = s.slice(start, at(...[{ indexOf: () => start + 320 }]));',
       ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 4. A CHOICE is not a value: any branch that is visibly not
+  // text condemns the call, because any branch may be the one that runs.
+  it('sees a stand-in through a choice of values', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      ['a conditional', 'const r = s.slice(start, at(flag ? { indexOf: () => start + 320 } : { indexOf: () => 1 }));'],
+      ['a logical choice', 'const r = s.slice(start, at(x || { indexOf: () => start + 320 }));'],
+      ['a sequence, whose LAST expression is the value', 'const r = s.slice(start, at((0, { indexOf: () => start + 320 })));'],
     ]) {
       const code = lead + tail;
       expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
