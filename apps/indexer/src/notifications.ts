@@ -451,13 +451,40 @@ export async function materializeNotifications(
   ];
   if (loanIds.length === 0) return 0;
 
+  const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
+  if (partiesByLoan === null) return 0;
+
+  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
+  if (rows.length === 0) return 0;
+
+  try {
+    return await insertNotificationRows(db, rows);
+  } catch (err) {
+    console.error('[notifications] insert failed', err);
+    return 0;
+  }
+}
+
+/**
+ * Both sides of each loan, for deciding who an inbox row is FOR.
+ *
+ * Factored out of `materializeNotifications` when the reconciliation pass
+ * needed the same lookup (#2190 r2 `4006071734`). It carries a hard-won
+ * detail worth not copying: D1 caps a statement at 100 bound parameters, so
+ * a catch-up touching >99 distinct loans would blow the limit, throw, and —
+ * fail-open — skip those rows forever, with the cursor already advanced
+ * (Codex #1292 r1). 90 ids plus the chainId bind stays safely under.
+ *
+ * Returns `null` when the lookup itself failed, which callers treat as "write
+ * nothing this pass" rather than "this loan has no parties".
+ */
+async function loadLoanParties(
+  db: D1Database,
+  chainId: number,
+  loanIds: number[],
+): Promise<Map<number, LoanParties> | null> {
   const partiesByLoan = new Map<number, LoanParties>();
   try {
-    // Chunk the IN-list: D1 caps a statement at 100 bound parameters, so
-    // a catch-up scan touching >99 distinct loans would otherwise blow
-    // the limit, throw, and (fail-open) skip that scan's rows forever —
-    // the cursor has already advanced (Codex #1292 r1). 90 ids + the
-    // chainId bind stays safely under the cap.
     const CHUNK = 90;
     for (let i = 0; i < loanIds.length; i += CHUNK) {
       const slice = loanIds.slice(i, i + CHUNK);
@@ -492,16 +519,103 @@ export async function materializeNotifications(
     }
   } catch (err) {
     console.error('[notifications] party lookup failed', err);
-    return 0;
+    return null;
   }
+  return partiesByLoan;
+}
 
-  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
+/** The row status a repair writes → the inbox kind both holders get. Only
+ *  the statuses `decideRepair` can produce appear here; anything else
+ *  writes no row rather than a guessed one. */
+const RECONCILED_STATUS_NOTIF_KIND: Readonly<Record<string, NotifKind>> = {
+  repaid: 'loan_repaid',
+  defaulted: 'loan_defaulted',
+  settled: 'loan_repaid',
+  internal_matched: 'loan_repaid',
+};
+
+/** Marks a row derived by the #2101 repair rather than by an event. The
+ *  column is free text and nothing switches on it, so this is provenance a
+ *  reader can see rather than a control flag — and it is NOT `null`, which
+ *  already means "cron-derived calendar row". */
+export const RECONCILED_EVENT_KIND = 'Reconciled';
+
+/**
+ * Inbox rows for terminals the repair found rather than an event announced
+ * (#2190 r2 `4006071734`).
+ *
+ * Without this the holders of a ghost position get NO terminal row at all:
+ * the event was missed for good, so `materializeNotifications` never sees
+ * it, and the repair corrects the position while the inbox stays silent
+ * forever. The promise the notification surface makes is a terminal outcome
+ * for both holders, and a correction is the only chance left to keep it.
+ *
+ * WHAT THESE ROWS DO NOT CLAIM. The repair cannot know WHEN the loan ended —
+ * it reads the state at a safe head and has no way back to the block the
+ * terminal actually landed in — so nothing here is dated to the ending.
+ * `created_at` is the moment the platform found out, which is true, and is
+ * the same meaning the cron-derived calendar rows already carry.
+ * `event_kind` says `Reconciled` rather than naming an event nobody saw, and
+ * `log_index` is -1 because there is no log. The block recorded is the safe
+ * head the state was observed at, which also sorts the row as current in the
+ * chain-ordered feed — correct here, since the news is now: a two-month-old
+ * default buried two months back in the feed would be no notification at all.
+ *
+ * Fail-open like every other notification writer: derived data must never
+ * fail a scan whose authoritative writes already landed.
+ */
+export async function materializeReconciledNotifications(
+  db: D1Database,
+  chainId: number,
+  repaired: ReadonlyArray<{ loanId: number; to: string }>,
+  observedBlock: number,
+  nowSec: number,
+): Promise<number> {
+  if (repaired.length === 0) return 0;
+  const partiesByLoan = await loadLoanParties(
+    db,
+    chainId,
+    repaired.map((r) => r.loanId),
+  );
+  if (partiesByLoan === null) return 0;
+
+  const rows: NotifRow[] = [];
+  for (const { loanId, to } of repaired) {
+    const kind = RECONCILED_STATUS_NOTIF_KIND[to];
+    if (!kind) continue;
+    const parties = partiesByLoan.get(loanId);
+    // A sale-vehicle loan is bookkeeping, not a position anyone holds —
+    // the same exclusion the event path applies.
+    if (parties?.isSaleVehicle) continue;
+    const seen = new Set<string>();
+    for (const side of ['lender', 'borrower'] as const) {
+      const recipient = recipientFor(parties, side);
+      if (!recipient) continue;
+      // `-1` for the log index, and NOT the observed block, so the key is
+      // stable per (recipient, kind, loan): a repair happens once per loan
+      // by construction, but a key that moved with the head would let a
+      // re-run duplicate the row.
+      const dedupKey = `${chainId}:${recipient}:${kind}:${loanId}:-1:-1`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      rows.push({
+        chainId,
+        recipient,
+        kind,
+        loanId,
+        eventKind: RECONCILED_EVENT_KIND,
+        blockNumber: observedBlock,
+        logIndex: -1,
+        createdAt: nowSec,
+        dedupKey,
+      });
+    }
+  }
   if (rows.length === 0) return 0;
-
   try {
     return await insertNotificationRows(db, rows);
   } catch (err) {
-    console.error('[notifications] insert failed', err);
+    console.error('[notifications] reconciled insert failed', err);
     return 0;
   }
 }

@@ -71,7 +71,10 @@ import {
   refreshMarketSummaries,
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
-import { materializeNotifications } from './notifications';
+import {
+  materializeNotifications,
+  materializeReconciledNotifications,
+} from './notifications';
 import {
   applyRewardLoopLedger,
   ensureRewardLoopBackfill,
@@ -714,6 +717,20 @@ async function runLoanReconcilePass(input: {
       console.warn(
         `[chainIndexer] reconciled chain ${chainId}: ` +
           report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
+      );
+      // The holders of a ghost position got NO terminal inbox row: the
+      // event was missed for good, so the event materializer never saw it,
+      // and the correction is the only chance left to keep the promise the
+      // notification surface makes. Rows say they came from a repair and
+      // are dated to when the platform found out, because when the loan
+      // actually ended is not something this pass can know (#2190 r2
+      // `4006071734`). Fail-open inside.
+      await materializeReconciledNotifications(
+        env.DB,
+        chainId,
+        report.repaired,
+        Number(head),
+        Math.floor(Date.now() / 1000),
       );
     }
     // A row whose chain read failed is NOT silently dropped. If a deployed

@@ -94,6 +94,16 @@ position, the same way any other change does — without that, the record was
 put right while every open screen kept showing the old one until it happened
 to refresh.
 
+Both holders of a corrected position also get the ending in their inbox.
+They had received nothing: the announcement was missed, so the surface that
+turns announcements into messages never saw one, and a position could be put
+right while the two people with money in it were told nothing at all. What
+those messages carefully do not do is pretend to be news of the moment. They
+say the platform found this out now, which is true; they do not carry a date
+for the ending, because the check genuinely cannot work out when it happened;
+and they are marked as coming from a correction rather than from an
+announcement nobody saw.
+
 ## What it will not do
 
 It only ever moves a record from "running" to an ending, and only when the

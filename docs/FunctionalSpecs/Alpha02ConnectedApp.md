@@ -258,6 +258,13 @@ The app uses chain reads and indexed reads for different jobs.
   ended. A correction is also announced to anyone watching that position,
   like any other change — a record put right silently would leave every
   open screen showing the old one.
+- Both holders of a corrected position receive the ending in their inbox.
+  Without it they receive nothing at all for that position, since the
+  message surface is built from announcements and this ending never had
+  one. Such a message states when the platform FOUND OUT, never when the
+  loan ended — the check cannot determine that — and is marked as derived
+  from a correction rather than attributed to an announcement nobody saw. A
+  bookkeeping position that no person holds produces no message.
 - How fast the correction works through the records depends on the
   deployment's ingest configuration, and the platform states this rather
   than implying a single pace. Where the chain reading has its own capacity
