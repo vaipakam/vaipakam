@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as acorn from 'acorn';
 import { describe, it, expect } from 'vitest';
-import { confirmWrite, unconfirmedWhy } from './writeConfirm.mjs';
+import { confirmWrite, confirmWriteOrReport, unconfirmedWhy } from './writeConfirm.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -239,6 +239,44 @@ describe('confirmWrite', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('never starts an attempt after the deadline', async () => {
+    // The wait used to be a full `everyMs` regardless of what was left,
+    // so a loop could sleep past the deadline and then run a whole
+    // further attempt. viem's HTTP transport times out at 10 s and
+    // retries, so that attempt can carry a nominal 90 s confirmation
+    // tens of seconds beyond it — or return a success the caller was
+    // told could not arrive that late (#2107 round 2).
+    const attemptsAt = [];
+    const clock = fakeClock();
+    await confirmWrite({
+      minBlock: 100n,
+      accept: () => false,
+      timeoutMs: 25,
+      everyMs: 10,
+      ...clock,
+      getBlockNumber: async () => {
+        attemptsAt.push(clock.now());
+        return 99n; // always behind, so the loop runs to the deadline
+      },
+    });
+    expect(attemptsAt.every((t) => t < 25)).toBe(true);
+    expect(clock.now()).toBeLessThanOrEqual(25);
+  });
+
+  it('caps the final wait to what is left of the budget', async () => {
+    const clock = fakeClock();
+    await confirmWrite({
+      minBlock: 100n,
+      accept: () => false,
+      timeoutMs: 25, // not a multiple of everyMs, so the cap has to bite
+      everyMs: 10,
+      ...clock,
+      getBlockNumber: async () => 99n,
+    });
+    // 10 + 10 + 5 — the last wait trimmed rather than overshooting to 30.
+    expect(clock.now()).toBe(25);
+  });
+
   it('gives up rather than looping forever', async () => {
     let asked = 0;
     const r = await confirmWrite(
@@ -297,6 +335,59 @@ describe('unconfirmedWhy', () => {
   });
 });
 
+describe('confirmWriteOrReport', () => {
+  it('turns a failure of the confirmation itself into the unconfirmed verdict', async () => {
+    // Every call site sits inside a cleanup catch that says the position
+    // may still rest and tells the operator to send the cancel again. A
+    // throw reaching that catch re-creates the false funds alarm this PR
+    // removes, by a longer route (#2107 round 2).
+    const r = await confirmWriteOrReport(
+      base({
+        what: 'the fill ledger',
+        getBlockNumber: async () => 100n,
+        read: async () => {
+          throw new Error('execution reverted: FunctionDoesNotExist');
+        },
+        retryable: () => false,
+      }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.unconfirmed).toBe(true);
+    // The error is NAMED, not swallowed — that is what makes this more
+    // informative than the catch it replaces, not less.
+    expect(r.why).toMatch(/FunctionDoesNotExist/);
+    expect(r.why).toMatch(/THE CONFIRMATION ITSELF FAILED/);
+    expect(r.why).toMatch(/the fill ledger/);
+    // And it must not read as a claim that the write did not happen.
+    expect(r.why).toMatch(/receipt already reported as mined and successful/);
+  });
+
+  it('reports a predicate bug the same way rather than crashing the cleanup', async () => {
+    const r = await confirmWriteOrReport(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => ({}),
+        accept: (v) => v.missing.field === 1,
+      }),
+    );
+    expect(r.unconfirmed).toBe(true);
+    expect(r.why).toMatch(/THE CONFIRMATION ITSELF FAILED/);
+  });
+
+  it('passes every other verdict through untouched', async () => {
+    const ok = await confirmWriteOrReport(
+      base({ getBlockNumber: async () => 100n, read: async () => 'done' }),
+    );
+    expect(ok.ok).toBe(true);
+    const wrong = await confirmWriteOrReport(
+      base({ getBlockNumber: async () => 100n, read: async () => 'still-open' }),
+    );
+    expect(wrong.ok).toBe(false);
+    expect(wrong.unconfirmed).toBe(false);
+    expect(wrong.value).toBe('still-open');
+  });
+});
+
 /**
  * The `cacheTime: 0` on every head read is invisible in behaviour — a
  * cached head produces a plausible UNCONFIRMED rather than an error —
@@ -334,7 +425,11 @@ describe('every confirmWrite call site reads a fresh head', () => {
       }
       walk(ast, (n) => {
         if (n.type !== 'CallExpression') return;
-        if (n.callee.type !== 'Identifier' || n.callee.name !== 'confirmWrite') return;
+        // Either entry point: a drive uses the reporting wrapper, but a
+        // future caller outside a funds-alarm catch may use the raw one,
+        // and both take the same options object.
+        if (n.callee.type !== 'Identifier') return;
+        if (n.callee.name !== 'confirmWrite' && n.callee.name !== 'confirmWriteOrReport') return;
         found.push({ file: f, arg: n.arguments[0] });
       });
     }

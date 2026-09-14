@@ -114,3 +114,37 @@ taken", is a branch where it cannot be taken anyway. Guarding against it
 would mean adding a defence against something no run has ever seen, and
 this codebase has a costly recent lesson about exactly that. The limit is
 written down instead.
+
+## And three more, from the round after
+
+The recognition of "broken in a way every machine agrees on" was named
+one case too narrowly. It covered a reply that was empty; review
+produced a reply that was present but the wrong size, which fails
+identically everywhere and was still being waited out. The library
+offers seventeen such errors and gives them no shared parent, so naming
+them one at a time would have added one per review round. They are now
+recognised as the family they are, with a check that walks the library's
+own list and insists every member is covered — so if one is renamed or
+a new one appears outside the pattern, that fails loudly rather than
+quietly going back to being waited out.
+
+The deadline was a promise the check did not quite keep. It waited a
+fixed interval between attempts regardless of how much time was left,
+so a run could sleep past its own deadline and then begin a fresh
+attempt — and an attempt is not quick, since each network call has its
+own timeout and retries. A ninety-second bound could overshoot by tens
+of seconds, or return an answer the caller had been told could not
+arrive that late. Attempts are now gated on the deadline and the wait is
+trimmed to what remains.
+
+The third is the most worth recording, because the previous round caused
+it. Making broken-everywhere failures stop being retried meant they were
+raised instead — and raising them handed them to the surrounding cleanup
+code, whose message says the position may still be live, funds may be
+held, and someone should go and cancel it by hand. That is the exact
+false alarm this whole change exists to remove, reached by a longer
+route. The transaction's own receipt said it succeeded; a checker that
+breaks afterwards does not withdraw that. Such a failure is now reported
+as what it is — the verification did not complete, and here is precisely
+why — with the error named rather than swallowed, and without the claim
+about funds that nobody established.

@@ -103,7 +103,7 @@ import {
   visit,
 } from './driver.mjs';
 import { rpcRetryable } from './rpcRetryable.mjs';
-import { confirmWrite } from './writeConfirm.mjs';
+import { confirmWriteOrReport } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -375,9 +375,9 @@ async function getOffer(offerId) {
  * from a cancel that did nothing. `live-signed-book` reported a live
  * fillable order that way on a real batch.
  */
-function confirmCreatorZeroed(offerId, minBlock) {
+function verifyCancelled(offerId, minBlock) {
   requireAbiMember('getOffer', 'function');
-  return confirmWrite({
+  return confirmWriteOrReport({
     what: `getOffer(${offerId}).creator zeroed`,
     minBlock,
     // `cacheTime: 0` is load-bearing, not tidiness. viem defaults this
@@ -1433,7 +1433,7 @@ try {
             if (receipt.status !== 'success') {
               throw new Error(`cancelOffer tx ${hash} mined but REVERTED (status=${receipt.status})`);
             }
-            const after = await confirmCreatorZeroed(id, receipt.blockNumber);
+            const after = await verifyCancelled(id, receipt.blockNumber);
             if (!after.ok && after.unconfirmed) {
               // NOT thrown: the catch below reports the offer as maybe
               // live with escrow held, and that claim is not available
@@ -1444,9 +1444,9 @@ try {
                 'FAIL',
                 `CANCEL SENT, EFFECT UNCONFIRMED — cancelOffer tx ${hash} for offer #${id} ` +
                   `mined at block ${receipt.blockNumber} with status success, so the ` +
-                  `cancel executed; no node would confirm it. ${after.why}. Re-read ` +
-                  `getOffer(${id}).creator on ${DIAMOND} against a synced node — expect ` +
-                  `the zero address.`,
+                  `cancel executed; the verification did not complete. ${after.why}. ` +
+                  `Re-read getOffer(${id}).creator on ${DIAMOND} against a synced node — ` +
+                  `expect the zero address.`,
               );
               continue;
             }

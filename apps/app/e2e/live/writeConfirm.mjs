@@ -136,7 +136,14 @@ export async function confirmWrite({
   let behind = 0; // attempts dropped because the node's head was behind
   let lastErr = null;
 
-  for (;;) {
+  for (let first = true; ; first = false) {
+    // Every attempt AFTER the first is gated on the deadline. The cap on
+    // the wait below is not enough on its own: a wait trimmed to land
+    // exactly on the deadline would otherwise be followed by a full
+    // attempt starting at it.
+    if (!first && now() >= deadline) {
+      return { ok: false, unconfirmed: true, why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) };
+    }
     let got = false;
     let value;
     let at;
@@ -175,11 +182,58 @@ export async function confirmWrite({
         : { ok: false, unconfirmed: false, value, blockNumber: at };
     }
 
-    // Checked AFTER an attempt, so a zero budget still asks once.
-    if (now() >= deadline) {
+    // The deadline is checked AFTER an attempt, so a zero budget still
+    // asks once — and the wait is capped to what is left of it, so the
+    // loop cannot sleep past the deadline and then start a whole further
+    // attempt. That attempt is not free: viem's HTTP transport times out
+    // at 10 s and retries, so an unbounded one can carry a nominal 90 s
+    // confirmation tens of seconds beyond it, or return a success the
+    // caller was told could not arrive that late (#2107 round 2). The
+    // budget is a promise about elapsed time, not about attempt count.
+    const remaining = deadline - now();
+    if (remaining <= 0) {
       return { ok: false, unconfirmed: true, why: unconfirmedWhy({ what, minBlock, behind, lastErr, timeoutMs }) };
     }
-    await sleep(everyMs);
+    await sleep(Math.min(everyMs, remaining));
+  }
+}
+
+/**
+ * `confirmWrite`, with a failure OF THE CONFIRMATION ITSELF turned into
+ * the unconfirmed verdict instead of a throw.
+ *
+ * Every call site sits inside a cleanup `catch` whose message says the
+ * position may still rest and tells the operator to send the cancel
+ * again by hand. A throw from the verification reaches that catch —
+ * so the round-1 fix that made deterministic read failures propagate
+ * re-created, through a longer route, exactly the false funds alarm
+ * this PR exists to remove (#2107 round 2). The transaction's receipt
+ * said `success`; a verifier that breaks afterwards does not retract
+ * that evidence.
+ *
+ * The error is not swallowed — it is NAMED in `why`, which is strictly
+ * more than the generic catch did with it, and the caller still reports
+ * a failure. What changes is only the claim attached to it: "the
+ * verification did not complete, here is why" rather than "these funds
+ * may be at risk, go spend gas".
+ *
+ * Use this from a drive. `confirmWrite` still throws, because a caller
+ * NOT inside a funds-alarm catch is better served by the exception.
+ */
+export async function confirmWriteOrReport(opts) {
+  try {
+    return await confirmWrite(opts);
+  } catch (err) {
+    const first = String(err?.message ?? err).split('\n')[0].slice(0, 200);
+    return {
+      ok: false,
+      unconfirmed: true,
+      why:
+        `THE CONFIRMATION ITSELF FAILED while reading ${opts.what ?? 'the written state'} ` +
+        `— ${first}. Every node reproduces this or it is a fault in the drive, so it is ` +
+        `not a statement about the write, which its receipt already reported as mined ` +
+        `and successful`,
+    };
   }
 }
 

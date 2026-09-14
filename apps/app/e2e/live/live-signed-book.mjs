@@ -112,7 +112,7 @@ import {
   visit,
 } from './driver.mjs';
 import { rpcRetryable } from './rpcRetryable.mjs';
-import { confirmWrite } from './writeConfirm.mjs';
+import { confirmWriteOrReport } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -372,7 +372,7 @@ const diamondReadAt = (functionName, args, blockNumber) => {
  * confirmation is a weaker fact than failing the confirmation.
  */
 const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
-  confirmWrite({
+  confirmWriteOrReport({
     what: `signedOfferFilledAmount(${orderHash}) at or above the ceiling ${ceiling}`,
     minBlock,
     // `cacheTime: 0` is load-bearing, not tidiness. viem defaults this
@@ -1434,7 +1434,7 @@ try {
       'OBSERVED',
       `tx ${cancelTxHash} (block ${cancelBlock}) emitted SignedOfferCancelled for ` +
         `${orderHash} with status success — the revocation executed. The ledger ` +
-        `confirmation of it did not: ${ledger.why}. Cleanup re-verifies below.`,
+        `confirmation of it did not complete: ${ledger.why}. Cleanup re-verifies below.`,
     );
   } else {
     throw new Error(
@@ -2071,7 +2071,7 @@ try {
             'FAIL',
             `CANCEL SENT, EFFECT UNCONFIRMED — tx ${cancelTxHash} (block ${cancelBlock}) ` +
               `emitted SignedOfferCancelled for ${orderHash} with status success, so the ` +
-              `revocation executed; no node would confirm the ledger. ${ledger.why}. ` +
+              `revocation executed; the ledger confirmation did not complete. ${ledger.why}. ` +
               `No second cancel was sent (it would duplicate one already mined). ` +
               `Re-read signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a ` +
               `synced node — expect at least the ceiling ${ceiling}.`,
@@ -2114,7 +2114,7 @@ try {
               'FAIL',
               `CANCEL SENT, EFFECT UNCONFIRMED — cancelSignedOffer tx ${hash} mined at ` +
                 `block ${receipt.blockNumber} with status success, so the revocation ` +
-                `executed; no node would confirm the ledger. ${after.why}. Re-read ` +
+                `executed; the ledger confirmation did not complete. ${after.why}. Re-read ` +
                 `signedOfferFilledAmount(${orderHash}) on ${DIAMOND} against a synced ` +
                 `node — expect at least the ceiling ${ceiling}.`,
             );
