@@ -307,6 +307,7 @@
       "bellLabel": "Notifications",
       "title": "Notifications",
       "loading": "आपकी notifications load हो रही हैं…",
+      "correctionNote": "यह हमें जाँच करते समय पता चला — यह कब हुआ, हम नहीं बता सकते। मौजूदा स्थिति देखने के लिए इसे खोलें।",
       "empty": "अभी कुछ नहीं। आपके loans की updates यहाँ दिखेंगी।",
       "unavailable": "अभी आपकी notifications load नहीं कर सके। Connection वापस आएगा तो वे यहाँ होंगी।",
       "connectFirst": "अपने loans की updates देखने के लिए wallet connect करें।",
