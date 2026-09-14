@@ -342,12 +342,23 @@ export default {
     // the scheduled pass — but awaiting the Secrets Store fan-out below
     // would reintroduce exactly the failure the recut removed: a degraded
     // secrets binding could push the response past the browser's abort and
-    // discard a valid D1 series. It needs D1, the ingest flag and the
-    // deployment artifact; none of those come from Secrets Store.
+    // discard a valid D1 series. It needs D1, the resolved ingest gate and
+    // the deployment artifact; none of those come from Secrets Store.
     if (url.pathname === '/metrics/recycling') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
-        return handleRecyclingSeries(req, env as unknown as Env);
+        // The ONE route that skips `resolveEnv`, so the one place that has
+        // to stamp the gate itself (#2202 r1). The raw env carries BOTH
+        // halves here, so this is not a workaround for a missing binding —
+        // it is the same resolution `resolveEnv` performs, done at the only
+        // seam that bypasses it. Casting alone would hand the route
+        // `doIngestEnabled: undefined`, which reads as "legacy" and would
+        // make this route WORSE than before the resolved gate existed: it
+        // used to see the flag, and would now see nothing.
+        return handleRecyclingSeries(req, {
+          ...(env as unknown as Env),
+          doIngestEnabled: isDoIngestEnabled(env),
+        });
       }
       return new Response('Not found', { status: 404 });
     }
