@@ -273,14 +273,20 @@ older seed, and refuses to run a chain whose figure is not stated. Refs #1566, #
 ## #1566 slice 4 PR B — reward custody moves onto the dedicated address (PR #2186)
 
 The first slice-4 change bound a dedicated custody address per deployment
-and left it dark. This change switches reward custody onto it: once a
-chain's operator runs the activation ceremony — under the manual pause,
-bound to the pause count the figures were established at, and only when
-every position the address must back is backed exactly (the recycled
-runway, the recovery position, the overage quarantine and, on a mirror, the
-imported delivered headroom; a zero position takes no answer, a non-zero
-one refuses without one) — every reward read and debit goes through the
-address's attribution rows instead of the platform's own token balance. A
+and left it dark. This change switches reward custody onto it: once an administrator runs the activation ceremony — an
+administrator-only call, taken under the manual pause and bound to the
+pause count the figures were established at (under governance the pause
+is the pauser's act and the activation the timelock's, which the staged
+form of the ceremony keeps apart), and only when every position the
+address must back is settled: the recycled runway, the recovery position
+and the overage quarantine must each equal their figure exactly, a zero
+position takes no answer and a non-zero one refuses without one, and a
+mirror's imported delivered headroom is settled by one of two recorded
+choices — funding the position up to the imported figure, or writing the
+figure down to what the address actually backs, after which the
+written-down figure is what bounds claims — every reward read and debit
+goes through the address's attribution rows instead of the platform's own
+token balance. A
 single-chain deployment with no reward role never activates and behaves
 exactly as before, and a detached deployment waits for the era registry
 that gives its inbound packets a rule. Backing a position ahead of the activation is itself an
