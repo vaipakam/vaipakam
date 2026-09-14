@@ -337,6 +337,13 @@ interface IVaipakamErrors {
     ///         never delivered through the Diamond's receiver hook; the pin
     ///         is cleared and the sweep refused rather than reported.
     error RewardCustodyInboundNotDelivered();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the ERC-721
+    ///         sweep was asked to recover a token the named holder does not
+    ///         own, so there is nothing to recover from it.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token.
+    /// @param owner   Who the token reports as its owner.
+    error RewardCustodyErc721NotAtHolder(address token, uint256 tokenId, address owner);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

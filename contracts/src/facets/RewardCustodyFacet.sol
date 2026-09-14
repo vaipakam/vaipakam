@@ -346,6 +346,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         RewardCustodyHolder(holder).release(token, treasury, amount);
         uint256 received = IERC20(token).balanceOf(treasury) - before;
         _requireDebited(holder, holderBefore, IERC20(token).balanceOf(holder), amount);
+        _creditDiamondTreasury(s, token, received);
         emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
     }
 
@@ -415,6 +416,14 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
+        // Ownership is read BEFORE the release too (Codex #2158 post-cap P2):
+        // a token that already reports the treasury as owner — or that the
+        // holder never held — must not produce a "recovered from holder"
+        // event after a transfer that moved nothing.
+        address ownerBefore = IERC721(token).ownerOf(tokenId);
+        if (ownerBefore != holder) {
+            revert IVaipakamErrors.RewardCustodyErc721NotAtHolder(token, tokenId, ownerBefore);
+        }
         _armCustodyInbound(s, treasury, token, tokenId, 1);
         RewardCustodyHolder(holder).releaseERC721(token, treasury, tokenId);
         _requireCustodyInboundConsumed(s, treasury);
@@ -542,6 +551,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyExceedsUnattributed(amount, unattributed);
         }
         _releaseMeasured(token, bound, treasury, amount);
+        _creditDiamondTreasury(s, token, amount);
         emit RewardCustodyUnattributedVpfiSwept(bound, treasury, amount, unattributed);
     }
 
@@ -837,6 +847,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyMoveUnverified(amount, credited);
         }
         _requireDebited(from, fromBefore, IERC20(token).balanceOf(from), amount);
+    }
+
+    /// @dev When the configured treasury is this Diamond, an ERC-20 the sweeps
+    ///      deliver to it must be CREDITED to the treasury's tracked balance
+    ///      (Codex #2158 post-cap P2): `TreasuryFacet.claimTreasuryFees`
+    ///      releases only `treasuryBalances[asset]`, so an uncredited receipt
+    ///      would sit in the Diamond's raw balance, unclaimable — and, for
+    ///      the configured VPFI, back in the mixed balance the holder exists
+    ///      to separate. Credited as a plain balance, not through the fee
+    ///      analytics: a recovered stray asset is not revenue. Native
+    ///      currency has no tracked treasury balance and no claim path on a
+    ///      Diamond-as-treasury today; that gap predates this change and is
+    ///      not hidden by it.
+    function _creditDiamondTreasury(LibVaipakam.Storage storage s, address asset, uint256 amount) private {
+        if (amount == 0 || s.treasury != address(this)) return;
+        s.treasuryBalances[asset] += amount;
     }
 
     /// @dev When the configured treasury is this Diamond, its receiver hooks

@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -623,6 +624,41 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.prank(alice);
         vm.expectRevert();
         nft.safeTransferFrom(alice, address(diamond), 2);
+    }
+
+    /// @dev Codex #2158 post-cap P2 — an ERC-20 recovered to a Diamond that is
+    ///      its own treasury is credited to the tracked treasury balance the
+    ///      claim path releases, both for a foreign token and for the bound
+    ///      holder's unattributed VPFI; nothing lands uncredited in the raw
+    ///      balance.
+    function test_Sweep_CreditsADiamondTreasurysTrackedBalance() public {
+        address holder = _bind();
+        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        TreasuryFacet tf = TreasuryFacet(address(diamond));
+
+        PlainERC20 foreign = new PlainERC20();
+        foreign.mint(holder, 70);
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(foreign), 70);
+        assertEq(tf.getTreasuryBalance(address(foreign)), 70, "foreign receipt credited to the tracked balance");
+
+        vpfi.mint(holder, 40 ether); // unsolicited, no row describes it
+        _pause();
+        _custody().sweepUnattributedVpfiFromRewardCustody(40 ether);
+        assertEq(tf.getTreasuryBalance(address(vpfi)), 40 ether, "unattributed VPFI credited to the tracked balance");
+    }
+
+    /// @dev Codex #2158 post-cap P2 — the ERC-721 sweep refuses a token the
+    ///      named holder does not own, so a token already sitting with the
+    ///      treasury can never be reported as recovered from a holder.
+    function test_Sweep_RefusesAnERC721TheHolderDoesNotOwn() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        MockRentableNFT721 nft = new MockRentableNFT721();
+        nft.mint(treasury, 5);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyErc721NotAtHolder.selector, address(nft), 5, treasury)
+        );
+        _custody().sweepERC721FromRewardCustody(holder, address(nft), 5);
     }
 
     function test_Rebase_RefusesAStalePauseEpoch() public {
