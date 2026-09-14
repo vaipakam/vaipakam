@@ -74,8 +74,9 @@ platform's own balance — a delivery's unattributed remainder, a
 quarantined compensation, and a return for a receipt older than
 per-receipt attribution — now move into the address's unclassified
 attribution as they land; every reward-budget packet — a delivery, a
-compensation, a stranded return, a recovery-ceremony inflow — is
-recorded, on every deployment, under the identity the transport supplies
+compensation, a stranded return, a recovery-ceremony inflow for a receipt
+that predates attribution — is recorded, on every deployment, under the
+identity the transport supplies
 — or, where the transport supplies none, under one the platform's own
 ingress allocates in sequence per source — and a receipt is delivered
 once; and the platform's manual pause becomes the migration mode the
@@ -1247,7 +1248,8 @@ the quarantine reservation from now on, so the watcher's exact balance
 relation keeps its meaning without a shape change.
 
 Every reward-budget packet — a budget delivery, a compensation, a stranded
-return, a recovery-ceremony inflow — is now recorded under an identity:
+return, a recovery-ceremony inflow for a receipt that predates per-receipt
+attribution — is now recorded under an identity:
 the message id the transport itself supplies at delivery, or, where the
 transport supplies none, one the platform's own ingress allocates in
 sequence per source. That message id is what the cross-chain adapter now
@@ -1262,9 +1264,11 @@ receipt is delivered once, so every figure kept against a receipt
 describes exactly one delivery. The receipt a delivery creates is bound to
 the identity. This
 record is what the second part will reconcile against, and it is taken on
-every deployment, activated or not. One value-bearing arrival is not yet
+every deployment, activated or not. Some value-bearing arrivals are not yet
 recorded this way: a planned-surplus repatriation return, which credits
-recycled custody only; #2204 tracks recording it.
+recycled custody only; a recovery-ceremony inflow for a receipt that is
+already attributed; and every recycled ceremony inflow. #2204 tracks
+recording them.
 
 The migration mode the design calls for is the platform's own manual
 pause: reward packets still land and are protected while the pause
