@@ -6005,9 +6005,10 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > live auto-pause window as not live (review r28). The legacy seed carries
 > the pause epoch and requires the manual pause exactly as the rebase does;
 > the refresh always sends pause() first (cuts protected by order; the
-> on-chain cut gate is #2179); a bootstrap run demands no migration answer;
-> and a Diamond-as-treasury receives custody NFT sweeps through a pinned,
-> single-use inbound (review r29). The refresh REMOVES the retired
+> on-chain cut gate is #2179); and a bootstrap run demands no migration
+> answer (review r29 — the pinned NFT inbound that round also added was
+> withdrawn at the post-cap review; the refusal below is normative). The
+> refresh REMOVES the retired
 > one-argument seed selector (a pinned retired-selector list, verified
 > unrouted through the loupe), and the bootstrap run is described as
 > everything but the two paid-side migrations (review r30). A Diamond that is
