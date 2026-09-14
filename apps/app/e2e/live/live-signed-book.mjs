@@ -2054,20 +2054,28 @@ try {
         // so it stays an unpinned read of the current state — which is
         // the right question then: nothing was written to be stale
         // about.
+        //
+        // Either way the VALUE READ is carried, not collapsed to a
+        // boolean (#2107 round 9). The predicate is `>= ceiling` on
+        // purpose — a ledger past its ceiling still rests nothing — so a
+        // value ABOVE it passes, and that is unexpected accounting state
+        // worth seeing. Reducing the fallback to a yes/no threw away the
+        // one signal the loose predicate exists to keep.
         const ledger =
           cancelBlock !== null
             ? await confirmLedgerAtCeiling(orderHash, ceiling, cancelBlock)
-            : { ok: (await diamondRead('signedOfferFilledAmount', [orderHash])) >= ceiling };
+            : await (async () => {
+                const value = await diamondRead('signedOfferFilledAmount', [orderHash]);
+                return { ok: value >= ceiling, value };
+              })();
         if (ledger.ok) {
           ledgerPoisoned = true; // already consumed/cancelled — nothing rests
           record(
             'cleanup: signed order',
             'PASS',
-            cancelBlock !== null
-              ? `ledger reads ${ledger.value} at block ${ledger.blockNumber}, at or ` +
-                `above the ceiling ${ceiling} for ${orderHash} — order not fillable`
-              : `ledger already reads at or above the ceiling ${ceiling} for ` +
-                `${orderHash} — order not fillable`,
+            `ledger reads ${ledger.value}` +
+              (ledger.blockNumber !== undefined ? ` at block ${ledger.blockNumber}` : ' at latest') +
+              `, at or above the ceiling ${ceiling} for ${orderHash} — order not fillable`,
           );
         } else if (ledger.unconfirmed) {
           // A cancel from step 6 is on chain with status success, and
