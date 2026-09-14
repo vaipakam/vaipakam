@@ -7387,6 +7387,40 @@ library LibVaipakam {
         ///      on an address, so a previous holder stays reachable for
         ///      recovery while nothing else ever is.
         mapping(address => bool) rewardCustodyHolderConstructed;
+        /// @dev #1566 slice 4 PR B — whether this deployment's reward custody
+        ///      reads and debits the holder. Set ONCE by the per-chain
+        ///      activation ceremony (`RewardCustodyFacet.activateRewardCustody`
+        ///      — ADMIN, under the manual pause, epoch-pinned) after the
+        ///      recovery, overage and recycled positions have been reconciled
+        ///      into the holder's rows; never by a facet refresh. `false` is
+        ///      today's Diamond-custody behaviour, which an `Unconfigured`
+        ///      deployment keeps forever (it cannot activate). Read through
+        ///      `LibRewardCustody.active` only — that is the design's role
+        ///      branch, in one place.
+        bool rewardCustodyActivated;
+        /// @dev #1566 slice 4 PR B — the role and source freeze (design §5d):
+        ///      armed by the first holder attribution or by the activation,
+        ///      whichever comes first; while set, `setBaseChainId` and
+        ///      `setIsCanonicalRewardChain` refuse every EFFECTIVE role change,
+        ///      because the retained residual retirement can level the
+        ///      delivered counters but cannot re-key a holder allocation, so a
+        ///      transition would orphan funded custody. Cleared by slice 4
+        ///      PR C's era-registry backfill as its last step, and by nothing
+        ///      else.
+        bool rewardRoleChangesFrozen;
+        /// @dev #1566 slice 4 PR B (Codex #2186 r4, r5) — the COMPLETE-cut
+        ///      record: the custody protocol version
+        ///      (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the
+        ///      ROUTING — every facet address with the selectors it serves —
+        ///      as they stood when a complete facet cut (`DeployDiamond`,
+        ///      `RefreshAllFacetsInPlace`) recorded them, under the pause the
+        ///      cut ran under. Activation and every bootstrap write require
+        ///      both to be current, so custody can never be switched onto
+        ///      the holder while a reward path that does not know the holder
+        ///      is still routed. Re-taken by every complete cut; invalidated
+        ///      by any cut in between, of a facet or of a single selector.
+        uint32 rewardCustodyCutoverVersion;
+        bytes32 rewardCustodyCutoverRouting;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

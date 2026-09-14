@@ -192,6 +192,25 @@
 #   direct bind that never executed, which the one-shot bind refuses to run
 #   over — refuses before any broadcast as well.
 #
+#   REWARD CUSTODY ACTIVATION (#1566 slice 4 PR B) is a SEPARATE ceremony,
+#   never a refresh step: `ActivateRewardCustody.s.sol` switches a chain's
+#   reward reads and debits onto the bound holder once every position the
+#   holder must back has been reconciled by an explicit per-row answer
+#   established under the manual pause (REWARD_CUSTODY_FUND_<ROW> /
+#   REWARD_CUSTODY_RELOCATE_<ROW> with REWARD_CUSTODY_PROVENANCE, and on a
+#   Mirror REWARD_CUSTODY_FUND_LIVE_FRESH or
+#   REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP; REWARD_CUSTODY_PAUSE_EPOCH pins
+#   them — every one of them PER CHAIN, suffixed _<PREFIX>, resolved for the
+#   current slug only right before the ceremony, exactly like the migration
+#   answers). Step [4c] reads each refreshed chain's activation state after the
+#   refresh: it runs the ceremony only for a chain opted in with
+#   REWARD_CUSTODY_ACTIVATE_<PREFIX>=true, and otherwise REPORTS the chain as
+#   not activated — on a Canonical chain that means reward claims and
+#   remittances are refused (the delivered bound is received − paid, zero
+#   until funded) until the ceremony runs. An Unconfigured deployment keeps
+#   Diamond custody by design and is not owed one. After activation the
+#   chain stays paused; fund forward with `fundRewardPool` after the unpause.
+#
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
 #   bash script/redeploy-testnet-inplace.sh
@@ -362,6 +381,25 @@ export_chain_answers() {
   local epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"
   unset ARMED_FRESH_PAUSE_EPOCH
   [ -n "${!epoch_var:-}" ] && export ARMED_FRESH_PAUSE_EPOCH="${!epoch_var}"
+  return 0
+}
+# #1566 slice 4 PR B (Codex #2186 r1 P2) — the activation ceremony's answers
+# are PER CHAIN too: every unprefixed name the forge script reads is unset,
+# then set from `<NAME>_<PREFIX>` for the current slug only, right before the
+# invocation, so a multi-chain run can never pair one chain's pause epoch,
+# funding, relocation, write-down or provenance with another chain's
+# ceremony.
+export_custody_answers() {
+  local slug="$1" pfx name v
+  pfx="$(prefix_for "$slug")"
+  for name in REWARD_CUSTODY_PAUSE_EPOCH REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP \
+      REWARD_CUSTODY_FUND_LIVE_FRESH REWARD_CUSTODY_FUND_RECYCLED REWARD_CUSTODY_RELOCATE_RECYCLED \
+      REWARD_CUSTODY_FUND_RECOVERY REWARD_CUSTODY_RELOCATE_RECOVERY \
+      REWARD_CUSTODY_FUND_OVERAGE REWARD_CUSTODY_RELOCATE_OVERAGE REWARD_CUSTODY_PROVENANCE; do
+    unset "$name"
+    v="${name}_${pfx}"
+    [ -n "${!v:-}" ] && export "$name=${!v}"
+  done
   return 0
 }
 info()   { printf '  · %s\n' "$*"; }
@@ -988,6 +1026,43 @@ for slug in $CHAINS; do
       ;;
   esac
 
+  # #1566 slice 4 PR B — the custody cutover is a SEPARATE, operator-answered
+  # ceremony (ActivateRewardCustody.s.sol), never a refresh step: it needs
+  # the reconciliation figures established under the manual pause and one
+  # explicit answer per non-zero figure. This step only REPORTS where the
+  # chain stands so the run cannot end reading as complete while the
+  # chain's reward custody is still on the Diamond path, and runs the
+  # ceremony ONLY when the operator opted this chain in with
+  # REWARD_CUSTODY_ACTIVATE_<PREFIX>=true and stated its answers. A chain
+  # whose role is Unconfigured keeps Diamond custody by design and is not
+  # owed an activation.
+  banner "[4c] $slug — reward custody activation (design §5d)"
+  activated="$(cast call "$diamond3" 'rewardCustodyActivated()(bool)' --rpc-url "$rpc" 2>/dev/null || echo '')"
+  role_now="$(cast call "$diamond3" 'getRewardRole()(uint8)' --rpc-url "$rpc" 2>/dev/null | tr -d '[:space:]' || echo '')"
+  act_var="REWARD_CUSTODY_ACTIVATE_$(prefix_for "$slug")"
+  case "$activated" in
+    true)  info "[4c] $slug — reward custody already ACTIVATED (reads and debits go through the holder) ✓" ;;
+    false)
+      if [ "$role_now" = "2" ]; then
+        info "[4c] $slug — reward role is Unconfigured: this deployment keeps Diamond custody by design; no activation is owed"
+      elif [ "${!act_var:-}" = "true" ]; then
+        info "[4c] $slug — \$$act_var=true: running ActivateRewardCustody.run() with THIS chain's REWARD_CUSTODY_*_$(prefix_for "$slug") answers (pauses again; states the stated pause epoch + 1)"
+        export_custody_answers "$slug"
+        [ -n "${REWARD_CUSTODY_PAUSE_EPOCH:-}" ] || fail "$slug: \$$act_var=true but \$REWARD_CUSTODY_PAUSE_EPOCH_$(prefix_for "$slug") is unset -- every activation answer is per chain (suffix _$(prefix_for "$slug")); nothing sent for this ceremony"
+        "${NICE[@]}" forge script script/ActivateRewardCustody.s.sol --sig "run()" \
+          --rpc-url "$rpc" --broadcast --slow \
+          || fail "$slug: ActivateRewardCustody failed -- read the refusal above (a figure without an answer, a stale REWARD_CUSTODY_PAUSE_EPOCH, a role or rebase precondition); nothing after the refusal was sent; after governance handover use --sig \"stage()\" then \"record()\""
+        "${NICE[@]}" forge script script/ActivateRewardCustody.s.sol --sig "record()" \
+          --rpc-url "$rpc" \
+          || fail "$slug: ActivateRewardCustody record() failed -- the activation broadcast but its record was NOT reconciled; run --sig \"record()\" again"
+        info "[4c] $slug — reward custody ACTIVATED and recorded ✓ (the Diamond REMAINS PAUSED; fund forward with fundRewardPool after the unpause)"
+      else
+        info "[4c] $slug — reward custody NOT ACTIVATED: reward reads and debits stay on the Diamond path, and on a Canonical chain the delivered bound is received - paid (ZERO until funded) so reward claims and remittances are REFUSED until the ceremony runs. To activate: under the manual pause read the figures (recycleBucket, recovered - redispatched, strandedReturnOverage, and on a Mirror received - paid), state one answer per non-zero figure — PER CHAIN, suffixed _$(prefix_for "$slug"): REWARD_CUSTODY_FUND_<ROW>_<PREFIX> / REWARD_CUSTODY_RELOCATE_<ROW>_<PREFIX> with REWARD_CUSTODY_PROVENANCE_<PREFIX>, REWARD_CUSTODY_FUND_LIVE_FRESH_<PREFIX> or REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP_<PREFIX> on a Mirror — set REWARD_CUSTODY_PAUSE_EPOCH_<PREFIX> to the pause library's transition count under that pause and \$$act_var=true, then run this script again for this chain or ActivateRewardCustody.s.sol by hand (a Detached chain does not activate in this slice)"
+        unactivated_chains="${unactivated_chains:+$unactivated_chains }$slug"
+      fi ;;
+    *) fail "$slug: rewardCustodyActivated() could not be read after the refresh ('${activated:-unreadable}') -- refusing to guess whether this chain's reward custody is activated; retry [4c] by hand once the RPC answers" ;;
+  esac
+
   if [ "$SKIP_VAULT" -eq 0 ]; then
     banner "[5] $slug — UpgradeVaultImplementation (UUPS template)"
     "${NICE[@]}" forge script script/UpgradeVaultImplementation.s.sol --sig "run()" \
@@ -1078,5 +1153,8 @@ if [ -n "${paused_chains:-}" ]; then
 fi
 if [ -n "${bootstrap_chains:-}" ]; then
   info "BOOTSTRAP chains (paid-side seed + rebase DEFERRED; every other refresh step ran): [$bootstrap_chains] -- for each: AdminFacet.pause() once more (counted now that the new pause code is live), establish the seed / total / no-history answer under that pause, set ARMED_FRESH_PAUSE_EPOCH_<PREFIX> to the pause library's transition count, and run this script again for that chain."
+fi
+if [ -n "${unactivated_chains:-}" ]; then
+  info "REWARD CUSTODY NOT ACTIVATED on: [$unactivated_chains] -- reward reads and debits stay on the Diamond path there; a Canonical chain among them REFUSES reward claims and remittances until the activation ceremony (ActivateRewardCustody.s.sol, or this script with REWARD_CUSTODY_ACTIVATE_<PREFIX>=true and the per-row answers) has run. Not ordinary completion."
 fi
 banner "DONE"

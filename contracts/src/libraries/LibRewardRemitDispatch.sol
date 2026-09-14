@@ -3,6 +3,8 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "./LibRewardCustody.sol";
+import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -75,9 +77,23 @@ library LibRewardRemitDispatch {
         address messenger,
         uint32 dstChainId,
         bytes memory payload,
-        uint256 total,
-        uint256 remitId
+        uint256 remitId,
+        LibRewardCustody.TransportDraw memory draw
     ) internal returns (bytes32 messageId) {
+        // #1566 slice 4 PR B — the tail takes the custody SOURCE as an
+        // argument (design §5d): a `Live` draw is bounded and charged
+        // against the delivered ledger by its fresh share FIRST (reject
+        // before anything is approved or moved; the charge is the ledger
+        // half of the same act) and then leaves the live-fresh and recycled
+        // rows; a `Recovery` draw leaves the recovery row only and is exempt
+        // from the delivered charge — its original outflow was charged. On
+        // an activated deployment the tokens are released from the holder
+        // to this Diamond here, where the messenger pulls them; otherwise
+        // they are already in the Diamond's balance (today's path).
+        if (draw.source == LibRewardCustody.TransportSource.Live) {
+            LibInteractionRewards.chargeDeliveredFresh(s, draw.fresh);
+        }
+        uint256 total = LibRewardCustody.callDrawForTransport(s, draw);
         IERC20(vpfi).forceApprove(messenger, total);
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);

@@ -9,6 +9,7 @@ import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../../src/libraries/LibRewardCustody.sol";
 import {LibConsolidation} from "../../src/libraries/LibConsolidation.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
@@ -971,7 +972,21 @@ contract TestMutatorFacet {
     ///         credited series directly (bypasses the backing check — the
     ///         stamp tests exercise finalization math, not custody).
     function setRecycleBucketRaw(uint256 amount) external {
-        LibVaipakam.storageSlot().recycleBucket = amount;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 slice 4 PR B — on an ACTIVATED deployment the bucket is an
+        // attribution over the holder's recycled row, so a raw bucket write
+        // keeps the custody consistent too: the difference is relocated
+        // from the Diamond's balance into the row, or released from the row
+        // back to the Diamond, measured either way.
+        if (LibRewardCustody.active(s)) {
+            uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled];
+            if (amount > row) {
+                LibRewardCustody.relocateToHolder(s, LibVaipakam.RewardCustodyRow.Recycled, amount - row);
+            } else if (amount < row) {
+                LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, address(this), row - amount);
+            }
+        }
+        s.recycleBucket = amount;
     }
 
     /// @notice #1504 test-only — drive a REAL {LibVpfiRecycle.credit},
@@ -1462,10 +1477,63 @@ contract TestMutatorFacet {
     ///         primitive through the Diamond (its production caller,
     ///         `executeRepatriation`, ships with the transport slice).
     function debitRepatriationSurplusRaw(uint256 amount) external {
+        // #1566 slice 4 PR B — the primitive now moves the tokens itself;
+        // naming the Diamond as the destination keeps this a ledger-only
+        // exercise (a self-transfer on the Diamond path; a measured release
+        // holder → Diamond on an activated one).
         LibVpfiRecycle.debitRepatriationSurplus(
             LibVaipakam.storageSlot(),
-            amount
+            amount,
+            address(this)
         );
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the three role inputs
+    ///         directly, so the resolver and the freeze can be tested on
+    ///         states the frozen setters refuse to produce. The production
+    ///         setters are the only role mutators; this bypasses their
+    ///         residual retirement and their freeze on purpose.
+    function setRewardRoleRaw(uint32 baseChainId, bool canonical, bool configured) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.baseChainId = baseChainId;
+        s.isCanonicalRewardChain = canonical;
+        s.rewardRoleConfigured = configured;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the Base recovery position
+    ///         and the overage quarantine directly, so the bootstrap writers
+    ///         and the overage disposition can be exercised without driving a
+    ///         full stranded-return round trip.
+    function setRecoveryPositionWithOverageRaw(uint256 recovered, uint256 redispatched, uint256 overage) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardBudgetRecovered = recovered;
+        s.rewardBudgetRedispatched = redispatched;
+        s.strandedReturnOverage = overage;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the role freeze raw, so a
+    ///         suite whose setUp activated the custody can still drive the
+    ///         PRODUCTION role setters (with their residual retirement) in
+    ///         the tests that are about transitions. The freeze itself is
+    ///         pinned in RewardCustodyCutoverTest.
+    function setRewardRoleChangesFrozenRaw(bool frozen) external {
+        LibVaipakam.storageSlot().rewardRoleChangesFrozen = frozen;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — read the freeze flag raw.
+    function getRewardRoleChangesFrozenRaw() external view returns (bool) {
+        return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
+    }
+
+    /// @notice #1566 slice 4 PR B (Codex #2186 r4) test-only — write the
+    ///         complete-cut record raw, so the VERSION half of the activation
+    ///         gate can be straddled (the routing half is straddled by real
+    ///         cuts). Production writes it only through
+    ///         {RewardCustodyFacet.stampRewardCustodyCutover}.
+    function setRewardCustodyCutoverRaw(uint32 version, bytes32 routing) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardCustodyCutoverVersion = version;
+        s.rewardCustodyCutoverRouting = routing;
     }
 
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited

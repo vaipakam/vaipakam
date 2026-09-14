@@ -821,6 +821,17 @@ contract InteractionRewardsLensFacet {
      *         why omitting it overstates the reserve rather than merely
      *         rounding it.
      */
+    /// @dev #1566 slice 4 PR B — on an ACTIVATED deployment (reward custody
+    ///      switched onto the holder) `bucket` and `recoveryPositionReserved`
+    ///      are custody of the HOLDER, not subtrahends of `vpfiBalance`, and
+    ///      `unearmarked` is `vpfiBalance − strandedRecoveryReserved`. The
+    ///      legacy relation `vpfiBalance ≥ bucket + strandedRecoveryReserved
+    ///      + recoveryPositionReserved` no longer holds there BY DESIGN; a
+    ///      watcher recomposes the backing from
+    ///      `RewardCustodyFacet.getRecycleBackingSnapshotV2`, which returns
+    ///      these eight fields unchanged plus the activation flag and the
+    ///      holder's balance and attributed total. This view keeps its shape
+    ///      so an eight-field reader keeps decoding.
     function getRecycleBackingSnapshot()
         external
         view

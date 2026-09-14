@@ -903,6 +903,10 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
     function test_D4_CanonicalArmedDayPricesNormally() public {
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
         RewardReporterFacet(address(diamond)).setBaseChainId(8453);
+        // #1566 slice 4 PR B — a canonical chain prices its armed days off
+        // what was FUNDED, not the schedule: activate the custody and fund
+        // the pool, and the claim prices normally within that headroom.
+        activateRewardCustodyForTest(address(vpfi), 10e18);
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);

@@ -88,6 +88,10 @@ contract RewardRemitLedgerTest is SetupTest {
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
         rep.setBaseChainId(CHAIN_BASE);
         rep.setIsCanonicalRewardChain(true);
+        // #1566 slice 4 PR B — a canonical chain dispatches out of the custody
+        // holder, bounded by what was funded: activate and fund the pool. The
+        // freeze this arms is why the mirror fixture below sets the role RAW.
+        activateRewardCustodyForTest(address(vpfiTok), 10_000_000 ether);
         rep.setRewardMessenger(address(rewardMessenger));
         TreasuryFacet(address(diamond)).setCrossChainMessenger(address(ccip));
 
@@ -1464,11 +1468,26 @@ contract RewardRemitLedgerTest is SetupTest {
 
     /// @dev Reconfigure the SAME diamond as a mirror (matches the d1
     ///      commitment-test convention: one deploy, role flipped).
+    /// @dev #1566 slice 4 PR B — the suite's setUp activates the custody,
+    ///      which arms the role freeze; the tests that flip the role (this
+    ///      fixture, the arming helper and the demotion tests) lift it RAW
+    ///      first and then drive the PRODUCTION setters, so their residual
+    ///      retirement and arming semantics are exercised as before. The
+    ///      freeze itself is pinned in RewardCustodyCutoverTest.
+    function _unfreezeRole() internal {
+        TestMutatorFacet(address(diamond)).setRewardRoleChangesFrozenRaw(false);
+    }
+
     function _configureMirror() internal {
         vm.chainId(CHAIN_ARB);
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
+        _unfreezeRole();
         rep.setIsCanonicalRewardChain(false);
         rep.setBaseChainId(CHAIN_BASE);
+        // A mirror starts with an EMPTY delivered ledger until Base remits;
+        // the setUp's canonical funding (and the retirement the demotion
+        // just applied to it) is not this mirror's history.
+        TestMutatorFacet(address(diamond)).setArmedFreshLedgerRaw(0, 0);
         remit.setRewardRemittanceReceiver(address(this));
     }
 
@@ -1529,7 +1548,12 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
         , 0);
-        // Owner rotates the canonical deployment.
+        // Owner rotates the canonical deployment — through Detached, as
+        // #1566 slice 4 PR B requires of a mirror's source; the freeze is
+        // lifted raw (the stale-receipt rule is what this test pins).
+        _unfreezeRole();
+        RewardReporterFacet(address(diamond)).setBaseChainId(0);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setBaseChainId(999);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -2599,6 +2623,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertGt(sentA, 0, "fixture: released real backing while canonical");
 
         // The role moves AFTER the history exists.
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
 
         comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
@@ -2615,6 +2640,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// And the gate that replaces the role check actually bites: a Diamond
     /// with no reservation history cannot seed at all, whatever its role.
     function test_Seed_RefusesWithNoReservationHistory() public {
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
         vm.expectRevert(RewardCompensationDispatchFacet.SeedNothingToScan.selector);
         comp.seedReleasedRemitStranded(1);
@@ -2724,10 +2750,12 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      attribution rule reading real arming state.
     function _armFrom(uint256 dayId) internal {
         vm.chainId(CHAIN_BASE);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
         RewardAggregatorFacet(address(diamond))
             .setGovernorCommitArmedFromDay(dayId);
         vm.chainId(CHAIN_ARB);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
     }
 
@@ -2857,12 +2885,15 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      that never charged, the inconsistency this closure removes.
     function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCount() public {
         _configureMirror();
+        // The setUp funded the canonical pool before this fixture switched
+        // the role raw, so the counted figure starts at that baseline.
+        (uint256 baseline, ) = rlens.getDeliveredFreshPosition();
         remit.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
             address(0xBA5E), 0, 5e18
         );
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 5e18, "an unarmed chain counts its fresh share");
+        assertEq(counted - baseline, 5e18, "an unarmed chain counts its fresh share");
         assertEq(uncounted, 0, "nothing refused");
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
@@ -2871,7 +2902,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 0, 6e18
         );
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 11e18, "an empty day set changes nothing about counting");
+        assertEq(counted - baseline, 11e18, "an empty day set changes nothing about counting");
         assertEq(uncounted, 0, "still nothing refused");
     }
 
@@ -3572,14 +3603,19 @@ contract RewardRemitLedgerTest is SetupTest {
         // Books-only: pin the bucket at the whole balance so the fresh
         // credit has NO unearmarked float behind it - a recovery with no
         // tokens actually home must roll back at the record.
+        // #1566 slice 4 PR B: on this activated deployment the raw bucket
+        // write relocates that whole balance into the holder's recycled row,
+        // so the Diamond holds nothing and the inflow itself — the only
+        // earmark the ceremony asserts here now — is unbacked.
         uint256 bal = vpfiTok.balanceOf(address(diamond));
         mutator.setRecycleBucketRaw(bal);
+        assertEq(vpfiTok.balanceOf(address(diamond)), 0, "the raw bucket moved the balance into the holder");
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CeremonyInflowNotBacked.selector,
                 1,
-                bal,
-                bal + 1e18
+                0,
+                1e18
             )
         );
         comp.recordRecoveryCeremony(1, 1e18, 0);
@@ -4323,6 +4359,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRecoveryAttributionRaw(false, 0);
 
         // Now DEMOTE, and refresh. This is the exact ordering r9 skipped.
+        _unfreezeRole();
         rep.setIsCanonicalRewardChain(false);
         comp.armRecoveryAttribution();
 

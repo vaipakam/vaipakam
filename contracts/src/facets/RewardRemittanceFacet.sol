@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -340,11 +341,11 @@ contract RewardRemittanceFacet is
         address messenger,
         uint32 dstChainId,
         bytes memory payload,
-        uint256 total,
-        uint256 remitId
+        uint256 remitId,
+        LibRewardCustody.TransportDraw memory draw
     ) private returns (bytes32) {
         return LibRewardRemitDispatch.dispatchRemitTail(
-            s, vpfi, messenger, dstChainId, payload, total, remitId
+            s, vpfi, messenger, dstChainId, payload, remitId, draw
         );
     }
 
@@ -655,8 +656,23 @@ contract RewardRemittanceFacet is
             address(this),
             d.recycledShare
         );
-        messageId =
-            _tail(s, vpfi, messenger, dstChainId, payload, total, d.remitId);
+        // #1566 slice 4 PR B — the ordinary remittance names LIVE custody:
+        // its fresh share is bounded and charged against the delivered
+        // ledger and leaves the live-fresh row, its recycled share leaves
+        // the recycled row (the bucket's ledger debit is {consume} above).
+        messageId = _tail(
+            s,
+            vpfi,
+            messenger,
+            dstChainId,
+            payload,
+            d.remitId,
+            LibRewardCustody.TransportDraw({
+                source: LibRewardCustody.TransportSource.Live,
+                fresh: total - d.recycledShare,
+                recycled: d.recycledShare
+            })
+        );
     }
 
 
@@ -907,7 +923,16 @@ contract RewardRemittanceFacet is
         // arrives with `freshShare = 0` and lands whole in `uncounted`, which
         // the cutover epoch (closure 2, second PR) reconciles.
         uint256 counted = freshShare;
-        if (counted != 0) s.rewardBudgetArmedFreshReceived += counted;
+        // #1566 slice 4 PR B — on an activated deployment the counted fresh
+        // share is RELOCATED from this balance into the holder and credited
+        // under the §5c deficit split (live-fresh, or restitution for the
+        // part that only closes a deficit). The uncounted remainder stays in
+        // this balance, recorded as before; its protection into the
+        // holder's unclassified row is the cutover PR's.
+        if (counted != 0) {
+            if (LibRewardCustody.active(s)) LibRewardCustody.callRelocateFreshIngress(counted);
+            else s.rewardBudgetArmedFreshReceived += counted;
+        }
         if (freshLooking > counted) {
             s.rewardBudgetFreshUncounted += freshLooking - counted;
         }
@@ -1284,7 +1309,10 @@ contract RewardRemittanceFacet is
         // day's vintage. `armedFreshCounted` records exactly what this credit
         // added, which is exactly what a later demotion removes: the two are
         // inverses by construction rather than by a matching day test.
-        s.rewardBudgetArmedFreshReceived += amount;
+        // #1566 slice 4 PR B — see {onRewardBudgetReceived}: relocated into
+        // the holder under the deficit split on an activated deployment.
+        if (LibRewardCustody.active(s)) LibRewardCustody.callRelocateFreshIngress(amount);
+        else s.rewardBudgetArmedFreshReceived += amount;
         dc.armedFreshCounted += SafeCast.toUint128(amount);
         emit CompensationCredited(
             dayId, lenderShare18, borrowerShare18, provisional, era
@@ -1419,8 +1447,17 @@ contract RewardRemittanceFacet is
         // Move the counted portion back to uncounted so the
         // counted + uncounted reconciliation identity holds.
         if (counted != 0) {
-            uint256 af = s.rewardBudgetArmedFreshReceived;
-            s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;
+            // #1566 slice 4 PR B — on an activated deployment the credit is
+            // reversed through the custody seam: the received side unwinds
+            // (saturating, as before) and what the live-fresh row still
+            // holds of it is released back to this balance, where the
+            // stranded-recovery reservation above now describes it.
+            if (LibRewardCustody.active(s)) {
+                LibRewardCustody.callUncreditFresh(counted);
+            } else {
+                uint256 af = s.rewardBudgetArmedFreshReceived;
+                s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;
+            }
             s.rewardBudgetFreshUncounted += counted;
         }
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[
@@ -1812,6 +1849,13 @@ contract RewardRemittanceFacet is
         if (claw != 0) {
             s.rewardBudgetRecovered -= claw;
             s.strandedReturnOverage += claw;
+            // #1566 slice 4 PR B — the claw is an in-holder re-attribution
+            // on an activated deployment: recovery row → overage row.
+            if (LibRewardCustody.active(s)) {
+                LibRewardCustody.callMove(
+                    LibVaipakam.RewardCustodyRow.Recovery, LibVaipakam.RewardCustodyRow.Overage, claw
+                );
+            }
         }
         s.recoveryClawedForReceipt[receiptId] += unspent;
     }

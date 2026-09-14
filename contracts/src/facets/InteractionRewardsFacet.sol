@@ -94,7 +94,7 @@ contract InteractionRewardsFacet is
             headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
                 : 0;
-            (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+            uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
             freshRecoverable = backingRoom < headroom;
             if (backingRoom < headroom) headroom = backingRoom;
         }

@@ -126,7 +126,7 @@ contract RewardHorizonSweepFacet is
         // apart. Duplicated arithmetic is the drift class. The zero-token
         // case cannot reach the helper's own revert — this function's
         // {VPFITokenNotSet} guard has already rejected it.
-        (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+        uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
         // Pre-merge adversarial review (2026-08-17) P1 — remember WHICH bound
         // is binding, because the two have opposite recovery semantics. The
         // pool-cap room is MONOTONE (only ever shrinks; waiting on it

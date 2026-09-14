@@ -1169,6 +1169,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
+        // #1566 slice 4 PR B (Codex #2186 r4) — record the COMPLETE cut on
+        // chain: the custody protocol version and the routed facet set as
+        // they stand after every cut, removal and migration above, still
+        // under this run's pause. `activateRewardCustody` and the bootstrap
+        // writers refuse on any other set, so a chain refreshed by a curated
+        // partial script — or cut again after this run — cannot switch
+        // custody onto the holder until this complete refresh runs again.
+        // The record is this run's completion attestation bound to the set
+        // it installed; `RefreshScriptFacetParityTest` is what pins that set
+        // to the deploy's.
+        RewardCustodyFacet(diamond).stampRewardCustodyCutover();
+        console.log("slice-4: complete-cut record stamped (custody protocol version + routed facet set)");
+
         if (!wasPaused) {
             // The check is ON CHAIN (Codex #2158 post-cap P1): a branch here
             // runs only while Forge builds the broadcast list, so the

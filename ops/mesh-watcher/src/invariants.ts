@@ -157,6 +157,19 @@ export interface LocalLedger {
     strandedRecoveryReserved: bigint;
     // #1434 P2-w5 — the Base recovery-position earmark (zero on mirrors).
     recoveryPositionReserved: bigint;
+    /**
+     * #1566 slice 4 PR B — from the VERSIONED snapshot, the only one read
+     * (Codex #2186 r3): whether reward custody moved onto the holder, and
+     * the holder's balance (known or not) and attributed total. On an
+     * activated chain the bucket and the recovery position are the
+     * HOLDER's, so the legacy relation is replaced by
+     * `holderBalance >= holderAttributed` plus
+     * `vpfiBalance >= strandedRecoveryReserved`, both EXACT.
+     */
+    custodyActivated: boolean;
+    holderBalanceKnown: boolean;
+    holderBalance: bigint;
+    holderAttributed: bigint;
   };
   outstandingFresh: bigint;
   armedFromDay: bigint;
@@ -938,6 +951,68 @@ export function checkHardInvariants(
   // snapshot could not be read (pre-P2-w2 lens or transport failure).
   for (const local of obs.allLocals.values()) {
     if (!local.backing) continue;
+    // #1566 slice 4 PR B — an ACTIVATED chain: the holder must back every
+    // attributed row, and the Diamond's own balance must still cover the
+    // one Diamond-side reservation left (quarantined compensation awaiting
+    // its return). The legacy relation below would page a false CRITICAL
+    // here whenever healthy holder rows exceed the unrelated Diamond
+    // balance, so it is not applied.
+    //
+    // Both relations are EXACT — no tolerance (Codex #2186 r3 P2).
+    // `BUCKET_COVERAGE_TOLERANCE_WEI` exists for one dust case: `consume`
+    // flooring the BUCKET for bounded cap-trim rounding. The holder's rows
+    // and the holder's balance move together, measured at both ends in the
+    // same frame, so a shortfall of one wei is a real loss and would make a
+    // fully allocated payout revert; and on an activated chain the bucket
+    // is the holder's, so nothing on the Diamond side rounds either.
+    // Sharing the knob would let an operator raising it for a noisy chain's
+    // bucket coverage silently widen an unrelated custody blind spot.
+    if (local.backing.custodyActivated) {
+      const b = local.backing;
+      if (!b.holderBalanceKnown) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-balance-unreadable',
+          identity: [local.chainId, b.holderAttributed],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder balance cannot be read',
+          detail:
+            `reward custody is ACTIVATED on this chain but the holder's VPFI balance could not be read (unbound holder, unset or non-conforming token) — the rows attribute ${fmt(b.holderAttributed)} and nothing substantiates it\n` +
+            `  attributed  = ${fmt(b.holderAttributed)}`,
+        }));
+      } else if (b.holderBalance < b.holderAttributed) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-below-attributed',
+          identity: [local.chainId, b.holderBalance, b.holderAttributed],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder no longer covers its attributed rows',
+          detail:
+            `holderBalance < attributed rows (exact — no tolerance: rows and balance are measured together, so any shortfall is a real loss) — tokens the custody ledger attributes to live funding, recycled runway, recovery, overage or restitution have left the holder\n` +
+            `  holder      = ${fmt(b.holderBalance)}\n` +
+            `  attributed  = ${fmt(b.holderAttributed)}\n` +
+            `  shortfall   = ${fmt(b.holderAttributed - b.holderBalance)}`,
+        }));
+      }
+      if (b.vpfiBalance < b.strandedRecoveryReserved) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'balance-below-reservation',
+          identity: [local.chainId, b.vpfiBalance, b.strandedRecoveryReserved],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Balance no longer covers the arrival reservation',
+          detail:
+            `balance < strandedRecoveryReserved (the arrival reservation) on an activated chain (exact — the bucket, the only rounding source, is the holder's here) — quarantined compensation awaiting its return has been spent from the Diamond's own balance\n` +
+            `  balance     = ${fmt(b.vpfiBalance)}\n` +
+            `  reserved    = ${fmt(b.strandedRecoveryReserved)}\n` +
+            `  shortfall   = ${fmt(b.strandedRecoveryReserved - b.vpfiBalance)}`,
+        }));
+      }
+      continue;
+    }
     const spoken =
       local.bucket +
       local.backing.strandedRecoveryReserved +

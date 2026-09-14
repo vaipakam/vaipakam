@@ -9,6 +9,7 @@ import {LibPausable} from "./LibPausable.sol";
 // imports this library in turn, but both directions are `internal`
 // library calls, which solc inlines — no runtime cycle.
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
+import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -3286,7 +3287,12 @@ library LibInteractionRewards {
                 uint256 legacyFresh
             ) = _userArmedFreshNeedWithLegs(s, e.user);
             (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
-            uint256 fundingNeed = _userClaimFundingNeedViewWith(
+            // The transfer test is {_claimTransferable} — the ONE
+            // implementation the view mirror reads too (Codex #2186 r5 P1):
+            // on an activated deployment it is the holder's rows, and a
+            // Diamond-balance test here would have held every entry's clock
+            // unstarted while the holder fully covered the claim.
+            bool transferable = _claimTransferable(
                 s,
                 e.user,
                 armedFresh,
@@ -3342,8 +3348,7 @@ library LibInteractionRewards {
                 deliveredPayable &&
                 !LibVaipakam.isSanctionedAddress(e.user) &&
                 !LibPausable.paused() &&
-                IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-                fundingNeed;
+                transferable;
 
             if (!executable) {
                 // Observed non-executable. Before the first executable
@@ -3885,16 +3890,61 @@ library LibInteractionRewards {
         if (freshNeed != 0 && freshNeed > deliveredFreshBound(s)) {
             return false;
         }
+        // The transfer test — the same function the authoritative clock in
+        // {sweepExpiredEntry} reads, so the two cannot disagree about where
+        // custody is (Codex #2186 r5 P1).
+        return _claimTransferable(s, e.user, armedFresh, recycledUpper, userLegs, treasuryLegs);
+    }
+
+    /// @dev ONE transfer test for the expiry clock and its view mirror
+    ///      (Codex #2186 r5 P1). #1566 slice 4 PR B — on an activated
+    ///      deployment it reads the HOLDER's rows, the same figures the
+    ///      claim's gate and its two-row payout consult: the claim's capped
+    ///      fresh total against the live-fresh row, and the recycled upper
+    ///      bound against the recycled row (the predicate's documented
+    ///      conservative recycled side, unchanged in direction). The
+    ///      Diamond-balance form is the Unconfigured column, frozen. An
+    ///      earlier revision branched only the view mirror and left the
+    ///      clock on the Diamond's balance, which on an activated chain is
+    ///      not where reward funds rest — so every observation read
+    ///      non-executable while the holder fully covered the claim, and no
+    ///      entry could ever expire.
+    function _claimTransferable(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 armedFresh,
+        uint256 recycledUpper,
+        uint256 userLegs,
+        uint256 treasuryLegs
+    ) private view returns (bool) {
+        if (LibRewardCustody.active(s)) {
+            uint256 freshTotal = _userFreshTotalCapped(s, user, armedFresh, userLegs, treasuryLegs);
+            return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh] >= freshTotal
+                && s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled] >= recycledUpper;
+        }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            _userClaimFundingNeedViewWith(
-                s,
-                e.user,
-                armedFresh,
-                recycledUpper,
-                userLegs,
-                treasuryLegs
-            );
+            _userClaimFundingNeedViewWith(s, user, armedFresh, recycledUpper, userLegs, treasuryLegs);
+    }
+
+    /// @dev The claim's capped FRESH total, assembled from the same exact
+    ///      pieces {_userClaimFundingNeedViewWith} uses — the window and
+    ///      legacy reserves, the grouped armed need — truncated to the 69M
+    ///      pool exactly as the claim truncates its total. One
+    ///      implementation, read by both custody forms of the predicate.
+    function _userFreshTotalCapped(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 armedFresh,
+        uint256 userLegs,
+        uint256 treasuryLegs
+    ) private view returns (uint256 freshTotal) {
+        freshTotal = _userWindowFreshReserved(s, user)
+            + userLegs
+            + treasuryLegs
+            + armedFresh;
+        uint256 room = poolRemaining();
+        if (freshTotal > room) freshTotal = room;
     }
 
     /// @dev #1351 slice 2d-0 — the ONE computation of an entry's claim-payable
@@ -4056,12 +4106,7 @@ library LibInteractionRewards {
         // Not a double-count: `armed <= remaining - window - legacy` by
         // construction, so the cap is a NO-OP whenever the walk is budgeted and
         // binds only where the window/legacy portion alone exceeds headroom.
-        uint256 freshTotal = _userWindowFreshReserved(s, user)
-            + userLegs
-            + treasuryLegs
-            + armedFresh;
-        uint256 room = poolRemaining();
-        if (freshTotal > room) freshTotal = room;
+        uint256 freshTotal = _userFreshTotalCapped(s, user, armedFresh, userLegs, treasuryLegs);
 
         // ONE predicate, no forfeit branch. Forfeit value enters as
         // `treasuryLegs` — a TERM, not a second formula with its own
@@ -4305,15 +4350,20 @@ library LibInteractionRewards {
                 : 0;
     }
 
-    /// @notice #1434 P1-b — the MIRROR delivered-fresh bound: armed fresh
-    ///         this chain has actually RECEIVED, less armed fresh it has
-    ///         already PAID.
-    /// @dev    Unbounded (`type(uint256).max`) on anything that is not a
-    ///         mirror reward chain. Base funds its own armed days from the
-    ///         69M cap directly — it receives no remittances, so an
-    ///         unconditional bound here would read zero and BRICK Base
-    ///         entirely. That scope control is what
-    ///         `test_D4_CanonicalArmedDayPricesNormally` exists to hold.
+    /// @notice #1434 P1-b — the delivered-fresh bound: fresh this chain has
+    ///         actually RECEIVED, less fresh it has already PAID.
+    /// @dev    Live on the `Mirror` role and, since #1566 slice 4 PR B, on
+    ///         `Canonical` too: Base receives no remittances, so its
+    ///         `received` side is credited only by the registered funding
+    ///         writer (`RewardCustodyFacet.fundRewardPool`) and the era
+    ///         transfers — a canonical chain that has not been funded bounds
+    ///         at ZERO and refuses fresh payouts rather than pricing its
+    ///         armed days off the schedule, which is the design's rule
+    ///         ("bound by what was DELIVERED, not by what is OWED").
+    ///         `test_D4_CanonicalArmedDayPricesNormally` holds the funded
+    ///         side of that: once funded, a canonical armed day prices
+    ///         normally. Unbounded (`type(uint256).max`) ONLY on an
+    ///         `Unconfigured` deployment — see below.
     ///
     ///         SATURATING in both directions, and that is load-bearing
     ///         rather than defensive. The received side is NOT monotone:
@@ -4343,7 +4393,14 @@ library LibInteractionRewards {
     ) internal view returns (uint256) {
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
         if (role == LibVaipakam.RewardRole.Detached) return 0;
-        if (role != LibVaipakam.RewardRole.Mirror) return type(uint256).max;
+        // #1566 slice 4 PR B (design §5c matrix, row 14) — the canonical
+        // column takes its real answer: `received − paid`, where `received`
+        // is credited only by the registered funding writer
+        // (`RewardCustodyFacet.fundRewardPool`) and the era transfers, never
+        // inherited from the schedule. `Unconfigured` alone keeps `max`: a
+        // single-chain deploy has no delivered ledger to bind to and no
+        // `received` writer, so binding it would freeze every such deploy.
+        if (role == LibVaipakam.RewardRole.Unconfigured) return type(uint256).max;
         uint256 received = s.rewardBudgetArmedFreshReceived;
         uint256 paid = s.rewardBudgetArmedFreshPaid;
         return received > paid ? received - paid : 0;
@@ -4371,10 +4428,10 @@ library LibInteractionRewards {
     ///         transfer, which observed an over-draw that had already
     ///         happened. Reverting here rolls the whole claim back.
     ///
-    ///         The charge is taken only where the ledger is live — the
-    ///         `Mirror` role. `Canonical` and `Unconfigured` bound at `max`
-    ///         (their column lands with slice 4 and its migration), and a
-    ///         write there would be a counter with no `received` behind it.
+    ///         The charge is taken where the ledger is live — the `Mirror`
+    ///         role and, since slice 4 PR B, the `Canonical` role, whose
+    ///         `received` side the funding writer now credits. `Unconfigured`
+    ///         bounds at `max` and is not written (no delivered ledger).
     ///         `Detached` bounds at zero, so any non-zero fresh outflow is
     ///         refused, which is the fail-closed half closure 3 installed.
     /// @param  s     Diamond storage.
@@ -4388,7 +4445,15 @@ library LibInteractionRewards {
         if (fresh > remaining) {
             revert IVaipakamErrors.DeliveredFreshBoundExceeded(fresh, remaining);
         }
-        if (LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Mirror) {
+        // #1566 slice 4 PR B — charged on the canonical chain as well as the
+        // mirror (design §5d: "`chargeDeliveredFresh` charges on Canonical
+        // as well as Mirror"): its `received` is now written by the funding
+        // writer, so a paid write there is a counter WITH a received side
+        // behind it. `Unconfigured` is the only role left unwritten, and it
+        // is the only one still bounding at `max`. `Detached` never reaches
+        // this line with a non-zero `fresh` (its bound is zero).
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        if (role == LibVaipakam.RewardRole.Mirror || role == LibVaipakam.RewardRole.Canonical) {
             s.rewardBudgetArmedFreshPaid += fresh;
         }
     }

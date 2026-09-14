@@ -1,6 +1,24 @@
 [
   {
     "type": "function",
+    "name": "activateRewardCustody",
+    "inputs": [
+      {
+        "name": "pauseEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "writeDownMirrorGap",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "armedFreshLedger",
     "inputs": [],
     "outputs": [
@@ -45,6 +63,241 @@
   },
   {
     "type": "function",
+    "name": "custodyDrawForTransport",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyMove",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyPayoutToWallet",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyReleaseFromRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyRelocateFreshIngress",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyRelocateToRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "custodyUncreditFresh",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fundRewardCustodyRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardCustodyRow"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fundRewardPool",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getRecycleBackingSnapshotV2",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "vpfiBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unearmarked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidOutRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeperBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "strandedRecoveryReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recoveryPositionReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "custodyActivated",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "holderBalanceKnown",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "holderBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holderAttributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rebaseArmedFreshPaid",
     "inputs": [
       {
@@ -81,6 +334,91 @@
   },
   {
     "type": "function",
+    "name": "releaseRestitutionAsPaidCorrection",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRestitutionToTreasury",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRewardCustodyOverage",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRewardCustodyRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardCustodyRow"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "relocateRewardCustodyRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardCustodyRow"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "replaceRewardCustodyHolder",
     "inputs": [],
     "outputs": [
@@ -91,6 +429,47 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rewardCustodyActivated",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rewardCustodyCutoverStatus",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "stampedVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requiredVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "stampedRouting",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "currentRouting",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -120,6 +499,64 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rewardCustodyLedger",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "activated",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "roleChangesFrozen",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "liveFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recovery",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "overage",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pendingSurplus",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "intent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unclassified",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "restitution",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -194,6 +631,26 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rewardRoleChangesFrozen",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stampRewardCustodyCutover",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -345,6 +802,92 @@
   },
   {
     "type": "event",
+    "name": "RewardCustodyActivated",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recovery",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "overage",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mirrorGapWrittenDown",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyCutoverStamped",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "routing",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "facetCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "selectorCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyERC1155Swept",
     "inputs": [
       {
@@ -456,6 +999,37 @@
   },
   {
     "type": "event",
+    "name": "RewardCustodyFreshCredited",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "receivedAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyHolderBound",
     "inputs": [
       {
@@ -537,6 +1111,31 @@
   },
   {
     "type": "event",
+    "name": "RewardCustodyOverageReleased",
+    "inputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "overageAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyPredecessorVpfiRecovered",
     "inputs": [
       {
@@ -556,6 +1155,168 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRestitutionCorrected",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRestitutionReleased",
+    "inputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowBootstrapReleased",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ledgerFigure",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowBootstrapped",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "relocatedFromDiamond",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "ledgerFigure",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowCredited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "origin",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowDebited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -584,6 +1345,37 @@
       },
       {
         "name": "unattributedBefore",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardPoolFunded",
+    "inputs": [
+      {
+        "name": "funder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -682,6 +1474,179 @@
   },
   {
     "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationDetachedNotSupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresConfiguredRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresCutover",
+    "inputs": [
+      {
+        "name": "stampedVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requiredVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "stampedRouting",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "currentRouting",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresRebase",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresRecoveryArming",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyAlreadyActivated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBalanceUnreadable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBaselineNotVerified",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapExceedsLedger",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "room",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapReleaseExceedsExcess",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "excess",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRequiresActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRequiresRebase",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRowNotAllowed",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyErc721NotAtHolder",
     "inputs": [
       {
@@ -740,6 +1705,33 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyFundingExceedsCap",
+    "inputs": [
+      {
+        "name": "resulting",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyFundingRequiresActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyHolderAlreadyBound",
     "inputs": []
   },
@@ -787,12 +1779,102 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyNotActivated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyOnlyDiamondInternal",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyOverageExceedsRecorded",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyRecoverTargetsBoundHolder",
     "inputs": [
       {
         "name": "holder",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRestitutionCorrectionExceedsPaid",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRowShort",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRowUnbacked",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -831,5 +1913,32 @@
     "type": "error",
     "name": "RewardCustodyTreasuryUnset",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyUnderHeld",
+    "inputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   }
 ]

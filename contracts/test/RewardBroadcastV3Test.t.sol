@@ -70,6 +70,20 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
         return RewardReporterFacet(address(diamond));
     }
 
+    /// @dev #1566 slice 4 PR B — a mirror's funding identity is never rebound
+    ///      DIRECTLY to a different era (design §5c: the old residual must
+    ///      retire and delayed packets from the old source must not be
+    ///      attributed to the new one), so an era rotation passes through
+    ///      `Detached`: detach, rotate, re-attach. These suites hold no
+    ///      custody attribution, so the role freeze is not armed and the
+    ///      transition is allowed.
+    function _rotateEra(address newEra) internal {
+        _rep().setBaseChainId(0);
+        _rep().setBaseRewardDeployment(newEra);
+        _rep().setBaseChainId(CHAIN_BASE);
+    }
+
+
     /// #1569 — the keeper earmark is read through the same register view
     /// the LOCAL register uses, so both allocation paths are observed
     /// identically.
@@ -743,7 +757,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         _configureMirror(CHAIN_ARB);
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
 
-        _rep().setBaseRewardDeployment(address(0x0DD));
+        _rotateEra(address(0x0DD));
         RewardBroadcastV3 memory stale = _v3Packet(CHAIN_ARB);
         stale.baseDeployment = address(0x0DD);
         vm.expectRevert(
@@ -818,7 +832,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV2(day4);
 
         // A DIFFERENT nonzero era: rotation — legacy fresh applies retire.
-        _rep().setBaseRewardDeployment(address(0xE2));
+        _rotateEra(address(0xE2));
         RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
         day5.dayId = 5;
         vm.expectRevert(
@@ -848,7 +862,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // era-1 figures
         assertEq(_rep().getDayClockEra(3), ERA_BASE, "provenance = era 1");
 
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.baseDeployment = address(0xE2); // passes the configured-era gate
@@ -877,7 +891,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(_rep().getDayClockEra(3), address(0), "no provenance");
 
         _rep().setBaseRewardDeployment(ERA_BASE); // first arming
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         RewardBroadcastV3 memory b3 = _v3Packet(CHAIN_ARB);
         b3.baseDeployment = address(0xE2);
@@ -1157,7 +1171,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
 
         // Base rotates. Everything the old era says is now unauthenticated.
-        _rep().setBaseRewardDeployment(address(0xE2));
+        _rotateEra(address(0xE2));
 
         // The retired era replays that same day carrying an arming day. The
         // replay is still ACCEPTED — idempotency after rotation is the
@@ -1823,7 +1837,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         vm.chainId(CHAIN_ARB);
         _mut().setBroadcastV2AppliedRaw(3, true);
         _rep().setBaseRewardDeployment(ERA_BASE);
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         _deliverComp(3, address(0xE2), 3e18, 2e18);
 

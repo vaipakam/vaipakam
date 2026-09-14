@@ -36,6 +36,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -173,6 +174,14 @@ import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFac
 import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
 import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+
+/// @dev #1566 slice 4 PR B — the one call the activation fixture needs from
+///      whichever VPFI token a suite built: every suite that builds the token
+///      makes the test contract its minter.
+interface IVpfiMintableForTest {
+    function mint(address to, uint256 amount) external;
+    function approve(address spender, uint256 amount) external returns (bool);
+}
 
 contract SetupTest is Test {
     VaipakamDiamond diamond;
@@ -971,6 +980,14 @@ contract SetupTest is Test {
         // Initialize AccessControl roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
+        // #1566 slice 4 PR B (Codex #2186 r4) — the test Diamond IS a
+        // complete cut: record it under the born-paused state exactly as
+        // `DeployDiamond` does, so the activation gate has a current record
+        // to verify. A suite that cuts its own mock facets afterwards changes
+        // the routed set; `activateRewardCustodyForTest` re-records under the
+        // pause it activates in, as a re-run of the complete refresh would.
+        RewardCustodyFacet(address(diamond)).stampRewardCustodyCutover();
+
         // Init vault factory with impl
         VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
@@ -1386,5 +1403,47 @@ contract SetupTest is Test {
             keccak256(abi.encode(termsAnchor))
         );
         return RiskAccessFacet(address(diamond)).revealRiskTermsBump(termsAnchor);
+    }
+
+    // ─── #1566 slice 4 PR B — the reward custody activation fixture ──────────
+
+    /// @dev Runs the per-chain activation ceremony the way the ceremony script
+    ///      does, on a Diamond whose reward role is ALREADY configured (the
+    ///      freeze arms at activation, so configure first): manual pause →
+    ///      bind the holder if unbound → consume the paid-side rebase with
+    ///      zero if not consumed → re-record the complete cut (a suite's
+    ///      own mock cuts change the routed set) → activate at the live
+    ///      pause epoch →
+    ///      unpause. Then funds the pool through the registered writer when
+    ///      `fund` is non-zero (this contract mints and approves). A
+    ///      canonical Diamond that never funds pays nothing: its delivered
+    ///      bound is `received − paid`, zero until funded — which is why the
+    ///      canonical suites that claim or remit call this in their setup.
+    ///      Leaves the Diamond UNPAUSED; call it from an unpaused state.
+    function activateRewardCustodyForTest(address vpfi, uint256 fund) internal {
+        RewardCustodyFacet custody = RewardCustodyFacet(address(diamond));
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.pause();
+        if (custody.rewardCustodyHolder() == address(0)) {
+            custody.bindRewardCustodyHolder();
+        }
+        (, , , uint64 epoch) = LibPausable.decodePausableSlot(
+            vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION)
+        );
+        if (!custody.armedFreshPaidRebased()) {
+            custody.rebaseArmedFreshPaid(0, epoch);
+        }
+        custody.stampRewardCustodyCutover();
+        custody.activateRewardCustody(epoch, false);
+        admin.unpause();
+        if (fund != 0) fundRewardPoolForTest(vpfi, fund);
+    }
+
+    /// @dev Mint `amount` to this contract, approve the Diamond, fund the
+    ///      pool through the registered writer.
+    function fundRewardPoolForTest(address vpfi, uint256 amount) internal {
+        IVpfiMintableForTest(vpfi).mint(address(this), amount);
+        IVpfiMintableForTest(vpfi).approve(address(diamond), amount);
+        RewardCustodyFacet(address(diamond)).fundRewardPool(amount);
     }
 }

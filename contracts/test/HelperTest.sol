@@ -96,7 +96,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](201); // #1566 closure 2 — +creditInflowRawWithBefore (was 200)
+        selectors = new bytes4[](206); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -148,6 +148,12 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1566 slice 4 PR B — raw role inputs + the freeze flag.
+        selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
+        selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRecoveryPositionWithOverageRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardRoleChangesFrozenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardCustodyCutoverRaw.selector;
         // #1618 r6 — selector-registry pointer for the live lane bound.
         selectors[n++] =
             TestMutatorFacet.setCrossChainMessengerRaw.selector;
@@ -862,7 +868,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -902,6 +908,7 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[29] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[30] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
         return selectors;
     }
 
@@ -2342,7 +2349,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](37);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2359,6 +2366,32 @@ contract HelperTest {
         selectors[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
         selectors[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
         selectors[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
+        // #1566 slice 4 PR B — activation, funding, bootstrap, overage, ledger.
+        selectors[16] = RewardCustodyFacet.activateRewardCustody.selector;
+        selectors[17] = RewardCustodyFacet.fundRewardPool.selector;
+        selectors[18] = RewardCustodyFacet.fundRewardCustodyRow.selector;
+        selectors[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
+        selectors[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
+        selectors[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
+        selectors[22] = RewardCustodyFacet.rewardRoleChangesFrozen.selector;
+        selectors[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
+        // #1566 slice 4 PR B — the Diamond-internal custody entry points.
+        selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
+        selectors[25] = RewardCustodyFacet.custodyMove.selector;
+        selectors[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
+        selectors[27] = RewardCustodyFacet.custodyUncreditFresh.selector;
+        selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
+        selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        selectors[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
+        selectors[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        selectors[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        selectors[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
+        // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
+        selectors[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
+        selectors[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        selectors[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2539,7 +2572,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](33);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -2576,6 +2609,7 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
         return selectors;
     }
 

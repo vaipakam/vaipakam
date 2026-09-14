@@ -6064,6 +6064,182 @@ remains possible and shows only as the unattributed remainder — review r5).**
 deploy, one paused ceremony per chain; role changes frozen from here until
 PR C.**
 
+> **LANDED — PR #2182-follow-on (slice 4 PR B).** The cutover is behind a
+> per-chain ACTIVATION rather than switched at the facet cut:
+> `RewardCustodyFacet.activateRewardCustody(pauseEpoch, writeDownMirrorGap)`
+> (ADMIN, the MANUAL pause, epoch-pinned, one-shot) is the ceremony's
+> "switch custody reads to the holder" step, and `LibRewardCustody.active`
+> is the ONE role branch every read and debit consults. Only an ACTIVE
+> role activates in this slice — a `Detached` chain is refused (review r1:
+> its value-bearing receive ingresses do not yet refuse by role, so a
+> delayed packet would relocate custody into rows a zero bound can never
+> spend while the freeze blocks re-attachment; the intended-era ingress
+> gates are PR C's, and Detached activation lands with them). The library's
+> MUTATIONS are hosted on `RewardCustodyFacet` as Diamond-internal entry
+> points (`custodyRelocateToRow`, `custodyMove`,
+> `custodyRelocateFreshIngress`, `custodyUncreditFresh`,
+> `custodyReleaseFromRow`, `custodyPayoutToWallet`,
+> `custodyDrawForTransport`; `msg.sender == address(this)` only, not
+> `nonReentrant` — each runs inside a caller's guarded frame, as the vault
+> credit does) and every other facet reaches them through a thin self-call
+> with a memory-safe revert bubble: inlining the implementation pushed the
+> two remittance facets and `LoanFacet` (the notification-fee door into the
+> bucket) over EIP-170, and pulling the shared un-annotated revert bubbler
+> into `RewardClaimFacet` cost it its viaIR memory guard. Reads stay inline — an `Unconfigured`
+> deployment can never activate, which is what keeps its column frozen at
+> Diamond custody. Why a flag: a code-level switch would have every
+> active-role gate read empty rows between the refresh and the ceremony
+> that reconciles the rows; the flag makes that window a defined state
+> (today's behaviour, fail-closed on the delivered bound) and gives a fresh
+> deployment the same ceremony as a live one (PR A's "behind the same
+> activation"). Activation refuses unless every reconcilable figure IS
+> backed by its row — recycled = `recycleBucket`, recovery = `recovered −
+> redispatched`, overage = `strandedReturnOverage`, live-fresh = the
+> mirror's `received − paid` (a canonical chain: `received == paid` and an
+> empty live row) — with equality, so a row above its figure refuses too.
+> The two executable forms of the bootstrap disposition are the writers
+> `fundRewardCustodyRow` (custody-only replacement funding from the
+> signer, any of the four rows, bounded by `figure − row`) and
+> `relocateRewardCustodyRow` (historical inventory out of the Diamond's
+> balance, measured at both ends, bounded the same way, NEVER the live row
+> — history is not money; the provenance proof is the ceremony record's,
+> not the contract's); the write-down form for a mirror's gap is the
+> activation's flag (`received := paid + liveRow`). The RESTITUTION row
+> has its two dispositions from the start (review r1 — a row with no exit
+> would strand every deficit-covering credit):
+> `releaseRestitutionAsPaidCorrection(amount, dispositionId)` for an
+> evidenced accounting error — `paid` falls by `amount` and only the
+> headroom that reappears (the bound after minus before, never `amount`
+> itself while a deficit is still open) moves restitution → live, refused
+> if restitution cannot cover it — and
+> `releaseRestitutionToTreasury(amount, dispositionId)` for a genuine
+> deficit, `paid` retained, no headroom created. A demotion of a
+> provisional compensation unwinds the WHOLE credit still in the holder —
+> live first, then restitution — back to the Diamond where the stranded
+> reservation describes it (review r1). `VPFITokenFacet.setVPFIToken`
+> refuses a rotation while any row is funded or the holder still holds
+> the old token (review r1): the rows are denominated in the configured
+> token, so the rotation runbook's drain is now a rule. `fundRewardPool(amount)`
+> is the registered writer: ADMIN, activated, an active role, the transfer
+> delta-checked against the HOLDER, `received` credited in the same act
+> under the §5c deficit split (restitution first, the excess live), the
+> result capped at the pool's lifetime cap. `deliveredFreshBound` takes the
+> canonical answer and `chargeDeliveredFresh` writes on Canonical. The
+> gates read `LibVpfiRecycle.freshBackingRoom` (the live row when active;
+> `backingPosition` keeps its meaning and, when active, subtracts only the
+> Diamond-side stranded reservation); `_entryExecutableNow` tests the live
+> and recycled rows; the payout is one two-row debit —
+> `VaultFactoryFacet.vaultCreditFromRewardCustodyERC20` runs debit,
+> release, record and rollup in one revert-isolated frame, the wallet
+> fallback releases from the holder; an absorption is live → recycled in
+> place; the three non-reward inflows and every relocated-custody credit
+> RELOCATE into the recycled row; the repatriation surplus primitive moves
+> its tokens itself. Transports: `dispatchRemitTail` takes a
+> `TransportDraw{source, fresh, recycled}` — `Live` is charged against the
+> delivered ledger by its fresh share BEFORE anything is approved and
+> leaves the live and recycled rows; `Recovery` leaves the recovery row,
+> uncharged; the `bool fromRecovery` is gone. Ingresses on an activated
+> deployment: the mirror's counted fresh share and its compensation credit
+> relocate under the deficit split, a demotion unwinds through the seam
+> (the live row's remainder released back beside the Diamond-side
+> reservation), the stranded return relocates into recovery and overage,
+> the claw is recovery → overage in place, the recovery ceremony's fresh
+> inflow relocates into recovery. The overage row's disposition is
+> `releaseRewardCustodyOverage` (treasury only, the position retired by
+> the same amount). The freeze is `rewardRoleChangesFrozen`, armed by the
+> first row credit or the activation, refused by both role setters on an
+> EFFECTIVE change with the two roles named, plus the permanent
+> direct-rebind refusals on `setBaseChainId` (non-zero → different
+> non-zero) and `setBaseRewardDeployment` (a mirror, against the last
+> non-zero era); PR C clears it. The ceremony script is
+> `ActivateRewardCustody.s.sol` (direct / stage / check / record on the
+> shared base; one answer per non-zero figure, refuse-to-default;
+> `record()` keeps a durable `reward-custody-activated.json` and writes no
+> artifact field — activation is chain state), and the multi-chain
+> wrapper's step [4c] reports every unactivated chain as not ordinary
+> completion and runs the ceremony only when opted in per chain.
+> **Deliberately NOT in PR B, each stated here so it is not read as
+> forgotten:** the uncounted remainder of a delivery, the quarantined
+> compensation reservation and a pre-attribution stranded return stay
+> Diamond-side, as today — their protection into the `Unclassified` row
+> is the cutover PR's UNCLASSIFIED ingress attribution; era rows are PR
+> C's; the Diamond-side balance-attribution invariant is #2141's (its own
+> text sequences it after slice 4). The
+> public backing snapshot is versioned (review r1):
+> `RewardCustodyFacet.getRecycleBackingSnapshotV2` returns the legacy eight
+> fields unchanged plus the activation flag and the holder's balance and
+> attributed total, the legacy lens keeps its shape and documents that on an
+> activated deployment its relation no longer holds by design, and
+> `ops/mesh-watcher` reads V2 and ONLY V2 (review r3 — a chain not yet
+> carrying it is reported as a coverage gap that names the cut, never
+> judged by the legacy tuple) and alarms on `holderBalance ≥
+> holderAttributed` and `vpfiBalance ≥ strandedRecoveryReserved` there,
+> both exact, instead of the legacy
+> relation. The staged ceremony record carries one executable calldata per
+> non-zero answer, and `record()` verifies the holder, the role, the
+> activation and a claimed write-down against live state before promoting
+> the record, filing the confirmed figures beside the staged intent under
+> their own names (review r1). The wrapper resolves every activation answer
+> per chain, suffixed with the chain's prefix (review r1). Review r2: the
+> bootstrap writers refuse a role that cannot activate in this slice
+> (`RewardCustodyBootstrapRequiresActiveRole`), the ceremony pre-flight
+> mirrors the canonical recovery-arming prerequisite before anything is
+> sent, and the watcher treated a missing V2 as UNKNOWN unless the
+> activation flag itself (or the custody facet's absence) established
+> non-activation. Review r3: every bootstrap write refuses before the
+> paid-side rebase (`RewardCustodyBootstrapRequiresRebase` — the rebase
+> only ever RAISES `paid`, so a live row credited to the pre-rebase gap
+> would be left above the figure the activation demands, which nothing
+> before the activation can debit); a THIRD bootstrap form,
+> `releaseRewardCustodyRow` (holder → the Diamond's own balance and
+> nowhere else, bounded by `row − figure`, every bootstrap row, never
+> below the figure, closed by the activation), is the exit for a row a
+> moved figure left over-backed — the CLASS, not one mover: the rebase,
+> and any payout, redispatch or surplus debit a lifted pause lets through
+> between the credits and the activation; the watcher reads ONLY V2 and
+> reports a missing one as a coverage gap naming the cut, because the
+> activation flag lives on the same facet as V2 and so a "facet absent"
+> probe could never distinguish a never-installed facet from one removed
+> after activation — the legacy fallback is gone; and both holder-side
+> relations are exact, with no tolerance (the bucket, the one rounding
+> source the tolerance absorbs, is the holder's on an activated chain).
+> Review r4: activation and every bootstrap write require the COMPLETE-CUT
+> RECORD to be current — `stampRewardCustodyCutover` (ADMIN, manual
+> pause) writes this tree's custody protocol version
+> (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the ROUTING (every
+> facet address the loupe holds with the selectors it serves, both
+> sorted), and is called only by
+> the two complete-cut paths after their last cut: `DeployDiamond` after
+> its routing verification and `RefreshAllFacetsInPlace` after its last
+> cut and migration, both under the pause the cut ran under.
+> `RewardCustodyActivationRequiresCutover` names the four values. A
+> custody facet cut alone, a curated partial refresh before or after the
+> record, or a record from an older tree all refuse until the complete
+> refresh runs again — the ledger figures say nothing about which facets
+> are routed, and stale consumers would never debit a funded holder. The
+> record is the refresh's completion attestation bound to the set it
+> installed, not an on-chain proof of every facet's bytecode; that its cut
+> IS complete is `RefreshScriptFacetParityTest`'s pin. The ceremony
+> pre-flight mirrors the gate, and `stage()` / `run()` refuse an artifact
+> VPFI token that is not the Diamond's configured one (`getVPFIToken`),
+> so an approval is never serialised against a rotated-away token.
+> Review r5: the record hashes the ROUTING, not the facet-address set — a
+> Remove of one selector from a facet that keeps others leaves the loupe's
+> address list unchanged and would have let activation proceed with a
+> required claim, sweep or transport seam unrouted (a cut counter in the
+> cut facet was considered and rejected: `DiamondCutFacet` is
+> constructor-installed and never refreshed, so a counter there would not
+> be live on any existing chain); and the expiry clock's transfer test is
+> ONE function with its view mirror, `_claimTransferable` (the holder's
+> live and recycled rows when active, the Diamond's balance otherwise) —
+> the authoritative `sweepExpiredEntry` had kept the Diamond-balance test,
+> so on an activated chain with funds only in the holder no entry's clock
+> ever started.
+> The two holder invariants, the
+> recycled-row and live-row identities and the untouched Diamond balance
+> are pinned by `RewardCustodyInvariant`; the design's test list is
+> `RewardCustodyCutoverTest`.
+
 - **Role-branched custody, so the frozen column stays frozen** (review r1):
   every custody read and debit below is branched on `LibVaipakam.rewardRole`.
   `Canonical` and `Mirror` read and debit the holder; **`Unconfigured` keeps

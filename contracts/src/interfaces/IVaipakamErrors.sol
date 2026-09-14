@@ -371,6 +371,171 @@ interface IVaipakamErrors {
     /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
     ///         to deliver to and none is configured.
     error RewardCustodyTreasuryUnset();
+    /// @notice #1566 slice 4 PR B — an attribution row cannot cover the
+    ///         debit asked of it. Enforced, never floored: a payout or
+    ///         transport a row cannot back is refused whole rather than paid
+    ///         from another row's custody (the "no row goes negative"
+    ///         invariant).
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The debit asked for.
+    /// @param available What the row holds.
+    error RewardCustodyRowShort(uint8 row, uint256 requested, uint256 available);
+    /// @notice #1566 slice 4 PR B — the activation ceremony has already run
+    ///         on this chain (or a bootstrap writer was called after it).
+    error RewardCustodyAlreadyActivated();
+    /// @notice #1566 slice 4 PR B — the operation needs the holder custody to
+    ///         be activated on this chain and it is not.
+    error RewardCustodyNotActivated();
+    /// @notice #1566 slice 4 PR B — activation was attempted on an
+    ///         `Unconfigured` deployment, which has no delivered ledger to
+    ///         bind to and keeps the Diamond-custody column forever.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyActivationRequiresConfiguredRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — activation requires the one-shot paid-side
+    ///         rebase to have run (a fresh deploy consumes it at deploy; a
+    ///         live chain's refresh runs it), so the baseline it verifies is
+    ///         the one the rebase installed.
+    error RewardCustodyActivationRequiresRebase();
+    /// @notice #1566 slice 4 PR B (Codex #2186 r4, r5) — activation, or a
+    ///         bootstrap write, was attempted on a deployment whose ROUTING
+    ///         (every facet with the selectors it serves) is not the one a
+    ///         COMPLETE cut recorded under this tree's custody protocol
+    ///         version: the custody facet was cut alone, a partial cut — of a
+    ///         facet or of a single selector — ran after the record, or the
+    ///         record is from an older tree. The reward paths that must read
+    ///         the holder may still be stale or unrouted, so custody is not
+    ///         switched. Run the complete refresh.
+    /// @param stampedVersion  The recorded version (zero: never recorded).
+    /// @param requiredVersion This tree's `LibRewardCustody.CUTOVER_VERSION`.
+    /// @param stampedRouting  The recorded routing hash.
+    /// @param currentRouting  The routing hash now.
+    error RewardCustodyActivationRequiresCutover(
+        uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedRouting, bytes32 currentRouting
+    );
+    /// @notice #1566 slice 4 PR B — a canonical chain must have armed
+    ///         per-receipt recovery attribution before activation: arming
+    ///         retires the legacy pooled recovery position, and a recovery
+    ///         row funded before that retirement would be left over-backed.
+    error RewardCustodyActivationRequiresRecoveryArming();
+    /// @notice #1566 slice 4 PR B — the pause epoch the operator established
+    ///         the activation figures under is no longer the live one.
+    /// @param stated The epoch stated by the caller.
+    /// @param live   The current transition count.
+    error RewardCustodyActivationStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR B — a reconcilable ledger figure is not backed
+    ///         by its holder row at activation: the ceremony must fund it
+    ///         (custody-only), relocate it (historical inventory) or write it
+    ///         down before custody reads switch to the holder.
+    /// @param row      The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param required The ledger figure the row must equal.
+    /// @param held     What the row holds.
+    error RewardCustodyRowUnbacked(uint8 row, uint256 required, uint256 held);
+    /// @notice #1566 slice 4 PR B — the canonical chain's paid-side baseline
+    ///         (`received == paid`, installed by the rebase) does not hold at
+    ///         activation.
+    error RewardCustodyBaselineNotVerified(uint256 received, uint256 paid);
+    /// @notice #1566 slice 4 PR B — the holder's balance cannot be read at
+    ///         activation, so the rows cannot be verified against it.
+    error RewardCustodyBalanceUnreadable();
+    /// @notice #1566 slice 4 PR B — the rows attribute more than the holder
+    ///         holds.
+    error RewardCustodyUnderHeld(uint256 held, uint256 attributed);
+    /// @notice #1566 slice 4 PR B — `fundRewardPool` requires an ACTIVE role
+    ///         (`Canonical` or `Mirror`): funding a `Detached` chain would
+    ///         credit headroom a zero bound cannot consume and strand the
+    ///         allocation across the next transition.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyFundingRequiresActiveRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — the funding would push the received
+    ///         counter above the interaction pool's lifetime cap; nothing
+    ///         above it can ever be paid, so it could only strand.
+    error RewardCustodyFundingExceedsCap(uint256 resulting, uint256 cap);
+    /// @notice #1566 slice 4 PR B — a bootstrap writer was pointed at a row
+    ///         it does not serve (the live-fresh row cannot be relocated from
+    ///         the Diamond: an imported `received − paid` is history, not
+    ///         money; the pending-surplus, intent, unclassified and
+    ///         restitution rows have no bootstrap figure).
+    /// @param row The {LibVaipakam.RewardCustodyRow} ordinal.
+    error RewardCustodyBootstrapRowNotAllowed(uint8 row);
+    /// @notice #1566 slice 4 PR B — a bootstrap writer was called on a
+    ///         deployment whose role cannot activate in this slice
+    ///         (`Unconfigured` never; `Detached` until PR C): a credit there
+    ///         would move funds into the holder, arm the freeze, and leave
+    ///         the allocation reachable by nothing.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyBootstrapRequiresActiveRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — a bootstrap credit would take a row above
+    ///         the ledger figure it backs.
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The credit asked for.
+    /// @param room      `figure − row`, what the row may still receive.
+    error RewardCustodyBootstrapExceedsLedger(uint8 row, uint256 requested, uint256 room);
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap writer was
+    ///         called before the paid-side rebase ran. The rows are backed
+    ///         against ledger figures the rebase finalises — `received −
+    ///         paid` most directly, since the rebase only ever RAISES
+    ///         `paid` — and a credit made before it can be left above the
+    ///         figure the rebase leaves, which activation refuses.
+    error RewardCustodyBootstrapRequiresRebase();
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap release
+    ///         asked for more than the row holds ABOVE its ledger figure.
+    ///         The release reconciles a row a moved figure left over-backed;
+    ///         it never takes a row below its figure.
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The release asked for.
+    /// @param excess    `row − figure`, what the row may give back.
+    error RewardCustodyBootstrapReleaseExceedsExcess(uint8 row, uint256 requested, uint256 excess);
+    /// @notice #1566 slice 4 PR B — a holder-sourced payout named a token
+    ///         other than the configured VPFI; the holder's rows describe
+    ///         that token only.
+    error RewardCustodyPayoutTokenMismatch(address expected, address given);
+    /// @notice #1566 slice 4 PR B — a custody entry point that only the
+    ///         Diamond itself may reach (a cross-facet self-call from a
+    ///         reward path) was called from outside.
+    error RewardCustodyOnlyDiamondInternal(address caller);
+    /// @notice #1566 slice 4 PR B — a cross-facet custody call failed without
+    ///         revert data (the entry point is not routed, or the Diamond's
+    ///         fallback refused it).
+    error RewardCustodyCallFailed();
+    /// @notice #1566 slice 4 PR B — activation was attempted on a `Detached`
+    ///         deployment. Its value-bearing receive ingresses do not yet
+    ///         refuse by role (the intended-era gates land with slice 4 PR
+    ///         C's era registry), so a delayed packet could relocate custody
+    ///         into rows a zero bound can never spend while the freeze
+    ///         blocks re-attachment; activation waits for that slice.
+    error RewardCustodyActivationDetachedNotSupported();
+    /// @notice #1566 slice 4 PR B — a restitution correction claims more of
+    ///         the paid side than the ledger holds.
+    error RewardCustodyRestitutionCorrectionExceedsPaid(uint256 requested, uint256 paid);
+    /// @notice #1566 slice 4 PR B — the VPFI token cannot be rotated while
+    ///         the custody holder's rows describe the current token or the
+    ///         holder still holds it: every row is denominated in the
+    ///         configured token, so a rotation would relabel live custody.
+    ///         Drain the rows and the holder (the token-rotation runbook)
+    ///         first.
+    error RewardCustodyTokenRotationBlocked(uint256 attributed, uint256 heldInOldToken);
+    /// @notice #1566 slice 4 PR B — an overage release exceeds the recorded
+    ///         overage position.
+    error RewardCustodyOverageExceedsRecorded(uint256 requested, uint256 recorded);
+    /// @notice #1566 slice 4 PR B — an EFFECTIVE reward-role change was
+    ///         refused: holder allocations exist (or custody is activated)
+    ///         and the era registry that could carry them across a
+    ///         transition lands with slice 4 PR C, whose backfill clears the
+    ///         freeze.
+    /// @param current   The resolved {LibVaipakam.RewardRole} ordinal now.
+    /// @param requested The role the write would have resolved to.
+    error RewardRoleChangeFrozen(uint8 current, uint8 requested);
+    /// @notice #1566 slice 4 PR B — a mirror's authenticated base chain was
+    ///         being rebound directly to a different one. Design §5c: a
+    ///         source change passes through `Detached` (the old residual
+    ///         retires; delayed packets from the old source are not
+    ///         attributed to the new one) — never a direct rebinding.
+    error RewardBaseChainRebindRequiresDetach(uint32 current, uint32 requested);
+    /// @notice #1566 slice 4 PR B — a mirror's base reward deployment (its
+    ///         funding identity) was being rebound directly to a different
+    ///         one while the mirror role stands. Same rule as the base chain:
+    ///         detach first.
+    error RewardBaseDeploymentRebindRequiresDetach(address current, address requested);
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that
