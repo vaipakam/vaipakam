@@ -918,6 +918,9 @@ const UNBOUND = 'unbound';
 
 /** Whether this file ASSIGNS to an undeclared name — which creates no
  *  binding, so the scope analyser still calls every reference global. */
+// The names that denote the global object itself.
+const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
+
 function globalWrites(src, name) {
   const { nodes, variableOf } = astOf(src, 'globalWrites');
   const out = [];
@@ -930,10 +933,33 @@ function globalWrites(src, name) {
       if (id.name === name && !variableOf.get(id)) out.push(id);
     }
   };
+  // …and THROUGH THE GLOBAL OBJECT, which is the same write by another
+  // route: `globalThis.String = …` replaces the intrinsic exactly as
+  // `String = …` does, and handing a member expression to a pattern
+  // walk yields nothing at all.
+  const throughGlobalObject = (target) => {
+    if (target?.type !== 'MemberExpression') return;
+    const host = unwrapChain(target.object);
+    // Asked of the binding DIRECTLY rather than through `isIntrinsic`,
+    // which resolves — and resolving consults this very check, so the
+    // two called each other until the stack ran out. An unbound name is
+    // the whole question here, and the scope analyser answers it without
+    // anyone having to resolve anything.
+    if (host?.type !== 'Identifier') return;
+    if (!GLOBAL_OBJECTS.includes(host.name) || variableOf.get(host)) return;
+    if (propertyName(target) === name) out.push(target.property);
+  };
   for (const n of nodes) {
-    if (n.type === 'AssignmentExpression') take(n.left);
-    else if (n.type === 'UpdateExpression') take(n.argument);
-    else if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') take(n.left);
+    if (n.type === 'AssignmentExpression') {
+      take(n.left);
+      throughGlobalObject(n.left);
+    } else if (n.type === 'UpdateExpression') {
+      take(n.argument);
+      throughGlobalObject(n.argument);
+    } else if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') {
+      take(n.left);
+      throughGlobalObject(n.left);
+    }
   }
   return out;
 }
@@ -2149,30 +2175,47 @@ function suspectValue(src, node, seen) {
  */
 function helperArgumentsSound(src, fn, args, seen) {
   const supplied = args ?? [];
-  // A SPREAD destroys the positional mapping entirely: nothing here can
-  // say which value lands on which parameter, so nothing can be trusted.
-  if (supplied.some((a) => a?.type === 'SpreadElement')) return false;
-  const params = fn.params.map((p) => (p.type === 'Identifier' ? p.name : null));
-  // A parameter this cannot name is a parameter this cannot map.
-  if (params.some((p) => p === null)) return false;
-  const searched = searchedParameters(src, fn, params);
-  for (const [i, name] of params.entries()) {
-    if (!searched.has(name)) continue;
+  const searched = searchedParameters(src, fn);
+  if (searched.size === 0) return true;
+  // A SPREAD destroys the positional mapping FROM WHERE IT APPEARS, not
+  // before it. `at(s, ...[1])` still names its first argument
+  // unambiguously, and refusing the whole call changed an accepted bound
+  // into a rejected one.
+  const spreadAt = supplied.findIndex((a) => a?.type === 'SpreadElement');
+  if (spreadAt >= 0 && [...searched].some((i) => i >= spreadAt)) return false;
+  for (const i of searched) {
     const values = candidateValues(src, supplied[i], seen);
     if (!values || values.some((v) => suspectValue(src, v, seen))) return false;
   }
   return true;
 }
 
-/** The parameter names a helper's body uses as a FINDER RECEIVER. */
-function searchedParameters(src, fn, params) {
+/**
+ * The parameter POSITIONS a helper's body uses as a finder receiver.
+ *
+ * By BINDING, never by spelling. A nested function may reuse one of the
+ * helper's parameter names for something else entirely, and comparing
+ * names attributed that inner receiver to the outer parameter. This is
+ * the third rule on this PR to be caught matching a spelling where it
+ * meant an identity — twice on globals, now here — so it asks the scope
+ * analyser which variable the receiver actually is, and whether that
+ * variable is a parameter OF THIS function.
+ */
+function searchedParameters(src, fn) {
+  const { variableOf } = astOf(src, 'searchedParameters');
   const used = new Set();
   walk(fn.body, (n) => {
     if (n.type !== 'CallExpression') return;
     const callee = unwrapChain(n.callee);
     if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return;
     const object = unwrapChain(callee.object);
-    if (object?.type === 'Identifier' && params.includes(object.name)) used.add(object.name);
+    if (object?.type !== 'Identifier') return;
+    const variable = variableOf.get(object);
+    if (!variable) return;
+    const index = fn.params.findIndex(
+      (p) => p.type === 'Identifier' && variable.defs.some((d) => d.type === 'Parameter' && d.node === fn && d.name === p),
+    );
+    if (index >= 0) used.add(index);
   });
   return used;
 }
@@ -2311,6 +2354,11 @@ function suspectReceiver(src, node, seen) {
   // holding a regexp and a regexp written out should not be answered by
   // two different pieces of code (round 8).
   if (t === 'Literal') return typeof r.value.value !== 'string';
+  // A PROPERTY READ is not an established value, whether it is written
+  // at the use or reached through a name first. Round 6 closed the
+  // inline form and left the aliased one, which is the same rule in one
+  // place and not the other — the shape this PR exists to stop.
+  if (t === 'MemberExpression') return true;
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
   // read as a search until round 13.

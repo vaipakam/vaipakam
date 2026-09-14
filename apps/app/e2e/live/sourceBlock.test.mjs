@@ -2278,6 +2278,43 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
+  // Round 9. Two more of this PR's own rules reaching past their
+  // question, and two more routes to a value it had claimed to refuse.
+  it('identifies a searched parameter by binding, not by spelling', () => {
+    // A nested function reusing the name is a different binding, and
+    // comparing names blamed the outer parameter for it.
+    const shadowed =
+      "const s = f();\nconst at = needle => s.indexOf((needle => needle.indexOf('x'))(s));\n" +
+      'const r = s.slice(0, at(1));';
+    expect(countsCharacters(shadowed, sliceCallsIn(shadowed).at(-1))).toBe(false);
+  });
+
+  it('lets a spread destroy the mapping only from where it appears', () => {
+    const lead = "const s = f();\nconst at = (text, from) => text.indexOf('e', from);\n";
+    // After every searched parameter: the first argument is still named.
+    const after = lead + 'const r = s.slice(0, at(s, ...[1]));';
+    expect(countsCharacters(after, sliceCallsIn(after).at(-1))).toBe(false);
+    // At the searched parameter: nothing can be attributed to it.
+    const before = lead + 'const r = s.slice(0, at(...[s], 1));';
+    expect(countsCharacters(before, sliceCallsIn(before).at(-1))).toBe(true);
+  });
+
+  it('refuses a property read reached through a name, as well as inline', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const holder = { fake: { indexOf: () => start + 320 } };\n' +
+      'const fake = holder.fake;\nconst r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  it('sees a built-in replaced through the global object', () => {
+    const code =
+      'const s = f();\nglobalThis.String = { raw: String.prototype.slice };\n' +
+      'const r = String.raw.call(s, 0, 320);';
+    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
