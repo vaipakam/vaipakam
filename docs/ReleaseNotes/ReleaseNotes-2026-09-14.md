@@ -1230,21 +1230,31 @@ own count. If the two differ it examines a handful of its records; if they
 agree it still examines one. Where the chain says a loan has ended and the
 record says otherwise, the record is corrected.
 
-That qualification is deliberate, and it is the one place this check is
-weakest exactly where it is most needed. Reading old blocks is done in
-bounded passes — two thousand blocks at a time — so a service that has been
-down long enough to miss an ending comes back needing as many passes as the
-gap divides into, and the comparison waits until the last of them. On a
-network producing a block every couple of seconds that is roughly an hour of
-lost time recovered per pass, so a long outage is repaired over many turns
-rather than on the first one. The records this exists to repair are
-therefore repaired after the catching-up, not during it.
+That qualification is deliberate, and it is the one place this check waits
+longest exactly where it is needed most. Old blocks are read in bounded
+passes of about two thousand at a time, so a service that has been down
+comes back needing as many passes as the gap divides into, and the
+comparison waits for the last of them.
 
-The alternative is worse rather than better, which is why it is a
-qualification and not a defect: reading the chain's present state while the
-index is still working through months-old events would have the two
-disagreeing about which moment they describe, and a correction drawn from
-that disagreement could close a position that is genuinely open.
+How long that takes in real time is NOT something those two numbers give
+you, and it would be worse than useless to imply otherwise. A backlog does
+not wait for the next scheduled turn between passes — it drives itself,
+re-arming on a much shorter clock until it is nearly done and leaving only
+the tail to the ordinary schedule, and work started by an incoming
+notification runs to yet another rhythm. So the honest statement is the
+mechanism rather than a figure: the gap is closed in bounded passes that
+chase each other, and the comparison happens once they are finished.
+
+Why wait at all, rather than compare while catching up? Not because a
+correction could be invented — it could not, and the platform's own
+statement of intent says so: a source that is behind reports the loan still
+running, which matches the record and changes nothing. The cost is a
+different one. A correction rewrites the whole record, including the money,
+from the chain as it stands NOW; the events still queued behind it are
+months older and their handlers only touch a record that is still open. Run
+the comparison first and those handlers find a record already closed and
+skip it, leaving one that is correctly ended and wrong about the amounts —
+which is the precise failure this check was rearranged to avoid.
 
 How many chains that covers per tick depends on how the service takes in
 data. As currently configured every chain is serviced on every tick, so the
