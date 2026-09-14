@@ -5995,7 +5995,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > the epoch the answer was established at, and the rebase refuses a stale
 > epoch ON CHAIN (`rebaseArmedFreshPaid(total, pauseEpoch)`); the pre-flight
 > also checks the signer's ADMIN_ROLE wherever [4b] will bind, and a chain
-> left paused is reported as such, never as ordinary completion (review r27). Simulations neither create nor erase
+> left paused is reported as such, never as ordinary completion (review r27);
+> the first in-place rollout is two runs — facets only while the live pause
+> code counts no transitions, then the migrations under a pause taken on the
+> new code — and the completion report treats an unreadable pause slot or a
+> live auto-pause window as not live (review r28). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

@@ -289,6 +289,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // Forge's pre-send simulation re-runs this check immediately before
         // each broadcast, so it holds at that moment too.
         uint64 pauseEpoch;
+        bool bootstrapOnly;
         {
             bool seeded = _probeBool(diamond, IArmedFreshPaidSeed.armedFreshPaidSeeded.selector);
             bool rebased = _probeBool(diamond, RewardCustodyFacet.armedFreshPaidRebased.selector);
@@ -302,23 +303,44 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     "no-history answer from the paused chain, then run; an auto-pause window does not "
                     "count and this run will not pause on your behalf over a due migration"
                 );
-                uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
-                require(
-                    epoch != type(uint256).max,
-                    "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch (the "
-                    "pause library's transition count, bytes 17..24 of its storage slot) at which "
-                    "YOU established the seed / total / no-history answer under the manual pause. "
-                    "Refusing to pair an answer with a pause it was not taken under."
-                );
-                require(
-                    epoch == uint256(epochNow),
-                    "RefreshAllFacetsInPlace: the stated pause epoch is not the live one - the pause "
-                    "was lifted or re-applied since the answer was established, and a payout in "
-                    "between never reaches the counter this migration seals. Re-establish the "
-                    "answer under the current pause and state its epoch"
-                );
-                pauseEpoch = uint64(epoch);
-                console.log("paid-side migration due: manual pause continuous at the stated epoch", epoch);
+                if (epochNow == 0) {
+                    // BOOTSTRAP (Codex #2158 r28 P1): the transition count is
+                    // stamped only by the pause code this very run cuts in. A
+                    // manual pause with a ZERO count was made under the OLD
+                    // code, which never counted — so a lift-and-reapply while
+                    // the implementations deploy, before the new AdminFacet is
+                    // cut, would leave it zero, and an answer bound to "zero"
+                    // proves nothing. This run therefore cuts the facets ONLY,
+                    // leaves the Diamond paused, and DEFERS every paid-side
+                    // migration: once the new code is live, pause again (it
+                    // counts now), establish the answer under that pause,
+                    // state its epoch, and run again — the facets are then
+                    // current and the migrations run under a pinned pause.
+                    bootstrapOnly = true;
+                    console.log(
+                        "BOOTSTRAP: pause transitions are not yet counted on this Diamond (old pause code) - "
+                        "cutting facets ONLY; the paid-side migrations are deferred to a second run under a "
+                        "pause taken on the new code"
+                    );
+                } else {
+                    uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
+                    require(
+                        epoch != type(uint256).max,
+                        "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch (the "
+                        "pause library's transition count, bytes 17..24 of its storage slot) at which "
+                        "YOU established the seed / total / no-history answer under the manual pause. "
+                        "Refusing to pair an answer with a pause it was not taken under."
+                    );
+                    require(
+                        epoch == uint256(epochNow),
+                        "RefreshAllFacetsInPlace: the stated pause epoch is not the live one - the pause "
+                        "was lifted or re-applied since the answer was established, and a payout in "
+                        "between never reaches the counter this migration seals. Re-establish the "
+                        "answer under the current pause and state its epoch"
+                    );
+                    pauseEpoch = uint64(epoch);
+                    console.log("paid-side migration due: manual pause continuous at the stated epoch", epoch);
+                }
             }
         }
         // Codex #992 — pause the diamond across the batched cuts so no
@@ -939,7 +961,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // wedging every rerun, paused, on a now-obsolete question. The
         // on-chain flag is authoritative and the facet cut above has already
         // routed its getter.
-        if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
+        if (bootstrapOnly) {
+            console.log("P1-b: DEFERRED - bootstrap run, see above");
+        } else if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
             console.log(
                 "P1-b: armed-fresh paid history already seeded - skipped"
             );
@@ -1056,7 +1080,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // operator to restate a zero instead would invite a false
         // no-history declaration that consumes the guard over unrecorded
         // history. Every other failure aborts while still paused.
-        if (RewardCustodyFacet(diamond).armedFreshPaidRebased()) {
+        if (bootstrapOnly) {
+            console.log("slice-4: rebase DEFERRED - bootstrap run, see above");
+        } else if (RewardCustodyFacet(diamond).armedFreshPaidRebased()) {
             console.log("slice-4: armed-fresh paid side already rebased - skipped");
         } else {
             uint256 total = vm.envOr("ARMED_FRESH_PAID_TOTAL", type(uint256).max);
@@ -1112,6 +1138,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
 
         if (!wasPaused) AdminFacet(diamond).unpause();
+        if (bootstrapOnly) {
+            console.log("");
+            console.log("BOOTSTRAP RUN COMPLETE - facets cut, Diamond left PAUSED, paid-side migrations NOT run.");
+            console.log("Next: AdminFacet.pause() once more (it counts now), establish the seed / total / no-history");
+            console.log("      answer under that pause, set ARMED_FRESH_PAUSE_EPOCH to the pause library's transition");
+            console.log("      count, and run refresh() again - the facets are current and the migrations then run.");
+        }
 
         vm.stopBroadcast();
 

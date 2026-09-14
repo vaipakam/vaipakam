@@ -98,7 +98,15 @@ transaction and immediately before each broadcast, and it never pauses on
 the operator's behalf over a due migration. The refresh itself pauses as its
 very first transaction, before any implementation is deployed; a chain it
 found paused is left paused and reported as such — user operations stay
-disabled until a fresh unpause decision — never as ordinary completion. The
+disabled until a fresh unpause decision — never as ordinary completion, and a
+chain whose pause state cannot be read afterwards, or that sits under an
+automatic pause window, is reported as not live rather than as restored. On
+the first in-place rollout of this change the platform does not yet count
+pause transitions, so no pause made before it can be pinned: that run cuts
+the facets only and defers the migrations, and a second run — after pausing
+again under the new code and establishing the answer under that pause —
+carries them, so no migration is ever sealed against a pause that could not
+be shown continuous. The
 pre-flight also checks, before any broadcast, that the signer can perform the
 post-refresh holder binding wherever one will be needed. The
 refresh also decides a deferral from what it reads rather than by calling

@@ -153,6 +153,13 @@
 #   leaves a chain it found paused PAUSED — reported as such, not as
 #   ordinary completion.
 #
+#   FIRST ROLLOUT = TWO RUNS. Until this refresh has cut the new pause code
+#   in, the live Diamond counts no transitions (the count reads zero), so a
+#   pause made under the old code cannot be pinned. On such a chain the run
+#   cuts facets ONLY and defers the migrations; then pause again (counted
+#   now), establish the answer under that pause, state its epoch, and run
+#   again for that chain — the facets are current and the migrations run.
+#
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
 #   skipped): each refusal the forge script can raise is exercised at that
@@ -570,11 +577,21 @@ for slug in $CHAINS; do
   if [ "$already_seeded" != "true" ] || [ "$already_rebased" != "true" ]; then
     [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, note the pause epoch this pre-flight then reports, and re-run. Nothing has been sent"
     [ -n "$pause_epoch" ] || fail "chain '$slug': the pause epoch could not be read from the pause slot -- refusing to consume a migration answer whose pause cannot be pinned"
-    epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"; epoch_val="${!epoch_var:-}"
-    [ -n "$epoch_val" ] || fail "chain '$slug': a paid-side migration is DUE -- set \$$epoch_var to the pause EPOCH at which you established the seed / total / no-history answer under the manual pause (the live epoch right now is $pause_epoch; it is the pause library's transition count, bytes 17..24 of its storage slot). Refusing to pair an answer with a pause it was not taken under. Nothing has been sent"
-    case "$epoch_val" in ''|*[!0-9]*) fail "chain '$slug': \$$epoch_var='${epoch_val}' is not a non-negative integer" ;; esac
-    [ "$(dec_norm "$epoch_val")" = "$(dec_norm "$pause_epoch")" ] || fail "chain '$slug': \$$epoch_var=$epoch_val but the live pause epoch is $pause_epoch -- the pause was lifted or re-applied since the answer was established, so the answer may omit a payout; re-establish it under the current pause and state that epoch. Nothing has been sent"
-    info "$slug: manually paused ✓ at the stated pause epoch $epoch_val (the refresh and the rebase re-check it)"
+    if [ "$(dec_norm "$pause_epoch")" = "0" ]; then
+      # BOOTSTRAP (Codex #2158 r28 P1): a zero count under a manual pause
+      # means the pause was made by the OLD pause code, which never counted —
+      # nothing can pin it. This run cuts facets only on this chain and the
+      # refresh defers the migrations; a second run, after re-pausing on the
+      # new code, carries the answer and its epoch.
+      info "$slug: BOOTSTRAP — pause transitions are not counted on this Diamond yet (old pause code): this run cuts facets ONLY and leaves it paused; then pause again (counted now), establish the seed / total / no-history answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_${pfx}, and run again for the migrations"
+      bootstrap_chains="${bootstrap_chains:+$bootstrap_chains }$slug"
+    else
+      epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"; epoch_val="${!epoch_var:-}"
+      [ -n "$epoch_val" ] || fail "chain '$slug': a paid-side migration is DUE -- set \$$epoch_var to the pause EPOCH at which you established the seed / total / no-history answer under the manual pause (the live epoch right now is $pause_epoch; it is the pause library's transition count, bytes 17..24 of its storage slot). Refusing to pair an answer with a pause it was not taken under. Nothing has been sent"
+      case "$epoch_val" in ''|*[!0-9]*) fail "chain '$slug': \$$epoch_var='${epoch_val}' is not a non-negative integer" ;; esac
+      [ "$(dec_norm "$epoch_val")" = "$(dec_norm "$pause_epoch")" ] || fail "chain '$slug': \$$epoch_var=$epoch_val but the live pause epoch is $pause_epoch -- the pause was lifted or re-applied since the answer was established, so the answer may omit a payout; re-establish it under the current pause and state that epoch. Nothing has been sent"
+      info "$slug: manually paused ✓ at the stated pause epoch $epoch_val (the refresh and the rebase re-check it)"
+    fi
   fi
   if [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
@@ -967,14 +984,28 @@ for slug in $CHAINS; do
   # chain that had to be paused for a due migration (the normal first
   # rollout) is LEFT PAUSED for a fresh Unpauser decision, and that is not
   # ordinary completion (Codex #2158 r27 P2): say so, here and at the end.
+  # Every pause mode is decoded and an unreadable slot is UNKNOWN, never
+  # "restored" (Codex #2158 r28 P2): the claim that user operations are
+  # enabled is made only when the slot reads and shows neither the manual
+  # flag nor a live auto-pause window.
   raw_after="$(cast storage "$diamond3" "$pause_slot" --rpc-url "$rpc" 2>/dev/null || echo '')"
   hex_after="${raw_after#0x}"
-  if [ "${#hex_after}" -eq 64 ] && [ "${hex_after:62:2}" != "00" ]; then
+  now_ts="$(date -u +%s)"
+  if [ "${#hex_after}" -ne 64 ]; then
+    info "$slug: in-place redeploy complete -- pause state UNKNOWN (the pause slot could not be read: '${raw_after:-empty}'); verify with 'cast storage <diamond> $pause_slot' before treating this chain as live"
+    paused_chains="${paused_chains:+$paused_chains }$slug(unknown)"
+  elif [ "${hex_after:62:2}" != "00" ]; then
     info "$slug: in-place redeploy complete -- the Diamond REMAINS PAUSED (manual): user operations stay disabled until a fresh Unpauser decision (AdminFacet.unpause()) once the migrations are verified; this run does not unpause"
     paused_chains="${paused_chains:+$paused_chains }$slug"
+  elif dec_gt "$(cast to-dec "0x${hex_after:46:16}")" "$now_ts"; then
+    info "$slug: in-place redeploy complete -- the Diamond is under a watcher AUTO-PAUSE window until $(cast to-dec "0x${hex_after:46:16}") (unix): user operations stay disabled until it lapses or an Unpauser clears it; not ordinary completion"
+    paused_chains="${paused_chains:+$paused_chains }$slug(auto-pause)"
   else
-    info "$slug: in-place redeploy complete (service restored: the Diamond was live when the refresh began)."
+    info "$slug: in-place redeploy complete (service restored: the pause slot shows neither the manual flag nor a live auto-pause window)."
   fi
+  case " ${bootstrap_chains:-} " in *" $slug "*)
+    info "$slug: BOOTSTRAP run -- facets cut, migrations DEFERRED. Next for this chain: AdminFacet.pause() once more (counted now), establish the answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_$(prefix_for "$slug"), and run again with --chains \"$slug\"" ;;
+  esac
   done_chains="${done_chains:+$done_chains }$slug"
 done
 
@@ -1022,6 +1053,9 @@ cat <<EOF
 EOF
 
 if [ -n "${paused_chains:-}" ]; then
-  info "PAUSED after this run: [$paused_chains] -- each stays under the manual pause it was refreshed under; resume by a fresh Unpauser decision (AdminFacet.unpause()) once its migrations are verified. Not ordinary completion."
+  info "NOT LIVE after this run: [$paused_chains] -- a plain slug is under the manual pause it was refreshed under (resume by a fresh Unpauser decision, AdminFacet.unpause(), once its migrations are verified); '(auto-pause)' is under a watcher window; '(unknown)' could not be read and must be verified by hand. Not ordinary completion."
+fi
+if [ -n "${bootstrap_chains:-}" ]; then
+  info "BOOTSTRAP chains (migrations DEFERRED): [$bootstrap_chains] -- for each: AdminFacet.pause() once more (counted now that the new pause code is live), establish the seed / total / no-history answer under that pause, set ARMED_FRESH_PAUSE_EPOCH_<PREFIX> to the pause library's transition count, and run this script again for that chain."
 fi
 banner "DONE"
