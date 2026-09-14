@@ -298,10 +298,18 @@ export function invalidationKeysFromResult(
   // advance. They change what a party is owed/holds, so they ride the same
   // coarse key; previously a scan with ONLY these events broadcast nothing
   // beyond `activity.appended`.
+  // `reconciledLoans` (#2101) = a loan row terminalized from the CHAIN
+  // because its event was missed for good. It rides the same coarse key and
+  // must: the repair has no accompanying log, so without it a scan whose
+  // only loan change was a repair broadcast nothing and every open client
+  // kept presenting the ghost as an open position until its next poll
+  // (#2190 r2 `4005986348`). It is the case where the push matters most —
+  // the correction is precisely the news.
   if (
     result.loanStatusUpdates > 0 ||
     result.loanDetailRefreshes > 0 ||
-    (result.loanEntitlementUpdates ?? 0) > 0
+    (result.loanEntitlementUpdates ?? 0) > 0 ||
+    (result.reconciledLoans ?? 0) > 0
   ) {
     keys.push('loan.updated');
   }

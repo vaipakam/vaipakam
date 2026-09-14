@@ -226,6 +226,20 @@ export interface ChainIndexerResult {
    *  missed entitlement changes until a poll. Optional so the early-return
    *  paths stay untouched (absent reads as 0). */
   loanEntitlementUpdates?: number;
+  /** #2101 — loan rows this scan REPAIRED from the chain rather than from an
+   *  event: a terminal whose announcement was missed for good. Optional so
+   *  the early-return paths stay untouched (absent reads as 0).
+   *
+   *  It is its own field rather than folded into `loanStatusUpdates` because
+   *  the two are different facts — one is "an event said so", the other is
+   *  "nothing ever said so and we went and looked" — and an operator reading
+   *  a metric should be able to tell a chain whose terminals arrive normally
+   *  from one that is being repaired every tick. `invalidationKeysFromResult`
+   *  maps both to the same coarse `loan.updated` key, which is the point of
+   *  the field existing at all: without it a repair with no accompanying
+   *  event corrected D1 and broadcast nothing, so every open client kept
+   *  showing the ghost until its next poll (#2190 r2 `4005986348`). */
+  reconciledLoans?: number;
   /** RPC read-diet PR 0 — position-NFT `Transfer` events that actually
    *  re-pointed a tracked row's `*_current_owner` column (secondary trade,
    *  claim-burn, borrower migration). Feeds the new `ownership.changed`
@@ -636,6 +650,108 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 5, minRows: 1 };
 
+/**
+ * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.
+ *
+ * It exists because #2190 r2 (`4005986356`) found the pass wired only into
+ * the scanned tail: a chain producing no new safe block returns from the
+ * quiet path every tick, so on a quiet chain the rotation never turned at
+ * all — and the chain carrying #2101's ghost loans is exactly that. Two call
+ * sites with the same body would have made the next such divergence just as
+ * easy, so there is one.
+ *
+ * Returns the number of rows REPAIRED, which the caller folds into its
+ * result so the DO's invalidation reaches subscribed clients (`4005986348`);
+ * a repair with no accompanying event would otherwise correct D1 while every
+ * open client kept showing the ghost until its next poll.
+ *
+ * Never throws: a repair failure must not wedge a scan that is otherwise
+ * healthy, and the rotation returns to those rows next tick.
+ */
+async function runLoanReconcilePass(input: {
+  env: Env;
+  chain: ChainConfig;
+  chainId: number;
+  diamond: Address;
+  /** The SAFE head this path resolved. Every read pins to it. */
+  head: bigint;
+  budget: ReconcileOptions;
+}): Promise<number> {
+  const { env, chain, chainId, diamond, head, budget } = input;
+  // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
+  // The scan's client takes viem's default `retryCount: 3`, so each of this
+  // pass's "one subrequest per read" could be four, and the whole budget
+  // argument the caller's constants encode would be off by that factor
+  // exactly when the provider is rate-limiting — the moment it matters. A
+  // read that fails is not worth retrying here anyway: the row is left
+  // alone, reported in `unread`, and the rotation returns to it next tick.
+  const reconcileClient = createPublicClient({
+    transport: http(chain.rpc, { retryCount: 0 }),
+  });
+  try {
+    const report = await reconcileAfterScan(
+      {
+        db: env.DB,
+        chainId,
+        diamond,
+        head,
+        readContract: (args) =>
+          reconcileClient.readContract(args as never) as Promise<unknown>,
+        metricsAbi: DIAMOND_METRICS_ABI,
+        loanAbi: DIAMOND_LOAN_DETAILS_ABI,
+        // The same tables every terminal handler clears, as STATEMENTS so
+        // the repair can commit them in one transaction with its status
+        // write. Handed in so the repair keeps no list of its own: round 1
+        // found the prepay listing missing, round 2 the swap-to-repay
+        // intent, and a table added to `_closedLoanSideTableStatements`
+        // reaches the repair with no change here (#2190 rounds 1-3).
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements(env, chainId, loanId),
+      },
+      budget,
+    );
+    if (report.repaired.length > 0) {
+      console.warn(
+        `[chainIndexer] reconciled chain ${chainId}: ` +
+          report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
+      );
+    }
+    // A row whose chain read failed is NOT silently dropped. If a deployed
+    // facet stops matching the compiled ABI, every read fails every pass and
+    // the statuses stay stale forever while the scan looks healthy — so the
+    // unread set is said out loud (#2190 r1).
+    if (report.unread.length > 0) {
+      console.warn(
+        `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
+          `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+      );
+    }
+    // A DISAGREEMENT NOBODY CAN REPAIR is the quietest failure this pass
+    // has, and it was invisible (#2190 r2 `4006071758`). When the counts
+    // differ because a `LoanInitiated` was MISSED rather than a terminal,
+    // every indexed row legitimately reads Active: nothing is repaired,
+    // nothing is unread, and the pass looks perfectly healthy while the
+    // index stays permanently short of the chain AND spends the larger
+    // mismatch budget on every tick forever. Reported once the lap has been
+    // round — a mid-lap mismatch is expected, since the repairs that would
+    // settle it have not been made yet.
+    if (!report.agreed && report.wrappedLap && report.repaired.length === 0) {
+      console.warn(
+        `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
+          `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
+          `full lap repaired none — the difference is NOT a missed terminal ` +
+          `(most likely a missed LoanInitiated, which this pass cannot repair)`,
+      );
+    }
+    return report.repaired.length;
+  } catch (err) {
+    // A repair failure must not wedge the scan that found nothing wrong;
+    // the rotation returns to these rows.
+    console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
+    return 0;
+  }
+}
+
 export async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
@@ -751,6 +867,27 @@ export async function runChainIndexerForChain(
     // also the CONSISTENT one (D1 reflects everything up to the safe
     // head), so the sweep always runs here; rows stamp the cursor's
     // caught-up position.
+    // #2190 r2 `4005986356` — the repair runs on THIS path too, and it is
+    // the path that matters most. A chain producing no new safe block
+    // returns here every tick, so wiring the pass only into the scanned
+    // tail meant the rotation never turned on a quiet chain — which is
+    // exactly what the chain carrying #2101's three ghost loans is. The
+    // pass as first placed might never have fired for the case that
+    // motivated it.
+    //
+    // `lastBlock` IS the safe head on this path (`scanFrom > head` means
+    // the cursor has reached it), so reads pin to the same safe block the
+    // scanned path uses, and D1 reflects everything up to it — the two
+    // properties the placement argument rests on. Before the calendar
+    // sweep, for the reason the scanned path states.
+    const quietReconciled = await runLoanReconcilePass({
+      env,
+      chain,
+      chainId,
+      diamond,
+      head: lastBlock,
+      budget: reconcileBudget,
+    });
     const quietCal = await sweepCalendarNotifications(
       env.DB,
       chainId,
@@ -777,6 +914,11 @@ export async function runChainIndexerForChain(
       // the hints so client relevance scoping keeps the refetch on the
       // wallets that hold those loans.
       calendarNotifications: quietCal.inserted,
+      // #2101 — a quiet tick that repaired a ghost has changed loan state
+      // with no event behind it, so it must broadcast like any other loan
+      // change. This path used to return a hard-coded zero result, which is
+      // what made the repair invisible to subscribed clients here.
+      reconciledLoans: quietReconciled,
       hints:
         quietCal.inserted > 0
           ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
@@ -1039,6 +1181,20 @@ export async function runChainIndexerForChain(
   // data, fail-open INSIDE (see notifications.ts), after the cursor
   // advance — a hiccup here must never fail a scan whose authoritative
   // activity_events / loans writes already landed.
+  // #2101 — repair loan rows whose terminal event was missed for good, and
+  // do it BEFORE the two notification surfaces below (#2190 r2
+  // `4006071765` / `4006071734`). Both are derived from D1 state at the
+  // moment they run and neither retracts what it writes: the calendar sweep
+  // would mint a non-retractable maturity or past-due reminder for a loan
+  // that had already ended, and the inbox materializer would settle the
+  // terminal question for this tick with the ghost still active. Ordering
+  // is the whole fix for the first; the second is narrower and is answered
+  // separately (see the reply on that thread).
+  const reconciledLoans =
+    scanTo === head
+      ? await runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
+      : 0;
+
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
   // RPC read-diet PR B — keep the display config snapshot current
@@ -1093,94 +1249,6 @@ export async function runChainIndexerForChain(
   // and ownership rows are current through `last_block`.
   if (scanTo === head) {
     await stampNotifiedWatermark(env, chainId, scanTo);
-
-    // #2101 — repair loan rows whose terminal event was missed for good.
-    // A terminal missed while this Worker was down, throttled, or past
-    // its catch-up window is missed PERMANENTLY: advancing the cursor
-    // restores the cursor, not the rows. Measured on Base Sepolia
-    // 2026-09-14 — chain 6 active, `/loans/stats` 7, `/loans/active` 9,
-    // one ghost untouched since 2026-07-04.
-    //
-    // HERE, not a cron pass of its own, and the placement is the fix
-    // (#2190 round 1). Inside this guard it inherits four properties a
-    // separate pass had to invent and got wrong: reads pin to `head`,
-    // which is SAFE-tagged, so a reorg cannot leave a row terminal in
-    // the index and active on the chain — and that row would never be
-    // looked at again, since the pass selects only `active`. It runs
-    // after this window's events are applied, so it cannot terminalize
-    // ahead of one. It is inside the DO's call, so the DO's broadcast
-    // covers the write. And identity was asserted far above.
-    //
-    // `scanTo === head` is the ordering gate, not a freshness nicety:
-    // mid-backfill there are unapplied events between cursor and head,
-    // and repairing from head state would jump that queue.
-    //
-    // Budget, stated exactly because getting it wrong here starves the SCAN
-    // and recreates the dropped-event condition the whole round-robin
-    // exists to prevent: `1 + minRows` subrequests in the healthy case (the
-    // chain's active count, plus the rows examined whether or not the counts
-    // agree — that is the point of `minRows`), and `1 + maxRows` at worst.
-    // No head read and no identity read: this scan has both already. D1
-    // queries are not in this count — the rotation pointer and the row
-    // selection go over the binding, not the subrequest budget.
-    //
-    // The numbers come from the CALLER, because only the caller knows what
-    // shares its invocation. See `RECONCILE_BUDGET_SHARED_TICK`.
-    const reconcileClient = createPublicClient({
-      transport: http(chain.rpc, { retryCount: 0 }),
-    });
-    try {
-      const report = await reconcileAfterScan(
-        {
-          db: env.DB,
-          chainId,
-          diamond,
-          head,
-          // A NON-RETRYING client, deliberately its own (#2190 r2
-          // `4005986337`). The scan's client takes viem's default
-          // `retryCount: 3`, so each of this pass's "one subrequest per
-          // read" could be four, and the whole budget argument these
-          // constants encode would be off by that factor exactly when the
-          // provider is rate-limiting — the moment it matters. A read that
-          // fails is not worth retrying here anyway: the row is left alone,
-          // reported in `unread`, and the rotation returns to it next tick.
-          readContract: (args) =>
-            reconcileClient.readContract(args as never) as Promise<unknown>,
-          metricsAbi: DIAMOND_METRICS_ABI,
-          loanAbi: DIAMOND_LOAN_DETAILS_ABI,
-          // The same tables every terminal handler above clears, as
-          // STATEMENTS so the repair can commit them in one transaction
-          // with its status write. Handed in so the repair keeps no list of
-          // its own: round 1 found the prepay listing missing, round 2 the
-          // swap-to-repay intent, and a table added to
-          // `_closedLoanSideTableStatements` reaches the repair with no
-          // change here (#2190 rounds 1-3).
-          closedLoanSideTableStatements: (loanId) =>
-            _closedLoanSideTableStatements(env, chainId, loanId),
-        },
-        reconcileBudget,
-      );
-      if (report.repaired.length > 0) {
-        console.warn(
-          `[chainIndexer] reconciled chain ${chainId}: ` +
-            report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
-        );
-      }
-      // A row whose chain read failed is NOT silently dropped. If a
-      // deployed facet stops matching the compiled ABI, every read fails
-      // every pass and the statuses stay stale forever while the scan
-      // looks healthy — so the unread set is said out loud (#2190 r1).
-      if (report.unread.length > 0) {
-        console.warn(
-          `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
-            `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
-        );
-      }
-    } catch (err) {
-      // A repair failure must not wedge the scan that found nothing
-      // wrong; the rotation returns to these rows.
-      console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
-    }
   }
 
   // #1245 measurement rail — one structured line per scan that touched
@@ -1233,6 +1301,7 @@ export async function runChainIndexerForChain(
     // tail feed the `notification.created` push key; their loan ids join
     // the hints below so client relevance scoping still applies.
     calendarNotifications: cal.inserted,
+    reconciledLoans,
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).

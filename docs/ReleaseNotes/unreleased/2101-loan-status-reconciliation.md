@@ -77,6 +77,23 @@ share is what this change can honestly do about it, and it does not pretend
 that makes the slot safe. Either way every record is eventually reached; the
 difference is how many turns it takes.
 
+The check also runs on a **quiet** chain — one producing no new blocks
+between ticks — and that is not a detail. An earlier version ran it only
+where new blocks had just been read, which meant it never ran at all on a
+chain that had gone quiet. The three records this was written for sit on
+exactly such a chain, so the check might never have examined the very
+entries that prompted it.
+
+Where it sits in the tick matters too. It now runs **before** the two
+surfaces that tell people things: the reminder sweep and the inbox. Both
+read the records as they stand and neither withdraws what it has already
+said, so running afterwards meant a loan that had ended months ago could
+still be sent a "payment due" or "overdue" reminder that nothing would ever
+retract. And a correction now announces itself to anyone watching the
+position, the same way any other change does — without that, the record was
+put right while every open screen kept showing the old one until it happened
+to refresh.
+
 ## What it will not do
 
 It only ever moves a record from "running" to an ending, and only when the

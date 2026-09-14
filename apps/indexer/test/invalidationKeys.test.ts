@@ -64,6 +64,15 @@ describe('invalidationKeysFromResult', () => {
     expect(
       invalidationKeysFromResult(result({ loanEntitlementUpdates: 1 })),
     ).toEqual(['loan.updated']);
+    // #2101 — a loan repaired from the CHAIN, with no event behind it,
+    // must broadcast like any other loan change. This is the case where
+    // the push matters most: the correction IS the news, and without the
+    // key a scan whose only loan change was a repair broadcast nothing, so
+    // every open client kept presenting the ghost as an open position
+    // until its next poll (#2190 r2).
+    expect(invalidationKeysFromResult(result({ reconciledLoans: 1 }))).toEqual([
+      'loan.updated',
+    ]);
     // RPC read-diet PR 0 — a position-NFT ownership re-point gets its own
     // key (holder-keyed views: own positions / claimables / detail owner).
     expect(invalidationKeysFromResult(result({ ownershipTransfers: 1 }))).toEqual([

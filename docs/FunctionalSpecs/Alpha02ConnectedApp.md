@@ -247,6 +247,17 @@ The app uses chain reads and indexed reads for different jobs.
   service interrupted between the two leaves no failure to report. There is
   no partial state to recover from because there is no window in which one
   can exist.
+- The correction runs on every tick the index is up to date with the
+  chain, INCLUDING on a chain producing no new blocks. A check that only
+  ran where new blocks had arrived would never run on a quiet chain, which
+  is precisely where an old missed ending sits undisturbed.
+- It runs before any surface that tells a person something. Reminder and
+  inbox messages are derived from the records as they stand and are never
+  withdrawn once sent, so a position corrected after they were composed
+  would have produced a payment reminder for a loan that had already
+  ended. A correction is also announced to anyone watching that position,
+  like any other change — a record put right silently would leave every
+  open screen showing the old one.
 - How fast the correction works through the records depends on the
   deployment's ingest configuration, and the platform states this rather
   than implying a single pace. Where the chain reading has its own capacity
