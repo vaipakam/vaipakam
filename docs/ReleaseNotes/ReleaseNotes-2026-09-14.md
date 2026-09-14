@@ -1466,9 +1466,11 @@ momentary reorganisation could report an ending that then disappears,
 leaving a genuinely open loan recorded as closed with nothing that would
 ever come back to it.
 
-That holds while the source can be asked for a settled point, and there is
-one case where it cannot. A source too old to understand the question is
-answered instead by stepping back a fixed distance from the latest block —
+That holds while the source actually answers when asked for a settled
+point, and there is a case where it does not. Any failure of that question —
+a source too old to understand it, but equally a timeout or a momentary
+error from one that normally does — is answered instead by stepping back a
+fixed distance from the latest block —
 which is a guess at settlement rather than the chain's own word, and against
 a deep enough reorganisation it is the reading this rule exists to forbid.
 It is a pre-existing arrangement rather than anything this change
@@ -1549,8 +1551,9 @@ this check. If another part of the service recorded the ending first — which
 is the very race the check is built to lose gracefully — it stops, rather
 than telling the two holders it discovered something it did not. And where
 looking up the parties in its OWN records fails, that is treated as a
-failure rather than as "nobody to tell": the whole correction is left for
-the next turn instead of going through with the part that is silent.
+failure rather than as "nobody to tell": the whole correction is abandoned
+instead of going through with the part that is silent, and waits for the
+rotation to come round again as described above.
 
 That applies to its own records and not to the chain, and the difference is
 the point. A query of its own store that fails has unambiguously failed, so

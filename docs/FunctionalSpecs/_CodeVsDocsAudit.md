@@ -799,8 +799,11 @@ table four Workers read.
 **What it does not mean.** The pass does not treat these rows as confirmed
 running, which was the original defect: before #2190 an orphaned row read as a
 healthy active loan on every pass forever, and the count disagreement it caused
-was silent. It is now named, on every tick, with the loan ids. The gap is that
-naming it does not yet stop it being published.
+was silent. It is named, with the loan ids, WHENEVER THE ROTATION EXAMINES IT — not on
+every tick. The pass looks at one or three rows a turn, so on a larger live
+set a known orphan can go unmentioned for most of a lap. The gap is that
+naming it does not stop it being published, and that the naming itself is
+periodic rather than continuous.
 
 ---
 
@@ -816,15 +819,27 @@ the change that introduced the intent.
 | --- | --- | --- |
 | *"The chain state a correction relies on must therefore be read at a point the chain treats as settled, never at whatever the source last saw and never at a point derived from how far the index itself has read."* | The scan asks the source for its settled point and, when the source does not understand the question, falls back to a fixed step back from the latest block. That is derived from what the source last saw — the thing the sentence forbids — and it is a heuristic finality margin rather than the chain's own statement. Against a reorganisation deeper than the margin it can report an ending that later disappears. | #2201 |
 
-**Why this is worse here than elsewhere.** The same fallback feeds the
-ordinary scan, where a wrong read is self-correcting: the cursor is re-read,
-events replay, the record converges. The correction has no such recovery —
-it selects only live rows, so a row it has terminalized is never examined
-again. The identical heuristic is tolerable for one consumer and not for the
-other, which is why the divergence is worth recording rather than filing
-under "finality is always approximate".
+**BOTH consumers are exposed, and an earlier version of this entry said
+otherwise.** It claimed the ordinary scan self-corrects — cursor re-read,
+events replay, record converges — and used that to argue the heuristic was
+tolerable for the scan and not for the correction. That is wrong, and the
+scan's own code comment says so: the cursor advances monotonically from
+`lastBlock + 1`, so a reorganised-out block is never revisited and "the next
+cron run … would skip the reorged block, leaving the stale row in D1
+forever". Both consumers turn a wrong read into a permanent wrong record;
+they differ only in which record.
 
-**What it does not mean.** The fallback engages only where the source cannot
-answer the settled-point question at all; the deployed configuration reads a
-settled point normally. This is a gap in a contingency, not in the ordinary
-path.
+What remains true is that the correction's wrong record is the more
+alarming one — a position published as closed when it is open — and that
+the correction cannot even be corrected by the mechanism that wrote it,
+since it selects only live rows. But that is a difference of severity, not
+of recoverability, and the fix must cover both.
+
+**When the fallback engages is wider than it first appears.** The `catch`
+around the settled-point request is unconditional, so it is taken not only
+by a source that cannot answer the question but by ANY failure of it — a
+timeout, a momentary error — from a source that normally can. Supporting the
+settled tag therefore does not exempt a deployment; it only makes the
+contingency rarer. An earlier version of this entry said the deployed
+configuration "reads a settled point normally", which is true on the ordinary
+path and was doing the work of an exemption it does not provide.
