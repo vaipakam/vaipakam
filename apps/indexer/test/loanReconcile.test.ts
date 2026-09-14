@@ -40,10 +40,18 @@ type ChainStub =
 
 const TOKENS = { lenderTokenId: '1', borrowerTokenId: '2' };
 
+/** The shared mutable projection, in the shape the scan's builder emits.
+ *  The fake carries a REAL one rather than a placeholder so a case can see
+ *  what the write put in the row. */
+const mutableOf = (principal: string, collateralAmount: string) => ({
+  assignments: ['principal = ?', 'collateral_amount = ?'],
+  values: [principal, collateralAmount],
+});
+
 function asRead(v: Exclude<ChainStub, Error>) {
   return typeof v === 'number'
-    ? { status: v, principal: '0', collateralAmount: '0', ...TOKENS }
-    : { ...v, ...TOKENS };
+    ? { status: v, mutable: mutableOf('0', '0'), ...TOKENS }
+    : { status: v.status, mutable: mutableOf(v.principal, v.collateralAmount), ...TOKENS };
 }
 
 /** The selector reads only `loan_id` and `status` — the two extra columns
@@ -115,10 +123,16 @@ function fakeDeps(
       // a row another writer already terminalized does not change.
       if (!row || !LIVE.has(row.status)) return false;
       row.status = repair.status;
-      // The real write is one statement over all three columns, so a fake
-      // that moved only the status could not observe half a repair.
-      row.principal = repair.principal;
-      row.collateral_amount = repair.collateralAmount;
+      // The real write is ONE statement over the status plus every mutable
+      // column, so a fake that moved only the status could not observe half
+      // a repair. Applied by column name, the way the SQL does.
+      repair.mutable.assignments.forEach((a, i) => {
+        const col = a.split(' = ')[0];
+        if (col === 'principal') row.principal = String(repair.mutable.values[i]);
+        if (col === 'collateral_amount') {
+          row.collateral_amount = String(repair.mutable.values[i]);
+        }
+      });
       return true;
     },
     async terminalHolderStatements() {

@@ -46,13 +46,13 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   reconcileAfterScan,
   ReconcilePartialError,
+  type LoanMutableColumns,
   type ReconcileOptions,
 } from './loanReconcile';
 // #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
-import { isRevert } from '@vaipakam/lib/contractRevert';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -695,44 +695,41 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, m
  * the claim burn, so those columns are stale for exactly the same reason the
  * status was (#2190 r5 `4007360368`).
  *
- * THREE answers, not two (#2190 r6 `4007752763`). An address is a holder.
- * `'burned'` is the chain's authoritative "this token no longer exists",
- * which happens when the missed window also contained that side's CLAIM —
- * the claim event was missed too, so the index still names a holder for a
- * claim already taken, and `/claimables` goes on offering it. `null` is
- * NOTHING ESTABLISHED: the read failed to arrive.
+ * TWO answers, and deliberately so after a third was tried and removed.
+ * An address is a holder this pass can address a notice to. `null` is
+ * anything else — unreadable, or a token that no longer exists — and gets
+ * NO notice, because there is nobody substantiated to tell.
  *
- * Collapsing the last two, which an earlier version did, forces a choice
- * between two harms — clearing a live holder's claim on a transport blip,
- * or never clearing a taken one. The distinction comes from
- * `@vaipakam/lib`'s `isRevert`, which the connected app's Claim Center has
- * always used for exactly this decision; the indexer disagreeing with it
- * would be worse than either answer.
+ * An earlier revision returned a third, `'burned'`, and wrote the zero
+ * address into the owner column for it (#2190 r6 `4007752763`). Review
+ * then narrowed the classifier: `isRevert` also catches a missing selector
+ * and an empty reply, so a facet hiccup would clear a live holder and hide
+ * their claim (`4008330661`). That is the #2107 shape — a failure
+ * classifier narrowed round after round — and this repo's answer to it is
+ * to delete the classifier rather than sharpen it.
  *
- * A side that is `null` or `'burned'` gets no notice: there is nobody
- * substantiated to tell. Telling the wrong person their position ended,
- * while the real holder hears nothing, is worse than the silence this whole
- * notification exists to end.
+ * So the repair no longer writes owner columns AT ALL. It reads holders to
+ * decide who a notice is for, which is what the finding actually asked
+ * for; the write was my own extension. Refreshing the stored owner is a
+ * real want and belongs to whatever owns those columns, not to a pass that
+ * would have to guess a burn to do it.
+ *
+ * Telling the wrong person their position ended, while the real holder
+ * hears nothing, is worse than the silence this notification exists to
+ * end — which is why an unresolved side stays silent either way.
  *
  * Reads are pinned to the same safe head as the rest of the repair, and are
  * made only for a loan that IS being repaired — rare by construction. Two
  * subrequests per repaired loan; the reconcile budget constants account for
  * them.
  */
-/** An address, `'burned'` (authoritatively gone), or `null` (unknown). */
-type HolderRead = string | 'burned' | null;
-
-/** What the indexer already stores for "no holder" — the same value the
- *  Transfer handler writes on a burn. */
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
 async function resolveCurrentHolders(
   client: PublicClient,
   diamond: Address,
   head: bigint,
   tokenIds: { lender: string; borrower: string },
-): Promise<{ lender: HolderRead; borrower: HolderRead }> {
-  const one = async (tokenId: string): Promise<HolderRead> => {
+): Promise<{ lender: string | null; borrower: string | null }> {
+  const one = async (tokenId: string): Promise<string | null> => {
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
@@ -744,10 +741,10 @@ async function resolveCurrentHolders(
         blockNumber: head,
       })) as string;
       return owner.toLowerCase();
-    } catch (err) {
-      // A REVERT is the chain answering "no such token" — burned. Anything
-      // else never reached an answer.
-      return isRevert(err) ? 'burned' : null;
+    } catch {
+      // Unreadable, or gone. This pass does not need to know which: it uses
+      // a holder only when it has one, and writes no owner column.
+      return null;
     }
   };
   const [lender, borrower] = await Promise.all([
@@ -755,6 +752,59 @@ async function resolveCurrentHolders(
     one(tokenIds.borrower),
   ]);
   return { lender, borrower };
+}
+
+/**
+ * The mutable columns a `getLoanDetails` post-image can correct, as
+ * `column = ?` fragments plus their values.
+ *
+ * ONE list, used by `refreshStubLoans` (which heals a stub row) and by the
+ * #2101 repair (which corrects a stale one). Both are answering the same
+ * question — "what does the chain's current answer say that our row does
+ * not?" — and the repair spent three review rounds having that list
+ * extended a field at a time: the amounts, then the position-token ids
+ * after a missed `LoanObligationTransferred` left `claimables` serving a
+ * burned one, then the rate / start / duration after a missed
+ * `LoanExtended` left the route serving an old maturity (#2190 r6
+ * `4008216425`). A column added HERE now reaches both.
+ *
+ * `init_*` is deliberately absent: those are the executed terms at
+ * origination, immutable history the candle endpoint reads, and the stub
+ * heal only ever COALESCEs them into place when they are missing.
+ */
+function mutableLoanColumnsFromDetail(detail: Record<string, unknown>): LoanMutableColumns {
+  const d = detail as {
+    assetType: number; collateralAssetType: number;
+    principalAsset: string; collateralAsset: string;
+    durationDays: bigint; tokenId: bigint; collateralTokenId: bigint;
+    lenderTokenId: bigint; borrowerTokenId: bigint;
+    principal: bigint; collateralAmount: bigint;
+    interestRateBps: bigint; startTime: bigint;
+    allowsPartialRepay: boolean;
+    periodicInterestCadence?: bigint; lastPeriodicInterestSettledAt?: bigint;
+  };
+  const pairs: Array<[string, string | number]> = [
+    ['asset_type', Number(d.assetType)],
+    ['collateral_asset_type', Number(d.collateralAssetType)],
+    ['lending_asset', d.principalAsset.toLowerCase()],
+    ['collateral_asset', d.collateralAsset.toLowerCase()],
+    ['duration_days', Number(d.durationDays)],
+    ['token_id', d.tokenId.toString()],
+    ['collateral_token_id', d.collateralTokenId.toString()],
+    ['lender_token_id', d.lenderTokenId.toString()],
+    ['borrower_token_id', d.borrowerTokenId.toString()],
+    ['principal', d.principal.toString()],
+    ['collateral_amount', d.collateralAmount.toString()],
+    ['interest_rate_bps', Number(d.interestRateBps)],
+    ['start_time', Number(d.startTime)],
+    ['allows_partial_repay', d.allowsPartialRepay ? 1 : 0],
+    ['periodic_interest_cadence', Number(d.periodicInterestCadence ?? 0)],
+    ['last_period_settled_at', Number(d.lastPeriodicInterestSettledAt ?? 0n)],
+  ];
+  return {
+    assignments: pairs.map(([c]) => `${c} = ?`),
+    values: pairs.map(([, v]) => v),
+  };
 }
 
 async function runLoanReconcilePass(input: {
@@ -788,6 +838,7 @@ async function runLoanReconcilePass(input: {
           reconcileClient.readContract(args as never) as Promise<unknown>,
         metricsAbi: DIAMOND_METRICS_ABI,
         loanAbi: DIAMOND_LOAN_DETAILS_ABI,
+        mutableColumns: mutableLoanColumnsFromDetail,
         // The same tables every terminal handler clears, as STATEMENTS so
         // the repair can commit them in one transaction with its status
         // write. Handed in so the repair keeps no list of its own: round 1
@@ -820,46 +871,17 @@ async function runLoanReconcilePass(input: {
             head,
             tokenIds,
           );
+          // NO OWNER WRITE. The holders are read to decide who the notice
+          // is for and nothing else — see `resolveCurrentHolders` for why
+          // the write, and the burn classifier it needed, were removed.
           const statements: D1PreparedStatement[] = [];
-          // The refreshed owners are written too, not just used: the
-          // staleness is real and fixing only the notice would leave every
-          // other holder-keyed surface reading the wrong address.
-          // A burned side is written as the ZERO ADDRESS, not skipped: the
-          // missed window that hid the terminal can equally have hidden
-          // that side's CLAIM, and leaving the old holder in place keeps
-          // the claim-candidate route offering a claim already taken
-          // (#2190 r6 `4007752763`). `null` still COALESCEs, because
-          // nothing was established and clearing a live holder on a
-          // transport blip would hide a real claim — the opposite harm.
-          const ownerWrite = (h: HolderRead) => (h === 'burned' ? ZERO_ADDRESS : h);
-          if (holders.lender || holders.borrower) {
-            statements.push(
-              env.DB.prepare(
-                `UPDATE loans
-                    SET lender_current_owner = COALESCE(?, lender_current_owner),
-                        borrower_current_owner = COALESCE(?, borrower_current_owner),
-                        updated_at = ?
-                  WHERE chain_id = ? AND loan_id = ?`,
-              ).bind(
-                ownerWrite(holders.lender),
-                ownerWrite(holders.borrower),
-                Math.floor(Date.now() / 1000),
-                chainId,
-                loanId,
-              ),
-            );
-          }
           const rows = await planReconciledNotifications(
             env.DB,
             chainId,
             [{ loanId, to }],
             Number(head),
             Math.floor(Date.now() / 1000),
-            // A burned side has nobody to tell, exactly like an unread one.
-            {
-              lender: holders.lender === 'burned' ? null : holders.lender,
-              borrower: holders.borrower === 'burned' ? null : holders.borrower,
-            },
+            holders,
           );
           // The notices self-gate on the compare-and-set having won; the
           // owner refresh above does not, for the same reason the side-table
@@ -929,11 +951,22 @@ async function runLoanReconcilePass(input: {
       report.repaired.length === 0 &&
       (report.wrappedLap || report.examined.length === 0)
     ) {
+      // A lap that left rows UNREAD or UNWRITTEN established nothing about
+      // them, so it cannot rule anything out (#2190 r6 `4008330681`). An
+      // earlier version said "NOT a missed terminal" over a lap whose only
+      // stale row failed its read twice — a confident conclusion drawn
+      // from an absence of evidence.
+      const settled = report.unread.length === 0 && report.writeFailed.length === 0;
       console.warn(
         `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
           `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
-          `full lap repaired none — the difference is NOT a missed terminal ` +
-          `(most likely a missed LoanInitiated, which this pass cannot repair)`,
+          `full lap repaired none — ` +
+          (settled
+            ? `the difference is NOT a missed terminal (most likely a missed ` +
+              `LoanInitiated, which this pass cannot repair)`
+            : `but ${report.unread.length} read(s) and ${report.writeFailed.length} ` +
+              `write(s) failed, so the cause is UNDETERMINED — this lap ruled ` +
+              `nothing out`),
       );
     }
     // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
@@ -2632,17 +2665,14 @@ async function refreshStubLoans(
       // post-mutation terms. Acceptable: stubs are vanishingly rare
       // (companion event in the same tx), heal runs on the next tick,
       // and mutations inside that window are rarer still.
+      // THE SAME mutable set the #2101 repair writes — one builder, so
+      // "which columns does a chain post-image correct?" is answered once
+      // (#2190 r6). `init_*` stays COALESCE-only here: the executed terms
+      // at origination are immutable history, filled in when missing and
+      // never overwritten.
+      const mutable = mutableLoanColumnsFromDetail(detail as Record<string, unknown>);
       const updated = await env.DB.prepare(
-        `UPDATE loans SET asset_type = ?, collateral_asset_type = ?,
-                          lending_asset = ?, collateral_asset = ?,
-                          duration_days = ?, token_id = ?,
-                          collateral_token_id = ?,
-                          lender_token_id = ?, borrower_token_id = ?,
-                          principal = ?, collateral_amount = ?,
-                          interest_rate_bps = ?, start_time = ?,
-                          allows_partial_repay = ?,
-                          periodic_interest_cadence = ?,
-                          last_period_settled_at = ?,
+        `UPDATE loans SET ${mutable.assignments.join(', ')},
                           init_principal = COALESCE(init_principal, ?),
                           init_rate_bps = COALESCE(init_rate_bps, ?),
                           init_duration_days = COALESCE(init_duration_days, ?),
@@ -2651,22 +2681,7 @@ async function refreshStubLoans(
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
-          detail.assetType,
-          detail.collateralAssetType,
-          detail.principalAsset.toLowerCase(),
-          detail.collateralAsset.toLowerCase(),
-          Number(detail.durationDays),
-          detail.tokenId.toString(),
-          detail.collateralTokenId.toString(),
-          detail.lenderTokenId.toString(),
-          detail.borrowerTokenId.toString(),
-          detail.principal.toString(),
-          detail.collateralAmount.toString(),
-          Number(detail.interestRateBps),
-          Number(detail.startTime),
-          detail.allowsPartialRepay ? 1 : 0,
-          Number(detail.periodicInterestCadence ?? 0),
-          Number(detail.lastPeriodicInterestSettledAt ?? 0n),
+          ...mutable.values,
           detail.principal.toString(),
           Number(detail.interestRateBps),
           Number(detail.durationDays),

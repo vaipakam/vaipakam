@@ -104,7 +104,18 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // its compile-time `LIMIT ${SWEEP_LIMIT}` constant; the statement's
     // shape runs against the real migrated schema in
     // test/calendarNotifications.test.ts.
-    expect(skipped.length).toBeLessThanOrEqual(12);
+    // Raised 12 → 14 for #2101 (#2190 r6): the stub heal and the loan
+    // repair now build their `SET` clause from ONE shared column list
+    // (`mutableLoanColumnsFromDetail`), which is the fix for review
+    // extending the repair's hand-picked field set three rounds running.
+    // Sharing the list is what makes the SQL dynamic — the two cannot both
+    // be had — so this is the guard's own "consciously raise the pin with a
+    // test covering the dynamic shape" route, not an escape. Both shapes
+    // execute against the REAL migrated schema:
+    // `closedLoanSideTables.test.ts` drives `reconcileAfterScan` end to
+    // end, and `loanStatusProjection`'s heal lane runs in the scan suites.
+    // A column named wrongly in the builder fails those, loudly.
+    expect(skipped.length).toBeLessThanOrEqual(14);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

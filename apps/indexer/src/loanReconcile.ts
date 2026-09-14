@@ -182,8 +182,26 @@ export interface ReconcileRow {
  */
 export interface ChainLoanRead {
   status: number;
-  principal: string;
-  collateralAmount: string;
+  /**
+   * EVERY MUTABLE COLUMN the post-image can correct, not a hand-picked set.
+   *
+   * This started as `principal` + `collateralAmount`, and review extended
+   * it three rounds running — the token ids when a missed
+   * `LoanObligationTransferred` left `claimables` serving a burned one
+   * (`4007865953`), then the rate, start time and duration when a missed
+   * `LoanExtended` left the route serving the old maturity
+   * (`4008216425`). Enumerating fields makes "which ones" a question every
+   * round gets to ask again.
+   *
+   * So the set is the one the indexer ALREADY owns for this exact purpose:
+   * `mutableLoanColumnsFromDetail` builds it, and `refreshStubLoans` heals
+   * a stub row through the same builder. A column added there reaches the
+   * repair with no change here — which is what stops this recurring.
+   *
+   * `init_*` columns are NOT in it and must not be: they are the executed
+   * terms at origination, immutable history the candle endpoint reads.
+   */
+  mutable: LoanMutableColumns;
   /** The two position-NFT ids, carried so the caller can resolve who
    *  CURRENTLY holds each side rather than trusting the index's own
    *  `*_current_owner` columns — which the same missed window that lost the
@@ -192,12 +210,21 @@ export interface ChainLoanRead {
   borrowerTokenId: string;
 }
 
+/** The mutable projection of a `getLoanDetails` post-image — see
+ *  `ChainLoanRead.mutable`. Built by `mutableLoanColumnsFromDetail` in the
+ *  scan module, which `refreshStubLoans` uses too. */
+export interface LoanMutableColumns {
+  /** `column = ?` fragments, in bind order. */
+  assignments: readonly string[];
+  /** The values, matching `assignments`. */
+  values: readonly (string | number)[];
+}
+
 /** What a repair writes: the status it decided plus the money the same
  *  read reported. Kept as one value so a caller cannot write half of it. */
 export interface LoanRepair {
   status: string;
-  principal: string;
-  collateralAmount: string;
+  mutable: LoanMutableColumns;
   lenderTokenId: string;
   borrowerTokenId: string;
 }
@@ -395,8 +422,7 @@ export async function reconcileChainLoans(
     try {
       changed = await deps.writeRepair(chainId, row.loan_id, {
         status: to,
-        principal: onchain.principal,
-        collateralAmount: onchain.collateralAmount,
+        mutable: onchain.mutable,
         lenderTokenId: onchain.lenderTokenId,
         borrowerTokenId: onchain.borrowerTokenId,
       });
@@ -481,6 +507,9 @@ export interface ScanReconcileContext {
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
+  /** The scan's `mutableLoanColumnsFromDetail`, handed in so the repair and
+   *  the stub heal correct the SAME set of columns. */
+  mutableColumns(detail: Record<string, unknown>): LoanMutableColumns;
   /** The scan's own `_closedLoanSideTableStatements`, bound to this chain.
    *  STATEMENTS rather than an executed cleanup, so the repair can put them
    *  in the same transaction as its compare-and-set; handed in rather than
@@ -581,10 +610,8 @@ export async function reconcileAfterScan(
         functionName: 'getLoanDetails',
         args: [BigInt(loanId)],
         blockNumber: ctx.head,
-      })) as {
+      })) as Record<string, unknown> & {
         status: number | bigint;
-        principal: bigint;
-        collateralAmount: bigint;
         lenderTokenId: bigint;
         borrowerTokenId: bigint;
       };
@@ -592,10 +619,9 @@ export async function reconcileAfterScan(
         status: Number(d.status),
         lenderTokenId: String(d.lenderTokenId),
         borrowerTokenId: String(d.borrowerTokenId),
-        // `String(...)`, never `Number(...)`: these are uint256 amounts and
-        // the column is TEXT for that reason.
-        principal: String(d.principal),
-        collateralAmount: String(d.collateralAmount),
+        // The WHOLE mutable projection, built by the scan's own shared
+        // builder — see `ChainLoanRead.mutable`.
+        mutable: ctx.mutableColumns(d),
       };
     },
     async writeRepair(chainId, loanId, repair) {
@@ -624,30 +650,23 @@ export async function reconcileAfterScan(
       // of the live set the rotation selects from, so nothing would ever
       // come back to finish the job, and an isolate killed mid-way leaves
       // no error to report either (#2190 round 3).
+      // EVERY MUTABLE COLUMN the post-image corrects, from one shared
+      // builder, plus this pass's own terminal stamp. Enumerating fields
+      // here is what made "which ones" a question review got to ask three
+      // rounds running (#2190 r1 amounts, r6 token ids, r6 terms); the set
+      // now comes from `mutableLoanColumnsFromDetail`, which the stub heal
+      // uses too, so a column added there arrives with no change here.
       const update = ctx.db
         .prepare(
           `UPDATE loans
-              SET status = ?, principal = ?, collateral_amount = ?,
-                  lender_token_id = ?, borrower_token_id = ?,
+              SET status = ?, ${repair.mutable.assignments.join(', ')},
                   terminal_block = ?, terminal_at = ?, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
         .bind(
           repair.status,
-          repair.principal,
-          repair.collateralAmount,
-          // THE POSITION-TOKEN IDS TOO (#2190 r6 `4007865953`). A missed
-          // window can contain a `LoanObligationTransferred` before the
-          // missed terminal, which mints the incoming borrower a NEW token
-          // and burns the old one — and the event handler that normally
-          // persists that also never ran. Writing status and amounts while
-          // leaving the stale id is how `claimables` goes on serving the
-          // OLD token, rejecting it as burned, and hiding the new
-          // borrower's claim entirely. The read already returns both; they
-          // belong in the same write for the same reason the amounts do.
-          repair.lenderTokenId,
-          repair.borrowerTokenId,
+          ...repair.mutable.values,
           Number(ctx.head),
           at,
           at,

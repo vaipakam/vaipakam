@@ -282,6 +282,10 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        mutableColumns: (d: Record<string, unknown>) => ({
+          assignments: ['principal = ?', 'collateral_amount = ?'],
+          values: [String(d.principal), String(d.collateralAmount)],
+        }),
         terminalHolderStatements: async (loanId, to) => {
           const rows = await planReconciledNotifications(
             h.d1 as never, CHAIN, [{ loanId, to }], 100, 1_700_000_000,
@@ -342,6 +346,10 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        mutableColumns: (d: Record<string, unknown>) => ({
+          assignments: ['principal = ?', 'collateral_amount = ?'],
+          values: [String(d.principal), String(d.collateralAmount)],
+        }),
         terminalHolderStatements: async () => [],
       },
       { maxRows: 5, minRows: 1 },
