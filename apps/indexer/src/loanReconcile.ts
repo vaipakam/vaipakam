@@ -1,3 +1,5 @@
+import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+
 /**
  * RECONCILING INDEXED LOAN STATUS AGAINST THE CHAIN (#2101 part B).
  *
@@ -89,22 +91,11 @@
  */
 
 /**
- * The chain's `LoanStatus` → the row status the indexer stores.
- *
- * DELIBERATELY the same shape and the same omissions as
- * `LOAN_STATUS_TO_INDEXER_TERMINAL` in `chainIndexer.ts`: `Active(0)` and
- * `FallbackPending(4)` are absent because neither is terminal, and an
- * unknown future member falls through to `undefined` so a guessed status
- * is never written. Kept as its own copy rather than imported because
- * importing would pull the whole scan module — and the duplication is
- * pinned by a test that reads the two and requires them to agree.
+ * Re-exported under this pass's own name for its callers and tests. The
+ * DEFINITION lives in `loanStatusProjection.ts` and is shared with the
+ * scanner — see that module for why a second copy here was a defect.
  */
-export const CHAIN_STATUS_TO_ROW_STATUS: Record<number, string> = {
-  1: 'repaid',
-  2: 'defaulted',
-  3: 'settled',
-  5: 'internal_matched',
-};
+export { LOAN_STATUS_TO_INDEXER_TERMINAL as CHAIN_STATUS_TO_ROW_STATUS } from './loanStatusProjection';
 
 /**
  * Row statuses this pass may change — the LIVE ones.
@@ -142,16 +133,16 @@ const REPAIRABLE_FROM = new Set(['active', 'fallback_pending']);
 export function decideRepair(indexedStatus: string, chainStatus: number): string | null {
   if (!REPAIRABLE_FROM.has(indexedStatus)) return null;
   // No "is this actually a change?" guard. I wrote one and a probe
-  // showed it unreachable: every value in the map is terminal, so `to`
-  // can never equal a live status, and the map is pinned to the scan's
-  // copy by a test. An unreachable defensive branch is the shape this
+  // showed it unreachable: every value in the shared projection is
+  // terminal, so `to` can never equal a live status. An unreachable
+  // defensive branch is the shape this
   // repo has spent review rounds deleting — it cannot be exercised, so
   // it cannot be trusted, and it invites a reader to believe a case is
   // handled that never arises.
   //
   // A live row the chain also calls live simply gets `null` from the
   // lookup: `Active(0)` and `FallbackPending(4)` are both absent.
-  return CHAIN_STATUS_TO_ROW_STATUS[chainStatus] ?? null;
+  return LOAN_STATUS_TO_INDEXER_TERMINAL[chainStatus] ?? null;
 }
 
 /** The live statuses, for a caller building the SQL. Exported so the
@@ -201,11 +192,28 @@ export interface ReconcileReport {
   superseded: number[];
   /** Where the rotation pointer was left. */
   nextPointer: number;
+  /** True when this pass started a NEW lap — the previous one had examined
+   *  everything up to its boundary. Reported because "the rotation is still
+   *  turning" is otherwise invisible: a lap that never completes looks
+   *  exactly like a healthy one from outside. */
+  wrappedLap: boolean;
 }
 
 export interface ReconcileDeps {
-  /** Rows the index believes active, from `after` onward, at most `limit`. */
-  activeRowsAfter(chainId: number, after: number, limit: number): Promise<ReconcileRow[]>;
+  /** Rows the index believes live, with `after < loan_id <= lapEnd`, at most
+   *  `limit`. The upper bound is what makes a lap terminate on a chain that
+   *  is appending loans faster than the budget examines them. */
+  activeRowsInLap(
+    chainId: number,
+    after: number,
+    lapEnd: number,
+    limit: number,
+  ): Promise<ReconcileRow[]>;
+  /** The largest live `loan_id` right now — the boundary a new lap runs to. */
+  maxLiveLoanId(chainId: number): Promise<number>;
+  /** The current lap's boundary, or 0 for "capture a fresh one". */
+  readLapEnd(chainId: number): Promise<number>;
+  writeLapEnd(chainId: number, value: number): Promise<void>;
   countIndexedActive(chainId: number): Promise<number>;
   /** `MetricsFacet.getActiveLoansCount()`. One subrequest. */
   readChainActiveCount(chainId: number): Promise<number>;
@@ -279,12 +287,36 @@ export async function reconcileChainLoans(
   const agreed = chainActive === indexedActive;
   const budget = agreed ? minRows : maxRows;
 
+  // WHERE THIS LAP ENDS, fixed before the first row is read.
+  //
+  // Wrapping only on an empty tail is not enough, and assuming it was is
+  // what #2190 r2 (`4005830728`) caught: a chain that appends live loans at
+  // least as fast as the budget always has ids above the pointer, so the
+  // tail is never empty, the wrap never fires, and every id BELOW the
+  // pointer — including a missed terminal — is never re-examined. The
+  // guarantee this pass documents ("every row is eventually read") would be
+  // false exactly on a busy chain.
+  //
+  // A lap therefore runs to a HIGH-WATER id captured when the lap begins
+  // and held until it ends. Loans appended after that belong to the next
+  // lap, so the pointer cannot chase a moving target: the boundary is
+  // fixed, the pointer advances by at least one per row examined, and the
+  // lap terminates. Both the pointer and the boundary are D1 rows, not
+  // subrequests, so this costs nothing against the invocation budget.
   const pointer = await deps.readPointer(chainId);
-  let rows = await deps.activeRowsAfter(chainId, pointer, budget);
-  // The rotation WRAPS rather than stopping at the end, or the tail of the
-  // table would be swept once and the head never again.
+  let lapEnd = await deps.readLapEnd(chainId);
+  if (lapEnd <= 0) lapEnd = await deps.maxLiveLoanId(chainId);
+
+  let rows = await deps.activeRowsInLap(chainId, pointer, lapEnd, budget);
+  let wrapped = false;
   if (rows.length === 0 && pointer > 0) {
-    rows = await deps.activeRowsAfter(chainId, 0, budget);
+    // Lap complete — either the tail within the boundary is exhausted or
+    // every row in it was terminalized. Start the next one at a freshly
+    // captured boundary, which is where loans appended during the last lap
+    // come into scope.
+    wrapped = true;
+    lapEnd = await deps.maxLiveLoanId(chainId);
+    rows = await deps.activeRowsInLap(chainId, 0, lapEnd, budget);
   }
 
   const report: ReconcileReport = {
@@ -297,6 +329,7 @@ export async function reconcileChainLoans(
     unread: [],
     superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
+    wrappedLap: wrapped,
   };
 
   for (const row of rows) {
@@ -340,6 +373,11 @@ export async function reconcileChainLoans(
   }
 
   await deps.writePointer(chainId, report.nextPointer);
+  // The boundary is rewritten every pass, not only on a wrap: a lap that
+  // began before this deploy has none stored, and one that just wrapped has
+  // a new one. Zero means "capture a fresh boundary next pass", which is
+  // what a completed lap with nothing left to examine should leave behind.
+  await deps.writeLapEnd(chainId, report.nextPointer > 0 ? lapEnd : 0);
   return report;
 }
 
@@ -397,17 +435,45 @@ export async function reconcileAfterScan(
 ): Promise<ReconcileReport> {
   const now = () => Math.floor(Date.now() / 1000);
   const deps: ReconcileDeps = {
-    async activeRowsAfter(chainId, after, limit) {
+    async activeRowsInLap(chainId, after, lapEnd, limit) {
       const rows = await ctx.db
         .prepare(
           `SELECT loan_id, status FROM loans
             WHERE chain_id = ? AND status IN ('active', 'fallback_pending')
-              AND loan_id > ?
+              AND loan_id > ? AND loan_id <= ?
             ORDER BY loan_id ASC LIMIT ?`,
         )
-        .bind(chainId, after, limit)
+        .bind(chainId, after, lapEnd, limit)
         .all<ReconcileRow>();
       return rows.results ?? [];
+    },
+    async maxLiveLoanId(chainId) {
+      const row = await ctx.db
+        .prepare(
+          `SELECT MAX(loan_id) AS m FROM loans
+            WHERE chain_id = ? AND status IN ('active', 'fallback_pending')`,
+        )
+        .bind(chainId)
+        .first<{ m: number | null }>();
+      return row?.m ?? 0;
+    },
+    async readLapEnd(chainId) {
+      const row = await ctx.db
+        .prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
+        .bind(chainId, RECONCILE_LAP_KIND)
+        .first<{ last_block: number }>();
+      return row?.last_block ?? 0;
+    },
+    async writeLapEnd(chainId, value) {
+      const t = now();
+      await ctx.db
+        .prepare(
+          `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = ?, updated_at = ?`,
+        )
+        .bind(chainId, RECONCILE_LAP_KIND, value, t, value, t)
+        .run();
     },
     async countIndexedActive(chainId) {
       const row = await ctx.db
@@ -523,3 +589,9 @@ export async function reconcileAfterScan(
  *  repurposed as the last examined `loan_id` — the same repurposing the
  *  round-robin pointer already makes of that column. */
 export const RECONCILE_CURSOR_KIND = 'loan_reconcile';
+
+/** The CURRENT LAP'S upper boundary, per chain, in the same repurposed
+ *  `last_block` column. Separate from the pointer because the two answer
+ *  different questions — where the rotation got to, and where this lap ends
+ *  — and collapsing them would reintroduce the moving target. */
+export const RECONCILE_LAP_KIND = 'loan_reconcile_lap';

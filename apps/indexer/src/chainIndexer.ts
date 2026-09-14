@@ -44,6 +44,10 @@ import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { reconcileAfterScan, type ReconcileOptions } from './loanReconcile';
+// #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
+// block-pinned read can land on. ONE definition, shared with the repair pass;
+// see the module for why the copy it replaced was a defect (#2190 round 3).
+import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -178,22 +182,6 @@ async function stampNotifiedWatermark(
     console.error('[chainIndexer] notified-watermark stamp failed', err);
   }
 }
-
-/** `LibVaipakam.LoanStatus` (uint8) → the indexer's TERMINAL status string, for
- *  the subset that are terminal end-of-block states an `InternalMatchExecuted`
- *  block-pinned read can land on (#762/#766). Append-only enum, so the slots are
- *  stable: Active=0, Repaid=1, Defaulted=2, Settled=3, FallbackPending=4,
- *  InternalMatched=5. Active(0) and FallbackPending(4) are deliberately ABSENT:
- *  they're non-terminal-from-a-match (a partial match leaves the loan `Active`;
- *  a partial rescue leaves it `FallbackPending`) and get a numbers-only refresh,
- *  never a status overwrite. An unknown future value also maps to `undefined`
- *  here → numbers-only, so we never write a guessed status. */
-const LOAN_STATUS_TO_INDEXER_TERMINAL: Record<number, string> = {
-  1: 'repaid',
-  2: 'defaulted',
-  3: 'settled',
-  5: 'internal_matched',
-};
 
 /** Conservative reorg-horizon buffer used when an RPC doesn't support
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
@@ -1138,6 +1126,9 @@ export async function runChainIndexerForChain(
     //
     // The numbers come from the CALLER, because only the caller knows what
     // shares its invocation. See `RECONCILE_BUDGET_SHARED_TICK`.
+    const reconcileClient = createPublicClient({
+      transport: http(chain.rpc, { retryCount: 0 }),
+    });
     try {
       const report = await reconcileAfterScan(
         {
@@ -1145,7 +1136,16 @@ export async function runChainIndexerForChain(
           chainId,
           diamond,
           head,
-          readContract: (args) => client.readContract(args as never) as Promise<unknown>,
+          // A NON-RETRYING client, deliberately its own (#2190 r2
+          // `4005986337`). The scan's client takes viem's default
+          // `retryCount: 3`, so each of this pass's "one subrequest per
+          // read" could be four, and the whole budget argument these
+          // constants encode would be off by that factor exactly when the
+          // provider is rate-limiting — the moment it matters. A read that
+          // fails is not worth retrying here anyway: the row is left alone,
+          // reported in `unread`, and the rotation returns to it next tick.
+          readContract: (args) =>
+            reconcileClient.readContract(args as never) as Promise<unknown>,
           metricsAbi: DIAMOND_METRICS_ABI,
           loanAbi: DIAMOND_LOAN_DETAILS_ABI,
           // The same tables every terminal handler above clears, as

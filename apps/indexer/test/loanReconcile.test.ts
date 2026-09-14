@@ -12,8 +12,8 @@
  * scan's SAFE head is what makes it safe; the refusals below are what
  * bound what it may do with a read it trusts.
  */
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { LOAN_STATUS_TO_INDEXER_TERMINAL } from '../src/loanStatusProjection';
 import {
   CHAIN_STATUS_TO_ROW_STATUS,
   decideRepair,
@@ -57,13 +57,27 @@ function fakeDeps(
    *  all-or-nothing property the batch gives. */
   const sideTablesCleared: number[] = [];
   let pointer = 0;
+  let lapEnd = 0;
   const deps: ReconcileDeps = {
-    async activeRowsAfter(_c, after, limit) {
+    async activeRowsInLap(_c, after, lapEnd, limit) {
       calls.rowQueries += 1;
+      // The `<= lapEnd` bound is the whole point of the lap — a fake that
+      // ignored it could not show a busy chain's pointer being outrun.
       return rows
-        .filter((r) => LIVE.has(r.status) && r.loan_id > after)
+        .filter((r) => LIVE.has(r.status) && r.loan_id > after && r.loan_id <= lapEnd)
         .sort((a, b) => a.loan_id - b.loan_id)
         .slice(0, limit);
+    },
+    async maxLiveLoanId() {
+      return rows
+        .filter((r) => LIVE.has(r.status))
+        .reduce((m, r) => Math.max(m, r.loan_id), 0);
+    },
+    async readLapEnd() {
+      return lapEnd;
+    },
+    async writeLapEnd(_c, v) {
+      lapEnd = v;
     },
     async countIndexedActive() {
       return rows.filter((r) => LIVE.has(r.status)).length;
@@ -109,6 +123,7 @@ function fakeDeps(
     rows,
     sideTablesCleared,
     get pointer() { return pointer; },
+    get lapEnd() { return lapEnd; },
   };
 }
 
@@ -163,19 +178,14 @@ describe('decideRepair', () => {
     }
   });
 
-  it('agrees with the scan module it deliberately duplicates', () => {
-    // The map is copied rather than imported, so this reads the other
-    // copy out of the source and requires the two to match. A drift here
-    // means a repaired row disagrees with an event-written one.
-    const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
-    const block = src.slice(
-      src.indexOf('const LOAN_STATUS_TO_INDEXER_TERMINAL'),
-      src.indexOf('};', src.indexOf('const LOAN_STATUS_TO_INDEXER_TERMINAL')),
-    );
-    expect(block.length).toBeGreaterThan(0); // an empty slice would pass everything
-    const theirs: Record<number, string> = {};
-    for (const m of block.matchAll(/(\d+):\s*'([a-z_]+)'/g)) theirs[Number(m[1])] = m[2];
-    expect(theirs).toEqual(CHAIN_STATUS_TO_ROW_STATUS);
+  it('is the SAME object the scanner projects with, not a copy of it', () => {
+    // There was a case here that read `chainIndexer.ts` as TEXT and
+    // compared two production copies. #2190 round 3 was right that both
+    // the copy and the test were the defect: one made every enum change
+    // depend on someone remembering the second definition, the other
+    // coupled this suite to another module's formatting. There is one
+    // definition now, so identity is the whole assertion.
+    expect(CHAIN_STATUS_TO_ROW_STATUS).toBe(LOAN_STATUS_TO_INDEXER_TERMINAL);
   });
 });
 
@@ -408,5 +418,55 @@ describe('a repaired row is a whole row', () => {
     expect(f.calls.writes).toBe(2);
     expect(f.sideTablesCleared).toEqual([8, 9]);
     expect(f.pointer).toBe(9);
+  });
+});
+
+describe('the lap terminates on a chain that keeps appending loans', () => {
+  it('re-examines earlier ids instead of chasing the tail forever', async () => {
+    // #2190 r2 `4005830728`. Wrapping only when the tail is empty is a
+    // rotation that never wraps on a busy chain: new live loans keep
+    // appearing above the pointer, so ids below it are never looked at
+    // again.
+    //
+    // Loan 1 reads Active while the first lap passes over it and only
+    // LATER reports its terminal — which is the real shape of a missed
+    // event, and the only shape that can tell a wrapping rotation from one
+    // marching off the end. One loan is appended per pass, the rate that
+    // defeats an empty-tail wrap.
+    const rows: FakeRow[] = [1, 2, 3].map((loan_id) => ({ loan_id, status: 'active' }));
+    const chain: Record<number, number> = { 1: 0, 2: 0, 3: 0 };
+    const f = fakeDeps(rows, chain, 0);
+    let nextId = 4;
+    for (let pass = 0; pass < 8; pass++) {
+      if (pass === 3) chain[1] = 2; // the terminal the index never saw
+      await reconcileChainLoans(CHAIN, f.deps, { maxRows: 1, minRows: 1 });
+      rows.push({ loan_id: nextId, status: 'active' });
+      chain[nextId] = 0;
+      nextId += 1;
+    }
+    expect(rows.find((r) => r.loan_id === 1)?.status).toBe('defaulted');
+  });
+
+  it('holds the boundary for the whole lap, so a lap cannot be outrun', async () => {
+    // A loan appended mid-lap belongs to the NEXT lap. Without the fixed
+    // boundary the pass would extend the current one indefinitely.
+    const rows: FakeRow[] = [1, 2].map((loan_id) => ({ loan_id, status: 'active' }));
+    const f = fakeDeps(rows, { 1: 0, 2: 0, 9: 0 }, 0);
+    await reconcileChainLoans(CHAIN, f.deps, { maxRows: 1, minRows: 1 });
+    expect(f.lapEnd).toBe(2); // captured before loan 9 existed
+    rows.push({ loan_id: 9, status: 'active' });
+    const second = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5, minRows: 1 });
+    // Loan 9 is above the boundary, so this lap finishes at 2 rather than
+    // absorbing it.
+    expect(second.examined).toEqual([2]);
+  });
+
+  it('says when a lap wrapped, because a stalled rotation looks healthy', async () => {
+    const rows: FakeRow[] = [{ loan_id: 1, status: 'active' }];
+    const f = fakeDeps(rows, { 1: 0 }, 1);
+    const first = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 1, minRows: 1 });
+    expect(first.wrappedLap).toBe(false);
+    const second = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 1, minRows: 1 });
+    expect(second.wrappedLap).toBe(true);
   });
 });
