@@ -10,7 +10,6 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import {
-  INTERACTION_REWARDS_LENS_ABI,
   REPATRIATION_ABI,
   REWARD_AGGREGATOR_ABI,
   REWARD_CUSTODY_ABI,
@@ -278,58 +277,26 @@ export function repatPositionUnavailableGap(
 }
 
 /**
- * Build the gap for an unreadable backing snapshot (#1434 P2-w2).
+ * Build the gap for an unreadable backing snapshot (#1434 P2-w2; since
+ * #1566 slice 4 PR B the VERSIONED snapshot is the only one read).
  *
  * Exported for direct testing, like {@link compositionUnavailableGap}.
  */
-/**
- * #1566 slice 4 PR B — whether the LEGACY backing tuple may stand in for a
- * missing versioned snapshot: only where non-activation is established —
- * the activation flag read `false`, or the custody facet is absent
- * (`'missing'`: no activation was ever possible on that Diamond). A flag
- * that reads `true`, or one that could not be read for any other reason
- * (treated as `true`, fail-closed), keeps the backing UNKNOWN.
- */
-export function legacyFallbackAllowed(probe: boolean | 'missing'): boolean {
-  return probe === 'missing' || probe === false;
-}
-
-/**
- * #1566 slice 4 PR B — the coverage gap for a chain whose versioned backing
- * snapshot cannot be read while its custody is (or may be) ACTIVATED: the
- * holder relation cannot be checked and the legacy relation would be
- * wrong, so the backing check does not run for this chain.
- */
-export function custodyStateUnavailableGap(
-  chainId: number,
-  err: unknown,
-): CoverageGap {
-  const failure = classify(err, 'getRecycleBackingSnapshotV2');
-  return {
-    chainId,
-    reason: 'view-unavailable',
-    source: 'own-ledger-backing',
-    detail:
-      `getRecycleBackingSnapshotV2() could not be read on chain ${chainId} — ${describeFailure(failure)} — while rewardCustodyActivated() reads true or could not be read.\n\n` +
-      `The chain's reward custody is (or may be) on the holder, so the legacy balance / earmark tuple would describe the wrong relation; the backing check did NOT run for this chain. A partial refresh that cut the custody facet without the versioned snapshot is the likely cause: refresh the custody facet.`,
-  };
-}
-
 export function backingSnapshotUnavailableGap(
   chainId: number,
   err: unknown,
 ): CoverageGap {
-  const failure = classify(err, 'getRecycleBackingSnapshot');
-  const preP2 = isMissingSelector(err);
+  const failure = classify(err, 'getRecycleBackingSnapshotV2');
+  const missing = isMissingSelector(err);
   return {
     chainId,
     reason: 'view-unavailable',
     source: 'own-ledger-backing',
     detail:
-      `getRecycleBackingSnapshot() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The balance / arrival-reservation tuple is UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, and substituting the reservation as zero would silently stop alarming on spent recovery backing).\n\n` +
-      (preP2
-        ? `The 8-output snapshot does not exist in this Diamond's CURRENT CUT — either a pre-P2-w5 lens facet, or a partial refresh; selector/shape absence cannot distinguish the two. Refresh the InteractionRewardsLensFacet to close this gap.`
+      `getRecycleBackingSnapshotV2() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The balance / arrival-reservation tuple AND the custody activation state are UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, substituting the reservation as zero would silently stop alarming on spent recovery backing, and assuming non-activation would apply the Diamond-only relation to custody that may be on the holder).\n\n` +
+      (missing
+        ? `The versioned snapshot does not exist in this Diamond's CURRENT CUT — either a pre-slice-4 deployment, or a partial refresh that dropped the RewardCustodyFacet while its storage (possibly an ACTIVATED custody) persists; selector absence cannot distinguish the two. The legacy lens tuple cannot stand in: it carries no activation state, and the flag that does lives on the same facet as the versioned snapshot, so an activated chain that has lost the facet is indistinguishable from one that never had it. Cut the RewardCustodyFacet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
   };
 }
@@ -451,29 +418,31 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
 
   // #1434 P2-w2 — the backing snapshot (balance + arrival reservation),
   // separately for the same newer-facet reason, at the same pinned block.
-  // The lens view predates P2-w2 but its OUTPUT SHAPE widened (6 → 7
-  // returns), so an old lens decodes short and the read fails — which is
-  // the correct UNKNOWN, not a value.
+  //
+  // #1566 slice 4 PR B — the VERSIONED snapshot, and ONLY it (Codex #2186
+  // r3 P1): on a chain whose reward custody moved onto the holder, the
+  // bucket and the recovery position are the holder's and the relation to
+  // alarm on changes (`checkHardInvariants` branches on `custodyActivated`).
+  // The legacy lens tuple carries no activation state, and the flag that
+  // does lives on the SAME facet as V2 — so a Diamond that cannot answer V2
+  // cannot establish non-activation either, and "the custody facet was
+  // never installed" is indistinguishable from "it was removed after
+  // activation" (a partial refresh; the storage flag persists). The backing
+  // stays UNKNOWN there, reported as a coverage gap that names the cut to
+  // fix — the same rule the repatriation and composition views follow. An
+  // earlier revision read the legacy tuple when the activation probe was
+  // itself missing, which is exactly the conflation.
   let backing:
     | {
         vpfiBalance: bigint;
         strandedRecoveryReserved: bigint;
         recoveryPositionReserved: bigint;
-        custodyActivated?: boolean;
-        holderBalanceKnown?: boolean;
-        holderBalance?: bigint;
-        holderAttributed?: bigint;
+        custodyActivated: boolean;
+        holderBalanceKnown: boolean;
+        holderBalance: bigint;
+        holderAttributed: bigint;
       }
     | undefined;
-  // #1566 slice 4 PR B — the VERSIONED snapshot first: on a chain whose
-  // reward custody moved onto the holder, the bucket and the recovery
-  // position are the holder's and the relation to alarm on changes
-  // (`checkHardInvariants` branches on `custodyActivated`). A chain not yet
-  // carrying the custody facet's V2 fails this read with a missing selector
-  // and takes the legacy tuple below, exactly as before; any OTHER failure
-  // of V2 is reported as the gap, since the legacy read cannot substitute
-  // for an activation flag it does not carry.
-  let v2Err: unknown;
   try {
     const snap = await readView<
       readonly [
@@ -498,60 +467,8 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       holderAttributed: snap[11],
     };
   } catch (err) {
-    v2Err = err;
     backing = undefined;
-  }
-  // A MISSING V2 selector is not proof of legacy custody (Codex #2186 r2
-  // P1): a partial refresh can drop V2 while `rewardCustodyActivated` is
-  // still set in storage. The legacy tuple is read only where
-  // non-activation is established independently — the activation flag
-  // reads false, or the custody facet is absent altogether (no activation
-  // was ever possible); an activated chain with no V2 is a coverage gap.
-  let legacyAllowed = false;
-  if (backing === undefined && v2Err !== undefined && isMissingSelector(v2Err)) {
-    let probe: boolean | 'missing';
-    try {
-      probe = await readView<boolean>(
-        target.client,
-        target.diamond,
-        'rewardCustodyActivated',
-        [],
-        blockNumber,
-        REWARD_CUSTODY_ABI,
-      );
-    } catch (probeErr) {
-      probe = isMissingSelector(probeErr) ? 'missing' : true;
-    }
-    legacyAllowed = legacyFallbackAllowed(probe);
-    if (!legacyAllowed) {
-      viewGaps.push(custodyStateUnavailableGap(target.chainId, v2Err));
-    }
-  }
-  if (backing === undefined && v2Err !== undefined && !isMissingSelector(v2Err)) {
-    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, v2Err));
-  } else if (backing === undefined && legacyAllowed) {
-    try {
-      const snap = await readView<
-        readonly [
-          bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
-        ]
-      >(
-        target.client,
-        target.diamond,
-        'getRecycleBackingSnapshot',
-        [],
-        blockNumber,
-        INTERACTION_REWARDS_LENS_ABI,
-      );
-      backing = {
-        vpfiBalance: snap[0],
-        strandedRecoveryReserved: snap[6],
-        recoveryPositionReserved: snap[7],
-      };
-    } catch (err) {
-      backing = undefined;
-      viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
-    }
+    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
   }
 
   return {

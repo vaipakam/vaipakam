@@ -405,6 +405,110 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_live(), 2e18, "the row IS the headroom");
     }
 
+    /// Every bootstrap write waits for the paid-side rebase (Codex #2186 r3
+    /// P1): the rebase only raises `paid`, so a live row credited to the
+    /// pre-rebase `received − paid` would be left above the figure the
+    /// rebase leaves — which activation refuses and nothing before it can
+    /// debit. Straddled: refused before the rebase, the same writes
+    /// accepted after it.
+    function test_Bootstrap_RequiresThePaidRebase() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _mut().setArmedFreshLedgerRaw(10e18, 4e18); // gap 6
+        _mut().setRecycleBucketRaw(4e18);
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        vpfi.mint(address(this), 6e18);
+        vpfi.approve(address(diamond), 6e18);
+
+        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
+        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
+        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
+        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
+        assertEq(_held(), 0, "nothing moved into the holder");
+        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
+
+        _custody().rebaseArmedFreshPaid(4e18, _epoch());
+        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
+        assertEq(_live(), 6e18, "the live row backs the post-rebase gap");
+        assertEq(_recycledRow(), 4e18, "the recycled row backs the bucket");
+    }
+
+    /// A figure that moves after its row was backed leaves the row ABOVE it:
+    /// activation refuses, no reward path debits a row before activation,
+    /// and the excess would sit at the holder until another facet upgrade.
+    /// The bootstrap release is that exit — bounded by the excess, to the
+    /// Diamond's own balance only, no ledger counter touched — and it closes
+    /// with the activation like the two credits (Codex #2186 r3 P1).
+    function test_Bootstrap_ReleasesAnOverBackedRow_ToTheDiamond() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _mut().setArmedFreshLedgerRaw(10e18, 4e18); // gap 6
+        _mut().setRecycleBucketRaw(4e18);
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(4e18, epoch);
+        vpfi.mint(address(this), 6e18);
+        vpfi.approve(address(diamond), 6e18);
+        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
+        assertEq(_held(), 10e18, "both rows backed");
+        assertEq(vpfi.balanceOf(address(diamond)), 6e18, "the Diamond kept what was not relocated");
+
+        // The CLASS, not one mover: the paid side rises (a payout a lifted
+        // pause let through, or the rebase itself) and the bucket falls.
+        _mut().setArmedFreshLedgerRaw(10e18, 7e18); // gap 3, row 6 — excess 3
+        _mut().setRecycleBucketRaw(3e18); // bucket 3, row 4 — excess 1
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyRowUnbacked.selector, uint8(LibVaipakam.RewardCustodyRow.Recycled), 3e18, 4e18
+            )
+        );
+        _custody().activateRewardCustody(epoch, false);
+
+        // Only the excess can leave: never a wei of what the figure covers,
+        // and nothing at all from a row that is not over-backed.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyBootstrapReleaseExceedsExcess.selector,
+                uint8(LibVaipakam.RewardCustodyRow.LiveFresh),
+                3e18 + 1,
+                3e18
+            )
+        );
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 3e18 + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyBootstrapReleaseExceedsExcess.selector, uint8(LibVaipakam.RewardCustodyRow.Recovery), 1, 0
+            )
+        );
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recovery, 1);
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit RewardCustodyFacet.RewardCustodyRowBootstrapReleased(
+            uint8(LibVaipakam.RewardCustodyRow.LiveFresh), 3e18, 3e18
+        );
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 3e18);
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
+        assertEq(_live(), 3e18, "the live row equals the moved gap");
+        assertEq(_recycledRow(), 3e18, "the recycled row equals the moved bucket");
+        assertEq(_held(), 6e18, "the holder gave back exactly the excess");
+        assertEq(vpfi.balanceOf(address(diamond)), 10e18, "and the Diamond received it, no other destination");
+        (uint256 received, uint256 paid) = _ledger();
+        assertEq(received, 10e18, "custody-only: the ledger is untouched");
+        assertEq(paid, 7e18, "custody-only: the ledger is untouched");
+
+        _custody().activateRewardCustody(epoch, false);
+        assertTrue(_custody().rewardCustodyActivated(), "activated once every row equals its figure");
+        vm.expectRevert(RewardCustodyAlreadyActivated.selector);
+        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 1);
+    }
+
     // ─── 2. the canonical column ─────────────────────────────────────────────
 
     /// THE cutover: a canonical claim is refused with nothing funded, and pays

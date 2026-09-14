@@ -383,6 +383,24 @@
   },
   {
     "type": "function",
+    "name": "releaseRewardCustodyRow",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardCustodyRow"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "relocateRewardCustodyRow",
     "inputs": [
       {
@@ -1133,6 +1151,31 @@
   },
   {
     "type": "event",
+    "name": "RewardCustodyRowBootstrapReleased",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ledgerFigure",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyRowBootstrapped",
     "inputs": [
       {
@@ -1464,6 +1507,27 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyBootstrapReleaseExceedsExcess",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "excess",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyBootstrapRequiresActiveRole",
     "inputs": [
       {
@@ -1472,6 +1536,11 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRequiresRebase",
+    "inputs": []
   },
   {
     "type": "error",

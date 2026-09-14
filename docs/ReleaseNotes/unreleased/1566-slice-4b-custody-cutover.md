@@ -11,7 +11,11 @@ one refuses without one) — every reward read and debit goes through the
 address's attribution rows instead of the platform's own token balance. A
 single-chain deployment with no reward role never activates and behaves
 exactly as before, and a detached deployment waits for the era registry
-that gives its inbound packets a rule. The canonical chain now bounds reward payouts by what
+that gives its inbound packets a rule. Backing a position ahead of the
+activation waits for the paid-side migration whose result the figures
+depend on, and a position that a moved figure leaves over-backed before the
+activation can be released back to the platform's own balance, by at most
+the excess, so nothing is stranded at the address. The canonical chain now bounds reward payouts by what
 has actually been funded minus what has been paid, where funding is one
 explicit administrator transfer into the address that credits the received
 side in the same act (refused above the pool's lifetime cap), so a
@@ -23,8 +27,11 @@ recorded exits, a correction of an evidenced accounting error or a release
 to the treasury for a genuine deficit, and one that a demoted compensation
 gives back in full. The reward token cannot be rotated while custody or any
 of the old token remains at the address. The public backing snapshot gains
-a versioned form that names the address's balance and attributions, and the
-mesh watcher alarms on that relation where custody has moved. Payouts leave the address by
+a versioned form that names the address's balance and attributions; the
+mesh watcher reads only that form — a chain without it is reported as
+unverified rather than judged by the older relation — and alarms exactly,
+with no tolerance, when the address's balance stops covering its
+attributions where custody has moved. Payouts leave the address by
 their fresh and recycled components in one step, into a vault or a wallet,
 and a failure after the tokens moved rolls the whole leg back before the
 wallet is paid instead; absorptions re-attribute inside the address; user

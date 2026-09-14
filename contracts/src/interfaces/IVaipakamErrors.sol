@@ -454,6 +454,21 @@ interface IVaipakamErrors {
     /// @param requested The credit asked for.
     /// @param room      `figure − row`, what the row may still receive.
     error RewardCustodyBootstrapExceedsLedger(uint8 row, uint256 requested, uint256 room);
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap writer was
+    ///         called before the paid-side rebase ran. The rows are backed
+    ///         against ledger figures the rebase finalises — `received −
+    ///         paid` most directly, since the rebase only ever RAISES
+    ///         `paid` — and a credit made before it can be left above the
+    ///         figure the rebase leaves, which activation refuses.
+    error RewardCustodyBootstrapRequiresRebase();
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap release
+    ///         asked for more than the row holds ABOVE its ledger figure.
+    ///         The release reconciles a row a moved figure left over-backed;
+    ///         it never takes a row below its figure.
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The release asked for.
+    /// @param excess    `row − figure`, what the row may give back.
+    error RewardCustodyBootstrapReleaseExceedsExcess(uint8 row, uint256 requested, uint256 excess);
     /// @notice #1566 slice 4 PR B — a holder-sourced payout named a token
     ///         other than the configured VPFI; the holder's rows describe
     ///         that token only.

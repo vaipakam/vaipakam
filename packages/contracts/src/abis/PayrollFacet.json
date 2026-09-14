@@ -2344,6 +2344,27 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyBootstrapReleaseExceedsExcess",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "excess",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyBootstrapRequiresActiveRole",
     "inputs": [
       {
@@ -2352,6 +2373,11 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRequiresRebase",
+    "inputs": []
   },
   {
     "type": "error",

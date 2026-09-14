@@ -6170,9 +6170,11 @@ PR C.**
 > fields unchanged plus the activation flag and the holder's balance and
 > attributed total, the legacy lens keeps its shape and documents that on an
 > activated deployment its relation no longer holds by design, and
-> `ops/mesh-watcher` reads V2 first (falling back to the legacy tuple on a
-> chain not yet refreshed) and alarms on `holderBalance ≥ holderAttributed`
-> and `vpfiBalance ≥ strandedRecoveryReserved` there instead of the legacy
+> `ops/mesh-watcher` reads V2 and ONLY V2 (review r3 — a chain not yet
+> carrying it is reported as a coverage gap that names the cut, never
+> judged by the legacy tuple) and alarms on `holderBalance ≥
+> holderAttributed` and `vpfiBalance ≥ strandedRecoveryReserved` there,
+> both exact, instead of the legacy
 > relation. The staged ceremony record carries one executable calldata per
 > non-zero answer, and `record()` verifies the holder, the role, the
 > activation and a claimed write-down against live state before promoting
@@ -6182,9 +6184,26 @@ PR C.**
 > bootstrap writers refuse a role that cannot activate in this slice
 > (`RewardCustodyBootstrapRequiresActiveRole`), the ceremony pre-flight
 > mirrors the canonical recovery-arming prerequisite before anything is
-> sent, and the watcher treats a missing V2 as UNKNOWN unless the
-> activation flag itself (or the custody facet's absence) establishes
-> non-activation. The two holder invariants, the
+> sent, and the watcher treated a missing V2 as UNKNOWN unless the
+> activation flag itself (or the custody facet's absence) established
+> non-activation. Review r3: every bootstrap write refuses before the
+> paid-side rebase (`RewardCustodyBootstrapRequiresRebase` — the rebase
+> only ever RAISES `paid`, so a live row credited to the pre-rebase gap
+> would be left above the figure the activation demands, which nothing
+> before the activation can debit); a THIRD bootstrap form,
+> `releaseRewardCustodyRow` (holder → the Diamond's own balance and
+> nowhere else, bounded by `row − figure`, every bootstrap row, never
+> below the figure, closed by the activation), is the exit for a row a
+> moved figure left over-backed — the CLASS, not one mover: the rebase,
+> and any payout, redispatch or surplus debit a lifted pause lets through
+> between the credits and the activation; the watcher reads ONLY V2 and
+> reports a missing one as a coverage gap naming the cut, because the
+> activation flag lives on the same facet as V2 and so a "facet absent"
+> probe could never distinguish a never-installed facet from one removed
+> after activation — the legacy fallback is gone; and both holder-side
+> relations are exact, with no tolerance (the bucket, the one rounding
+> source the tolerance absorbs, is the holder's on an activated chain).
+> The two holder invariants, the
 > recycled-row and live-row identities and the untouched Diamond balance
 > are pinned by `RewardCustodyInvariant`; the design's test list is
 > `RewardCustodyCutoverTest`.

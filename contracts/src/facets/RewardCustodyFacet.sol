@@ -766,6 +766,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 ledgerFigure
     );
 
+    /// @notice A bootstrap row gave back custody it held ABOVE its ledger
+    ///         figure, to the Diamond's own balance (Codex #2186 r3): a
+    ///         figure that moved after the row was backed is reconciled by
+    ///         this release rather than stranding the excess at the holder.
+    /// @param row          The row debited.
+    /// @param amount       What left the holder for the Diamond, verified.
+    /// @param ledgerFigure The figure the row now equals at most, for the record.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRowBootstrapReleased(
+        uint8 indexed row,
+        uint256 amount,
+        uint256 ledgerFigure
+    );
+
     /// @notice Overage custody — value that arrived above what any
     ///         entitlement could claim — was released to the treasury.
     /// @custom:event-category state-change/reward-custody
@@ -1014,6 +1028,39 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /**
+     * @notice Bootstrap writer, form (c) — the two credits' INVERSE: release
+     *         `amount` of a row's excess over its ledger figure back to the
+     *         Diamond's own balance, touching NO ledger counter. Bounded by
+     *         `row − figure`.
+     * @dev    ADMIN, MANUAL pause, before activation only. A row is backed
+     *         against a figure that stays LIVE until the activation: the
+     *         paid-side rebase raises `paid` and shrinks `received − paid`,
+     *         and a pause lifted between the credits and the activation lets
+     *         payouts, redispatch and surplus debits shrink the others.
+     *         Activation refuses a row above its figure — equality, not
+     *         `>=` — and no reward path debits a row before activation, so
+     *         without this exit the excess would sit at the holder until
+     *         another facet upgrade (Codex #2186 r3 P1). Releases to the
+     *         Diamond and nowhere else: before activation the Diamond's
+     *         balance IS the pool the ledger figures are backed by, so the
+     *         tokens stay under the same ledger — a release to the signer
+     *         would be an exit for value that reached the row out of the
+     *         Diamond's own inventory. Never takes a row BELOW its figure.
+     * @param  row    The row to reconcile.
+     * @param  amount VPFI to release from the holder to the Diamond.
+     */
+    function releaseRewardCustodyRow(
+        LibVaipakam.RewardCustodyRow row,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibPausable.requireManuallyPaused();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 figure = _requireBootstrapExcess(s, row, amount);
+        LibRewardCustody.releaseFromRow(s, row, address(this), amount);
+        emit RewardCustodyRowBootstrapReleased(uint8(row), amount, figure);
+    }
+
+    /**
      * @notice The overage row's disposition: release value that arrived
      *         above what any entitlement could claim to the treasury,
      *         retiring the same amount from the recorded overage position.
@@ -1116,11 +1163,11 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (held != figure) revert IVaipakamErrors.RewardCustodyRowUnbacked(uint8(row), figure, held);
     }
 
-    /// @dev The bootstrap writers' shared bound: refuses after activation,
-    ///      resolves the ledger figure the row backs (or refuses a row with
-    ///      no bootstrap figure), and refuses a credit that would take the
-    ///      row above it. Returns the figure for the event.
-    function _requireBootstrapRoom(
+    /// @dev The bootstrap writers' shared preconditions and the ledger
+    ///      figure the row backs: refuses after activation, refuses a role
+    ///      that cannot activate, refuses before the paid-side rebase, and
+    ///      refuses a row with no bootstrap figure.
+    function _bootstrapFigure(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow row,
         uint256 amount,
@@ -1137,6 +1184,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyBootstrapRequiresActiveRole(uint8(role));
         }
+        // The figures are read as FINAL (Codex #2186 r3 P1): the paid-side
+        // rebase only ever RAISES `paid`, so a live-fresh row credited to
+        // `received − paid` before it would be left above the figure the
+        // rebase leaves — which activation refuses and nothing before it
+        // can debit. The ceremony script orders the rebase first; the
+        // contract holds the rule so no tooling can order them otherwise.
+        // Every row, not only the live one: one window for every bootstrap
+        // write is the rule an operator can hold in mind.
+        if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyBootstrapRequiresRebase();
         if (row == LibVaipakam.RewardCustodyRow.LiveFresh) {
             if (!allowLiveFresh) revert IVaipakamErrors.RewardCustodyBootstrapRowNotAllowed(uint8(row));
             uint256 received = s.rewardBudgetArmedFreshReceived;
@@ -1151,9 +1207,38 @@ contract RewardCustodyFacet is DiamondAccessControl {
         } else {
             revert IVaipakamErrors.RewardCustodyBootstrapRowNotAllowed(uint8(row));
         }
+    }
+
+    /// @dev A bootstrap CREDIT's bound: the row may not go above its figure.
+    ///      Returns the figure for the event.
+    function _requireBootstrapRoom(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow row,
+        uint256 amount,
+        bool allowLiveFresh
+    ) private view returns (uint256 figure) {
+        figure = _bootstrapFigure(s, row, amount, allowLiveFresh);
         uint256 held = s.rewardCustodyRows[row];
         uint256 room = figure > held ? figure - held : 0;
         if (amount > room) revert IVaipakamErrors.RewardCustodyBootstrapExceedsLedger(uint8(row), amount, room);
+    }
+
+    /// @dev A bootstrap RELEASE's bound: only the row's excess over its
+    ///      figure may leave, so the release reconciles an over-backed row
+    ///      and never under-backs one. Serves every bootstrap row, the live
+    ///      row included — its excess is replacement funding that a moved
+    ///      figure no longer describes. Returns the figure for the event.
+    function _requireBootstrapExcess(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow row,
+        uint256 amount
+    ) private view returns (uint256 figure) {
+        figure = _bootstrapFigure(s, row, amount, true);
+        uint256 held = s.rewardCustodyRows[row];
+        uint256 excess = held > figure ? held - figure : 0;
+        if (amount > excess) {
+            revert IVaipakamErrors.RewardCustodyBootstrapReleaseExceedsExcess(uint8(row), amount, excess);
+        }
     }
 
     // ─── Diamond-internal custody entry points ──────────────────────────────
