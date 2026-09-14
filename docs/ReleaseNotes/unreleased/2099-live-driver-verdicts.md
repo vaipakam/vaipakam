@@ -39,11 +39,11 @@ the "might be infrastructure" hedge that belongs on a drive nobody has
 classified.
 
 One drive turned out to be in exactly the gap this describes, and listing
-it needed a fix to the drive first — which is the most useful thing this
-change found.
+it needed two fixes to the drive first — which is the most useful thing
+this change found.
 
 It does speak the third verdict, in four places. But it also records
-defects as it goes, and three of those four places sit AFTER the first
+defects as it goes, and most of those four places sit AFTER the first
 checks that can record one. So a run that caught a real problem early and
 then could not open a window later would have ended on the third verdict:
 reporting that it did not finish, and burying a defect it had already
@@ -53,6 +53,15 @@ still printed and only the verdict changes, because nothing observed is
 lost by reporting the defect, while everything observed is lost by
 reporting the incompletion.
 
+The second fix is the same error by the opposite door. Two of that
+drive's checks are not preconditions at all: the connect window opened,
+and it went somewhere it must not have. Something was served and a check
+against it failed, which is the definition of finding a defect — and the
+comment beside one of those checks says exactly why it matters, since a
+spoofed connector satisfying the precondition would make the whole
+measurement meaningless. Reporting that as "did not finish" hides the
+precise thing the check exists to catch. Both now report a defect.
+
 Adding a drive to that list without reading it is the same mistake as
 leaving one off: it puts a claim into the runner's output that the drive
 never made.
@@ -60,5 +69,11 @@ never made.
 The lists moved out of the runner to make any of this possible. The
 runner starts every drive the moment it is loaded, so nothing could read
 its lists without launching browsers against the live site, which is why
-a warning printed during a run was the only guard that could exist. The
-runner behaves exactly as before.
+a warning printed during a run was the only guard that could exist.
+
+An earlier draft of this note ended by saying the runner behaves exactly
+as before. That was true when it was written and stopped being true two
+paragraphs above, once the runner learned to tell a deliberate opt-out
+from an oversight. What has not changed is the translation from exit code
+to verdict: the same code still means the same thing. What has changed is
+what the runner says about it, which was the point.

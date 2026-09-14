@@ -19,9 +19,15 @@
  * weeks with its BLOCKED reported as a product FAIL. The operator
  * reading that row has no way to tell.
  *
- * Splitting the data out is the whole fix: the runner's behaviour is
- * unchanged, and `verdictContract.test.mjs` can now fail on a driver
- * nobody has classified.
+ * Splitting the data out is what makes a check possible at all, and
+ * `verdictContract.test.mjs` is the check: it fails on a driver nobody
+ * has classified.
+ *
+ * The runner's CLASSIFICATION is untouched — an exit code still becomes
+ * the same verdict it always did. Its REPORTING did change, and an
+ * earlier draft of this comment claimed otherwise after the change had
+ * been made: a declared opt-out is now named with its reason and no
+ * longer carries the hedge meant for a driver nobody has looked at.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -113,4 +119,21 @@ export function driversOnDisk(dir = HERE) {
  */
 export function undeclaredDrivers(names = driversOnDisk()) {
   return names.filter((n) => !THREE_VERDICT_DRIVERS.has(n) && !TWO_VERDICT_DRIVERS.has(n));
+}
+
+/**
+ * Drivers declared in BOTH lists — two contracts for one driver, which
+ * is worse than none.
+ *
+ * The way in is converting a driver: add it to the opt-out list, forget
+ * to remove it from the other. Nothing here refuses that on its own,
+ * and the two readers then DISAGREE ABOUT THE SAME RUN — the runner
+ * announces it as deliberately two-verdict at startup and then reads its
+ * exit 2 as BLOCKED, because that classification asks
+ * `THREE_VERDICT_DRIVERS` directly (#2099 round 2).
+ *
+ * Exactly one declaration per driver, or the lists are not a contract.
+ */
+export function doublyDeclaredDrivers() {
+  return [...THREE_VERDICT_DRIVERS].filter((n) => TWO_VERDICT_DRIVERS.has(n)).sort();
 }

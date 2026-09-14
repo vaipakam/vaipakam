@@ -191,6 +191,31 @@ let failed = false;
  * BLOCKED, so the asymmetry decides it: the reason is printed either
  * way, and only the verdict changes.
  */
+/**
+ * FAIL outright — an assertion against something that WAS served.
+ *
+ * `driver.mjs` states the rule: a drive that never got a served page to
+ * assert against is BLOCKED; one that asserted against a page that was
+ * served and had the assertion fail is FAIL. The connector opening the
+ * wrong host is the second of those — a window opened, and it went
+ * somewhere it must not — and the surrounding comment says exactly why
+ * that matters: a spoofed or broken connector satisfying the
+ * precondition would make the zero-beacon reading mean nothing.
+ * Reporting it as BLOCKED hides the precise defect the check exists to
+ * catch (#2099 round 2).
+ *
+ * Distinct from `blockOrFail` below, which is for preconditions that
+ * really are preconditions: no Coinbase connector in the modal, or no
+ * window opened at all, are both "no eligible state to measure" — the
+ * shared rule's own example of BLOCKED — rather than something served
+ * failing a check.
+ */
+const failNow = (why) => {
+  step('Coinbase SDK initializes', 'FAIL', why);
+  console.error(`\nFAIL: ${why}`);
+  process.exit(1);
+};
+
 const blockOrFail = (why) => {
   if (!failed && steps.every((s) => s.verdict !== 'FAIL')) blockedSync(why);
   console.error(`\nBLOCKED-after-FAIL: ${why}`);
@@ -286,10 +311,10 @@ try {
   try {
     popupHost = new URL(popupUrl).host;
   } catch {
-    blockOrFail(`the connector opened an unparseable URL: ${popupUrl}`);
+    failNow(`the connector opened an unparseable URL: ${popupUrl}`);
   }
   if (popupHost !== 'keys.coinbase.com') {
-    blockOrFail(`the connector opened ${popupHost}, not keys.coinbase.com`);
+    failNow(`the connector opened ${popupHost}, not keys.coinbase.com`);
   }
   step('Coinbase SDK initializes', 'PASS', popupHost);
 

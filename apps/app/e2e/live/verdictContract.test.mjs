@@ -22,6 +22,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  doublyDeclaredDrivers,
   driversOnDisk,
   THREE_VERDICT_DRIVERS,
   TWO_VERDICT_DRIVERS,
@@ -64,6 +65,18 @@ describe('#2099 — every live driver says which verdicts it speaks', () => {
       (n) => !disk.has(n),
     );
     expect(phantom, 'a declared driver no longer exists on disk').toEqual([]);
+  });
+
+  // TWO declarations for one driver is worse than none: the runner
+  // announces it as an opt-out and then classifies its exit 2 off the
+  // other list, so its own two reporting sites disagree about one run.
+  it('gives each driver exactly one contract', () => {
+    expect(
+      doublyDeclaredDrivers(),
+      'a driver is in BOTH verdict lists — the usual way in is converting one ' +
+        'and forgetting to remove the old entry. Remove it from whichever list ' +
+        'no longer describes it',
+    ).toEqual([]);
   });
 
   it('records a reason for every deliberate opt-out', () => {
