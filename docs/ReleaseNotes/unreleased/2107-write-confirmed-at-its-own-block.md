@@ -92,11 +92,16 @@ The second: not every failure to read is a failure to reach. If the
 thing being read has itself broken — a function that now rejects the
 call, a reply that will not decode — every machine gives the same answer,
 and waiting out the deadline to announce that nobody would answer blames
-the network for a fault in the code. Those two specific failures are now
+the network for a fault in the code. Those two specific failures were
 recognised and reported as what they are. Everything else still retries,
 deliberately: the list of ways a network call can fail has no end, so the
 short, knowable list is the one worth naming, and anything unfamiliar
 behaves exactly as it did before.
+
+*(The half of this about replies that will not decode was replaced twice
+over the next two rounds and finally stopped being a matter of
+recognition at all — see the last two sections. The half about a call
+being rejected is still exactly this.)*
 
 A third suggestion was to prove the reading came from the same chain the
 transaction is on, rather than merely from the same height — two machines
@@ -122,11 +127,15 @@ one case too narrowly. It covered a reply that was empty; review
 produced a reply that was present but the wrong size, which fails
 identically everywhere and was still being waited out. The library
 offers seventeen such errors and gives them no shared parent, so naming
-them one at a time would have added one per review round. They are now
-recognised as the family they are, with a check that walks the library's
-own list and insists every member is covered — so if one is renamed or
-a new one appears outside the pattern, that fails loudly rather than
-quietly going back to being waited out.
+them one at a time would have added one per review round — so they were
+recognised as a family, by the pattern the library names them under,
+with a check insisting every member of that family was covered.
+
+*(That is not how this ends. The very next round found failures that
+decode a reply wrongly and do not carry the pattern's name at all, and
+the section below replaces this fix rather than extending it. It is
+described here as it happened because the two failed attempts are the
+argument for what finally worked.)*
 
 The deadline was a promise the check did not quite keep. It waited a
 fixed interval between attempts regardless of how much time was left,
