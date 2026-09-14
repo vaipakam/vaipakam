@@ -41,7 +41,11 @@ it, and the platform stays closed to every inbound NFT. A refresh that found
 the platform live restores service at the end through an unpause that itself
 checks, on chain, that nothing else touched the pause state during the run — a
 pause raised meanwhile, by a watcher or by a person, makes that unpause refuse
-and is left in force for a fresh decision. A single-token recovery also refuses a token
+and is left in force for a fresh decision; to make that hold, a watcher's
+automatic pause raised while the platform is already manually paused is now
+recorded as a pause transition (its window noted, its event emitted) instead of
+being silently ignored, though an already-active automatic window is still
+never extended. A single-token recovery also refuses a token
 the named holder does not own, so a token already with the treasury can never
 be reported as recovered from a holder.
 The sweeps act only on holders the platform itself

@@ -6018,7 +6018,9 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > Diamond-as-treasury destination (no claim or withdrawal path there), and a
 > refresh that found the chain live restores service through
 > `AdminFacet.unpauseIfPauseEpoch`, which refuses ON CHAIN unless the
-> transition count shows nothing but the run's own pause (post-cap review). Simulations neither create nor erase
+> transition count shows nothing but the run's own pause — and a watcher's
+> `autoPause` while the manual pause is in force is recorded as a transition
+> rather than swallowed, so that refusal actually fires (post-cap review). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

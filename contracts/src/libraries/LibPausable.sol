@@ -175,18 +175,24 @@ library LibPausable {
     }
 
     /// @dev Phase 1 follow-up — auto-pause primitive. Sets a time-
-    ///      bounded pause window. No-op if the protocol is already
-    ///      paused (manual or auto), so a compromised watcher can't
-    ///      chain repeated calls into an indefinite freeze; the most
-    ///      it can do is set the window once, which auto-clears at
-    ///      `now + duration`.
+    ///      bounded pause window. An ACTIVE window is never extended, so a
+    ///      compromised watcher can't chain repeated calls into an
+    ///      indefinite freeze; the most it can do is set the window once,
+    ///      which auto-clears at `now + duration`.
+    ///
+    ///      A watcher firing while the MANUAL pause is in force is NOT a
+    ///      no-op any more (#1566 slice 4 PR A, Codex #2158 post-cap P1): it
+    ///      records its window, counts a transition and emits the event,
+    ///      exactly as it would on a live chain. The manual pause still
+    ///      dominates while it lasts, and `unpause()` still clears both —
+    ///      but the incident leaves a trace, so a scripted restore of
+    ///      service that conditions on the transition count
+    ///      (`AdminFacet.unpauseIfPauseEpoch`) refuses instead of reopening
+    ///      service over an incident it never saw. Quietly returning on an
+    ///      active window rather than reverting keeps a watcher racing an
+    ///      admin's pause out of the watcher's error logs.
     function autoPause(uint256 duration, string memory reason) internal {
         PausableStorage storage ps = _storage();
-        // Already paused (manual or active auto-pause): no-op. Quietly
-        // returning rather than reverting so a watcher firing into a
-        // race-condition with admin's manual pause doesn't surface as
-        // a confusing revert in the watcher's logs.
-        if (ps.paused) return;
         if (ps.pausedUntilTimestamp > block.timestamp) return;
         uint64 until = SafeCast.toUint64(block.timestamp + duration);
         ps.pausedUntilTimestamp = until;

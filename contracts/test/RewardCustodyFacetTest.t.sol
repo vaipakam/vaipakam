@@ -629,6 +629,35 @@ contract RewardCustodyFacetTest is SetupTest {
         nft.safeTransferFrom(alice, address(diamond), 2);
     }
 
+    /// @dev Codex #2158 post-cap P1 — a watcher firing while the MANUAL pause
+    ///      is in force is recorded (window, transition, event) rather than
+    ///      swallowed, so the conditional unpause refuses over it; an active
+    ///      window is still never extended.
+    function test_AutoPauseWhileManuallyPausedIsRecorded() public {
+        AdminFacet admin = AdminFacet(address(diamond));
+        address watcher = makeAddr("watcher");
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.WATCHER_ROLE, watcher);
+        admin.pause();
+        uint64 afterOurPause = _epoch();
+
+        vm.prank(watcher);
+        admin.autoPause("incident during a refresh");
+        assertEq(_epoch(), afterOurPause + 1, "the incident is a transition");
+        assertGt(admin.pausedUntil(), 0, "the window is recorded");
+        uint256 window = admin.pausedUntil();
+        vm.prank(watcher);
+        admin.autoPause("again");
+        assertEq(_epoch(), afterOurPause + 1, "an active window is never extended");
+        assertEq(admin.pausedUntil(), window);
+
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PauseEpochMoved.selector, afterOurPause, afterOurPause + 1));
+        admin.unpauseIfPauseEpoch(afterOurPause);
+        assertTrue(admin.paused(), "still paused: the incident stands");
+        admin.unpause(); // a person's decision clears both
+        assertFalse(admin.paused());
+        assertEq(admin.pausedUntil(), 0);
+    }
+
     /// @dev Codex #2158 post-cap P1 — the conditional unpause refuses ON CHAIN
     ///      when the pause epoch moved, so a scripted restore of service can
     ///      never clear a pause someone else raised in between.
