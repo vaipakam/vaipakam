@@ -14,20 +14,25 @@
  * (both `Repaid`). A ghost active loan is not a miscount — it is a
  * position the platform tells the world is still open.
  *
- * THE WRITE DIRECTION IS SAFE BY CONSTRUCTION, and that is what makes this
- * sweep acceptable on a fund-state surface at all. It only ever acts when
- * the chain reports a state MORE ADVANCED than the index:
+ * THE WRITE DIRECTION IS ONE-WAY, AND THAT IS NOT SUFFICIENT ON ITS OWN.
+ * It acts only when the chain reports a state more advanced than the
+ * index, so a node that is BEHIND answers `Active`, matches the row, and
+ * writes nothing.
  *
- *   - A node that is BEHIND answers with the old status (`Active`), which
- *     matches the row, so nothing is written. Staleness cannot manufacture
- *     a repair; it can only miss one, and the next rotation retries.
- *   - A node that is AHEAD is the whole point.
- *   - There is no path from here that marks a genuinely active loan
- *     terminal, because a terminal answer is never the stale one.
+ * An earlier revision stopped there and called that "safe by
+ * construction". Review showed the argument inverts (#2190 round 1). The
+ * write is IRREVERSIBLE from this pass's point of view: it only ever
+ * selects `active` rows, so a row it has terminalized is never examined
+ * again. Read `latest` and a reorg can remove the terminal afterwards,
+ * leaving the row terminal in the index and active on the chain with
+ * nothing that would ever look at it — the very permanence that makes a
+ * stale read harmless in one direction makes a WRONG read unrecoverable
+ * in the other.
  *
- * That asymmetry is why this needs none of the block-pinning
- * `writeConfirm.mjs` needs for the live drives (#2107): there, a stale read
- * was indistinguishable from a failed write, and here it is inert.
+ * So every read pins to the SAFE head the scan already resolved, which is
+ * what `chainIndexer` and the backing snapshot have always done for
+ * exactly this reason, and the pass runs only when that scan has caught
+ * up to it.
  *
  * WHAT IT CANNOT RECOVER. The chain's `LoanStatus` has no `Liquidated`
  * member — an HF-liquidated loan reads `Defaulted(2)` — so a row repaired
@@ -95,6 +100,10 @@ export interface ReconcileReport {
   repaired: { loanId: number; from: string; to: string }[];
   /** Loan ids whose chain read failed this tick. Retried next rotation. */
   unread: number[];
+  /** Loan ids whose repair the compare-and-set declined because another
+   *  writer had already terminalized the row. Not a failure — the other
+   *  write is the better-informed one — but not a repair either. */
+  superseded: number[];
   /** Where the rotation pointer was left. */
   nextPointer: number;
 }
@@ -107,7 +116,9 @@ export interface ReconcileDeps {
   readChainActiveCount(chainId: number): Promise<number>;
   /** `getLoanDetails(id).status`. One subrequest per call. */
   readChainStatus(chainId: number, loanId: number): Promise<number>;
-  writeStatus(chainId: number, loanId: number, status: string): Promise<void>;
+  /** Returns whether the row actually changed — a compare-and-set that
+   *  matched nothing is not a repair, and must not be reported as one. */
+  writeStatus(chainId: number, loanId: number, status: string): Promise<boolean>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -171,6 +182,7 @@ export async function reconcileChainLoans(
     examined: [],
     repaired: [],
     unread: [],
+    superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
   };
 
@@ -188,7 +200,17 @@ export async function reconcileChainLoans(
     const from = row.status;
     const to = decideRepair(from, chainStatus);
     if (to === null) continue;
-    await deps.writeStatus(chainId, row.loan_id, to);
+    const changed = await deps.writeStatus(chainId, row.loan_id, to);
+    // REPORTED ONLY IF THE ROW CHANGED. The compare-and-set exists
+    // because the scan may terminalize this row from its own event
+    // first; when it does, the CAS matches nothing and the stored status
+    // is the scan's more specific one. Announcing `active->defaulted`
+    // there would make the operational record false in precisely the
+    // race the guard was added to handle (#2190 round 1).
+    if (!changed) {
+      report.superseded.push(row.loan_id);
+      continue;
+    }
     // `from` is captured BEFORE the write, not re-read after it. Reading
     // it afterwards happens to work against D1, which does not touch the
     // row object — and silently reports `from` equal to `to` against any
@@ -202,122 +224,131 @@ export async function reconcileChainLoans(
 }
 
 /**
- * Build the live dependencies for one chain and run a pass.
+ * Build the live dependencies from the SCAN'S OWN CONTEXT and run a pass.
  *
- * `maxRows` is PASSED IN, not derived from `env`. The tick's subrequest
- * headroom depends on which ingest path is running, and the resolved
- * `Env` does not carry `CHAIN_INGEST_DO` — `captureBackingSnapshot`
- * records that exact trap, where a cast to reach the flag always read
- * `undefined` and every DO-path row was stamped with the wrong cadence.
- * The scheduler is the only place both the flag and the binding are
- * visible, so it is the only place that can answer.
+ * WHERE THIS RUNS IS THE FIX (#2190 round 1). An earlier revision ran
+ * this as its own cron pass with its own client, its own identity check
+ * and its own `latest` reads, and review returned five P1s that were one
+ * mistake said five ways: a repair that writes loan rows from OUTSIDE the
+ * ingest path does none of what the ingest path does. Both ingest paths
+ * already funnel through `runChainIndexerForChain` — the DO calls it, and
+ * the legacy cron reaches it through the round-robin — so running there
+ * settles four of them structurally rather than by adding a guard each:
+ *
+ *  - the scan has already resolved a SAFE head, so reads pin to it and
+ *    cost nothing extra. This is the one that mattered: an unpinned
+ *    `latest` read can return a terminal a reorg then removes, and
+ *    because this pass only ever selects `active` rows, the row it wrote
+ *    is never looked at again — terminal in the index and active on the
+ *    chain, permanently. "A stale read can only miss a repair" was the
+ *    claim, and irreversibility is exactly what makes it false;
+ *  - it runs after that window's events are processed, so it cannot
+ *    terminalize a row ahead of an event still to be applied;
+ *  - it is inside the DO's call, so the DO's broadcast covers the write;
+ *  - the scan has already asserted chain identity before any of this.
+ *
+ * CAUGHT UP OR NOT AT ALL. The caller runs this only when the scan
+ * reached the safe head (`scannedTo === headBlock`). While a backfill is
+ * still walking forward there are processed-but-later events between the
+ * cursor and the head, and repairing from head state would jump the
+ * queue — which is the ordering hazard, not a refinement of it.
  */
-export async function reconcileLoansForChain(
-  env: { DB: D1Database },
-  chain: { id: number; rpc: string; diamond: string },
-  createClient: (rpc: string) => {
-    getChainId(): Promise<number>;
-    readContract(args: Record<string, unknown>): Promise<unknown>;
-  },
-  metricsAbi: unknown,
-  loanAbi: unknown,
+export interface ScanReconcileContext {
+  db: D1Database;
+  chainId: number;
+  diamond: string;
+  /** The SAFE head the scan resolved. Every read pins to it. */
+  head: bigint;
+  readContract(args: Record<string, unknown>): Promise<unknown>;
+  metricsAbi: unknown;
+  loanAbi: unknown;
+}
+
+export async function reconcileAfterScan(
+  ctx: ScanReconcileContext,
   opts: ReconcileOptions = {},
-): Promise<ReconcileReport | null> {
-  const client = createClient(chain.rpc);
-
-  // IDENTITY BEFORE TRUST. A secret pointed at the wrong network still
-  // answers, and this pass WRITES terminal status from what it answers —
-  // so a mis-pointed RPC would mark one chain's loans over using another
-  // chain's state. `captureBackingSnapshot` refuses to store under the
-  // same condition; refusing to write is more important here, because a
-  // wrong reserve figure is a wrong number and a wrong terminal status is
-  // a position the platform stops publishing.
-  const observed = await client.getChainId();
-  if (observed !== chain.id) {
-    console.warn(
-      `[loanReconcile] RPC for chain ${chain.id} reports ${observed}; not reconciling`,
-    );
-    return null;
-  }
-
+): Promise<ReconcileReport> {
+  const now = () => Math.floor(Date.now() / 1000);
   const deps: ReconcileDeps = {
     async activeRowsAfter(chainId, after, limit) {
-      const rows = await env.DB.prepare(
-        `SELECT loan_id, status FROM loans
-          WHERE chain_id = ? AND status = 'active' AND loan_id > ?
-          ORDER BY loan_id ASC LIMIT ?`,
-      )
+      const rows = await ctx.db
+        .prepare(
+          `SELECT loan_id, status FROM loans
+            WHERE chain_id = ? AND status = 'active' AND loan_id > ?
+            ORDER BY loan_id ASC LIMIT ?`,
+        )
         .bind(chainId, after, limit)
         .all<ReconcileRow>();
       return rows.results ?? [];
     },
     async countIndexedActive(chainId) {
-      const row = await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM loans WHERE chain_id = ? AND status = 'active'`,
-      )
+      const row = await ctx.db
+        .prepare(`SELECT COUNT(*) AS n FROM loans WHERE chain_id = ? AND status = 'active'`)
         .bind(chainId)
         .first<{ n: number }>();
       return row?.n ?? 0;
     },
     async readChainActiveCount() {
-      const n = await client.readContract({
-        address: chain.diamond,
-        abi: metricsAbi,
+      const n = await ctx.readContract({
+        address: ctx.diamond,
+        abi: ctx.metricsAbi,
         functionName: 'getActiveLoansCount',
+        blockNumber: ctx.head,
       });
       return Number(n as bigint);
     },
     async readChainStatus(_chainId, loanId) {
-      const d = (await client.readContract({
-        address: chain.diamond,
-        abi: loanAbi,
+      const d = (await ctx.readContract({
+        address: ctx.diamond,
+        abi: ctx.loanAbi,
         functionName: 'getLoanDetails',
         args: [BigInt(loanId)],
+        blockNumber: ctx.head,
       })) as { status: number | bigint };
       return Number(d.status);
     },
     async writeStatus(chainId, loanId, status) {
-      // COMPARE-AND-SET on `status = 'active'`, never an unconditional
-      // UPDATE. The chain-ingest Durable Object is the serialized writer
-      // for event-driven status, and this pass runs from the cron — two
-      // writers on one column. Guarding the write means a terminal the DO
-      // landed first simply wins, and this pass becomes a no-op rather
-      // than overwriting the DO's more specific `liquidated` with the
-      // chain enum's `defaulted`.
-      await env.DB.prepare(
-        `UPDATE loans SET status = ?, updated_at = ?
-          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
-      )
-        .bind(status, Math.floor(Date.now() / 1000), chainId, loanId)
+      // The SAME columns `flipLoanStatus` writes, not status alone.
+      // `terminal_block` and `terminal_at` are part of what a terminal
+      // row IS here; writing status without them would leave a repaired
+      // row in a shape no event-written row has ever had, which nothing
+      // downstream is built to read. The block recorded is the safe head
+      // the status was read at — the repair cannot know the block the
+      // terminal actually landed in, and recording the block it observed
+      // the state at is the honest substitute.
+      //
+      // COMPARE-AND-SET on `status = 'active'`: if the scan just above
+      // terminalized this row from its own event, that write is the more
+      // specific one and wins, and this becomes a no-op.
+      const r = await ctx.db
+        .prepare(
+          `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+            WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+        )
+        .bind(status, Number(ctx.head), now(), now(), chainId, loanId)
         .run();
+      return (r.meta?.changes ?? 0) > 0;
     },
     async readPointer(chainId) {
-      const row = await env.DB.prepare(
-        `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
-      )
+      const row = await ctx.db
+        .prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
         .bind(chainId, RECONCILE_CURSOR_KIND)
         .first<{ last_block: number }>();
       return row?.last_block ?? 0;
     },
     async writePointer(chainId, value) {
-      await env.DB.prepare(
-        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = ?, updated_at = ?`,
-      )
-        .bind(
-          chainId,
-          RECONCILE_CURSOR_KIND,
-          value,
-          Math.floor(Date.now() / 1000),
-          value,
-          Math.floor(Date.now() / 1000),
+      const t = now();
+      await ctx.db
+        .prepare(
+          `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = ?, updated_at = ?`,
         )
+        .bind(chainId, RECONCILE_CURSOR_KIND, value, t, value, t)
         .run();
     },
   };
-
-  return reconcileChainLoans(chain.id, deps, opts);
+  return reconcileChainLoans(ctx.chainId, deps, opts);
 }
 
 /** Rotation pointer row in `indexer_cursor`, per chain. `last_block` is

@@ -12,7 +12,6 @@ import {
   CHAIN_STATUS_TO_ROW_STATUS,
   decideRepair,
   reconcileChainLoans,
-  reconcileLoansForChain,
   type ReconcileDeps,
   type ReconcileRow,
 } from '../src/loanReconcile';
@@ -52,7 +51,11 @@ function fakeDeps(
     async writeStatus(_c, loanId, status) {
       calls.writes += 1;
       const row = rows.find((r) => r.loan_id === loanId);
-      if (row) row.status = status;
+      // Mirrors a compare-and-set on `status = 'active'`: a row another
+      // writer already terminalized does not change.
+      if (!row || row.status !== 'active') return false;
+      row.status = status;
+      return true;
     },
     async readPointer() {
       return pointer;
@@ -205,55 +208,32 @@ describe('reconcileChainLoans', () => {
   });
 });
 
-describe('reconcileLoansForChain (live deps)', () => {
-  const chain = { id: 84532, rpc: 'https://rpc.example', diamond: '0xd1a' };
-
-  it('REFUSES to write when the RPC reports a different chain', async () => {
-    // A secret pointed at the wrong network still answers, and this pass
-    // writes terminal status from what it answers — so a mis-pointed RPC
-    // would mark one chain's loans over using another chain's state.
-    let dbTouched = false;
-    const db = {
-      prepare() {
-        dbTouched = true;
-        throw new Error('the database must not be reached');
-      },
+describe('reporting what actually changed', () => {
+  it('does NOT report a repair the compare-and-set declined', async () => {
+    // The scan may terminalize the row from its own event between the
+    // selection and this write. The CAS then matches nothing and the
+    // stored status is the scan's — more specific than anything this
+    // pass could derive. Announcing `active->defaulted` there would make
+    // the operational record false in exactly the race the guard handles.
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 2 }, 0);
+    // Another writer wins between selection and write.
+    const inner = f.deps.writeStatus;
+    f.deps.writeStatus = async (c, id, st) => {
+      rows[0].status = 'liquidated';
+      return inner(c, id, st);
     };
-    const r = await reconcileLoansForChain(
-      { DB: db as never },
-      chain,
-      () => ({
-        getChainId: async () => 8453, // Base, not Base Sepolia
-        readContract: async () => {
-          throw new Error('no chain read may happen either');
-        },
-      }),
-      [],
-      [],
-    );
-    expect(r).toBeNull();
-    expect(dbTouched).toBe(false);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.repaired).toEqual([]);
+    expect(r.superseded).toEqual([8]);
+    expect(rows[0].status).toBe('liquidated');
   });
 
-  it('checks identity BEFORE any other call', async () => {
-    const order: string[] = [];
-    await reconcileLoansForChain(
-      { DB: { prepare: () => { order.push('db'); throw new Error('stop'); } } as never },
-      chain,
-      () => ({
-        getChainId: async () => {
-          order.push('getChainId');
-          return 999;
-        },
-        readContract: async () => {
-          order.push('readContract');
-          return 0n;
-        },
-      }),
-      [],
-      [],
-    ).catch(() => {});
-    expect(order[0]).toBe('getChainId');
-    expect(order).not.toContain('readContract');
+  it('reports a repair it did make', async () => {
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 2 }, 0);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.repaired).toEqual([{ loanId: 8, from: 'active', to: 'defaulted' }]);
+    expect(r.superseded).toEqual([]);
   });
 });
