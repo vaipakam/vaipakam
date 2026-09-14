@@ -47,6 +47,17 @@ describe('isRevert', () => {
     }
   });
 
+  it('is FALSE for a non-Error that merely HAS a walk method', () => {
+    // Structural matching must not become pure duck-typing. An arbitrary
+    // object with `walk` would otherwise be handed the predicate and get to
+    // answer for it — and a false "yes" points the dangerous way, clearing a
+    // live holder or pruning a claimable side. `instanceof Error` is what
+    // bounds it, and is safe where `instanceof BaseError` was not: `Error`
+    // is a realm intrinsic, so pnpm cannot hand two packages different ones.
+    expect(isRevert({ walk: () => ({ name: 'ContractFunctionRevertedError' }) })).toBe(false);
+    expect(isRevert({ walk: () => 'anything truthy' })).toBe(false);
+  });
+
   // THE CASE THE CASES ABOVE STRUCTURALLY CANNOT MAKE (#2190 r11
   // `4009116588`). They all build their errors from the `viem` THIS file
   // imports — the same physical module `contractRevert.ts` imports — so an

@@ -51,7 +51,18 @@
 type WalkableError = { walk: (fn: (x: unknown) => boolean) => unknown };
 
 function isWalkable(e: unknown): e is WalkableError {
-  return typeof e === 'object' && e !== null && typeof (e as WalkableError).walk === 'function';
+  // `instanceof Error` is SAFE here where `instanceof BaseError` was not,
+  // and the difference is the whole subtlety of this file. `Error` is a
+  // realm intrinsic — every package in one Node process or one browser
+  // window shares the single global — so it cannot be duplicated by pnpm
+  // the way `viem`'s own classes are. It costs nothing and it keeps the
+  // structural check from being pure duck-typing: without it, ANY object
+  // carrying a `walk` method could be handed an arbitrary predicate and
+  // answer for it. That mistake would point the DANGEROUS way — a
+  // not-really-a-revert read as authoritative, clearing a live holder or
+  // pruning a claimable side — which is the direction this rule is
+  // deliberately asymmetric about.
+  return e instanceof Error && typeof (e as unknown as WalkableError).walk === 'function';
 }
 
 /** The two viem error names that mean "the node executed the call and
