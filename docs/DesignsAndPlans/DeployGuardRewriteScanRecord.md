@@ -5,7 +5,7 @@
 > `keeper deploy guard (--keep-vars, tree-wide)` CI job were deleted: the
 > question they tried to answer — will this text run a command, and with which
 > configuration — needs the execution model of every interpreter the text might
-> be, and fourteen open issues each naming a different parsing edge showed it
+> be, and seventeen open issues each naming a different parsing edge showed it
 > was not reachable. `apps/keeper/scripts/check-keep-vars.mjs` asserts the
 > `keep_vars` declaration instead, which makes every spelling of a deploy safe
 > without parsing any of them, and its header lists by name what that gives up.

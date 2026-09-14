@@ -29,20 +29,21 @@
  * THE TREE-WIDE SCANNER IS RETIRED, and this file is now the whole defence.
  * #1995 (2026-08-31) kept `check-deploy-invocations.mjs` as defence in depth
  * on top of the declaration. The thirteen days that followed showed what that
- * cost: fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), every
- * one an edge of the same predicate — a folded YAML scalar's offsets, a
- * settable `.RECIPEPREFIX`, a PowerShell here-string, a case-varied variable
- * name, an upper-case file extension, a semicolon after an assignment — and
- * four of them FALSE REPORTS that redden a correct tree. Each was a
- * constructed example; none named a file in this repository. Reading
- * arbitrary text and deciding whether it will run a command requires the
- * execution model of every interpreter it might be, and 23,800 lines of
- * scanner and fixtures did not get there. Deleting the predicate is the fix
- * the record asks for, the same move as #2066 (a declaration heuristic
- * deleted after six rounds) and #2149 (a speculative branch deleted at round
- * 13). Thirteen days is a short observation window and the reader should
- * weigh it as one; what argues for the retirement is the SHAPE of the
- * findings, not their elapsed time.
+ * cost: seventeen open issues (#2104, #2106, #2108, #2110, #2112–#2119,
+ * #2121–#2124, #2126), every one an edge of the same predicate — a folded YAML
+ * scalar's offsets, a settable `.RECIPEPREFIX`, a PowerShell here-string, a
+ * case-varied variable name, an upper-case file extension, a semicolon after
+ * an assignment, a Make prerequisite declared after the target it feeds, a
+ * non-shell step body classified as shell — and five of them FALSE REPORTS
+ * that redden a correct tree. Each was a constructed example; none named a
+ * file in this repository. Reading arbitrary text and deciding whether it
+ * will run a command requires the execution model of every interpreter it
+ * might be, and 23,800 lines of scanner and fixtures did not get there.
+ * Deleting the predicate is the fix the record asks for, the same move as
+ * #2066 (a declaration heuristic deleted after six rounds) and #2149 (a
+ * speculative branch deleted at round 13). Thirteen days is a short
+ * observation window and the reader should weigh it as one; what argues for
+ * the retirement is the SHAPE of the findings, not their elapsed time.
  *
  * ONE THING THE SCANNER CAUGHT IS KEPT, in bounded form. It rejected a deploy
  * or `versions upload` pointed by `--config` at a different configuration

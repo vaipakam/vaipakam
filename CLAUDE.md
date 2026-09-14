@@ -623,9 +623,10 @@ findings demonstrating it. The flag is still correct where it appears.
 `apps/keeper/scripts/check-deploy-invocations.mjs` and its fixtures are
 deleted, and so is the `keeper deploy guard (--keep-vars, tree-wide)` CI job.
 #1995 kept it as defence in depth on top of the declaration; what that bought
-was fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), each a
-different parsing edge of the same unbounded predicate and four of them false
-reports on a correct tree, with no issue naming a real file in this repo.
+was seventeen open issues (#2104, #2106, #2108, #2110, #2112–#2119,
+#2121–#2124, #2126), each a different parsing edge of the same unbounded
+predicate and five of them false reports on a correct tree, with no issue
+naming a real file in this repo.
 `apps/keeper/scripts/check-keep-vars.mjs` — structural, unconditional in CI —
 is now the whole implemented defence, and it asserts the declaration on
 **EVERY wrangler config in the tracked tree**, at any depth and in any
