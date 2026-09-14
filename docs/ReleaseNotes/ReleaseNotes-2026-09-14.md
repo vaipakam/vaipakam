@@ -32,8 +32,9 @@ anything is sent; every position the address must back is settled —
 exactly backed, or for a mirror's imported headroom either funded up to
 the figure or written down to what the address backs; and the
 deployment's whole facet routing is the one a complete refresh or deploy
-recorded — so the custody surface can never be switched on ahead of the
-reward paths that read it. From the activation, the canonical chain pays
+recorded — so the custody surface cannot be switched on ahead of the reward paths
+that read it, short of an administrator recording a partial routing as if
+it were complete. From the activation, the canonical chain pays
 only what has been funded into the address minus what has been paid.
 Every payout leaves the address by its fresh and recycled parts; an
 ordinary remittance leaves by the same two parts and is charged against
@@ -289,13 +290,16 @@ pause count the figures were established at (under governance the pause
 is the pauser's act and the activation the timelock's, which the staged
 form of the ceremony keeps apart), and only when every position the
 address must back is settled: the recycled runway, the recovery position
-and the overage quarantine must each equal their figure exactly, a zero
-position takes no answer and a non-zero one refuses without one, and a
-mirror's imported delivered headroom is settled by one of two recorded
-choices — funding the position up to the imported figure, or writing the
-figure down to what the address actually backs, after which the
-written-down figure is what bounds claims — every reward read and debit
-goes through the address's attribution rows instead of the platform's own
+and the overage quarantine must each equal their figure exactly — a position whose remaining
+shortfall is zero takes no answer, and one with a shortfall refuses
+without one, so a retried ceremony states only what is still missing —
+and a mirror's imported delivered headroom is settled by one of two
+recorded choices — funding the position up to the imported figure, or
+writing the figure down to what the address actually backs, after which
+the written-down figure is what bounds claims; and the address's balance
+in the configured token must be readable and must cover the total of
+every attribution, or the activation refuses whatever the rows say —
+every reward read and debit goes through the address's attribution rows instead of the platform's own
 token balance. A
 single-chain deployment with no reward role never activates and behaves
 exactly as before, and a detached deployment waits for the era registry
@@ -314,14 +318,20 @@ the manual pause, by at most the excess, and to no other destination — so
 nothing is stranded at the address. Activation and the
 backing of a position also require the deployment's whole facet routing —
 every installed facet and every function it serves — to be the one a
-complete refresh or deploy recorded, so a partial refresh can never switch
-custody onto the address while a reward path that does not know it is
-still installed or a required one has been removed. The canonical chain now bounds reward payouts by what
+complete refresh or deploy recorded, so a partial refresh cannot switch custody onto the address while a
+reward path that does not know it is still installed or a required one
+has been removed. That record is the complete refresh's own attestation
+of the routing it installed, bound to that routing so any later change
+invalidates it; it is not an on-chain proof that the cut was complete,
+and an administrator who took the record after a partial cut would be
+attesting to a partial routing. The canonical chain now bounds reward payouts by what
 has actually been funded minus what has been paid, where funding is one
 explicit administrator transfer into the address that credits the received
 side in the same act (refused above the pool's lifetime cap), so a
-canonical chain that has not been funded refuses claims and ordinary
-live-funded remittances rather than paying them from other value — a
+canonical chain that has not been funded refuses any claim or ordinary
+remittance that carries a fresh component rather than paying it from
+other value — a recycled-only claim or remittance still pays from the
+recycled runway, which is backed separately — a
 redispatch funded from the recovery position draws on that position, not
 on this headroom, and is not refused by it; a funding that lands against a
 paid-over-received deficit closes that deficit into a separate restitution
