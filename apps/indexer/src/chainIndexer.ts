@@ -777,7 +777,7 @@ async function runLoanReconcilePass(input: {
         // own transaction — written afterwards they could be lost for good,
         // since the repaired row leaves the live set the rotation selects
         // from (#2190 r4 `4007360360`).
-        terminalHolderStatements: async (loanId, to, tokenIds) => {
+        terminalHolderStatements: async (loanId, to, tokenIds, fingerprint) => {
           // WHO HOLDS THIS POSITION NOW, asked of the chain rather than of
           // our own `*_current_owner` columns (#2190 r5 `4007360368`). The
           // window that lost the terminal could equally have contained the
@@ -823,7 +823,22 @@ async function runLoanReconcilePass(input: {
             Math.floor(Date.now() / 1000),
             holders,
           );
-          statements.push(...rows.map((r) => notificationInsertStatement(env.DB, r)));
+          // The notices self-gate on the compare-and-set having won; the
+          // owner refresh above does not, for the same reason the side-table
+          // deletes do not — a refreshed holder is right whoever closed the
+          // loan, while "we found this by checking" is only right if this
+          // pass was the one that did (#2190 r6 `4007588180`).
+          statements.push(
+            ...rows.map((r) =>
+              notificationInsertStatement(env.DB, r, {
+                chainId,
+                loanId,
+                status: to,
+                terminalBlock: fingerprint.terminalBlock,
+                terminalAt: fingerprint.terminalAt,
+              }),
+            ),
+          );
           return statements;
         },
       },
@@ -1070,9 +1085,17 @@ export async function runChainIndexerForChain(
       // The repaired ids ride the hints for the same reason the calendar
       // ids do: without them the frame looks irrelevant to the holders of
       // the very position that changed, and their scoped refetch is dropped.
+      // A repair additionally TRUNCATES the set — see the scanned path's
+      // note: a refreshed owner is a holder whose cache cannot contain this
+      // old loan, so only a coarse frame reaches them (#2190 r6).
       hints:
         quietCal.inserted > 0 || quietReconciledIds.length > 0
-          ? mergeHintLoanIds(emptyHints(), [...quietCal.loanIds, ...quietReconciledIds])
+          ? mergeHintLoanIds(
+              quietReconciledIds.length > 0
+                ? { ...emptyHints(), truncated: true }
+                : emptyHints(),
+              [...quietCal.loanIds, ...quietReconciledIds],
+            )
           : undefined,
       headBlock: head,
       skipped: 'caught-up',
@@ -1462,8 +1485,18 @@ export async function runChainIndexerForChain(
     // A repaired loan is OLD, so it is never in `allLogs` — its id has to
     // be merged in explicitly or the hint set is "complete" while omitting
     // the one position this scan actually corrected (#2190 r5).
+    //
+    // And a repair also marks the set TRUNCATED (#2190 r6 `4007752754`).
+    // The id alone is not enough when the missed window also carried a
+    // position transfer: the repair refreshes the owner to a holder whose
+    // cached `myLoanIds` cannot contain this old loan, so `pushHintScope`
+    // finds neither a cached id nor a holder link and drops `myLoans`,
+    // `claimables` and `notifications` from the NEW holder's refetch — the
+    // one person who most needs it. Truncation makes the frame coarse,
+    // which is the same answer a stub heal already takes for the same
+    // reason: the scan cannot enumerate who is affected.
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 || loanDetailRefreshes > 0
+      detailRefreshes > 0 || loanDetailRefreshes > 0 || reconciledLoanIds.length > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
       [...cal.loanIds, ...reconciledLoanIds],

@@ -107,7 +107,11 @@ detail and is not: the announcement is filtered down to the people it
 concerns, and a corrected loan is by definition an OLD one that appears
 nowhere else in that tick's work. Left unnamed, the one announcement that
 mattered would have been filtered away from exactly the two people it was
-for.
+for. Naming it is still not quite enough where the position has changed
+hands in the meantime — the new holder's own view cannot know about a loan
+they have only just been found to own — so a correction also marks its
+announcement as incomplete, which makes it reach everyone rather than only
+those already known to be involved.
 
 Both holders of a corrected position also get the ending in their inbox.
 They had received nothing: the announcement was missed, so the surface that
@@ -172,6 +176,14 @@ together is the only version with no window. The messages were the last
 thing still written afterwards, and they had the same flaw: a failure there
 left the position corrected and the two people with money in it told nothing,
 permanently.
+
+The messages are written only where the correction was actually made by
+this check. If another part of the service recorded the ending first — which
+is the very race the check is built to lose gracefully — it stops, rather
+than telling the two holders it discovered something it did not. And a
+failure to work out who the holders are is treated as a failure, not as
+"nobody to tell": the whole correction is left for the next turn instead of
+going through with the part that is silent.
 
 One failure it survives rather than prevents: if the write for one record
 fails while others in the same turn succeed, the successful ones stand and

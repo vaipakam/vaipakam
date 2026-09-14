@@ -20,6 +20,7 @@ import {
   notificationInsertStatement,
   planReconciledNotifications,
   RECONCILED_EVENT_KIND,
+  type RepairFingerprint,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
@@ -199,5 +200,80 @@ describe('who the notice actually goes to', () => {
     seedLoan(h, 32, 'defaulted');
     const n = await planAndWrite(h, [{ loanId: 32, to: 'defaulted' }], 500, 1_700_000_000);
     expect(n).toBe(2);
+  });
+});
+
+describe('a notice is written only for a repair this pass made', () => {
+  const FP = (over: Partial<RepairFingerprint> = {}): RepairFingerprint => ({
+    chainId: CHAIN,
+    loanId: 40,
+    status: 'defaulted',
+    terminalBlock: 500,
+    terminalAt: 1_700_000_000,
+    ...over,
+  });
+
+  async function insertGated(h: SqliteD1, fp: RepairFingerprint) {
+    const rows = await planReconciledNotifications(
+      h.d1 as never, CHAIN, [{ loanId: fp.loanId, to: 'defaulted' }], 500, 1_700_000_000,
+    );
+    const results = await (h.d1 as {
+      batch(s: unknown[]): Promise<Array<{ meta?: { changes?: number } }>>;
+    }).batch(rows.map((r) => notificationInsertStatement(h.d1 as never, r, fp)));
+    return results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+  }
+
+  function markTerminal(h: SqliteD1, loanId: number, block: number, at: number) {
+    h.db
+      .prepare(
+        `UPDATE loans SET status = 'defaulted', terminal_block = ?, terminal_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+      .run(block, at, CHAIN, loanId);
+  }
+
+  it('writes it when the compare-and-set left this pass’s own fingerprint', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'active');
+    markTerminal(h, 40, 500, 1_700_000_000);
+    expect(await insertGated(h, FP())).toBe(2);
+  });
+
+  it('writes NOTHING when another writer closed the loan instead', async () => {
+    // #2190 r6. The compare-and-set matching nothing is the race it exists
+    // for; the holders must not then be told "we found this by checking"
+    // about a correction this pass did not make — probably beside the event
+    // path's own, more specific notice.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'active');
+    // Someone else terminalized it: same status, their own block and second.
+    markTerminal(h, 40, 481, 1_699_999_000);
+    expect(await insertGated(h, FP())).toBe(0);
+    expect(rowsFor(h, 40)).toHaveLength(0);
+  });
+
+  it('writes nothing when the loan is still live', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'active');
+    expect(await insertGated(h, FP())).toBe(0);
+  });
+});
+
+describe('a failed party lookup is not "no recipients"', () => {
+  it('throws, so the repair is retried rather than silently unannounced', async () => {
+    // #2190 r6 `4007588172`. Returning an empty plan let the repair commit
+    // while the rows it owed were dropped — and the loan then leaves the
+    // live set, so nothing retries. A throw leaves the row untouched and
+    // the rotation returns to it.
+    const broken = {
+      prepare() {
+        throw new Error('D1 unavailable');
+      },
+    };
+    await expect(
+      planReconciledNotifications(
+        broken as never, CHAIN, [{ loanId: 1, to: 'defaulted' }], 500, 1_700_000_000,
+      ),
+    ).rejects.toThrow(/party lookup failed/);
   });
 });

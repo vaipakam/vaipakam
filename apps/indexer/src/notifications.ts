@@ -626,7 +626,16 @@ export async function planReconciledNotifications(
     chainId,
     repaired.map((r) => r.loanId),
   );
-  if (partiesByLoan === null) return [];
+  if (partiesByLoan === null) {
+    // THROWS rather than returning an empty plan (#2190 r6 `4007588172`).
+    // A transient D1 failure and "this loan has no recipients" are opposite
+    // facts, and collapsing them let the repair commit while the rows it
+    // owes were dropped — after which the loan leaves the live set and
+    // nothing retries. The caller's per-row catch leaves the row untouched
+    // and the rotation returns to it, which is the outcome a failed lookup
+    // should have.
+    throw new Error(`[notifications] party lookup failed for chain ${chainId}`);
+  }
 
   const rows: NotifRow[] = [];
   /** Repaired loans whose outcome this pass cannot label honestly. */
@@ -691,25 +700,89 @@ export async function planReconciledNotifications(
 export function notificationInsertStatement(
   db: D1Database,
   r: NotifRow,
+  /** When given, the row is inserted ONLY if the loan carries exactly this
+   *  terminal fingerprint — see `repairFingerprint` on why a repair's notice
+   *  must self-gate inside its own transaction. */
+  onlyIfRepaired?: RepairFingerprint,
 ): D1PreparedStatement {
+  const binds = [
+    r.chainId,
+    r.recipient,
+    r.kind,
+    r.loanId,
+    r.eventKind,
+    r.blockNumber,
+    r.logIndex,
+    r.createdAt,
+    r.dedupKey,
+  ];
+  // BOTH forms written out in full rather than sharing an interpolated
+  // column list: `sqlSchemaGuard` can only check a statement it can read as
+  // a static string, and its own note says to make a new statement static
+  // rather than raise the skip pin. The duplication is the price of staying
+  // inside the guard, and the guard is what proves these columns exist.
+  if (!onlyIfRepaired) {
+    return db
+      .prepare(
+        `INSERT OR IGNORE INTO notifications
+           (chain_id, recipient, kind, loan_id, event_kind,
+            block_number, log_index, created_at, dedup_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(...binds);
+  }
   return db
     .prepare(
       `INSERT OR IGNORE INTO notifications
          (chain_id, recipient, kind, loan_id, event_kind,
           block_number, log_index, created_at, dedup_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM loans
+           WHERE chain_id = ? AND loan_id = ?
+             AND status = ? AND terminal_block = ? AND terminal_at = ?
+        )`,
     )
     .bind(
-      r.chainId,
-      r.recipient,
-      r.kind,
-      r.loanId,
-      r.eventKind,
-      r.blockNumber,
-      r.logIndex,
-      r.createdAt,
-      r.dedupKey,
+      ...binds,
+      onlyIfRepaired.chainId,
+      onlyIfRepaired.loanId,
+      onlyIfRepaired.status,
+      onlyIfRepaired.terminalBlock,
+      onlyIfRepaired.terminalAt,
     );
+}
+
+/**
+ * The exact shape a repair's own compare-and-set leaves on the loan row.
+ *
+ * A repair's notice must NOT be written when the CAS matched nothing
+ * (#2190 r6 `4007588180`): another ingest writer may have terminalized the
+ * row between selection and the batch — the very race the CAS exists for —
+ * and the holders would then get a "we found this by checking" notice for a
+ * correction this pass did not make, probably beside the event path's own
+ * more specific one.
+ *
+ * The side-table DELETES stay unconditional, and the difference is not
+ * inconsistency: what licenses a delete is the loan being closed, which is
+ * true whoever closed it, while what licenses this notice is THIS pass
+ * having been the one to discover it.
+ *
+ * D1 offers no "did the previous statement in this batch match" primitive,
+ * and splitting the batch would give back the atomicity round 3 established.
+ * So the insert self-gates on the fingerprint the CAS writes. The residual
+ * is stated rather than hidden: a different writer would have to have set
+ * the same status, at the same block number — ours is the SAFE HEAD, while
+ * an event handler uses its own log's block — within the same second. And
+ * in that coincidence the notice is still substantively right; only its
+ * provenance would be.
+ */
+export interface RepairFingerprint {
+  chainId: number;
+  loanId: number;
+  status: string;
+  terminalBlock: number;
+  terminalAt: number;
 }
 
 /**

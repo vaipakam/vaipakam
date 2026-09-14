@@ -468,6 +468,10 @@ export interface ScanReconcileContext {
     loanId: number,
     to: string,
     tokenIds: { lender: string; borrower: string },
+    /** The exact terminal shape this pass's compare-and-set will write, so
+     *  the notice can self-gate on the CAS having actually won — see
+     *  `RepairFingerprint`. */
+    fingerprint: { terminalBlock: number; terminalAt: number },
   ): Promise<D1PreparedStatement[]>;
 }
 
@@ -564,6 +568,10 @@ export async function reconcileAfterScan(
       };
     },
     async writeRepair(chainId, loanId, repair) {
+      // ONE timestamp for the whole write, not `now()` called twice: the
+      // notice's fingerprint has to name the same `terminal_at` the UPDATE
+      // stores, and two calls can straddle a second boundary.
+      const at = now();
       // The SAME columns the event path writes, not status alone.
       // `terminal_block` and `terminal_at` are part of what a terminal
       // row IS here, and `principal` / `collateral_amount` are what
@@ -598,8 +606,8 @@ export async function reconcileAfterScan(
           repair.principal,
           repair.collateralAmount,
           Number(ctx.head),
-          now(),
-          now(),
+          at,
+          at,
           chainId,
           loanId,
         );
@@ -608,10 +616,12 @@ export async function reconcileAfterScan(
       // rotation selects from, so nothing would ever come back to write
       // them (#2190 r4 `4007360360`). Planning them needs a read, which is
       // why it happens here rather than inside the batch.
-      const holderWrites = await ctx.terminalHolderStatements(loanId, repair.status, {
-        lender: repair.lenderTokenId,
-        borrower: repair.borrowerTokenId,
-      });
+      const holderWrites = await ctx.terminalHolderStatements(
+        loanId,
+        repair.status,
+        { lender: repair.lenderTokenId, borrower: repair.borrowerTokenId },
+        { terminalBlock: Number(ctx.head), terminalAt: at },
+      );
       const results = await ctx.db.batch([
         update,
         ...ctx.closedLoanSideTableStatements(loanId),
