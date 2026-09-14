@@ -69,6 +69,7 @@ export function trackBrowser(browser) {
   LIVE_BROWSER = browser;
 }
 
+
 /**
  * Synchronous BLOCKED exit, for the pre-browser precondition checks
  * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
