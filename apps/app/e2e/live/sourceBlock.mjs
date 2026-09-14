@@ -37,6 +37,41 @@
  * end" is the question a JavaScript grammar answers, and a hand-rolled
  * scanner is a worse implementation of it every time.
  *
+ * WHAT THIS ASSUMES ABOUT THE ENVIRONMENT, stated because it was twice
+ * built as a check and the check was twice wrong (#2175 rounds 9-15).
+ *
+ * Every rule here reads the file's own text to decide what a value is.
+ * That reasoning holds only while the language behaves as written — so
+ * THIS MODULE ASSUMES THE DRIVE FILES DO NOT REWRITE THE LANGUAGE'S OWN
+ * MACHINERY: no replaced intrinsic, no written prototype, no swapped
+ * iterator or coercion hook, no Proxy standing in for source text.
+ *
+ * It was tempting to CHECK that instead of assuming it, and two rounds
+ * were spent doing so — first for a replaced global, then for a written
+ * prototype. Both were deleted, because "has this file replaced
+ * something the language provides" has no syntactic answer: a computed
+ * key spells it, `Object.defineProperty` and `Reflect.set` and
+ * `Object.setPrototypeOf` each spell it, destructuring spells it, and
+ * `valueOf` / `Symbol.toPrimitive` / a prototype getter / a Proxy reach
+ * the same end without naming a prototype at all. Six review rounds each
+ * produced another spelling. A check over an open set is not a weaker
+ * check — it is a check that REPORTS SOUNDNESS IT DOES NOT HAVE, which
+ * on a guard whose whole job is refusing unearned confidence is worse
+ * than the honest assumption.
+ *
+ * The assumption is also the right shape for the actual threat. This
+ * guard exists to stop an AUTHOR writing `src.slice(start, start + 320)`
+ * by mistake. It was never an adversary model, and nobody reaches for
+ * `Object.defineProperty(String.prototype, …)` in a Playwright drive by
+ * accident.
+ *
+ * What replaces the check is in the SUITE, not here: `sourceBlock.test`
+ * asserts that no file under `e2e/live/**` rewrites machinery, in the
+ * forms it can recognise. Best-effort is appropriate THERE and was not
+ * appropriate here — a miss in the suite means nobody noticed something
+ * bizarre in our own drive files, while a miss here meant a region
+ * certified as anchored that is not.
+ *
  * So the boundaries come from `acorn`. Strings, template holes,
  * comments, regex literals and division all stop being special cases:
  * a node's `start` and `end` are the region, by construction. The
@@ -785,13 +820,15 @@ function memberTruncator(src, member) {
   const method = memberName(member);
   if (method === UNREADABLE) return UNREADABLE;
   if (TRUNCATORS.has(method)) return method;
-  // The UNRESOLVED node is kept as well, because a global does not
-  // resolve: `resolveAlias` finds no binding for `String` and returns
-  // nothing, which is the right answer to "what was this assigned" and
-  // the wrong one to "is this the intrinsic". `isIntrinsic` asks the
-  // second question, and it needs the name itself to ask it of.
+  // The object is whatever the name stands for — and where it stands
+  // for nothing in this file, the name ITSELF is the answer, because an
+  // unbound name is a global and a global is a thing this can recognise.
+  // Round 36 reached that with a `?? name` fallback over a resolver
+  // that reported both "no binding" and "cannot be trusted" as nothing;
+  // now the resolver says which, so the fallback is a stated case.
   const named = unwrapChain(member.object);
-  const object = resolveAlias(src, named) ?? named;
+  const held = resolutionOf(src, named);
+  const object = held.state === RESOLVED ? held.value : held.state === UNBOUND ? named : null;
   // `String.prototype.replace` — an INTRINSIC's prototype describes
   // itself, so a non-truncator name there is a definite negative. The
   // intrinsic has to be checked and not merely the spelling (round 36):
@@ -864,34 +901,117 @@ function reflectApplyTruncator(src, call) {
   return memberTruncator(src, fn);
 }
 
-/** Follow a STABLE alias to what it holds — one hop or many, refusing
- *  the moment a write reaches it or the chain cannot be followed. */
-function resolveAlias(src, node, seen = new Set()) {
-  if (node?.type !== 'Identifier') return node;
-  const key = `alias:${node.name}@${node.start}`;
-  if (seen.has(key)) return null;
+/**
+ * WHAT DOES THIS NAME HOLD, AND CAN I TRUST THAT HERE — asked once.
+ *
+ * Every rule in this file needs the answer and, until #2175, seven of
+ * them worked it out separately: each called the binding reader, each
+ * decided for itself what a missing binding or a reaching write meant,
+ * and each expressed "I could not tell" in its own way — `null` here, a
+ * `false` there, a `true` somewhere else. Two consequences followed, and
+ * both were review findings rather than theory. A rule added to one
+ * copy (a destructured name is not an alias for the whole initialiser)
+ * was absent from the other six for seven rounds. And "could not
+ * resolve" kept being read as "resolved to something harmless", which is
+ * the permissive direction.
+ *
+ * So there are THREE answers, and they are different questions:
+ *
+ *   RESOLVED   — here is the expression this name stands for.
+ *   UNRESOLVED — it has a binding, and what it holds here cannot be
+ *                trusted: reassigned before the use, unpacked from a
+ *                pattern, declared in a branch that may not have run,
+ *                or defined in terms of itself.
+ *   UNBOUND    — it has no binding in this file at all, so it is a
+ *                GLOBAL. An IMPORT is NOT this state and saying so was
+ *                wrong: the scope analyser binds an import, so it comes
+ *                back UNRESOLVED with no value to follow. What the two
+ *                share is the separate FACT below, not a state.
+ *
+ * UNBOUND is NOT a kind of failure, and separating it out is half the
+ * point: `String.raw` is unbound and perfectly well understood, while a
+ * local whose value cannot be followed is unknown and must be refused.
+ * Collapsing the two made an intrinsic look unreadable (round 36) and,
+ * the other way round, made an unreadable local look intrinsic.
+ *
+ * Alongside the state, the result carries FACTS that hold regardless of
+ * it — whether the value ARRIVES FROM OUTSIDE this file (a plain
+ * parameter or an import), and whether it is KNOWN NOT TO BE TEXT (a
+ * function or class declaration, which has no initialiser to follow yet
+ * is perfectly well understood). A fact is not a state: a caller that
+ * demands a state before reading a fact throws the fact away, which is
+ * how a declared function slipped past the visibility check.
+ *
+ * Callers still decide what each state MEANS for their own question —
+ * an unbound name is text to the needle rule and not-suspect to the
+ * receiver rule — but they now decide it in the open, against a named
+ * state, instead of re-deriving it from a falsy value.
+ */
+const RESOLVED = 'resolved';
+const UNRESOLVED = 'unresolved';
+const UNBOUND = 'unbound';
+
+
+/** The names that denote the global object itself. */
+const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
+
+/**
+ * Resolving keeps its OWN cycle set, and never takes the caller's.
+ *
+ * Round 10. Every rule here carries a `seen` set to stop itself
+ * recursing, and resolving used to borrow it — so two rules that each
+ * resolve the SAME name within one judgement shared the record of
+ * having done so, and the second read the first's entry as a cycle. A
+ * plain parameter came back "defined in terms of itself", which made a
+ * correct region look like a character count.
+ *
+ * Resolving is pure and depends on nothing but the name and the file,
+ * so there is no answer a caller's history could usefully change — only
+ * one it can corrupt. The recursion below carries the private set
+ * instead, which is the only chain a cycle can actually form along.
+ */
+function resolutionOf(src, node, seen = new Set()) {
+  if (!node || typeof node.type !== 'string') return { state: UNRESOLVED, why: 'absent' };
+  if (node.type !== 'Identifier') return { state: RESOLVED, value: node };
+  const key = `res:${node.name}@${node.start}`;
+  if (seen.has(key)) return { state: UNRESOLVED, why: 'defined in terms of itself' };
   seen.add(key);
   const bound = bindingOf(src, node);
-  if (!bound.found || !bound.init) return null;
-  if (writeReaches(src, bound.writes, node.start)) return null;
-  // A DESTRUCTURED name is not an alias for the whole initializer
-  // (round 27): `const { slice: cut } = String.prototype` binds `cut` to
-  // the selected property, while the declarator's init is
-  // `String.prototype`. Following that read `prototype` as a known
-  // non-truncator and DROPPED the call — the permissive answer again.
-  // Unprojected means unresolved, which refuses.
-  if (!simplyBound(src, node)) return null;
-  return resolveAlias(src, bound.init, seen);
+  if (!bound.found) {
+    // Whether this file has REPLACED the global is not asked here — see
+    // the module header's stated assumption. Rounds 9 through 15 each
+    // found another spelling of the replacement this check did not
+    // cover, and the list has no end.
+    return { state: UNBOUND, name: node.name, notText: bound.notText };
+  }
+  if (writeReaches(src, bound.writes, node.start)) {
+    return { state: UNRESOLVED, why: 'written to before the use', notText: bound.notText };
+  }
+  // No initialiser that STANDS at this use. The binding reader already
+  // declines to supply one for a name unpacked from a pattern, or where
+  // a definition that might have run cannot be ruled out — so this one
+  // branch covers what used to be three separate checks.
+  if (bound.projected) {
+    return { state: UNRESOLVED, why: 'unpacked from a pattern', notText: bound.notText };
+  }
+  if (!bound.init) {
+    return {
+      state: UNRESOLVED,
+      why: 'no value that stands',
+      fromCaller: bound.fromCaller,
+      notText: bound.notText,
+    };
+  }
+  const next = resolutionOf(src, bound.init, seen);
+  return next.state === RESOLVED ? { ...next, notText: bound.notText || next.notText } : next;
 }
 
-/** Whether every definition of the name binds it DIRECTLY — `const x =
- *  …` rather than a destructuring pattern, whose initializer belongs to
- *  the pattern and not to this name. */
-function simplyBound(src, node) {
-  const { variableOf } = astOf(src, 'simplyBound');
-  const variable = variableOf.get(node);
-  if (!variable) return false;
-  return variable.defs.every((d) => d.node?.id?.type === 'Identifier');
+/** Follow a STABLE alias to what it holds — one hop or many, refusing
+ *  the moment a write reaches it or the chain cannot be followed.
+ *  The thin form of `resolutionOf` for callers that only want a value. */
+function resolveAlias(src, node) {
+  const r = resolutionOf(src, node);
+  return r.state === RESOLVED ? r.value : null;
 }
 
 /** An optional member is wrapped in a `ChainExpression` (round 26):
@@ -993,13 +1113,70 @@ function memberName(member) {
  *                  it cannot hold source text;
  *   - `writes`   — the write references, for the ordering rule.
  */
+/**
+ * Whether a definition can put a value into the name at all.
+ *
+ * Not the same as carrying an initialiser: `for (var text of values)`
+ * supplies the iteration value with none, and an empty `var text;`
+ * supplies nothing while having the same shape as one that does.
+ */
+function canSupply(src, def) {
+  if (def.type === 'Parameter' || def.type === 'ImportBinding') return true;
+  if (def.node?.init) return true;
+  const { parents } = astOf(src, 'canSupply');
+  for (let c = def.node, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if ((p.type === 'ForOfStatement' || p.type === 'ForInStatement') && p.left === c) return true;
+  }
+  return false;
+}
+
 export function bindingOf(src, node) {
-  const { variableOf } = astOf(src, 'bindingOf');
+  const { variableOf, parents } = astOf(src, 'bindingOf');
   const variable = variableOf.get(node);
-  if (!variable) return { found: false, init: null, notText: false, writes: [] };
+  if (!variable) {
+    return { found: false, init: null, notText: false, writes: [], fromCaller: false };
+  }
   const defs = variable.defs;
-  if (defs.length === 0) return { found: true, init: null, notText: false, writes: [] };
+  if (defs.length === 0) {
+    return { found: true, init: null, notText: false, writes: [], fromCaller: false };
+  }
   const notText = defs.some((d) => NOT_TEXT_DEFS.has(d.type));
+  // A PLAIN parameter — every definition of the name is one, and each is
+  // written directly in the parameter list. This is a FACT about the
+  // binding, not a reason a lookup failed, and it is reported as one:
+  // the two rules that care ask whether the value arrives from the
+  // caller, rather than matching on a string that also covers other
+  // situations. That string-matching was the shape #2175 set out to
+  // remove and briefly recreated (round 1) — a defaulted parameter
+  // manufactures its own value, a rest parameter is an array, and a
+  // definition inside a branch may never have run, and all three shared
+  // one reason with a plain parameter.
+  // Only the definitions that can SUPPLY a value count. `function
+  // region(text) { var text; }` redeclares without assigning anything —
+  // the value still comes entirely from the caller — and requiring
+  // EVERY definition to be a parameter let that empty redeclaration
+  // erase the provenance and refuse a correct region.
+  // …and it must be able to REACH this use. A definition later in the
+  // same function cannot have supplied the value at an earlier line, and
+  // the reaching-write reasoning every other rule here uses answers
+  // that — `definitelyAfter` cannot, because it refuses to order
+  // anything inside a function at all.
+  const supplying = defs.filter((d) => {
+    if (d.type === 'Parameter' || d.type === 'ImportBinding') return true;
+    return canSupply(src, d) && writeReaches(src, [d.name], node.start);
+  });
+  const fromCaller =
+    supplying.length > 0 &&
+    supplying.every(
+      (d) =>
+        // A plain parameter, written directly in the parameter list.
+        (d.type === 'Parameter' && parents.get(d.name) === d.node) ||
+        // …or an IMPORT, which is the same fact by a different route:
+        // the value is another module's and nothing in this file can
+        // read it, while the name itself is perfectly well bound. Round
+        // 16 established that such a name is legitimate source text.
+        d.type === 'ImportBinding',
+    );
   // The LAST definition carrying an initializer is the one that stands:
   // `var end; var end = s.indexOf('e');` declares one binding twice, and
   // taking the first left a real landmark looking unknown (round 15).
@@ -1018,10 +1195,19 @@ export function bindingOf(src, node) {
   // reaching the use proves the second ran, so the first cannot be what
   // `end` holds — and poisoning the binding refused correct work.
   const certain = [...withInit].reverse().find((d) => alwaysRunsBefore(src, d.node, node));
+  // A definition on an arm the use EXCLUDES did not run, so it is not
+  // uncertain — it is absent (round 13). An initializer is not among a
+  // binding's writes at all (the scope analyser marks it `init`), so
+  // `var end = s.indexOf('e'); if (on) { var end = 320; } else {
+  // s.slice(0, end); }` never reached the branch rule in `writeReaches`
+  // and was refused here instead — the same rule answered at one site
+  // and not its sibling, for the fifth time on this PR, which is why it
+  // is a shared function rather than a second copy.
   const uncertain = withInit.some(
     (d) =>
       !alwaysRunsBefore(src, d.node, node) &&
       !definitelyAfter(src, d.node, node) &&
+      !excludedByBranch(src, d.node, node, variable) &&
       !(certain && certain.node.start > d.node.end),
   );
   const initialised = uncertain
@@ -1042,10 +1228,17 @@ export function bindingOf(src, node) {
   // The definition still counts for the uncertainty test above, so a
   // destructured definition that MIGHT have run still poisons the
   // binding (round 12); it simply never supplies a value.
-  const projected = initialised && initialised.node.id?.type !== 'Identifier';
+  const projected = Boolean(initialised && initialised.node.id?.type !== 'Identifier');
   return {
     found: true,
-    init: initialised && !projected ? initialised.node.init : null,
+    init: projected ? null : initialised ? initialised.node.init : null,
+    // Whether the name was UNPACKED from a pattern rather than simply
+    // having no initialiser. Both leave no value to follow, and they are
+    // different facts: a PARAMETER has no initialiser because its value
+    // arrives from the caller, which is the ordinary way a drive is
+    // handed its source; an unpacked name has one this cannot read.
+    projected,
+    fromCaller,
     notText,
     // A declaration's OWN initialiser counts as a write reference, and
     // it is not one for this purpose — `const at = s.indexOf(…)` would
@@ -1272,8 +1465,13 @@ const SKIPPABLE = {
 const DEFERRED = {
   PropertyDefinition: ['value'],
   ForStatement: ['test', 'update', 'body'],
-  ForOfStatement: ['body'],
-  ForInStatement: ['body'],
+  // The LEFT of a for-of/for-in is assigned once PER ITERATION, so it
+  // repeats exactly as the body does and a position cannot order it
+  // (round 12). It was absent here while present in SKIPPABLE, which
+  // let a write in one iteration's left slot look like straight-line
+  // top-level code to the branch-arm exclusion.
+  ForOfStatement: ['left', 'body'],
+  ForInStatement: ['left', 'body'],
   WhileStatement: ['test', 'body'],
   DoWhileStatement: ['test', 'body'],
   FunctionDeclaration: ALL_SLOTS,
@@ -1392,6 +1590,122 @@ export function markedStatement(src, stmt, marker) {
   });
 }
 
+/** The innermost deferred ancestor — the function or loop body a node
+ *  runs inside. Two nodes sharing one are in the SAME invocation, where
+ *  ordinary position order holds again (round 23): deferring a function
+ *  says nothing about the order of statements within a single call of
+ *  it, and treating every use inside one as unordered refused correct
+ *  code outright. */
+function deferredHost(parents, n) {
+  for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (inGuardedSlot(DEFERRED, p, c)) return p;
+  }
+  return null;
+}
+
+/**
+ * Whether `write` sits on an arm of a branch that the use EXCLUDES, so
+ * it cannot have run on the way there.
+ *
+ * Round 13 moved this out of `writeReaches`, where round 10 had put it,
+ * because a second caller needed the same answer and was not getting it:
+ * a declaration INITIALIZER is not among a binding's writes at all (it
+ * is marked `init`), so `var end = s.indexOf('e'); if (on) { var end =
+ * 320; } else { s.slice(0, end); }` reached the uncertainty test in
+ * `bindingOf` instead and refused a bound the branch rule accepts one
+ * line away. One rule answered at one site and not its sibling — the
+ * fifth time on this PR, and the reason it is a shared function now.
+ *
+ * It holds only within ONE EVALUATION, which is the lifetime question
+ * `writeReaches` asks next door: in `let end = at('e'); function
+ * region(on) { if (on) end = 320; else return s.slice(0, end); }
+ * region(true); region(false);` the arms are exclusive within a call and
+ * the FIRST call's write is still there for the second. So it applies
+ * when the binding is fresh for a shared activation, or when both sit in
+ * straight-line top-level code that runs once — and in no other case.
+ */
+function excludedByBranch(src, write, use, variable) {
+  const { parents } = astOf(src, 'excludedByBranch');
+  return mutuallyExclusive(parents, write, use) && oneEvaluation(src, write, use, variable);
+}
+
+/**
+ * Whether `a` and `b` necessarily run within ONE evaluation, so ordinary
+ * position reasoning holds between them.
+ *
+ * Either both sit in straight-line top-level code, which runs once, or
+ * they share a non-loop activation whose own binding this is — a binding
+ * declared OUTSIDE that activation outlives it, so the first call's
+ * write is there for the second.
+ *
+ * ROUND 14 made this decide for itself rather than take the answer as a
+ * parameter, and the parameter was the defect. `bindingOf` did not pass
+ * it, so a `var` local to a function — the mutually exclusive case one
+ * function deep — fell through to the top-level test and was refused.
+ * A fact a caller must remember to supply is a fact half the callers
+ * will not supply, which is the fifth-time-at-a-sibling-site pattern
+ * arriving through the parameter list instead of through a copy.
+ */
+function oneEvaluation(src, a, b, variable) {
+  const { parents } = astOf(src, 'oneEvaluation');
+  const hostA = deferredHost(parents, a);
+  const hostB = deferredHost(parents, b);
+  if (hostA === null && hostB === null) return true;
+  if (hostA !== hostB || hostA === null) return false;
+  // A LOOP repeats, so sharing one gives no order — UNLESS the binding
+  // is recreated on each pass, in which case a write in one iteration
+  // cannot reach another and ordinary position order holds within the
+  // one (round 15). `bindingLivesIn` is not enough on its own here: a
+  // `var` in a loop body is written INSIDE it and is still function
+  // scoped, so freshness is the DECLARATION KIND as well as the place.
+  if (LOOPS.has(hostA.type) && !freshEachIteration(variable, hostA)) return false;
+  return bindingLivesIn(variable, hostA);
+}
+
+/** Whether the binding is created afresh on each pass of `loop` — block
+ *  scoped AND declared inside it. A `var` is neither, however far inside
+ *  the loop it is written, which is the distinction that makes this a
+ *  separate question from `bindingLivesIn`. */
+function freshEachIteration(variable, loop) {
+  if (!variable || variable.defs.length === 0) return false;
+  // Inside the repeated BODY, not merely inside the loop (round 16). A
+  // `let` in a classic `for` HEADER is re-created each pass with the
+  // PREVIOUS pass's value copied in, so `for (let end = at('e');
+  // next(); ) { if (on()) end = 320; else s.slice(0, end); }` carries
+  // the fixed write into the next iteration. Position inside the loop
+  // node was true of that and of a body-local `let` and told them apart
+  // not at all.
+  //
+  // A `for…of` / `for…in` header binding IS fresh in the language — it
+  // is bound to the next element with nothing carried across — and is
+  // still excluded here, deliberately (round 17). Such a binding never
+  // reaches this question: it has no initialiser to read, because its
+  // value comes from iterating, so the resolver has already reported it
+  // as having no value that stands. Measured, not assumed — plain,
+  // `const`, destructured and `for…in` forms are all refused for that
+  // reason on both sides of this change. Admitting the slot here would
+  // be a branch that cannot fire, which is the shape three of this
+  // change's deletions were about.
+  const body = loop.body;
+  if (!body) return false;
+  return variable.defs.every(
+    (d) =>
+      d.type === 'Variable' &&
+      (d.parent?.kind === 'let' || d.parent?.kind === 'const') &&
+      d.name.start >= body.start &&
+      d.name.end <= body.end,
+  );
+}
+
+/** Whether every definition of `variable` sits inside `host`, so the
+ *  binding is created afresh on each activation of it. */
+function bindingLivesIn(variable, host) {
+  if (!variable) return false;
+  return variable.defs.every(
+    (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
+  );
+}
+
 /**
  * Whether a write to `variable` could reach the use at `useAt`.
  *
@@ -1407,7 +1721,7 @@ export function markedStatement(src, stmt, marker) {
  */
 function writeReaches(src, writes, useAt) {
   if (writes.length === 0) return false;
-  const { nodes, parents } = astOf(src, 'writeReaches');
+  const { nodes, parents, variableOf } = astOf(src, 'writeReaches');
   const deferred = (n) => {
     for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
       if (inGuardedSlot(DEFERRED, p, c)) return true;
@@ -1420,12 +1734,7 @@ function writeReaches(src, writes, useAt) {
   // says nothing about the order of statements within a single call of
   // it, and treating every use inside one as unordered refused correct
   // code outright.
-  const host = (n) => {
-    for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
-      if (inGuardedSlot(DEFERRED, p, c)) return p;
-    }
-    return null;
-  };
+  const host = (n) => deferredHost(parents, n);
   let useNode = null;
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
   const useHost = useNode ? host(useNode) : null;
@@ -1443,8 +1752,23 @@ function writeReaches(src, writes, useAt) {
     const shared =
       useHost !== null &&
       writeHost === useHost &&
-      !LOOPS.has(useHost.type) &&
+      (!LOOPS.has(useHost.type) || freshEachIteration(variableOf.get(w), useHost)) &&
       declaredWithin(src, w, useHost);
+    // A write on the OTHER ARM of a branch the use sits in never ran on
+    // the way here (round 10): in `if (on) { var text = standIn; } else
+    // { return text.slice(0, text.indexOf('e')); }` the `else` is
+    // reached only when the `if` was not, so the assignment is not a
+    // possible value of `text` there — and treating it as one erased
+    // the parameter's provenance and refused a correct bound.
+    //
+    // Answered HERE rather than at the one caller that reported it,
+    // because "did this write reach this use" is this function's whole
+    // question and every caller asks it — which is also what the
+    // coverage entry's single-reader claim is for.
+    //
+    // It holds only within ONE EVALUATION — see `excludedByBranch`, which
+    // both callers of this reasoning now share.
+    if (useNode && excludedByBranch(src, w, useNode, variableOf.get(w))) return false;
     // An assignment evaluates its RIGHT side before it writes (round
     // 27): in `end = s.slice(start, end).length` the bound use sits
     // inside the value being computed, so this write cannot have
@@ -1456,14 +1780,48 @@ function writeReaches(src, writes, useAt) {
   });
 }
 
+/**
+ * Slots of one construct that CANNOT BOTH RUN.
+ *
+ * Deliberately only two entries, and the omissions are the point. A
+ * `switch` falls through, so two cases are not exclusive. A `catch`
+ * runs because its `try` block threw PART WAY — statements before the
+ * throw did run, so the block and the handler are not exclusive either.
+ * Reading "these are alternatives" off the grammar would have swept
+ * both in, and both would have been wrong in the direction that
+ * certifies a window nobody can see.
+ */
+const EXCLUSIVE_SLOTS = {
+  IfStatement: ['consequent', 'alternate'],
+  ConditionalExpression: ['consequent', 'alternate'],
+};
+
+/** The exclusive slot `node` occupies in each construct above it. */
+function exclusiveSlots(parents, node) {
+  const out = new Map();
+  for (let c = node, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    const slots = EXCLUSIVE_SLOTS[p.type];
+    if (!slots) continue;
+    const name = slots.find((s) => holds(p[s], c));
+    if (name) out.set(p, name);
+  }
+  return out;
+}
+
+/** Whether two nodes sit on arms of one branch that cannot both run. */
+function mutuallyExclusive(parents, a, b) {
+  const mine = exclusiveSlots(parents, a);
+  for (const [construct, slot] of exclusiveSlots(parents, b)) {
+    const other = mine.get(construct);
+    if (other && other !== slot) return true;
+  }
+  return false;
+}
+
 /** Whether the binding the write targets is DECLARED inside `host`. */
 function declaredWithin(src, write, host) {
   const { variableOf } = astOf(src, 'declaredWithin');
-  const variable = variableOf.get(write);
-  if (!variable) return false;
-  return variable.defs.every(
-    (d) => d.name && d.name.start >= host.start && d.name.end <= host.end,
-  );
+  return bindingLivesIn(variableOf.get(write), host);
 }
 
 /** Whether the use sits inside the VALUE an assignment is computing, so
@@ -1551,12 +1909,20 @@ const CLASS_MEMBERS = new Set(['PropertyDefinition', 'MethodDefinition']);
 
 /** Every identifier a write reaches, through patterns and defaults. */
 function writtenNames(target) {
-  const out = new Set();
+  return new Set(writtenIdentifiers(target).map((id) => id.name));
+}
+
+/** The same walk, returning the identifier NODES. One pattern reader,
+ *  two shapes of answer — a caller that needs positions gets them here
+ *  rather than writing the walk again, which is how this file has ended
+ *  up with two answers to one question more than once. */
+function writtenIdentifiers(target) {
+  const out = [];
   const visit = (n) => {
     if (!n || typeof n.type !== 'string') return;
     switch (n.type) {
       case 'Identifier':
-        out.add(n.name);
+        out.push(n);
         return;
       case 'ArrayPattern':
         n.elements.forEach(visit);
@@ -1639,14 +2005,15 @@ export function kindOf(src, node, seen = new Set()) {
       const key = `${node.name}@${node.start}`;
       if (seen.has(key)) return null;
       seen.add(key);
-      const bound = bindingOf(src, node);
-      if (!bound.found || !bound.init || bound.notText) return null;
-      // A name that is WRITTEN TO after it is declared cannot be trusted
-      // to still hold what it was declared with (round 7):
-      // `let end = s.indexOf('x'); end = start + 320;` had the window
-      // inheriting the declaration's classification.
-      if (writeReaches(src, bound.writes, node.start)) return null;
-      return kindOf(src, bound.init, seen);
+      // A name is a kind only where its value can be followed. UNBOUND
+      // is refused here too — a global's value is not in this file, so
+      // it cannot be classified as a place or a distance — and so is
+      // UNRESOLVED, which covers the round-7 case of a name written to
+      // after it was declared (`let end = s.indexOf('x'); end = start +
+      // 320;` had the window inheriting the declaration's kind).
+      const r = resolutionOf(src, node);
+      if (r.state !== RESOLVED || r.notText) return null;
+      return kindOf(src, r.value, seen);
     }
 
     case 'MemberExpression': {
@@ -1777,13 +2144,11 @@ export function isBoundedRegion(src, node, seen = new Set()) {
     const key = `regionFn:${node.callee.name}@${node.callee.start}`;
     if (seen.has(key)) return false;
     seen.add(key);
-    const fn = bindingOf(src, node.callee);
-    return fn.found &&
-      !writeReaches(src, fn.writes, node.callee.start) &&
-      fn.init &&
-      fn.init.type === 'ArrowFunctionExpression' &&
-      fn.init.body.type !== 'BlockStatement'
-      ? isBoundedRegion(src, fn.init.body, seen)
+    const fn = resolutionOf(src, node.callee);
+    return fn.state === RESOLVED &&
+      fn.value.type === 'ArrowFunctionExpression' &&
+      fn.value.body.type !== 'BlockStatement'
+      ? isBoundedRegion(src, fn.value.body, seen)
       : false;
   }
   // A CHOICE between two bounded regions is bounded (round 19): either
@@ -1814,10 +2179,10 @@ export function isBoundedRegion(src, node, seen = new Set()) {
   const key = `region:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingOf(src, node);
-  return bound.found && !writeReaches(src, bound.writes, node.start) && bound.init
-    ? isBoundedRegion(src, bound.init, seen)
-    : false;
+  // Only a value this can follow is a region. An UNBOUND name is some
+  // other file's, and an UNRESOLVED one may hold the whole source.
+  const r = resolutionOf(src, node);
+  return r.state === RESOLVED ? isBoundedRegion(src, r.value, seen) : false;
 }
 
 const REGION_HELPERS = new Set(['blockFrom', 'between', 'statementFrom', 'callContaining']);
@@ -1882,12 +2247,213 @@ export function isStartOfText(src, node) {
  *  spelling. A binding found in this file is somebody else's. */
 function isIntrinsic(src, node, name) {
   if (node?.type !== 'Identifier' || node.name !== name) return false;
-  return !bindingOf(src, node).found;
+  // UNBOUND *AS ITSELF*. The resolver follows chains, so asking only
+  // for the state answers a different question than the one here:
+  // `const String = External` resolves through to an unbound
+  // `External`, which reported UNBOUND and made a local spelling look
+  // like the built-in. The unbound result carries the name it ended on,
+  // and the intrinsic is the case where that is this name.
+  const r = resolutionOf(src, node);
+  return r.state === UNBOUND && r.name === name;
 }
 
 /** Whether `node` is a bound that may end a source region. */
 export function isAnchored(src, node, seen = new Set()) {
   return kindOf(src, node, seen) === 'position';
+}
+
+/**
+ * Every value an argument can FORWARD, or null when that set cannot be
+ * established.
+ *
+ * This answers one question only — *what does this expression hand
+ * over* — and it is separate on purpose. Rounds 2 through 7 folded it
+ * together with "is that value a stand-in" behind a single boolean, and
+ * the muddle was exactly the one this whole change exists to remove:
+ * two facts behind one name, so no caller could tell a value known not
+ * to be text from a value nobody could read. They are two functions now.
+ *
+ * Every form the grammar offers for passing a value along appears here,
+ * because each is a place the walk can stop one step short of the value
+ * — found five rounds running, one form at a time.
+ */
+function candidateValues(src, node, seen) {
+  if (!node) return null;
+  switch (node.type) {
+    case 'ChainExpression':
+    case 'ParenthesizedExpression':
+    case 'TSAsExpression':
+    case 'TSNonNullExpression':
+      return candidateValues(src, node.expression, seen);
+    case 'AwaitExpression':
+      return candidateValues(src, node.argument, seen);
+    // A sequence evaluates to its LAST expression; the rest are discarded.
+    case 'SequenceExpression':
+      return candidateValues(src, node.expressions.at(-1), seen);
+    // A SPREAD hands over the ELEMENTS of what it spreads, so an array
+    // written out is read through to them — `at(s, ...[1])` passes a
+    // number, not an array. Anything else spread is a value this cannot
+    // establish, and is reported as such rather than guessed at.
+    case 'SpreadElement': {
+      const inner = unwrapChain(node.argument);
+      if (inner?.type !== 'ArrayExpression') return null;
+      const out = [];
+      for (const el of inner.elements) {
+        // A HOLE (`[, 1]`) yields `undefined`, which carries no finder.
+        if (!el) continue;
+        const vals = candidateValues(src, el, seen);
+        if (!vals) return null;
+        out.push(...vals);
+      }
+      return out;
+    }
+    case 'AssignmentExpression': {
+      if (node.operator === '=') return candidateValues(src, node.right, seen);
+      // A LOGICAL assignment may not assign at all, and then evaluates
+      // to the left operand it already held — so both are candidates.
+      // EVERY OTHER compound operator computes, and hands back what it
+      // computed (round 14): `counter.value += 1` is a number however
+      // suspect the property read on its left is, and treating it as a
+      // two-outcome choice refused a valid offset while the identical
+      // `counter.value + 1` was accepted. Same defect class as `+1` one
+      // round earlier, in the neighbouring branch.
+      if (!LOGICAL_ASSIGNMENTS.has(node.operator)) return [node];
+      const right = candidateValues(src, node.right, seen);
+      const left = candidateValues(src, node.left, seen);
+      return right && left ? [...left, ...right] : null;
+    }
+    case 'ConditionalExpression': {
+      const yes = candidateValues(src, node.consequent, seen);
+      const no = candidateValues(src, node.alternate, seen);
+      return yes && no ? [...yes, ...no] : null;
+    }
+    case 'LogicalExpression': {
+      const left = candidateValues(src, node.left, seen);
+      const right = candidateValues(src, node.right, seen);
+      return left && right ? [...left, ...right] : null;
+    }
+    default:
+      return [node];
+  }
+}
+
+/**
+ * Whether a value would be a SUSPECT RECEIVER — a stand-in wearing a
+ * search-shaped property, rather than a piece of source text.
+ *
+ * The other half of the split. For a NAME this is the receiver rule
+ * itself, unchanged and shared; for an expression written out it is a
+ * closed list of what text may look like, with everything else refused
+ * because knowing the expression is not knowing its value.
+ */
+function suspectValue(src, node, seen) {
+  if (!node) return true;
+  // A NAME is judged by the receiver rule AND by what it resolves to,
+  // with the same closed list a written-out value gets. Delegating only
+  // to the receiver rule made `const fake = make(); at(fake)` pass while
+  // the identical `at(make())` was refused — one question answered
+  // differently at two sites, for the fourth time on this PR.
+  //
+  // Note this is the ARGUMENT rule, not the receiver rule: a truncation
+  // whose receiver is a name holding a call's result is still ordinary
+  // (`const src = read(); src.slice(…)`), because there the name carries
+  // the file's convention. Here a visible call is handing a value over,
+  // and nothing about that value has been established.
+  if (node.type === 'Identifier') {
+    if (suspectReceiver(src, node, seen)) return true;
+    const r = resolutionOf(src, node);
+    return r.state === RESOLVED ? suspectValue(src, r.value, seen) : !r.fromCaller;
+  }
+  // A PRIMITIVE cannot carry a finder that lies. A REGULAR EXPRESSION is
+  // refused as an object written out: it carries no `indexOf` either,
+  // but the receiver rule refuses it (#2174) and one value answered two
+  // ways at two sites is the shape this PR exists to remove.
+  //
+  // The case where a primitive DOES carry one — this file having written
+  // a prototype — is not asked here, or anywhere. See the module
+  // header's stated assumption for why that is a decision rather than an
+  // oversight.
+  if (node.type === 'Literal') return node.regex !== undefined;
+  // …and the same value written as an EXPRESSION rather than a literal
+  // (round 13 again). `at(s, +1)` and `at(s, 1)` denote the same number,
+  // and deciding from literal syntax alone answered them differently —
+  // the defect class this whole PR is about, committed inside the rule
+  // that replaced the last one. These forms are necessarily primitive
+  // whatever their operands are: every unary operator here yields a
+  // number, string, boolean or undefined; every binary operator yields a
+  // number, string or boolean; an update yields a number; a template
+  // yields a string. A TAGGED template is absent on purpose — its tag
+  // returns whatever it likes.
+  if (PRIMITIVE_RESULTS.has(node.type)) return false;
+  // An arithmetic compound assignment hands back what it computed, and
+  // every such operator yields a number or a string.
+  if (node.type === 'AssignmentExpression' && !LOGICAL_ASSIGNMENTS.has(node.operator)) {
+    return node.operator === '=';
+  }
+  return true;
+}
+
+/** The assignment operators that may NOT assign, and then evaluate to
+ *  the left operand they already held. Every other compound operator
+ *  computes and hands back a primitive. */
+const LOGICAL_ASSIGNMENTS = new Set(['&&=', '||=', '??=']);
+
+/** Expression forms whose result is a primitive whatever the operands. */
+const PRIMITIVE_RESULTS = new Set([
+  'TemplateLiteral',
+  'UnaryExpression',
+  'BinaryExpression',
+  'UpdateExpression',
+]);
+
+
+/**
+ * Whether every argument at a visible call is INCAPABLE OF LYING to the
+ * helper about where something is.
+ *
+ * ROUND 12, and this REPLACES the per-parameter targeting rather than
+ * fixing it — the #2149 move, taken because the policy names exactly
+ * this situation. That targeting produced a finding in five consecutive
+ * rounds (8, 9, 10, 11, 12), each a different route by which a search
+ * written somewhere in a helper's body did or did not select an
+ * argument: a nested function reusing a parameter's name, a closure the
+ * helper never calls, a search in a discarded conditional test, a search
+ * whose result only feeds another search's needle, and a helper that
+ * forwards its parameter to a second helper. The sixth was going to
+ * exist too. Each fix was correct and none of them ended the sequence,
+ * which is the signal the policy describes.
+ *
+ * The question underneath was never WHICH parameter a search reads. It
+ * is whether an argument could hand the helper a FINDER THAT LIES — a
+ * `.indexOf` that answers with a fixed number instead of a position. So
+ * that is what is asked, of every argument, with no tracing at all.
+ *
+ * Only an object-ish value can carry a method that lies. A STRING can
+ * too, in principle, but its `indexOf` is the real one and it is genuine
+ * text. Every other primitive carries no such method at all, so a helper
+ * handed one either crashes or returns `undefined` — loud, not a
+ * silently fixed window — which is why a numeric search offset is
+ * accepted where five rounds of a widening predicate had refused it.
+ *
+ * What this gives up, stated because it is a real reduction: an argument
+ * that IS a stand-in, passed to a helper whose every possible result is
+ * source-relative anyway, is now refused (round 11's third finding
+ * accepted it). The cost is a refused region on a shape that appears
+ * nowhere in this tree; the gain is that no amount of forwarding can
+ * route a stand-in past this, because nothing is being traced.
+ */
+function helperArgumentsSound(src, args, seen) {
+  // An argument list this cannot READ is not an empty one. The old
+  // targeting never reached that case because it returned early whenever
+  // no parameter was searched; asking of every argument means asking
+  // what the arguments ARE first, and "I could not tell" is refused
+  // rather than treated as nothing to check.
+  if (!Array.isArray(args)) return args == null;
+  for (const a of args) {
+    const values = candidateValues(src, a, seen);
+    if (!values || values.some((v) => suspectValue(src, v, seen))) return false;
+  }
+  return true;
 }
 
 function callKind(src, node, seen) {
@@ -1909,7 +2475,7 @@ function callKind(src, node, seen) {
   ) {
     return 'position';
   }
-  return helperKind(src, callee, seen);
+  return helperKind(src, callee, node.arguments, seen);
 }
 
 /**
@@ -1929,21 +2495,29 @@ function callKind(src, node, seen) {
  * expression or to bound the region with one of the structural helpers —
  * never to mark it.
  */
-function helperKind(src, callee, seen) {
+function helperKind(src, callee, args, seen) {
   if (callee.type !== 'Identifier') return null;
   const key = `fn:${callee.name}@${callee.start}`;
   if (seen.has(key)) return null;
   seen.add(key);
-  const bound = bindingOf(src, callee);
-  if (!bound.found || writeReaches(src, bound.writes, callee.start)) return null;
-  const fn = bound.init;
-  if (!fn || fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
+  const held = resolutionOf(src, callee);
+  if (held.state !== RESOLVED) return null;
+  const fn = held.value;
+  if (fn.type !== 'ArrowFunctionExpression' || fn.body.type === 'BlockStatement') return null;
   // An ASYNC arrow does not return what its body evaluates to — it
   // returns a promise of it. `const at = async (n) => src.indexOf(n)`
   // then makes `src.slice(start, at('end'))` coerce an object to NaN and
   // then to zero, so the region is empty and was being certified as
   // anchored. The body's kind is the promise's kind, not the call's.
   if (fn.async) return null;
+  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2). A
+  // helper's receiver is a parameter and a parameter is exempt from the
+  // stand-in check — sound while the caller is out of sight, and not
+  // when it is in plain view. EVERY argument is asked, since round 12
+  // replaced the five-round attempt to work out which ones a search
+  // reads; see `helperArgumentsSound` for why that was the wrong
+  // question.
+  if (!helperArgumentsSound(src, args, seen)) return null;
   return kindOf(src, fn.body, seen);
 }
 
@@ -1981,11 +2555,48 @@ function suspectReceiver(src, node, seen) {
   const key = `recv:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingOf(src, node);
-  if (!bound.found) return false;
-  if (bound.notText || writeReaches(src, bound.writes, node.start)) return true;
-  if (!bound.init) return false;
-  const t = bound.init.type;
+  // UNBOUND is NOT suspect here, and that is a deliberate asymmetry with
+  // the needle rule below: a receiver whose binding is elsewhere — an
+  // import, a parameter of the enclosing drive — is the ordinary way
+  // these suites pass source text around, and refusing it would refuse
+  // nearly every real region. UNRESOLVED IS suspect: a name written to
+  // before the use may hold anything by the time the search runs.
+  const r = resolutionOf(src, node);
+  if (r.state === UNBOUND) return false;
+  if (r.notText) return true;
+  // ANY unresolved receiver is suspect, not just a reassigned one. A
+  // name whose value cannot be determined here may hold a stand-in with
+  // its own finder, and this rule exists to catch exactly that. The
+  // seven-copy version answered "found, but no value that stands" with
+  // "not suspect" — the permissive direction, invisible while the
+  // states had no names. Making them explicit is what showed it.
+  // A PARAMETER is not suspect — its value arrives from the caller, and
+  // that is how these drives are handed their source. Every other
+  // unresolved state is: a name written to before the use, or unpacked
+  // from a pattern, may hold a stand-in with its own finder, which is
+  // the thing this rule exists to catch. The seven-copy version
+  // answered ALL of them with "not suspect", and that only became
+  // visible once the states had names.
+  // The question is whether the value ARRIVES FROM THE CALLER, asked of
+  // the binding itself — not whether a reason string happens to match.
+  // A defaulted parameter makes its own value, a rest parameter is an
+  // array, and a definition inside a branch may never have run; none of
+  // those arrives from the caller, and all three shared a reason with a
+  // plain parameter until round 1 of #2175 found them.
+  if (r.state === UNRESOLVED) return !r.fromCaller;
+  const t = r.value.type;
+  // A LITERAL is text only when it is a STRING — a regular expression is
+  // an object written out, and a number or boolean is not text either.
+  // This lives HERE, in the receiver rule, rather than in a predicate
+  // beside it: it is the same question about the same thing, and a name
+  // holding a regexp and a regexp written out should not be answered by
+  // two different pieces of code (round 8).
+  if (t === 'Literal') return typeof r.value.value !== 'string';
+  // A PROPERTY READ is not an established value, whether it is written
+  // at the use or reached through a name first. Round 6 closed the
+  // inline form and left the aliased one, which is the same rule in one
+  // place and not the other — the shape this PR exists to stop.
+  if (t === 'MemberExpression') return true;
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
   // read as a search until round 13.
@@ -2076,17 +2687,18 @@ function isTextNeedle(src, node, seen = new Set()) {
   const key = `needle:${node.name}@${node.start}`;
   if (seen.has(key)) return false;
   seen.add(key);
-  const bound = bindingOf(src, node);
-  if (!bound.found) return true;
-  if (bound.notText) return false;
-  // A needle REASSIGNED before the use is not what it was declared as
-  // (round 24) — `let needle = 'x'; needle = 320;` leaves `.length`
-  // undefined and the end coerces to zero. Same rule the bound and the
-  // receiver have followed since round 7; this check simply had not
-  // adopted it.
-  if (writeReaches(src, bound.writes, node.start)) return false;
-  const init = bound.init;
-  if (!init) return true;
+  // UNBOUND is taken as text, which is the opposite of what the region
+  // rule above does with it and is meant: a needle named by an import or
+  // a parameter is how these suites name a landmark, and there is
+  // nothing in this file to read. UNRESOLVED is refused — a needle
+  // reassigned before the use is not what it was declared as (round 24):
+  // `let needle = 'x'; needle = 320;` leaves `.length` undefined and the
+  // end coerces to zero.
+  const r = resolutionOf(src, node);
+  if (r.notText) return false;
+  if (r.state === UNBOUND) return true;
+  if (r.state === UNRESOLVED) return Boolean(r.fromCaller);
+  const init = r.value;
   if (init.type === 'Literal') return typeof init.value === 'string';
   // An ALIAS hides the value one hop further on (round 23):
   // `const raw = 320; const needle = raw;` stopped at the Identifier
@@ -2135,7 +2747,11 @@ function measuredSource(src, node) {
  * and asked for a marker claiming a count that was not happening
  * (round 11). `sliceCallsIn` already read truncator names this way.
  */
-function propertyName(member) {
+// EXPORTED so the suite's assumption check decodes a static member the
+// same way this module does (round 18). It had a narrower copy that
+// missed a no-substitution template key — one question, two answers,
+// which is the shape this whole change is about.
+export function propertyName(member) {
   // `#indexOf` is a PRIVATE method and can never be the built-in string
   // finder (round 28), but its node carries the bare name `indexOf`.
   if (member.property?.type === 'PrivateIdentifier') return null;

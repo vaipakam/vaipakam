@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parse } from 'acorn';
+import { analyze } from 'eslint-scope';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -23,6 +25,7 @@ import {
   markableStatementsOf,
   UNKNOWN_BOUNDS,
   markedStatement,
+  propertyName,
   sliceCallsIn,
   statementFrom,
   stripLineComments,
@@ -361,6 +364,37 @@ describe('statementFrom', () => {
 // array rows — say so at their declaration with a `not-a-source-region`
 // marker naming what they count. Nine such sites became three markers,
 // because saying it once per reason is also how you notice a fourth.
+const countsCharacters = (src, call) => {
+  // Bounds this cannot read are not absent bounds (round 25). Zero
+  // arguments on a bounded receiver is a legitimate slice-to-end;
+  // an unreadable argument list is a window nobody can see.
+  if (call.args === UNKNOWN_BOUNDS) return true;
+  // A MISSING end is not an anchored end (round 7): the region runs to
+  // the end of the text, so a rule over it can be satisfied by matching
+  // anything later. True of `substr` too, whose one-argument form takes
+  // the rest of the string (round 8) — the earlier exemption for it was
+  // about its SECOND argument and had no business covering this.
+  // …unless the receiver is ALREADY a bounded region, in which case the
+  // end is that region's end, bounded by meaning when it was taken.
+  if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
+  return call.args.some((a, i) => {
+    // `substr`'s second argument is a LENGTH by definition, however it
+    // is produced — and a method name this cannot READ may be
+    // `substr` (round 24): `const m = 'substr'; s[m](start, at('end'))`
+    // was recorded as UNREADABLE and then had both arguments accepted
+    // as positions. Unreadable means it might be, which is the same
+    // reason the collector inspects such calls instead of skipping
+    // them.
+    if ((call.method === 'substr' || typeof call.method === 'symbol') && i === 1) return true;
+    // A START may be the literal 0 — the stable beginning of the text,
+    // a position and not a count (round 8). Marking it would claim a
+    // character count that is not happening. Every END, and every other
+    // bound, must be a landmark.
+    if (i === 0 && isStartOfText(src, a)) return false;
+    return !isAnchored(src, a);
+  });
+};
+
 describe('#2144 — no source region is bounded by a character count', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   // RECURSIVELY, because Vitest discovers `e2e/live/**/*.test.mjs`
@@ -373,6 +407,158 @@ describe('#2144 — no source region is bounded by a character count', () => {
     .filter((e) => e.isFile() && e.name.endsWith('.test.mjs'))
     .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
     .sort();
+
+  // EVERY live file, not only the suites: the assumption below is about
+  // the code the guard reads, and it reads drives as well as tests.
+  // Block comments as well as line comments: this module's own header
+  // discusses the very forms below, and a scan that reads prose reports
+  // the documentation as the violation.
+  const stripComments = (text) => stripLineComments(text).replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const allLiveFiles = () =>
+    fs
+      .readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
+      .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
+      .filter((rel) => rel !== 'sourceBlock.test.mjs')
+      .sort();
+
+  // THE ASSUMPTION THE MODULE STATES, ASSERTED OVER THE REAL FILES.
+  //
+  // `sourceBlock.mjs` reads each file's own text to decide what a value
+  // is, which holds only while the language behaves as written. It used
+  // to CHECK that — first for a replaced global, then for a written
+  // prototype — and both checks were deleted at round 15 of #2175,
+  // because "has this file replaced something the language provides" has
+  // no syntactic answer and six review rounds each produced another
+  // spelling of it.
+  //
+  // So it is asserted HERE instead, and the change of place is the whole
+  // point. Best-effort is appropriate in this assertion and was not
+  // appropriate inside the analyser: a form this misses means nobody
+  // noticed something bizarre in our OWN drive files, while a form the
+  // analyser missed meant a region certified as anchored that is not.
+  // These are the forms a person might actually reach for, not a claim
+  // to have enumerated the language.
+  it('no live file rewrites the machinery the guard assumes', () => {
+    // BY PARSING, not by matching text — round 17, and the third time on
+    // this change that a question about bindings was asked of characters
+    // and answered wrongly. The regexes this replaces reported
+    // `function f() { let String; String = x; }` as a replaced intrinsic
+    // (it is a local shadow) and `globalThis['__wsProbe'] = entries` as
+    // one too (it is an ordinary probe write).
+    //
+    // Those are FALSE ALARMS, and they matter more here than misses do.
+    // The argument for moving this check out of the analyser was that a
+    // miss is cheap in the suite — nobody noticed something bizarre in
+    // our own files. A false alarm is not cheap: it fails the suite on
+    // correct work, which is the failure this whole family exists to
+    // avoid. So the asymmetry runs the other way in this assertion than
+    // it does inside the analyser, and it is built accordingly:
+    // everything below is established from the tree, and anything that
+    // cannot be established is passed over rather than reported.
+    //
+    // Scoped to the machinery the guard's REASONING depends on, not to
+    // prototypes in general: `live-position-observe.mjs` legitimately
+    // patches `Element.prototype.scrollIntoView` for the page it drives.
+    const INTRINSICS = new Set([
+      'String', 'Array', 'Object', 'Number', 'Boolean', 'Function',
+      'Symbol', 'Reflect', 'JSON', 'Math',
+    ]);
+    const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
+    // The MODULE's own static-member decoder, not a copy of it — a
+    // narrower copy here missed a no-substitution template key
+    // (`globalThis[`String`]`), which is one question answered two ways
+    // and the shape this whole change is about (round 18).
+    const staticProperty = (m) => {
+      const name = propertyName(m);
+      return typeof name === 'string' ? name : null;
+    };
+
+    const found = [];
+    for (const rel of allLiveFiles()) {
+      const text = fs.readFileSync(path.join(dir, rel), 'utf8');
+      // `ranges` because eslint-scope needs them, the same options the
+      // module itself parses with.
+      const tree = parse(text, { ecmaVersion: 'latest', sourceType: 'module', ranges: true });
+      const scopes = analyze(tree, { ecmaVersion: 2024, sourceType: 'module' });
+      const globals = new Set();
+      for (const ref of scopes.globalScope.through) globals.add(ref.identifier);
+      const report = (why) => {
+        const entry = `${rel} — ${why}`;
+        if (!found.includes(entry)) found.push(entry);
+      };
+      // Write targets, THROUGH DESTRUCTURING: `[String.prototype.indexOf]
+      // = […]` installs the finder exactly as a plain assignment does,
+      // and pushing the outer pattern meant the loop skipped it (round
+      // 18). The analyser had a walk for this; it was deleted with the
+      // rule that used it, and the question outlived the rule.
+      const targets = [];
+      const pushTarget = (t) => {
+        if (!t) return;
+        if (t.type === 'MemberExpression' || t.type === 'Identifier') targets.push(t);
+        else if (t.type === 'ArrayPattern') t.elements.forEach(pushTarget);
+        else if (t.type === 'ObjectPattern') t.properties.forEach((q) => pushTarget(q.value ?? q.argument));
+        else if (t.type === 'AssignmentPattern') pushTarget(t.left);
+        else if (t.type === 'RestElement') pushTarget(t.argument);
+      };
+      const collect = (n) => {
+        if (!n || typeof n.type !== 'string') return;
+        if (n.type === 'AssignmentExpression') pushTarget(n.left);
+        if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') pushTarget(n.left);
+        for (const k of Object.keys(n)) {
+          const v = n[k];
+          if (Array.isArray(v)) v.forEach(collect);
+          else if (v && typeof v.type === 'string') collect(v);
+        }
+      };
+      collect(tree);
+
+      const unshadowedGlobal = (n, names) =>
+        n?.type === 'Identifier' && names.has(n.name) && globals.has(n);
+      // An intrinsic named DIRECTLY, or selected from an unshadowed
+      // global object — `String` and `globalThis.String` are the same
+      // object, and an identifier-only test saw only the first.
+      const intrinsic = (n) => {
+        if (unshadowedGlobal(n, INTRINSICS)) return true;
+        return (
+          n?.type === 'MemberExpression' &&
+          unshadowedGlobal(n.object, GLOBAL_OBJECTS) &&
+          INTRINSICS.has(staticProperty(n))
+        );
+      };
+
+      for (const t of targets) {
+        // Replacing an intrinsic OUTRIGHT. The binding must be global —
+        // a local of the same name replaces nothing.
+        if (t.type === 'Identifier') {
+          if (unshadowedGlobal(t, INTRINSICS)) report('replaces an intrinsic outright');
+          continue;
+        }
+        const prop = staticProperty(t);
+        if (prop === null) continue;
+        const obj = t.object;
+        // …through the global object, by a name nothing here declares.
+        if (unshadowedGlobal(obj, GLOBAL_OBJECTS) && INTRINSICS.has(prop)) {
+          report('replaces an intrinsic through the global object');
+        }
+        // …or writing a built-in PROTOTYPE, however the built-in is named.
+        if (
+          obj?.type === 'MemberExpression' &&
+          staticProperty(obj) === 'prototype' &&
+          intrinsic(obj.object)
+        ) {
+          report('writes a built-in prototype');
+        }
+      }
+    }
+    expect(
+      found,
+      'a live file rewrites the language the source guard assumes is intact; ' +
+        'see the assumption stated in sourceBlock.mjs. Either write it another ' +
+        'way, or the guard cannot reason about that file at all',
+    ).toEqual([]);
+  });
 
   const MARKER = 'not-a-source-region';
 
@@ -387,36 +573,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // produced — `s.substr(start, s.indexOf('end'))` truncates by however
   // many characters that landmark happens to sit at, which is a fixed
   // window wearing an anchor's clothes.
-  const countsCharacters = (src, call) => {
-    // Bounds this cannot read are not absent bounds (round 25). Zero
-    // arguments on a bounded receiver is a legitimate slice-to-end;
-    // an unreadable argument list is a window nobody can see.
-    if (call.args === UNKNOWN_BOUNDS) return true;
-    // A MISSING end is not an anchored end (round 7): the region runs to
-    // the end of the text, so a rule over it can be satisfied by matching
-    // anything later. True of `substr` too, whose one-argument form takes
-    // the rest of the string (round 8) — the earlier exemption for it was
-    // about its SECOND argument and had no business covering this.
-    // …unless the receiver is ALREADY a bounded region, in which case the
-    // end is that region's end, bounded by meaning when it was taken.
-    if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
-    return call.args.some((a, i) => {
-      // `substr`'s second argument is a LENGTH by definition, however it
-      // is produced — and a method name this cannot READ may be
-      // `substr` (round 24): `const m = 'substr'; s[m](start, at('end'))`
-      // was recorded as UNREADABLE and then had both arguments accepted
-      // as positions. Unreadable means it might be, which is the same
-      // reason the collector inspects such calls instead of skipping
-      // them.
-      if ((call.method === 'substr' || typeof call.method === 'symbol') && i === 1) return true;
-      // A START may be the literal 0 — the stable beginning of the text,
-      // a position and not a count (round 8). Marking it would claim a
-      // character count that is not happening. Every END, and every other
-      // bound, must be a landmark.
-      if (i === 0 && isStartOfText(src, a)) return false;
-      return !isAnchored(src, a);
-    });
-  };
 
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
@@ -1979,5 +2135,606 @@ describe('#2144 — no source region is bounded by a character count', () => {
     const src = "const a = b;\nconst b = a;\nconst s = f();\nconst start = s.indexOf('x');\nconst r = s.slice(start, a);";
     const call = sliceCallsIn(src).at(-1);
     expect(countsCharacters(src, call)).toBe(true);
+  });
+});
+
+// #2175 — "what does this name hold, and can I trust it here" is asked
+// ONCE. These pin the contract rather than any one rule: that the three
+// states are distinguished, and that callers are allowed to disagree
+// about what a state MEANS as long as they disagree in the open.
+describe('#2175 — one resolver, three answers', () => {
+  // UNBOUND is not a failure. The two rules below read it in OPPOSITE
+  // directions on purpose, and that is the case that cannot be
+  // expressed at all while "no binding" and "cannot be trusted" share
+  // one falsy answer.
+  it('reads a GLOBAL as text for a needle and as no region for a bound', () => {
+    // A genuinely unbound name — no declaration anywhere in the file.
+    const needle = "const s = f();\nconst r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);";
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(false);
+
+    // The same unboundness in a RECEIVER position is not a bounded
+    // region, so a one-argument slice off it is reported.
+    const region = 'const r = block.slice(40);';
+    expect(countsCharacters(region, sliceCallsIn(region).at(-1))).toBe(true);
+  });
+
+  // An IMPORT is NOT unbound, and an earlier revision of this block said
+  // it was. The scope analyser binds it, so it comes back UNRESOLVED
+  // with no value to follow — what it shares with a plain parameter is
+  // the separate FACT that the value arrives from outside this file, not
+  // a state. The two rules disagree here for that reason, not because
+  // of the state.
+  it('reads an IMPORT through the arrives-from-outside fact, not through a state', () => {
+    const needle =
+      "import { LANDMARK } from './fixture.mjs';\nconst s = f();\n" +
+      'const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);';
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(false);
+
+    const region = "import { block } from './fixture.mjs';\nconst r = block.slice(40);";
+    expect(countsCharacters(region, sliceCallsIn(region).at(-1))).toBe(true);
+  });
+
+  // UNRESOLVED refuses everywhere, because a name that may hold
+  // anything by the time the line runs is not something to reason from.
+  it('refuses a name whose value cannot be trusted at the use', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['reassigned before the use', "let end = s.indexOf('e');\nend = start + 320;\nconst r = s.slice(start, end);"],
+      ['unpacked from a pattern', "const { end } = s.indexOf('e');\nconst r = s.slice(start, end);"],
+      ['defined in terms of itself', 'const a = b;\nconst b = a;\nconst r = s.slice(start, a);'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // The rule that used to live in ONE of seven copies. A name unpacked
+  // from a pattern is not an alias for the whole initialiser, and every
+  // reader inherits that now rather than the one that was taught it.
+  it('applies the unpacking rule to every reader, not just the alias one', () => {
+    // The borrowing reader — the copy that always had the rule.
+    const borrowed =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const { slice: cut } = String.prototype;\n' +
+      'const r = cut.call(s, start, start + 320);';
+    expect(countsCharacters(borrowed, sliceCallsIn(borrowed).at(-1))).toBe(true);
+
+    // The receiver reader — a copy that did not, until the binding
+    // reader itself stopped handing back a pattern's initialiser.
+    const receiver =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const { thing: fake } = { thing: { indexOf: () => start + 320 } };\n' +
+      "const r = s.slice(start, fake.indexOf('end'));";
+    expect(countsCharacters(receiver, sliceCallsIn(receiver).at(-1))).toBe(true);
+  });
+
+  // Round 1 of this PR found the hazard I had flagged in the trigger:
+  // the resolver reported WHY a lookup failed, and two callers matched
+  // on that string — so every situation sharing a reason with a plain
+  // parameter inherited the parameter's exemption. The answer is to
+  // report the FACT ("the value arrives from outside this file") rather
+  // than the reason, asked of the binding.
+  it('exempts only a name whose value really does arrive from outside', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a DEFAULTED parameter, which manufactures its own value',
+        "const at = (recv = { indexOf: () => start + 320 }) => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at());',
+      ],
+      [
+        'a REST parameter, which is an array and not source text',
+        "const at = (...xs) => xs.indexOf('end');\nconst r = s.slice(start, at());",
+      ],
+      [
+        'a DESTRUCTURED parameter, whose value is a projection',
+        "const at = ({ recv }) => recv.indexOf('end');\nconst r = s.slice(start, at());",
+      ],
+      [
+        'a definition inside a branch that may never have run',
+        'if (on) { var recv = { indexOf: () => start + 320 }; }\n' +
+          "const r = s.slice(start, recv.indexOf('end'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 2. The parameter exemption is sound only while the caller is
+  // OUT OF SIGHT. At a visible call it is not, and handing the helper a
+  // stand-in in plain view was vouched for by the very exemption meant
+  // to describe values this cannot see.
+  it('refuses a helper handed a stand-in at a visible call', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'the stand-in written out at the call',
+        "const at = recv => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at({ indexOf: () => start + 320 }));',
+      ],
+      [
+        'the helper reached through an alias',
+        "const at = recv => recv.indexOf('end');\nconst alias = at;\n" +
+          'const r = s.slice(start, alias({ indexOf: () => start + 320 }));',
+      ],
+      [
+        'the stand-in behind a name',
+        'const fake = { indexOf: () => start + 320 };\n' +
+          "const at = recv => recv.indexOf('end');\nconst r = s.slice(start, at(fake));",
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 3. Three ways the visibility rule and the intrinsic rule were
+  // asking slightly the wrong question.
+  it('sees a stand-in through a declaration and through a spread', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a DECLARED function, which is known not to be text without being resolved',
+        'function fake() {}\nfake.indexOf = () => start + 320;\n' +
+          "const at = recv => recv.indexOf('end');\nconst r = s.slice(start, at(fake));",
+      ],
+      [
+        'a stand-in handed through a SPREAD, which is a wrapper and not a value',
+        "const at = recv => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at(...[{ indexOf: () => start + 320 }]));',
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 4. A CHOICE is not a value: any branch that is visibly not
+  // text condemns the call, because any branch may be the one that runs.
+  it('sees a stand-in through a choice of values', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      ['a conditional', 'const r = s.slice(start, at(flag ? { indexOf: () => start + 320 } : { indexOf: () => 1 }));'],
+      ['a logical choice', 'const r = s.slice(start, at(x || { indexOf: () => start + 320 }));'],
+      ['a sequence, whose LAST expression is the value', 'const r = s.slice(start, at((0, { indexOf: () => start + 320 })));'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 5. Every form the grammar offers for passing a value along is
+  // somewhere this inspection can stop one step short — found three
+  // rounds running, one form at a time, so they are pinned together.
+  it('sees a stand-in through every value-forwarding form', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      ['an await', 'const r = s.slice(start, at(await { indexOf: () => start + 320 }));'],
+      ['an assignment', 'let f2;\nconst r = s.slice(start, at((f2 = { indexOf: () => start + 320 })));'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // Round 6. A property read is not an established value, and unwrapping
+  // an optional chain is not enough on its own — both forms leave a
+  // member expression, and what a property holds when a line runs is
+  // not a question this answers (settled at #2170 round 37).
+  it('refuses a stand-in reached through a property', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const holder = { fake: { indexOf: () => start + 320 } };\n';
+    for (const [why, tail] of [
+      ['through an optional chain', 'const r = s.slice(start, at(holder?.fake));'],
+      ['through a plain property read', 'const r = s.slice(start, at(holder.fake));'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+
+  // Round 7. Two of these reverse tightenings this PR itself introduced
+  // one and two rounds earlier — both were rules reaching one step past
+  // their own question, which is the pattern this review keeps finding.
+  it('does not let its own tightenings refuse correct work', () => {
+    // A nested local sharing a built-in's spelling cannot touch the
+    // built-in, and matching on the NAME alone said it had.
+    const shadowed = 'function f() { let String; String = {}; }\nconst t = String.raw`x`;';
+    expect(sliceCallsIn(shadowed)).toEqual([]);
+
+    // An empty `var` redeclaration of a parameter supplies no value, so
+    // the value still comes entirely from the caller.
+    const redeclared =
+      "const s = f();\nfunction region(text) { var text; return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(redeclared, sliceCallsIn(redeclared).at(-1))).toBe(false);
+  });
+
+  // A LOGICAL assignment may not assign at all, and then evaluates to
+  // the left operand it already held; a CALL WRITTEN AT THE ARGUMENT is
+  // not established by knowing the call.
+  it('sees a stand-in through a logical assignment and an inline call', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      [
+        'a logical assignment that may keep its left operand',
+        "let fake = { indexOf: () => start + 320 };\nconst r = s.slice(start, at(fake ||= 'text'));",
+      ],
+      [
+        'a call written at the argument',
+        'const make = () => ({ indexOf: () => start + 320 });\nconst r = s.slice(start, at(make()));',
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+
+  it('asks which definitions can supply the value AT the use', () => {
+    // A loop target supplies without an initialiser, so the value no
+    // longer comes only from the caller.
+    const loop =
+      'const s = f();\nfunction region(text, values) { for (var text of values) {} ' +
+      "return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(loop, sliceCallsIn(loop).at(-1))).toBe(true);
+
+    // A redeclaration AFTER the use cannot have supplied it.
+    const later =
+      'const s = f();\nfunction region(text) { ' +
+      "const r = text.slice(0, text.indexOf('e')); var text = { indexOf: () => 320 }; return r; }";
+    expect(countsCharacters(later, sliceCallsIn(later).at(-1))).toBe(false);
+  });
+
+  // A NUMBER cannot carry a finder that lies, so an ordinary search
+  // offset passed alongside the text is accepted. Rounds 8 to 11 reached
+  // this same answer by working out which parameter the helper searched
+  // through; round 12 reaches it by asking what the argument could DO.
+  // The source text arrives from the CALLER, which is how a drive is
+  // actually handed it.
+  it('accepts a numeric search offset passed alongside the text', () => {
+    const code =
+      "const at = (text, from) => text.indexOf('e', from);\n" +
+      'export function region(s) { return s.slice(0, at(s, 1)); }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  // Round 9's case, kept because the ANSWER is still load-bearing even
+  // though the reason changed: a numeric argument cannot hand a helper a
+  // finder, whatever the body does with its parameters. It used to pass
+  // because the walk identified searched parameters by binding rather
+  // than by spelling; there is no such walk now.
+  it('accepts a numeric argument whatever the body does with it', () => {
+    const shadowed =
+      "const s = f();\nconst at = needle => s.indexOf((needle => needle.indexOf('x'))(s));\n" +
+      'const r = s.slice(0, at(1));';
+    expect(countsCharacters(shadowed, sliceCallsIn(shadowed).at(-1))).toBe(false);
+  });
+
+  // A SPREAD of an array written out hands over its ELEMENTS, so each is
+  // judged on its own. There is no positional mapping left to destroy —
+  // round 12 deleted the targeting this used to guard, and a spread is
+  // now just another way of writing the arguments.
+  it('reads a spread through to the elements it hands over', () => {
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
+    const after = lead + 'export function region(s) { return s.slice(0, at(s, ...[1])); }';
+    expect(countsCharacters(after, sliceCallsIn(after).at(-1))).toBe(false);
+    const before = lead + 'export function region(s) { return s.slice(0, at(...[s], 1)); }';
+    expect(countsCharacters(before, sliceCallsIn(before).at(-1))).toBe(false);
+    // A spread of something this cannot establish stays refused.
+    const opaque = lead + 'export function region(s) { return s.slice(0, at(...rest())); }';
+    expect(countsCharacters(opaque, sliceCallsIn(opaque).at(-1))).toBe(true);
+  });
+
+  it('refuses a property read reached through a name, as well as inline', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const holder = { fake: { indexOf: () => start + 320 } };\n' +
+      'const fake = holder.fake;\nconst r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+
+  // Round 10. Four more findings, and three of them are the SAME two
+  // mistakes this PR has now been shown four times each: a rule applied
+  // at one site and not its sibling, and a question answered about the
+  // wrong unit.
+  it('judges a name holding a call the way it judges the call', () => {
+    // `at(make())` was refused and `const fake = make(); at(fake)` was
+    // not — one question, two answers, which is the shape #2175 exists
+    // to remove.
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const fake = make();\nconst r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+
+  it('ignores a finder inside a closure the helper only creates', () => {
+    // The nested arrow is never called, so it selects no argument for
+    // inspection and both result arms are source-relative.
+    const code =
+      'const s = f();\n' +
+      "const at = text => (() => text.indexOf('x')) ? s.indexOf('a') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(1));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  it('does not let the other arm of a branch erase caller provenance', () => {
+    // The `else` runs only when the `if` did not, so the assignment in
+    // it never happened here and `text` is still the caller's.
+    const kept =
+      'function region(text, on) { if (on) { var text = standIn; }' +
+      " else { return text.slice(0, text.indexOf('e')); } }";
+    expect(countsCharacters(kept, sliceCallsIn(kept).at(-1))).toBe(false);
+    // …and the write still counts when the use is not on the other arm.
+    const reached =
+      'function region(text, on) { if (on) { var text = standIn; }' +
+      " return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(reached, sliceCallsIn(reached).at(-1))).toBe(true);
+  });
+
+  it('resolves a name once per question, not once per file', () => {
+    // Two rules each resolve the argument, and they used to share the
+    // record of having done so — so the second read the first's entry
+    // as a cycle and reported a plain parameter as defined in terms of
+    // itself.
+    const code =
+      "const at = (text, from) => text.indexOf('e', from);\n" +
+      'export function region(s) { return s.slice(0, at(s, 1)); }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  // Round 11. Each of the three is the previous round's fix reaching
+  // past its own question — which is the shape, not a coincidence.
+  it('keeps a write that survives the branch it was made in', () => {
+    // The arms are exclusive within ONE call, and the first call's
+    // write is still there for the second.
+    const code =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'function region(on) { if (on) end = 320; else return s.slice(0, end); }\n' +
+      'region(true); region(false);';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+    // Straight-line top-level code runs once, so exclusivity holds there.
+    const once =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'if (on) { end = 320; } else { var r = s.slice(0, end); }';
+    expect(countsCharacters(once, sliceCallsIn(once).at(-1))).toBe(false);
+  });
+
+
+  // ROUND 12 REVERSES THIS, and it is pinned in its new direction rather
+  // than deleted so the reversal is visible. Round 11 established that a
+  // stand-in handed to a helper whose every possible result is
+  // source-relative cannot change the bound, and made that case pass.
+  // Round 12 removed the machinery that could tell — five rounds of
+  // findings on it, each a different route through a helper body — and
+  // asks instead whether an argument could hand over a finder that lies.
+  // A stand-in could, wherever it lands, so both shapes are now refused.
+  //
+  // This is a REDUCTION and is recorded as one: a correct region of this
+  // shape is now refused. It appears nowhere in this tree, and the
+  // direction is the safe one — a refused region, never a certified
+  // window.
+  it('refuses a stand-in argument wherever the helper would use it', () => {
+    const test =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => text.indexOf('x') ? s.indexOf('a') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(test, sliceCallsIn(test).at(-1))).toBe(true);
+    const arm =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => on ? text.indexOf('x') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(arm, sliceCallsIn(arm).at(-1))).toBe(true);
+    // Round 12 named a second shape with the same answer: the stand-in's
+    // search supplies only the NEEDLE of an outer source-relative search,
+    // so the bound really is a position. Refused for the same reason —
+    // establishing that would need the tracing this round removed.
+    const needle =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => s.indexOf(text.indexOf('x'));\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(true);
+  });
+
+  // Round 12. Four findings, TWO OF WHICH DISSOLVED rather than being
+  // fixed: the seam they were edges of is gone. See the release note.
+  it('refuses a stand-in forwarded through any number of helpers', () => {
+    const one =
+      "const s = f();\nconst inner = recv => recv.indexOf('end');\n" +
+      'const at = text => inner(text);\n' +
+      'const r = s.slice(0, at({ indexOf: () => 320 }));';
+    expect(countsCharacters(one, sliceCallsIn(one).at(-1))).toBe(true);
+    // Nothing is traced, so a second hop changes nothing.
+    const two =
+      "const s = f();\nconst inner = recv => recv.indexOf('end');\n" +
+      'const mid = t => inner(t);\nconst at = text => mid(text);\n' +
+      'const r = s.slice(0, at({ indexOf: () => 320 }));';
+    expect(countsCharacters(two, sliceCallsIn(two).at(-1))).toBe(true);
+  });
+
+  it('counts a write in a for-of assignment slot as repeating', () => {
+    // The left slot is assigned once per ITERATION, so one iteration's
+    // write is there for the next and the arms are not exclusive across
+    // them. It was absent from the repeated-evaluation table while
+    // present in the may-not-run one.
+    const code =
+      "const s = f();\nlet end = s.indexOf('e'), on = true;\n" +
+      'for ([x = on ? ((on = false), end = 320) : s.slice(0, end)] of [[], []]) {}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+
+
+  it('judges a primitive by its result, not by its syntax', () => {
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
+    // `+1` and `1` denote the same number; deciding from literal syntax
+    // alone answered them differently.
+    for (const expr of ['+1', 'void 0', '!flag', 'typeof flag', '2 - 1']) {
+      const code = lead + `export function region(s) { return s.slice(0, at(s, ${expr})); }`;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(false);
+    }
+    // A TAGGED template is not necessarily primitive — the tag decides.
+    const tagged = lead + 'export function region(s) { return s.slice(0, at(s, tag`x`)); }';
+    expect(countsCharacters(tagged, sliceCallsIn(tagged).at(-1))).toBe(true);
+  });
+
+  it('applies the branch rule to a declaration initializer too', () => {
+    // An initializer is not among a binding's writes, so this never
+    // reached the branch rule and was refused by the uncertainty test
+    // instead — one rule, two sites, one answer.
+    const excluded =
+      "const s = f();\nvar end = s.indexOf('e');\n" +
+      'if (on) { var end = 320; } else { var r = s.slice(0, end); }';
+    expect(countsCharacters(excluded, sliceCallsIn(excluded).at(-1))).toBe(false);
+    // Outside the branch, the redeclaration still counts.
+    const reached =
+      "const s = f();\nvar end = s.indexOf('e');\n" +
+      'if (on) { var end = 320; }\nvar r = s.slice(0, end);';
+    expect(countsCharacters(reached, sliceCallsIn(reached).at(-1))).toBe(true);
+  });
+
+  // Round 14. Three findings were escapes from the round-13 prototype
+  // veto, and they are answered by replacing it rather than extending it.
+  it('applies the branch rule to a var local to a function', () => {
+    // The definition and the use share one fresh activation, so the arms
+    // really are exclusive. `excludedByBranch` now determines that for
+    // itself — it used to take the fact as a parameter, and the caller
+    // that needed it most did not pass one.
+    const code =
+      "function region(text, on) { var end = text.indexOf('e');" +
+      ' if (on) { var end = 320; } else { return text.slice(0, end); } }';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+
+  it('reads an arithmetic compound assignment as the value it computes', () => {
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
+    const region = (expr) =>
+      lead + `export function region(s) { return s.slice(0, at(s, ${expr})); }`;
+    // `+=` computes and hands back a number, however suspect its left
+    // operand is — the same value `counter.value + 1` denotes.
+    for (const expr of ['counter.value += 1', 'counter.value + 1']) {
+      const code = region(expr);
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(false);
+    }
+    // A LOGICAL assignment may not assign at all, so both operands are
+    // still candidates and a suspect one still refuses.
+    for (const expr of ['counter.value ||= fake', 'counter.value = fake']) {
+      const code = region(expr);
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(true);
+    }
+  });
+
+  // Round 15. A loop-local binding is fresh on every pass, so a write in
+  // one iteration reaches neither the same iteration's earlier use nor
+  // the next iteration's new binding.
+  it('keeps ordering for a binding recreated each iteration', () => {
+    const exclusiveArms =
+      "const s = f();\nwhile (next()) { let end = s.indexOf('e');" +
+      ' if (on) { end = 320; } else { var r = s.slice(0, end); } }';
+    expect(countsCharacters(exclusiveArms, sliceCallsIn(exclusiveArms).at(-1))).toBe(false);
+    const writeAfterUse =
+      "const s = f();\nfor (const x of xs) { let end = s.indexOf('e');" +
+      ' const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(writeAfterUse, sliceCallsIn(writeAfterUse).at(-1))).toBe(false);
+    // A `var` is written INSIDE the loop and is still function scoped,
+    // so it is not fresh and the write still reaches.
+    const hoisted =
+      "const s = f();\nfor (const x of xs) { var end = s.indexOf('e');" +
+      ' const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(hoisted, sliceCallsIn(hoisted).at(-1))).toBe(true);
+    // A `let` in a for HEADER is carried forward from the previous pass
+    // rather than re-initialised, so it is not fresh either — position
+    // inside the loop node was true of it and of a body-local `let`, and
+    // told them apart not at all.
+    const header =
+      "const s = f();\nfor (let end = s.indexOf('e'); next(); )" +
+      ' { if (on()) end = 320; else { var q = s.slice(0, end); } }';
+    expect(countsCharacters(header, sliceCallsIn(header).at(-1))).toBe(true);
+    // An OUTER binding written in the loop outlives every iteration.
+    const outer =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'for (const x of xs) { const r = s.slice(0, end); end = 320; }';
+    expect(countsCharacters(outer, sliceCallsIn(outer).at(-1))).toBe(true);
+  });
+
+  // A LITERAL is text only when it is a STRING. A regular expression is
+  // an object written out, and reading the node type alone called every
+  // literal unknown — the `/x/` stand-in this guard has had an open
+  // case about since #2174.
+  it('refuses a regular expression written out as a stand-in', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n" +
+      'const fake = /x/;\nfake.indexOf = () => start + 320;\n' +
+      'const r = s.slice(start, at(fake));';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // The exemption describes a value that CANNOT BE SEEN. A name whose
+  // value could not be worked out and which does not come from outside
+  // the file satisfies neither half — and forwarding one through a
+  // second helper had reopened the defaulted-parameter case.
+  it('refuses an unestablished local forwarded through a helper', () => {
+    const code =
+      'const s = f();\n' +
+      'function outer(fake = { indexOf: () => 320 }) {\n' +
+      "  const at = recv => recv.indexOf('end');\n" +
+      '  return s.slice(0, at(fake));\n' +
+      '}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // The resolver FOLLOWS CHAINS, so asking it only for a state answers a
+  // different question than "is this name the built-in". A local that
+  // aliases something unbound resolved through to an unbound name and
+  // wore the built-in's exemption.
+  it('recognises the built-in only where the name itself is unbound', () => {
+    const aliased =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const String = External;\nconst r = String.raw.call(s, start, start + 320);';
+    expect(sliceCallsIn(aliased).length).toBeGreaterThan(0);
+    // …and the genuine one is still not a narrowing.
+    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
+  });
+
+  // …and the two that genuinely do arrive from outside still work, or
+  // the rule above would be satisfied by refusing everything.
+  it('still accepts a plain parameter and an import', () => {
+    // The receiver is the parameter — which is what the fact governs.
+    // (A parameter used as a BOUND has never been a position: nothing
+    // in the file says where it points. That is unchanged here.)
+    const param = "function region(text) { return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(param, sliceCallsIn(param).at(-1))).toBe(false);
+
+    const imported =
+      "import { LANDMARK } from './fixture.mjs';\nconst s = f();\n" +
+      'const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);';
+    expect(countsCharacters(imported, sliceCallsIn(imported).at(-1))).toBe(false);
+  });
+
+  // An intrinsic is recognised BECAUSE it is unbound, not in spite of
+  // it — the distinction round 36 reached with a fallback and this
+  // states directly.
+  it('recognises an intrinsic global and refuses a local of the same name', () => {
+    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
+    const shadowed =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const String = { raw: s.slice };\n' +
+      'const r = String.raw`320`;';
+    expect(sliceCallsIn(shadowed).length).toBeGreaterThan(0);
   });
 });
