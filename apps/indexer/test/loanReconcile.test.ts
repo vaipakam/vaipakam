@@ -32,12 +32,17 @@ const LIVE = new Set(['active', 'fallback_pending']);
 
 /** What the chain says about one loan. A bare number is shorthand for
  *  "this status, and amounts nobody in the case cares about". */
-type ChainStub = number | Error | { status: number; principal: string; collateralAmount: string };
+type ChainStub =
+  | number
+  | Error
+  | { status: number; principal: string; collateralAmount: string };
+
+const TOKENS = { lenderTokenId: '1', borrowerTokenId: '2' };
 
 function asRead(v: Exclude<ChainStub, Error>) {
   return typeof v === 'number'
-    ? { status: v, principal: '0', collateralAmount: '0' }
-    : v;
+    ? { status: v, principal: '0', collateralAmount: '0', ...TOKENS }
+    : { ...v, ...TOKENS };
 }
 
 /** The selector reads only `loan_id` and `status` — the two extra columns
@@ -112,6 +117,9 @@ function fakeDeps(
       row.principal = repair.principal;
       row.collateral_amount = repair.collateralAmount;
       return true;
+    },
+    async terminalHolderStatements() {
+      return [];
     },
     async readPointer() {
       return pointer;

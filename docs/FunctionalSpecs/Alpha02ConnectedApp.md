@@ -275,6 +275,13 @@ The app uses chain reads and indexed reads for different jobs.
   loan ended — the check cannot determine that — and is marked as derived
   from a correction rather than attributed to an announcement nobody saw. A
   bookkeeping position that no person holds produces no message.
+- The recipients of such a message are established from the chain, never
+  from the platform's own record of who holds the position. The gap that
+  lost the ending could equally have lost a transfer of the position, so
+  that record is stale for the same reason. Where a holder cannot be
+  established, that side receives no message rather than one addressed to a
+  guess — and the holder the platform does establish is recorded, so other
+  surfaces stop naming the wrong one.
 - How fast the correction works through the records depends on the
   deployment's ingest configuration, and the platform states this rather
   than implying a single pace. Where the chain reading has its own capacity

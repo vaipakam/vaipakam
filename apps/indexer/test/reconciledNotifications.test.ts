@@ -56,9 +56,10 @@ async function planAndWrite(
   repaired: Array<{ loanId: number; to: string }>,
   observedBlock: number,
   nowSec: number,
+  verifiedHolders?: { lender: string | null; borrower: string | null },
 ): Promise<number> {
   const rows = await planReconciledNotifications(
-    h.d1 as never, CHAIN, repaired, observedBlock, nowSec,
+    h.d1 as never, CHAIN, repaired, observedBlock, nowSec, verifiedHolders,
   );
   if (rows.length === 0) return 0;
   const results = await (h.d1 as { batch(s: unknown[]): Promise<Array<{ meta?: { changes?: number } }>> })
@@ -154,5 +155,49 @@ describe('planReconciledNotifications', () => {
     seedLoan(h, 12, 'repaid');
     const n = await planAndWrite(h, [{ loanId: 12, to: 'something_new' }], 500, 1_700_000_000);
     expect(n).toBe(0);
+  });
+});
+
+describe('who the notice actually goes to', () => {
+  const NEW_HOLDER = '0x00000000000000000000000000000000000000cc';
+
+  it('prefers the chain-verified holder over the stored column', async () => {
+    // The window that lost the terminal could equally have contained the
+    // position transfer, so `*_current_owner` is stale for the same reason
+    // the status was (#2190 r5). Sending the one notice a holder gets to
+    // somebody who exited — while the real holder hears nothing — is worse
+    // than the silence this notice exists to end.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 30, 'defaulted');
+    await planAndWrite(h, [{ loanId: 30, to: 'defaulted' }], 500, 1_700_000_000, {
+      lender: NEW_HOLDER,
+      borrower: BORROWER,
+    });
+    const recipients = rowsFor(h, 30).map((r) => r.recipient);
+    expect(recipients).toContain(NEW_HOLDER);
+    expect(recipients).not.toContain(LENDER);
+  });
+
+  it('WITHHOLDS a side it could not substantiate, rather than guessing', async () => {
+    // A burned token reverts, and so does any other read failure. Falling
+    // back to the stored column there would use exactly the value the
+    // verification exists to distrust.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 31, 'defaulted');
+    const n = await planAndWrite(
+      h, [{ loanId: 31, to: 'defaulted' }], 500, 1_700_000_000,
+      { lender: null, borrower: BORROWER },
+    );
+    expect(n).toBe(1);
+    expect(rowsFor(h, 31).map((r) => r.recipient)).toEqual([BORROWER]);
+  });
+
+  it('falls back to the stored columns when no verification was done', async () => {
+    // A caller with no reason to distrust the columns passes nothing, and
+    // the existing behaviour is unchanged.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 32, 'defaulted');
+    const n = await planAndWrite(h, [{ loanId: 32, to: 'defaulted' }], 500, 1_700_000_000);
+    expect(n).toBe(2);
   });
 });

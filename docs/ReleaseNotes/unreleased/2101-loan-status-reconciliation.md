@@ -72,8 +72,10 @@ record it examines anyway.
 How many it may spend when the totals DO disagree depends on how the
 deployment ingests, and that is worth stating rather than leaving to be
 inferred. Where the reading of the chain runs in its own slot — which is how
-the service is currently configured — the correction may examine up to five
-records per turn. Where it shares a slot with the other scheduled work, it
+the service is currently configured — the correction may examine up to three
+records per turn. That figure came down from five when establishing the real
+holder of a corrected position was added: fewer records per turn, and the
+message reaching the right person, is the better of the two. Where it shares a slot with the other scheduled work, it
 examines one.
 
 That second case — the shared slot — deserves a plain statement rather than
@@ -116,6 +118,15 @@ say the platform found this out now, which is true; they do not carry a date
 for the ending, because the check genuinely cannot work out when it happened;
 and they are marked as coming from a correction rather than from an
 announcement nobody saw.
+
+Who receives them is asked of the chain, not of the platform's own record of
+who holds what. The same gap that swallowed the ending could equally have
+swallowed a transfer of the position, so that record is untrustworthy for
+exactly the same reason — and the one message a holder gets about their loan
+ending is the worst possible one to send to somebody who has already sold
+out of it. Where a holder cannot be established at all, no message is sent
+for that side rather than one sent to a guess, and the refreshed holder is
+written back so every other screen stops showing the wrong name too.
 
 They also arrive as NEW rather than as something already read. The inbox
 decides what is unread by position in the chain's order, and a message

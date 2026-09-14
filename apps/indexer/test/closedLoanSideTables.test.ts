@@ -225,15 +225,18 @@ describe('reconcile budget', () => {
     // Deliberately NOT phrased as "fits" — see the header: that invocation
     // is already over the cap without this pass. What is asserted is that
     // the pass takes the least it can while still doing anything.
-    const worst = 1 + (RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0);
-    expect(worst).toBeLessThanOrEqual(2);
+    const worst = 1 + (RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0) * 3;
+    expect(worst).toBeLessThanOrEqual(4);
     // And it still turns: a budget of zero rows would make the rotation a
     // no-op that only ever asks the chain for a total.
     expect(RECONCILE_BUDGET_SHARED_TICK.minRows).toBeGreaterThanOrEqual(1);
   });
 
-  it('fits the DO invocation, which the other passes do not share', () => {
-    const worst = 1 + (RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0);
+  it('fits the DO invocation, holder verification included', () => {
+    // Three subrequests per row in the worst case, not one: the chain read
+    // that decides the repair, plus the two `ownerOf` reads that decide who
+    // the notice goes to. The 5→3 trim exists for this sum (#2190 r5).
+    const worst = 1 + (RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0) * 3;
     expect(worst).toBeLessThanOrEqual(12);
   });
 
@@ -258,7 +261,13 @@ describe('reconcile budget', () => {
 describe('reconcileAfterScan against a real database', () => {
   const readTerminal = async (args: Record<string, unknown>) => {
     if (args.functionName === 'getActiveLoansCount') return 0n;
-    return { status: 1, principal: 0n, collateralAmount: 250n };
+    return {
+      status: 1,
+      principal: 0n,
+      collateralAmount: 250n,
+      lenderTokenId: 1n,
+      borrowerTokenId: 2n,
+    };
   };
 
   const runRepair = (h: SqliteD1) =>
@@ -273,7 +282,7 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
-        terminalNotificationStatements: async (loanId, to) => {
+        terminalHolderStatements: async (loanId, to) => {
           const rows = await planReconciledNotifications(
             h.d1 as never, CHAIN, [{ loanId, to }], 100, 1_700_000_000,
           );
@@ -322,12 +331,18 @@ describe('reconcileAfterScan against a real database', () => {
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
             ? 1n
-            : { status: 0, principal: 100n, collateralAmount: 200n }) as never,
+            : {
+                status: 0,
+                principal: 100n,
+                collateralAmount: 200n,
+                lenderTokenId: 1n,
+                borrowerTokenId: 2n,
+              }) as never,
         metricsAbi: [],
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
-        terminalNotificationStatements: async () => [],
+        terminalHolderStatements: async () => [],
       },
       { maxRows: 5, minRows: 1 },
     );

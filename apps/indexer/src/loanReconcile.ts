@@ -164,6 +164,12 @@ export interface ChainLoanRead {
   status: number;
   principal: string;
   collateralAmount: string;
+  /** The two position-NFT ids, carried so the caller can resolve who
+   *  CURRENTLY holds each side rather than trusting the index's own
+   *  `*_current_owner` columns — which the same missed window that lost the
+   *  terminal could equally have left stale (#2190 r5 `4007360368`). */
+  lenderTokenId: string;
+  borrowerTokenId: string;
 }
 
 /** What a repair writes: the status it decided plus the money the same
@@ -172,6 +178,8 @@ export interface LoanRepair {
   status: string;
   principal: string;
   collateralAmount: string;
+  lenderTokenId: string;
+  borrowerTokenId: string;
 }
 
 export interface ReconcileReport {
@@ -369,6 +377,8 @@ export async function reconcileChainLoans(
         status: to,
         principal: onchain.principal,
         collateralAmount: onchain.collateralAmount,
+        lenderTokenId: onchain.lenderTokenId,
+        borrowerTokenId: onchain.borrowerTokenId,
       });
     } catch {
       report.writeFailed.push(row.loan_id);
@@ -447,14 +457,17 @@ export interface ScanReconcileContext {
    *  tables a repair clears must be one list, and importing it here would
    *  make the scan module and this one mutually dependent. */
   closedLoanSideTableStatements(loanId: number): D1PreparedStatement[];
-  /** The inbox rows a repair to `to` owes this loan's holders, as
-   *  STATEMENTS for the same transaction as the write. Async because it
-   *  needs the loan's parties; returns `[]` when there is nothing honest to
-   *  say. See `planReconciledNotifications` for why they cannot be written
+  /** Everything a repair to `to` owes this loan's HOLDERS, as STATEMENTS
+   *  for the same transaction as the write: the refreshed
+   *  `*_current_owner` columns and the inbox rows. Async because it reads
+   *  the chain for the current holder of each position NFT; returns `[]`
+   *  when there is nothing honest to say or nobody substantiable to say it
+   *  to. See `planReconciledNotifications` for why they cannot be written
    *  afterwards (#2190 r4 `4007360360`). */
-  terminalNotificationStatements(
+  terminalHolderStatements(
     loanId: number,
     to: string,
+    tokenIds: { lender: string; borrower: string },
   ): Promise<D1PreparedStatement[]>;
 }
 
@@ -533,9 +546,17 @@ export async function reconcileAfterScan(
         functionName: 'getLoanDetails',
         args: [BigInt(loanId)],
         blockNumber: ctx.head,
-      })) as { status: number | bigint; principal: bigint; collateralAmount: bigint };
+      })) as {
+        status: number | bigint;
+        principal: bigint;
+        collateralAmount: bigint;
+        lenderTokenId: bigint;
+        borrowerTokenId: bigint;
+      };
       return {
         status: Number(d.status),
+        lenderTokenId: String(d.lenderTokenId),
+        borrowerTokenId: String(d.borrowerTokenId),
         // `String(...)`, never `Number(...)`: these are uint256 amounts and
         // the column is TEXT for that reason.
         principal: String(d.principal),
@@ -587,14 +608,14 @@ export async function reconcileAfterScan(
       // rotation selects from, so nothing would ever come back to write
       // them (#2190 r4 `4007360360`). Planning them needs a read, which is
       // why it happens here rather than inside the batch.
-      const notifications = await ctx.terminalNotificationStatements(
-        loanId,
-        repair.status,
-      );
+      const holderWrites = await ctx.terminalHolderStatements(loanId, repair.status, {
+        lender: repair.lenderTokenId,
+        borrower: repair.borrowerTokenId,
+      });
       const results = await ctx.db.batch([
         update,
         ...ctx.closedLoanSideTableStatements(loanId),
-        ...notifications,
+        ...holderWrites,
       ]);
       // The FIRST result is the loan row's, and only it decides whether
       // this was a repair. The deletes run regardless — see the module

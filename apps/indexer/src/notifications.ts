@@ -611,6 +611,11 @@ export async function planReconciledNotifications(
   repaired: ReadonlyArray<{ loanId: number; to: string }>,
   observedBlock: number,
   nowSec: number,
+  /** Chain-verified current holders, when the caller resolved them. A side
+   *  given as `null` is NOT substantiated and gets no row — see
+   *  `resolveCurrentHolders`. Omitted entirely, the stored columns are used,
+   *  which is right for a caller that has no reason to distrust them. */
+  verifiedHolders?: { lender: string | null; borrower: string | null },
 ): Promise<NotifRow[]> {
   if (repaired.length === 0) return [];
   const partiesByLoan = await loadLoanParties(
@@ -635,7 +640,12 @@ export async function planReconciledNotifications(
     if (parties?.isSaleVehicle) continue;
     const seen = new Set<string>();
     for (const side of ['lender', 'borrower'] as const) {
-      const recipient = recipientFor(parties, side);
+      // A verified holder REPLACES the stored one, and a verified `null`
+      // withholds the notice rather than falling back to it: the fallback
+      // is the stale column the verification exists to distrust.
+      const recipient = verifiedHolders
+        ? verifiedHolders[side]
+        : recipientFor(parties, side);
       if (!recipient) continue;
       // The KEY keeps its own fixed `-1:-1` tail and does NOT follow the
       // stored ordering position: it must be stable per (recipient, kind,

@@ -650,9 +650,18 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * The DEFAULT is the tight one on purpose. A future caller that forgets to
  * pass anything gets the budget that costs the shared invocation least, not
  * the one that costs it most.
+ *
+ * THE OWN-INVOCATION FIGURE CAME DOWN FROM 5 TO 3, and that is a trade
+ * rather than a tightening (#2190 r5 `4007360368`). Verifying who currently
+ * holds a repaired position costs two `ownerOf` reads for each loan actually
+ * repaired, so the worst case is `1 + maxRows * 3`: 10 at three rows, which
+ * fits the ~12 the DO invocation has beside the scan's own ~38, and 16 at
+ * five, which does not. Fewer rows examined per pass and correct recipients
+ * beats more rows and a terminal notice sent to somebody who exited the
+ * position. The rotation still reaches every row; it takes more turns.
  */
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
-export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 5, minRows: 1 };
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, minRows: 1 };
 
 /**
  * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.
@@ -672,6 +681,56 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 5, m
  * Never throws: a repair failure must not wedge a scan that is otherwise
  * healthy, and the rotation returns to those rows next tick.
  */
+/**
+ * The CURRENT holder of each side of a position, read from the chain.
+ *
+ * The repair cannot use the index's own `*_current_owner` columns to decide
+ * who to notify: the scan window that lost the terminal event could equally
+ * have contained the position transfer, the borrower-obligation migration or
+ * the claim burn, so those columns are stale for exactly the same reason the
+ * status was (#2190 r5 `4007360368`).
+ *
+ * `null` for a side means NOT SUBSTANTIATED — a burned token reverts, and so
+ * does any other failure. The caller withholds that side's notice rather
+ * than falling back to a possibly-wrong address: telling the wrong person
+ * their position ended, while the real holder hears nothing, is worse than
+ * the silence this whole notification exists to end.
+ *
+ * Reads are pinned to the same safe head as the rest of the repair, and are
+ * made only for a loan that IS being repaired — rare by construction. Two
+ * subrequests per repaired loan; the reconcile budget constants account for
+ * them.
+ */
+async function resolveCurrentHolders(
+  client: PublicClient,
+  diamond: Address,
+  head: bigint,
+  tokenIds: { lender: string; borrower: string },
+): Promise<{ lender: string | null; borrower: string | null }> {
+  const one = async (tokenId: string): Promise<string | null> => {
+    // '0' is the stub-row sentinel, never a real ERC721 id.
+    if (!tokenId || tokenId === '0') return null;
+    try {
+      const owner = (await client.readContract({
+        address: diamond,
+        abi: ERC721_OWNER_OF_ABI,
+        functionName: 'ownerOf',
+        args: [BigInt(tokenId)],
+        blockNumber: head,
+      })) as string;
+      return owner.toLowerCase();
+    } catch {
+      // Burned, or unreadable. Either way this side is not substantiated.
+      return null;
+    }
+  };
+  const [lender, borrower] = await Promise.all([
+    one(tokenIds.lender),
+    one(tokenIds.borrower),
+  ]);
+  return { lender, borrower };
+}
+
 async function runLoanReconcilePass(input: {
   env: Env;
   chain: ChainConfig;
@@ -718,15 +777,54 @@ async function runLoanReconcilePass(input: {
         // own transaction — written afterwards they could be lost for good,
         // since the repaired row leaves the live set the rotation selects
         // from (#2190 r4 `4007360360`).
-        terminalNotificationStatements: async (loanId, to) => {
+        terminalHolderStatements: async (loanId, to, tokenIds) => {
+          // WHO HOLDS THIS POSITION NOW, asked of the chain rather than of
+          // our own `*_current_owner` columns (#2190 r5 `4007360368`). The
+          // window that lost the terminal could equally have contained the
+          // position transfer, the borrower-obligation migration or the
+          // claim burn — the columns are stale for the same reason the
+          // status was — so trusting them can send the one notice a holder
+          // gets to somebody who exited, while the actual holder is told
+          // nothing. Two reads, and only for a loan actually being
+          // repaired, which is rare by construction; the budget constants
+          // account for them.
+          const holders = await resolveCurrentHolders(
+            reconcileClient,
+            diamond,
+            head,
+            tokenIds,
+          );
+          const statements: D1PreparedStatement[] = [];
+          // The refreshed owners are written too, not just used: the
+          // staleness is real and fixing only the notice would leave every
+          // other holder-keyed surface reading the wrong address.
+          if (holders.lender || holders.borrower) {
+            statements.push(
+              env.DB.prepare(
+                `UPDATE loans
+                    SET lender_current_owner = COALESCE(?, lender_current_owner),
+                        borrower_current_owner = COALESCE(?, borrower_current_owner),
+                        updated_at = ?
+                  WHERE chain_id = ? AND loan_id = ?`,
+              ).bind(
+                holders.lender,
+                holders.borrower,
+                Math.floor(Date.now() / 1000),
+                chainId,
+                loanId,
+              ),
+            );
+          }
           const rows = await planReconciledNotifications(
             env.DB,
             chainId,
             [{ loanId, to }],
             Number(head),
             Math.floor(Date.now() / 1000),
+            holders,
           );
-          return rows.map((r) => notificationInsertStatement(env.DB, r));
+          statements.push(...rows.map((r) => notificationInsertStatement(env.DB, r)));
+          return statements;
         },
       },
       budget,
