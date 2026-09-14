@@ -25,6 +25,7 @@ import {
   markableStatementsOf,
   UNKNOWN_BOUNDS,
   markedStatement,
+  propertyName,
   sliceCallsIn,
   statementFrom,
   stripLineComments,
@@ -465,13 +466,14 @@ describe('#2144 — no source region is bounded by a character count', () => {
       'Symbol', 'Reflect', 'JSON', 'Math',
     ]);
     const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
-    // A STATIC property name: `x.String` or `x['String']`, never `x[k]`.
-    const staticProperty = (m) =>
-      m.computed
-        ? typeof m.property.value === 'string'
-          ? m.property.value
-          : null
-        : m.property?.name ?? null;
+    // The MODULE's own static-member decoder, not a copy of it — a
+    // narrower copy here missed a no-substitution template key
+    // (`globalThis[`String`]`), which is one question answered two ways
+    // and the shape this whole change is about (round 18).
+    const staticProperty = (m) => {
+      const name = propertyName(m);
+      return typeof name === 'string' ? name : null;
+    };
 
     const found = [];
     for (const rel of allLiveFiles()) {
@@ -486,11 +488,24 @@ describe('#2144 — no source region is bounded by a character count', () => {
         const entry = `${rel} — ${why}`;
         if (!found.includes(entry)) found.push(entry);
       };
+      // Write targets, THROUGH DESTRUCTURING: `[String.prototype.indexOf]
+      // = […]` installs the finder exactly as a plain assignment does,
+      // and pushing the outer pattern meant the loop skipped it (round
+      // 18). The analyser had a walk for this; it was deleted with the
+      // rule that used it, and the question outlived the rule.
       const targets = [];
+      const pushTarget = (t) => {
+        if (!t) return;
+        if (t.type === 'MemberExpression' || t.type === 'Identifier') targets.push(t);
+        else if (t.type === 'ArrayPattern') t.elements.forEach(pushTarget);
+        else if (t.type === 'ObjectPattern') t.properties.forEach((q) => pushTarget(q.value ?? q.argument));
+        else if (t.type === 'AssignmentPattern') pushTarget(t.left);
+        else if (t.type === 'RestElement') pushTarget(t.argument);
+      };
       const collect = (n) => {
         if (!n || typeof n.type !== 'string') return;
-        if (n.type === 'AssignmentExpression') targets.push(n.left);
-        if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') targets.push(n.left);
+        if (n.type === 'AssignmentExpression') pushTarget(n.left);
+        if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') pushTarget(n.left);
         for (const k of Object.keys(n)) {
           const v = n[k];
           if (Array.isArray(v)) v.forEach(collect);
@@ -498,32 +513,40 @@ describe('#2144 — no source region is bounded by a character count', () => {
         }
       };
       collect(tree);
+
+      const unshadowedGlobal = (n, names) =>
+        n?.type === 'Identifier' && names.has(n.name) && globals.has(n);
+      // An intrinsic named DIRECTLY, or selected from an unshadowed
+      // global object — `String` and `globalThis.String` are the same
+      // object, and an identifier-only test saw only the first.
+      const intrinsic = (n) => {
+        if (unshadowedGlobal(n, INTRINSICS)) return true;
+        return (
+          n?.type === 'MemberExpression' &&
+          unshadowedGlobal(n.object, GLOBAL_OBJECTS) &&
+          INTRINSICS.has(staticProperty(n))
+        );
+      };
+
       for (const t of targets) {
         // Replacing an intrinsic OUTRIGHT. The binding must be global —
         // a local of the same name replaces nothing.
-        if (t.type === 'Identifier' && INTRINSICS.has(t.name) && globals.has(t)) {
-          report('replaces an intrinsic outright');
+        if (t.type === 'Identifier') {
+          if (unshadowedGlobal(t, INTRINSICS)) report('replaces an intrinsic outright');
+          continue;
         }
-        if (t.type !== 'MemberExpression') continue;
         const prop = staticProperty(t);
         if (prop === null) continue;
         const obj = t.object;
         // …through the global object, by a name nothing here declares.
-        if (
-          obj?.type === 'Identifier' &&
-          GLOBAL_OBJECTS.has(obj.name) &&
-          globals.has(obj) &&
-          INTRINSICS.has(prop)
-        ) {
+        if (unshadowedGlobal(obj, GLOBAL_OBJECTS) && INTRINSICS.has(prop)) {
           report('replaces an intrinsic through the global object');
         }
-        // …or writing a built-in PROTOTYPE.
+        // …or writing a built-in PROTOTYPE, however the built-in is named.
         if (
           obj?.type === 'MemberExpression' &&
           staticProperty(obj) === 'prototype' &&
-          obj.object?.type === 'Identifier' &&
-          INTRINSICS.has(obj.object.name) &&
-          globals.has(obj.object)
+          intrinsic(obj.object)
         ) {
           report('writes a built-in prototype');
         }

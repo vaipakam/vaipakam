@@ -2747,7 +2747,11 @@ function measuredSource(src, node) {
  * and asked for a marker claiming a count that was not happening
  * (round 11). `sliceCallsIn` already read truncator names this way.
  */
-function propertyName(member) {
+// EXPORTED so the suite's assumption check decodes a static member the
+// same way this module does (round 18). It had a narrower copy that
+// missed a no-substitution template key — one question, two answers,
+// which is the shape this whole change is about.
+export function propertyName(member) {
   // `#indexOf` is a PRIVATE method and can never be the built-in string
   // finder (round 28), but its node carries the bare name `indexOf`.
   if (member.property?.type === 'PrivateIdentifier') return null;
