@@ -30,6 +30,7 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import {
   _closedLoanSideTableStatements,
+  _verifiedHolderStatements,
   processLoanLogs,
   RECONCILE_BUDGET_OWN_INVOCATION,
   RECONCILE_BUDGET_SHARED_TICK,
@@ -258,6 +259,63 @@ describe('reconcile budget', () => {
  * scan's table list into the repair's transaction. This drives
  * `reconcileAfterScan` itself.
  */
+describe('a repair records the holder the chain named, and only that one', () => {
+  // The unsafe half of the deleted three-answer classifier was inferring a
+  // BURN from a failed read; removing it took the safe half with it
+  // (#2190 r7 `4008463632`). These two cases are the asymmetry that replaced
+  // it, and they are what stops either half coming back on its own: an
+  // address is recorded, and an absence is NOT — whatever the absence means.
+  const owners = (h: SqliteD1, loanId: number) =>
+    h.db
+      .prepare(
+        'SELECT lender_current_owner AS l, borrower_current_owner AS b FROM loans WHERE loan_id = ?',
+      )
+      .get(loanId) as { l: string; b: string };
+
+  it('writes a side the chain answered for', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 40);
+    await h.d1.batch(
+      _verifiedHolderStatements({ DB: h.d1 } as unknown as Env, CHAIN, 40, {
+        lender: '0xnewlender',
+        borrower: '0xnewborrower',
+      }, 1_700_000_000),
+    );
+    expect(owners(h, 40)).toEqual({ l: '0xnewlender', b: '0xnewborrower' });
+  });
+
+  it('leaves a side it got NO answer for exactly as it was', async () => {
+    // `null` is a token that no longer exists AND a call that did not
+    // complete — indistinguishable, which is why the classifier went. Zeroing
+    // this column on a transient failure would hide a claim that is still
+    // somebody's, which is the harm the removal exists to prevent.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 41);
+    const stmts = _verifiedHolderStatements(
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      41,
+      { lender: null, borrower: '0xnewborrower' },
+      1_700_000_000,
+    );
+    // One statement, not two with a null bound into the first.
+    expect(stmts).toHaveLength(1);
+    await h.d1.batch(stmts);
+    expect(owners(h, 41)).toEqual({ l: '0xlend', b: '0xnewborrower' });
+  });
+
+  it('writes nothing at all when neither side answered', () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 42);
+    expect(
+      _verifiedHolderStatements({ DB: h.d1 } as unknown as Env, CHAIN, 42, {
+        lender: null,
+        borrower: null,
+      }, 1_700_000_000),
+    ).toEqual([]);
+  });
+});
+
 describe('reconcileAfterScan against a real database', () => {
   const readTerminal = async (args: Record<string, unknown>) => {
     if (args.functionName === 'getActiveLoansCount') return 0n;

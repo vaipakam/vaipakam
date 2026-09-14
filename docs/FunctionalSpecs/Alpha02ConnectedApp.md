@@ -300,22 +300,23 @@ The app uses chain reads and indexed reads for different jobs.
   lost the ending could equally have lost a transfer of the position, so
   that record is stale for the same reason. Where a holder cannot be
   established, that side receives no message rather than one addressed to a
-  guess.
-- Asking who holds a position has two answers for this purpose: there is a
-  holder the message can be addressed to, or there is not. A side with no
-  answer is left silent, whether that is because the position has been
-  given up or because the question could not be reached — a correction
-  does not need to tell those apart in order to decide who to write to, and
-  the platform does not guess between them. Telling the wrong person that
-  their position ended, while its real holder hears nothing, is worse than
-  the silence the message exists to end.
-- **A correction does not restate who holds a position.** Refreshing that
-  record is a real need and belongs to whatever surface owns it; a pass
-  whose purpose is to correct a loan's state must not also overwrite an
-  ownership record on the strength of a reading it cannot interpret. An
-  unreachable answer and a position genuinely given up look alike from
-  here, and acting on the wrong reading of the two would hide something
-  that is still somebody's.
+  guess — and the holder the platform does establish is recorded, so other
+  surfaces stop naming the wrong one.
+- Asking who holds a position has two answers the platform will act on: it
+  has an answer naming a holder, or it has no answer. **An answer is acted
+  on; a non-answer changes nothing.** The platform does not read a
+  failure to answer as meaning the position was given up, even though that
+  is one of the things it can mean — the two are indistinguishable from
+  here, and treating an unreachable answer as an empty one would erase a
+  record that is still somebody's.
+- The cost of that asymmetry is **stated, not implied**: where a holder
+  cannot be read, that side is never told its position ended, and no later
+  attempt is made. The record is still corrected, because a position wrongly
+  published as running is the harm the whole check exists to end. Waiting
+  instead — holding the correction until the holder can be established — is
+  not available, since the unanswerable case and the legitimately-empty case
+  are the same answer, so waiting for one would leave the other's record
+  wrong permanently.
 - Such a message is SHOWN as a correction, not merely recorded as one. Its
   headline states the outcome, and a line beneath it says the platform
   found this by checking and cannot tell when it happened. A surface that

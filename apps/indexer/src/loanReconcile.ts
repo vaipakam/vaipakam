@@ -698,10 +698,7 @@ export async function reconcileAfterScan(
       // `applyMatch` refreshes on the one terminal that moves them;
       // writing status without them would leave a repaired row in a shape
       // no event-written row has ever had, which nothing downstream is
-      // built to read. The block recorded is the safe head the state was
-      // read at — the repair cannot know the block the terminal actually
-      // landed in, and recording the block it observed the state at is the
-      // honest substitute.
+      // built to read.
       //
       // COMPARE-AND-SET on the LIVE set: if the scan just above
       // terminalized this row from its own event, that write is the more

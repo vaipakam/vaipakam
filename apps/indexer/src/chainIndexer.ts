@@ -696,9 +696,9 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, m
  * status was (#2190 r5 `4007360368`).
  *
  * TWO answers, and deliberately so after a third was tried and removed.
- * An address is a holder this pass can address a notice to. `null` is
- * anything else — unreadable, or a token that no longer exists — and gets
- * NO notice, because there is nobody substantiated to tell.
+ * An address is a holder this pass can address a notice to, and record.
+ * `null` is anything else — unreadable, or a token that no longer exists —
+ * and gets NO notice and NO write, because there is nobody substantiated.
  *
  * An earlier revision returned a third, `'burned'`, and wrote the zero
  * address into the owner column for it (#2190 r6 `4007752763`). Review
@@ -708,15 +708,22 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, m
  * classifier narrowed round after round — and this repo's answer to it is
  * to delete the classifier rather than sharpen it.
  *
- * So the repair no longer writes owner columns AT ALL. It reads holders to
- * decide who a notice is for, which is what the finding actually asked
- * for; the write was my own extension. Refreshing the stored owner is a
- * real want and belongs to whatever owns those columns, not to a pass that
- * would have to guess a burn to do it.
+ * Deleting it took the owner write with it, and that went too far
+ * (`4008463632`). The unsafe half was inferring a BURN from a failure; an
+ * address `ownerOf` actually returned at the pinned safe head infers
+ * nothing. So the caller records a side it got an answer for and leaves a
+ * side it did not exactly as it was — an asymmetry that needs no
+ * classifier, which is why it stands where the three-answer version fell.
  *
  * Telling the wrong person their position ended, while the real holder
  * hears nothing, is worse than the silence this notification exists to
  * end — which is why an unresolved side stays silent either way.
+ *
+ * A side this pass could not read is therefore left stale rather than
+ * retried: `null` is not separable into "gone" and "unreachable", so
+ * aborting the repair on it would block the ghost-row fix indefinitely on
+ * a position whose token is legitimately burned. The published record is
+ * corrected; that one notice is not sent. The release note says so.
  *
  * Reads are pinned to the same safe head as the rest of the repair, and are
  * made only for a loan that IS being repaired — rare by construction. Two
@@ -871,10 +878,26 @@ async function runLoanReconcilePass(input: {
             head,
             tokenIds,
           );
-          // NO OWNER WRITE. The holders are read to decide who the notice
-          // is for and nothing else — see `resolveCurrentHolders` for why
-          // the write, and the burn classifier it needed, were removed.
-          const statements: D1PreparedStatement[] = [];
+          // OWNER WRITE, FOR A SUBSTANTIATED SIDE ONLY (#2190 r7
+          // `4008463632`). An earlier revision wrote the zero address when
+          // the read came back empty, which review showed could not be made
+          // safe: `null` covers both "the token is gone" and "the call did
+          // not answer", and a facet hiccup would have erased a live holder
+          // (`4008330661`). `9e5375efc` removed the write — and removed too
+          // much with it, because the two halves are not alike. An ADDRESS
+          // returned by `ownerOf` at the pinned safe head is not a guess
+          // about anything; writing it can only replace a stale owner with
+          // a verified one. `null` is the ambiguous half, and it alone is
+          // the reason the classifier had to go.
+          //
+          // So: an answer is recorded, a non-answer changes nothing. That
+          // asymmetry is the whole rule, and it needs no classifier — which
+          // is why it survives where the three-answer version did not.
+          // A side the chain named is recorded; a side it did not is left
+          // exactly as it was — see `_verifiedHolderStatements`.
+          const statements: D1PreparedStatement[] = [
+            ..._verifiedHolderStatements(env, chainId, loanId, holders, fingerprint.updatedAt),
+          ];
           const rows = await planReconciledNotifications(
             env.DB,
             chainId,
@@ -884,10 +907,11 @@ async function runLoanReconcilePass(input: {
             holders,
           );
           // The notices self-gate on the compare-and-set having won; the
-          // owner refresh above does not, for the same reason the side-table
-          // deletes do not — a refreshed holder is right whoever closed the
-          // loan, while "we found this by checking" is only right if this
-          // pass was the one that did (#2190 r6 `4007588180`).
+          // owner refresh above deliberately does NOT, for the same reason
+          // the side-table deletes do not — a chain-verified holder is the
+          // holder whoever closed the loan, while "we found this by
+          // checking" is only true if this pass was the one that did
+          // (#2190 r6 `4007588180`).
           statements.push(
             ...rows.map((r) =>
               notificationInsertStatement(env.DB, r, {
@@ -4902,6 +4926,55 @@ async function _clearClosedLoanSideTables(
   loanId: number,
 ): Promise<void> {
   await env.DB.batch(_closedLoanSideTableStatements(env, chainId, loanId));
+}
+
+/// The `*_current_owner` refresh a repair may fold into its own batch, for
+/// the sides whose holder the chain actually named (#2190 r7 `4008463632`).
+///
+/// AN ANSWER IS RECORDED; A NON-ANSWER CHANGES NOTHING. `resolveCurrentHolders`
+/// returns `null` both for a token that no longer exists and for a read that
+/// did not complete, and those two are not separable — the classifier that
+/// tried was deleted as a #2107 shape (`4008330661`). But only the ABSENCE was
+/// ever ambiguous: an address `ownerOf` returned at the pinned safe head
+/// infers nothing and can only replace a stale owner with a verified one.
+/// `9e5375efc` removed the whole write when it removed the classifier, which
+/// took the safe half with the unsafe one.
+///
+/// TWO LITERAL STATEMENTS rather than one interpolated on the side name. A
+/// `${side}_current_owner` template would be the third time dynamic SQL in
+/// this PR slipped past the `#1149` schema guard, which can only check column
+/// names it can read; raising that guard's skip pin to accommodate string
+/// building is how it stops checking anything.
+///
+/// Deliberately NOT gated on the repair's compare-and-set, for the same reason
+/// the side-table deletes are not: a chain-verified holder is the holder
+/// whoever closed the loan, whereas "we found this by checking" is true only if
+/// this pass was the one that did.
+export function _verifiedHolderStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  holders: { lender: string | null; borrower: string | null },
+  updatedAt: number,
+): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = [];
+  if (holders.lender) {
+    out.push(
+      env.DB.prepare(
+        `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(holders.lender, updatedAt, chainId, loanId),
+    );
+  }
+  if (holders.borrower) {
+    out.push(
+      env.DB.prepare(
+        `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(holders.borrower, updatedAt, chainId, loanId),
+    );
+  }
+  return out;
 }
 
 /// Exported for `activityRefs.test.ts` only — it is not imported by any other

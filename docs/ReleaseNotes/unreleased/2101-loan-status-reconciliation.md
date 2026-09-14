@@ -137,20 +137,33 @@ swallowed a transfer of the position, so that record is untrustworthy for
 exactly the same reason — and the one message a holder gets about their loan
 ending is the worst possible one to send to somebody who has already sold
 out of it. Where a holder cannot be established at all, no message is sent
-for that side rather than one sent to a guess.
+for that side rather than one sent to a guess, and the holder it does
+establish is written back so every other screen stops naming the wrong one.
 
-What the correction deliberately does NOT do is write that answer back as
-the record of who holds the position. An earlier version did, and told the
-two apart — a position genuinely given up, versus a question that could not
-be reached — by inspecting how the reading failed. Review narrowed that
-test once, and the narrowing was the signal: the same failure also covers an
-ordinary hiccup, so the version that was meant to stop offering something
-already claimed would, on a bad minute, erase a holder who still owned it.
-That is a shape this project has met before, and the answer to it is to
-remove the test rather than keep sharpening it. So the correction reads
-holders only to decide who to write to — which is what the original problem
-asked for — and leaves the ownership record to whatever owns it. Refreshing
-that record is a real want, and it is not this pass's to guess at.
+Which half of that gets acted on took two goes to get right, and the rule
+it settled on is worth stating. An earlier version also recorded an
+ABSENCE — nobody holds this side, because that party already took what was
+theirs — and worked out which case it was by inspecting how the reading had
+failed. That test had to be narrowed once, and the narrowing was the
+signal: the same failure also covers an ordinary hiccup, so a version meant
+to stop offering something already claimed would, on a bad minute, erase a
+holder who still owned it. This project has met that shape before and its
+answer is to remove such a test rather than keep sharpening it.
+
+Removing it took the whole write with it, which went too far. The unsafe
+part was concluding a position had been given up from a question that went
+unanswered; an answer that names an actual holder concludes nothing. So the
+correction records a side it got an answer for and leaves a side it did not
+exactly as it was.
+
+The cost of that is stated rather than implied: a side whose holder could
+not be read gets **no message at all, and no later attempt at one.** The
+record is still corrected — the loan stops being published as running,
+which is the harm this whole check exists to end — but that one person is
+not told. Retrying instead is not available, because an unanswered question
+and a position legitimately given up are the same answer here: waiting for
+one would leave the other's record wrong forever, which is the worse of the
+two.
 
 They also arrive as NEW rather than as something already read. The inbox
 decides what is unread by position in the chain's order, and a message
