@@ -27,10 +27,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import {
+  _closedLoanSideTableStatements,
   processLoanLogs,
   RECONCILE_BUDGET_OWN_INVOCATION,
   RECONCILE_BUDGET_SHARED_TICK,
 } from '../src/chainIndexer';
+import { reconcileAfterScan } from '../src/loanReconcile';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -228,5 +230,80 @@ describe('reconcile budget', () => {
     expect(RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0).toBeLessThanOrEqual(
       RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0,
     );
+  });
+});
+
+/**
+ * The repair path, end to end against a real database.
+ *
+ * The unit cases for the pass run against a fake, which cannot catch a
+ * mis-wired `closedLoanSideTableStatements` — the seam that carries the
+ * scan's table list into the repair's transaction. This drives
+ * `reconcileAfterScan` itself.
+ */
+describe('reconcileAfterScan against a real database', () => {
+  const readTerminal = async (args: Record<string, unknown>) => {
+    if (args.functionName === 'getActiveLoansCount') return 0n;
+    return { status: 1, principal: 0n, collateralAmount: 250n };
+  };
+
+  const runRepair = (h: SqliteD1) =>
+    reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        readContract: readTerminal as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+
+  it('closes the row and both side tables in one write', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 21);
+    seedListing(h, 21);
+    seedIntent(h, 21);
+    const report = await runRepair(h);
+    expect(report.repaired).toEqual([{ loanId: 21, from: 'active', to: 'repaid' }]);
+    const row = h.db
+      .prepare('SELECT status, principal, collateral_amount FROM loans WHERE loan_id = ?')
+      .get(21) as { status: string; principal: string; collateral_amount: string };
+    expect(row.status).toBe('repaid');
+    // The money comes from the same read as the status.
+    expect(row.principal).toBe('0');
+    expect(row.collateral_amount).toBe('250');
+    expect(hasListing(h, 21)).toBe(false);
+    expect(hasIntent(h, 21)).toBe(false);
+  });
+
+  it('leaves a loan the chain still calls running completely untouched', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 22);
+    seedListing(h, 22);
+    seedIntent(h, 22);
+    await reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        readContract: (async (args: Record<string, unknown>) =>
+          args.functionName === 'getActiveLoansCount'
+            ? 1n
+            : { status: 0, principal: 100n, collateralAmount: 200n }) as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+    expect(hasListing(h, 22)).toBe(true);
+    expect(hasIntent(h, 22)).toBe(true);
   });
 });

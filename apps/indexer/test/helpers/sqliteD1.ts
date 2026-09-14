@@ -51,7 +51,16 @@ export function createSqliteD1(ddl: string[]): SqliteD1 {
       try {
         const results = statements.map((s) => s.__exec());
         db.exec('COMMIT');
-        return results.map(() => ({ meta: {} }));
+        // `meta.changes` PER STATEMENT, as D1 returns it. The adapter used
+        // to return a bare `{ meta: {} }` here, which was fine while the
+        // only consumer ignored the result — and silently unusable for the
+        // #2101 repair, whose compare-and-set decides whether a row was
+        // repaired from the FIRST statement's change count. A fake that
+        // drops a field the real thing carries cannot be used to test the
+        // code that reads it.
+        return results.map((info) => ({
+          meta: { changes: Number((info as { changes: number | bigint }).changes) },
+        }));
       } catch (err) {
         db.exec('ROLLBACK');
         throw err;

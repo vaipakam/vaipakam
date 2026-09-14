@@ -51,10 +51,11 @@ function fakeDeps(
   chainActive?: number,
 ) {
   const calls = { chainCount: 0, statusReads: 0, writes: 0, rowQueries: 0 };
-  /** Loans whose side tables the pass cleared, in order. */
+  /** Loans whose side tables the pass cleared, in order. The real write is
+   *  ONE batch, so the fake clears inside `writeRepair` for the same
+   *  reason: a fake that cleared separately could not represent the
+   *  all-or-nothing property the batch gives. */
   const sideTablesCleared: number[] = [];
-  /** Loan ids whose cleanup should throw. */
-  const sideTableClearFails = new Set<number>();
   let pointer = 0;
   const deps: ReconcileDeps = {
     async activeRowsAfter(_c, after, limit) {
@@ -80,20 +81,20 @@ function fakeDeps(
     },
     async writeRepair(_c, loanId, repair) {
       calls.writes += 1;
+      // The deletes are NOT conditional on the compare-and-set winning —
+      // the chain reported this loan ended, and that is what licenses
+      // clearing them. Recorded first so the order matches the batch.
+      sideTablesCleared.push(loanId);
       const row = rows.find((r) => r.loan_id === loanId);
       // Mirrors the real compare-and-set, which guards on the LIVE set:
       // a row another writer already terminalized does not change.
       if (!row || !LIVE.has(row.status)) return false;
       row.status = repair.status;
-      // The real write is one UPDATE over all three columns, so a fake
+      // The real write is one statement over all three columns, so a fake
       // that moved only the status could not observe half a repair.
       row.principal = repair.principal;
       row.collateral_amount = repair.collateralAmount;
       return true;
-    },
-    async clearClosedLoanSideTables(_c, loanId) {
-      if (sideTableClearFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
-      sideTablesCleared.push(loanId);
     },
     async readPointer() {
       return pointer;
@@ -107,7 +108,6 @@ function fakeDeps(
     calls,
     rows,
     sideTablesCleared,
-    sideTableClearFails,
     get pointer() { return pointer; },
   };
 }
@@ -322,10 +322,14 @@ describe('reporting what actually changed', () => {
     expect(r.repaired).toEqual([]);
     expect(r.superseded).toEqual([8]);
     expect(rows[0].status).toBe('liquidated');
-    // And the side tables are left to the handler that actually closed the
-    // row. Clearing them here would be this pass acting on a close it did
-    // not make.
-    expect(f.sideTablesCleared).toEqual([]);
+    // The side tables ARE still cleared, and that is deliberate. An earlier
+    // revision guarded this on the compare-and-set winning, reasoning that
+    // the other writer clears its own. That is an inference about another
+    // code path; what this pass actually holds is the chain's own report
+    // that the loan has ended, and a live listing or intent on an ended
+    // loan is stale whoever recorded the ending. Making it unconditional is
+    // also what let the whole write become one transaction (#2190 r3).
+    expect(f.sideTablesCleared).toEqual([8]);
   });
 
   it('reports a repair it did make', async () => {
@@ -384,22 +388,23 @@ describe('a repaired row is a whole row', () => {
     expect(f.sideTablesCleared).toEqual([]);
   });
 
-  it('names a cleanup it could not complete instead of throwing the pass away', async () => {
-    // The status write has landed and the row is no longer live, so the
-    // rotation will never return to it. Aborting would lose the pointer
-    // write and STILL leave the listing, so it is reported by loan id.
+  it('has no way to land a status without its cleanup', async () => {
+    // There is no partial-failure path left to report. The status and the
+    // deletes are ONE call, which the live implementation runs as one D1
+    // batch, so a killed isolate loses both or neither. This case states
+    // that shape — exactly one write call per repaired loan — because what
+    // round 3 found was precisely a second call that could be lost, and a
+    // caught error was never the hard case: an isolate termination leaves
+    // nothing to catch.
     const rows: ReconcileRow[] = [
       { loan_id: 8, status: 'active' },
       { loan_id: 9, status: 'active' },
     ];
     const f = fakeDeps(rows, { 8: 2, 9: 1 }, 0);
-    f.sideTableClearFails.add(8);
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
-    expect(r.sideTablesNotCleared).toEqual([8]);
-    // The failure stops nothing: loan 9 is still examined, repaired and
-    // cleared, and the pointer still moves.
     expect(r.repaired.map((x) => x.loanId)).toEqual([8, 9]);
-    expect(f.sideTablesCleared).toEqual([9]);
+    expect(f.calls.writes).toBe(2);
+    expect(f.sideTablesCleared).toEqual([8, 9]);
     expect(f.pointer).toBe(9);
   });
 });

@@ -55,18 +55,30 @@
  * where it holds a lower figure that IS the economic truth the index
  * missed.
  *
- * A REPAIRED ROW ALSO CLEARS THE LOAN'S SIDE TABLES, and this pass keeps
- * NO LIST OF WHICH ONES. Review found the same gap twice running: round 1,
- * that a repaired close left a live prepay listing behind; round 2, that it
- * left a live swap-to-repay intent behind, which `handleLoanById` goes on
- * publishing with a cancel action attached. Adding the second table the way
- * the first was added would have left a third to be found the same way.
+ * A REPAIRED ROW ALSO CLEARS THE LOAN'S SIDE TABLES, IN THE SAME
+ * TRANSACTION, and this pass keeps NO LIST OF WHICH ONES.
  *
- * So the cleanup is one named concept owned by the scan —
- * `_clearClosedLoanSideTables`, the same one every terminal handler calls —
- * and it is handed in through the context. A table added there reaches the
- * repair with no change on this side, which is the property that stops this
- * particular finding recurring.
+ * Review found the same gap three rounds running. Round 1: a repaired close
+ * left a live prepay listing behind. Round 2: it left a live swap-to-repay
+ * intent behind, which `handleLoanById` goes on publishing with a cancel
+ * action attached. Round 3: even with both cleared, the status write
+ * committed FIRST and the deletes followed, and a Worker killed between the
+ * two leaves a row that is no longer live — so nothing re-examines it and
+ * the stale action is published forever. A caught error could be reported;
+ * an isolate termination cannot.
+ *
+ * Both halves are answered structurally rather than table-by-table. The
+ * scan owns the LIST (`_closedLoanSideTableStatements`), the repair folds
+ * those statements into the SAME `batch` as its compare-and-set, and D1
+ * runs a batch as one transaction. So the row cannot become terminal
+ * without its side tables going with it, and a table added to the scan's
+ * list reaches the repair with no change on this side.
+ *
+ * A consequence worth stating: the deletes are NOT conditional on the
+ * compare-and-set having won. If another writer terminalized the row first,
+ * this pass still clears the side tables — correctly, because the fact that
+ * licenses clearing them is the CHAIN reporting the loan ended, which this
+ * pass has read directly, not an inference about what the other writer did.
  *
  * WHAT IT CANNOT RECOVER. The chain's `LoanStatus` has no `Liquidated`
  * member — an HF-liquidated loan reads `Defaulted(2)` — so a row repaired
@@ -187,16 +199,6 @@ export interface ReconcileReport {
    *  writer had already terminalized the row. Not a failure — the other
    *  write is the better-informed one — but not a repair either. */
   superseded: number[];
-  /** Loan ids repaired whose side-table cleanup then FAILED.
-   *
-   *  Reported rather than thrown. The status write has already landed and
-   *  the row is no longer live, so the rotation will never select it again
-   *  — aborting here would lose the pointer write and still leave the rows
-   *  behind. An operator reading this list is looking at a closed loan the
-   *  app may still advertise a collateral listing or a live swap-to-repay
-   *  intent for, which is exactly the class of ghost this pass exists to
-   *  remove, so it is named rather than implied. */
-  sideTablesNotCleared: number[];
   /** Where the rotation pointer was left. */
   nextPointer: number;
 }
@@ -210,13 +212,14 @@ export interface ReconcileDeps {
   /** `getLoanDetails(id)`, reduced. ONE subrequest, and it carries the
    *  money as well as the status precisely so a repair needs no second. */
   readChainLoan(chainId: number, loanId: number): Promise<ChainLoanRead>;
-  /** Returns whether the row actually changed — a compare-and-set that
-   *  matched nothing is not a repair, and must not be reported as one. */
+  /** ONE transaction: the compare-and-set on the loan row PLUS the scan's
+   *  side-table deletes. Returns whether the loan row actually changed — a
+   *  compare-and-set that matched nothing is not a repair and must not be
+   *  reported as one, but its side tables are cleared either way (see the
+   *  module header). Atomic because a status that lands without its cleanup
+   *  can never be retried: the row stops being live, so nothing selects it
+   *  again. */
   writeRepair(chainId: number, loanId: number, repair: LoanRepair): Promise<boolean>;
-  /** Drop every side-table row representing a live action on a loan this
-   *  pass just closed. The scan's own helper, handed in — see the module
-   *  header for why this is one concept rather than a list of tables. */
-  clearClosedLoanSideTables(chainId: number, loanId: number): Promise<void>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -281,7 +284,6 @@ export async function reconcileChainLoans(
     repaired: [],
     unread: [],
     superseded: [],
-    sideTablesNotCleared: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
   };
 
@@ -323,15 +325,6 @@ export async function reconcileChainLoans(
     // implementation that does. A report of what changed must not depend
     // on the storage layer declining to mutate its input.
     report.repaired.push({ loanId: row.loan_id, from, to });
-    // Only after a repair that ACTUALLY landed. A superseded row was
-    // terminalized by a handler that runs this same cleanup itself, and a
-    // row this pass did not close has no business losing a live listing or
-    // a committed intent.
-    try {
-      await deps.clearClosedLoanSideTables(chainId, row.loan_id);
-    } catch {
-      report.sideTablesNotCleared.push(row.loan_id);
-    }
   }
 
   await deps.writePointer(chainId, report.nextPointer);
@@ -377,12 +370,13 @@ export interface ScanReconcileContext {
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
-  /** The scan's own `_clearClosedLoanSideTables`, bound to this chain.
-   *  Passed in rather than reimplemented: the cleanup every terminal
-   *  handler performs and the cleanup a repair performs must be the same
-   *  one, and importing it here would make the scan module and this one
-   *  mutually dependent. */
-  clearClosedLoanSideTables(loanId: number): Promise<void>;
+  /** The scan's own `_closedLoanSideTableStatements`, bound to this chain.
+   *  STATEMENTS rather than an executed cleanup, so the repair can put them
+   *  in the same transaction as its compare-and-set; handed in rather than
+   *  reimplemented, because the tables a terminal handler clears and the
+   *  tables a repair clears must be one list, and importing it here would
+   *  make the scan module and this one mutually dependent. */
+  closedLoanSideTableStatements(loanId: number): D1PreparedStatement[];
 }
 
 export async function reconcileAfterScan(
@@ -456,7 +450,14 @@ export async function reconcileAfterScan(
       // COMPARE-AND-SET on the LIVE set: if the scan just above
       // terminalized this row from its own event, that write is the more
       // specific one and wins, and this becomes a no-op.
-      const r = await ctx.db
+      //
+      // ONE BATCH, which D1 runs as one transaction, so the status and the
+      // side-table deletes commit together or not at all. Sequencing them
+      // is not an option here: a status that lands alone takes the row out
+      // of the live set the rotation selects from, so nothing would ever
+      // come back to finish the job, and an isolate killed mid-way leaves
+      // no error to report either (#2190 round 3).
+      const update = ctx.db
         .prepare(
           `UPDATE loans
               SET status = ?, principal = ?, collateral_amount = ?,
@@ -473,12 +474,16 @@ export async function reconcileAfterScan(
           now(),
           chainId,
           loanId,
-        )
-        .run();
-      return (r.meta?.changes ?? 0) > 0;
-    },
-    async clearClosedLoanSideTables(_chainId, loanId) {
-      await ctx.clearClosedLoanSideTables(loanId);
+        );
+      const results = await ctx.db.batch([
+        update,
+        ...ctx.closedLoanSideTableStatements(loanId),
+      ]);
+      // The FIRST result is the loan row's, and only it decides whether
+      // this was a repair. The deletes run regardless — see the module
+      // header: what licenses clearing the side tables is the chain having
+      // reported the loan ended, which this pass read for itself.
+      return (results[0]?.meta?.changes ?? 0) > 0;
     },
     async readPointer(chainId) {
       const row = await ctx.db

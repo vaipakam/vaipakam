@@ -241,9 +241,12 @@ The app uses chain reads and indexed reads for different jobs.
   borrower who withdraws a collateral sale keeps any swap commitment they
   made, and the reverse. The platform never disposes of a position the user
   still holds as a side effect of tidying a different one.
-- If that clearing itself fails, the affected loans are named in the
-  operator's log rather than silently left — the record has already ended,
-  so the rotation will not return to it.
+- The correction and that clearing are ONE write: both happen or neither
+  does. A correction that landed alone would take the record out of the set
+  the rotation examines, so nothing would ever return to finish it — and a
+  service interrupted between the two leaves no failure to report. There is
+  no partial state to recover from because there is no window in which one
+  can exist.
 - How fast the correction works through the records depends on the
   deployment's ingest configuration, and the platform states this rather
   than implying a single pace. Where the chain reading has its own capacity

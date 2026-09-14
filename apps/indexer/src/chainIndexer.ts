@@ -1136,15 +1136,15 @@ export async function runChainIndexerForChain(
           readContract: (args) => client.readContract(args as never) as Promise<unknown>,
           metricsAbi: DIAMOND_METRICS_ABI,
           loanAbi: DIAMOND_LOAN_DETAILS_ABI,
-          // The same cleanup every terminal handler above performs. Handed
-          // in so a repaired close and an event-driven close clear the same
-          // side tables through one implementation — which is the point:
-          // round 1 found the prepay listing missing and round 2 the
-          // swap-to-repay intent, so the repair keeps no list of its own
-          // and a table added to `_clearClosedLoanSideTables` reaches it
-          // with no change here (#2190 rounds 1-2).
-          clearClosedLoanSideTables: (loanId) =>
-            _clearClosedLoanSideTables(env, chainId, loanId),
+          // The same tables every terminal handler above clears, as
+          // STATEMENTS so the repair can commit them in one transaction
+          // with its status write. Handed in so the repair keeps no list of
+          // its own: round 1 found the prepay listing missing, round 2 the
+          // swap-to-repay intent, and a table added to
+          // `_closedLoanSideTableStatements` reaches the repair with no
+          // change here (#2190 rounds 1-3).
+          closedLoanSideTableStatements: (loanId) =>
+            _closedLoanSideTableStatements(env, chainId, loanId),
         },
         reconcileBudget,
       );
@@ -1162,18 +1162,6 @@ export async function runChainIndexerForChain(
         console.warn(
           `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
             `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
-        );
-      }
-      // Side-table rows the repair could not clear outlive the rotation:
-      // the row is terminal now, so nothing selects it again. Said out loud
-      // because the app would otherwise keep advertising a collateral
-      // listing or a live swap-to-repay intent for a closed loan, which is
-      // the ghost this pass exists to remove.
-      if (report.sideTablesNotCleared.length > 0) {
-        console.error(
-          `[chainIndexer] reconcile repaired but could NOT clear the side tables for ` +
-            `loan(s) ${report.sideTablesNotCleared.join(', ')} on chain ${chainId} — ` +
-            `these will not be retried; clear them by hand`,
         );
       }
     } catch (err) {
@@ -4499,13 +4487,38 @@ async function _deleteSwapToRepayIntent(
 ///      after the log loop), so the order cannot arise; if one ever does,
 ///      pre-index the lookup the way `loanDetailsByLoanId` is pre-indexed
 ///      rather than reordering the cleanup.
+///      The LIST is exposed separately from the EXECUTION
+///      (`_closedLoanSideTableStatements`) so a caller that must close the
+///      loan and clear its side tables ATOMICALLY can fold these statements
+///      into its own `batch` instead of running them afterwards. The
+///      reconciliation pass does exactly that (#2190 round 3): a repair that
+///      committed the status and then died would leave a row that is no
+///      longer live, so nothing would ever re-examine it, and the listing or
+///      intent would stay published forever. Keeping the list here and the
+///      transaction at the call site is what lets both be true — one place
+///      names the tables, and each caller decides what it must be atomic
+///      with.
+export function _closedLoanSideTableStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): D1PreparedStatement[] {
+  return [
+    env.DB.prepare(
+      `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+    env.DB.prepare(
+      `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+  ];
+}
+
 async function _clearClosedLoanSideTables(
   env: Env,
   chainId: number,
   loanId: number,
 ): Promise<void> {
-  await _deletePrepayListing(env, chainId, loanId);
-  await _deleteSwapToRepayIntent(env, chainId, loanId);
+  await env.DB.batch(_closedLoanSideTableStatements(env, chainId, loanId));
 }
 
 /// Exported for `activityRefs.test.ts` only — it is not imported by any other

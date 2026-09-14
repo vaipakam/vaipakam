@@ -92,11 +92,12 @@ discovered.
 
 And it cannot say why an ending was missed in the first place.
 
-One failure is reported rather than retried: if the correction lands but the
-tidying afterwards does not, the record has already ended and nothing will
-look at it again. The affected loans are named in the service's log so an
-operator can clear them by hand, rather than the platform quietly continuing
-to advertise something nobody can act on.
+The correction and the tidying that follows it are a single write, which
+either happens completely or not at all. That is not a refinement: a
+correction that landed on its own would take the record out of the set the
+rotation looks at, so nothing would ever come back to finish the job, and a
+service killed mid-way leaves no failure to report either. Committing them
+together is the only version with no window.
 
 ## Not included
 
