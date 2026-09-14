@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parse } from 'acorn';
+import { analyze } from 'eslint-scope';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -438,36 +440,93 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // These are the forms a person might actually reach for, not a claim
   // to have enumerated the language.
   it('no live file rewrites the machinery the guard assumes', () => {
-    // Scoped to the machinery the guard's REASONING depends on — text
-    // and array searches, iteration, coercion — and not to prototypes in
-    // general. `live-position-observe.mjs` patches
-    // `Element.prototype.scrollIntoView` for the page it drives, which
-    // is a legitimate thing for a drive to do and touches nothing this
-    // module reasons about. A rule that refused it would be refusing
+    // BY PARSING, not by matching text — round 17, and the third time on
+    // this change that a question about bindings was asked of characters
+    // and answered wrongly. The regexes this replaces reported
+    // `function f() { let String; String = x; }` as a replaced intrinsic
+    // (it is a local shadow) and `globalThis['__wsProbe'] = entries` as
+    // one too (it is an ordinary probe write).
+    //
+    // Those are FALSE ALARMS, and they matter more here than misses do.
+    // The argument for moving this check out of the analyser was that a
+    // miss is cheap in the suite — nobody noticed something bizarre in
+    // our own files. A false alarm is not cheap: it fails the suite on
     // correct work, which is the failure this whole family exists to
-    // avoid.
-    const GUARDED = 'String|Array|Object|Number|Boolean|Function';
-    const suspect = [
-      [new RegExp(`(${GUARDED})\\.prototype\\s*(\\.\\w+|\\[[^\\]]*\\])\\s*=[^=]`), 'writes a built-in prototype'],
-      [new RegExp(`Object\\.(defineProperty|defineProperties|assign)\\s*\\(\\s*(${GUARDED})\\.prototype`), 'mutates a built-in prototype through the Object API'],
-      [new RegExp(`Reflect\\.(set|defineProperty)\\s*\\(\\s*(${GUARDED})\\.prototype`), 'mutates a built-in prototype through Reflect'],
-      [/Object\.setPrototypeOf\s*\(/, 'changes an object\'s prototype'],
-      [/__proto__\s*=/, 'writes a prototype through __proto__'],
-      [/Symbol\.(iterator|toPrimitive)\s*\]\s*=/, 'replaces a coercion or iteration hook'],
-      [/new\s+Proxy\s*\(/, 'stands a Proxy in for a real value'],
-      // …and REPLACING an intrinsic outright, which the module header
-      // assumes just as squarely as it assumes prototypes are intact and
-      // which the first version of this assertion had no pattern for
-      // (round 16). `String = replacement` creates no binding, so the
-      // name reads as the built-in everywhere while being none of it.
-      [new RegExp(`^\\s*(${GUARDED}|Symbol|Reflect|JSON|Math)\\s*=[^=]`, 'm'), 'replaces an intrinsic outright'],
-      [new RegExp(`(globalThis|window|self|global)\\s*(\\.(${GUARDED}|Symbol|Reflect|JSON|Math)\\b|\\[[^\\]]*\\])\\s*=[^=]`), 'replaces an intrinsic through the global object'],
-    ];
+    // avoid. So the asymmetry runs the other way in this assertion than
+    // it does inside the analyser, and it is built accordingly:
+    // everything below is established from the tree, and anything that
+    // cannot be established is passed over rather than reported.
+    //
+    // Scoped to the machinery the guard's REASONING depends on, not to
+    // prototypes in general: `live-position-observe.mjs` legitimately
+    // patches `Element.prototype.scrollIntoView` for the page it drives.
+    const INTRINSICS = new Set([
+      'String', 'Array', 'Object', 'Number', 'Boolean', 'Function',
+      'Symbol', 'Reflect', 'JSON', 'Math',
+    ]);
+    const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
+    // A STATIC property name: `x.String` or `x['String']`, never `x[k]`.
+    const staticProperty = (m) =>
+      m.computed
+        ? typeof m.property.value === 'string'
+          ? m.property.value
+          : null
+        : m.property?.name ?? null;
+
     const found = [];
     for (const rel of allLiveFiles()) {
-      const body = stripComments(fs.readFileSync(path.join(dir, rel), 'utf8'));
-      for (const [re, why] of suspect) {
-        if (re.test(body)) found.push(`${rel} — ${why}`);
+      const text = fs.readFileSync(path.join(dir, rel), 'utf8');
+      // `ranges` because eslint-scope needs them, the same options the
+      // module itself parses with.
+      const tree = parse(text, { ecmaVersion: 'latest', sourceType: 'module', ranges: true });
+      const scopes = analyze(tree, { ecmaVersion: 2024, sourceType: 'module' });
+      const globals = new Set();
+      for (const ref of scopes.globalScope.through) globals.add(ref.identifier);
+      const report = (why) => {
+        const entry = `${rel} — ${why}`;
+        if (!found.includes(entry)) found.push(entry);
+      };
+      const targets = [];
+      const collect = (n) => {
+        if (!n || typeof n.type !== 'string') return;
+        if (n.type === 'AssignmentExpression') targets.push(n.left);
+        if (n.type === 'ForOfStatement' || n.type === 'ForInStatement') targets.push(n.left);
+        for (const k of Object.keys(n)) {
+          const v = n[k];
+          if (Array.isArray(v)) v.forEach(collect);
+          else if (v && typeof v.type === 'string') collect(v);
+        }
+      };
+      collect(tree);
+      for (const t of targets) {
+        // Replacing an intrinsic OUTRIGHT. The binding must be global —
+        // a local of the same name replaces nothing.
+        if (t.type === 'Identifier' && INTRINSICS.has(t.name) && globals.has(t)) {
+          report('replaces an intrinsic outright');
+        }
+        if (t.type !== 'MemberExpression') continue;
+        const prop = staticProperty(t);
+        if (prop === null) continue;
+        const obj = t.object;
+        // …through the global object, by a name nothing here declares.
+        if (
+          obj?.type === 'Identifier' &&
+          GLOBAL_OBJECTS.has(obj.name) &&
+          globals.has(obj) &&
+          INTRINSICS.has(prop)
+        ) {
+          report('replaces an intrinsic through the global object');
+        }
+        // …or writing a built-in PROTOTYPE.
+        if (
+          obj?.type === 'MemberExpression' &&
+          staticProperty(obj) === 'prototype' &&
+          obj.object?.type === 'Identifier' &&
+          INTRINSICS.has(obj.object.name) &&
+          globals.has(obj.object)
+        ) {
+          report('writes a built-in prototype');
+        }
       }
     }
     expect(

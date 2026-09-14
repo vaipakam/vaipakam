@@ -1669,12 +1669,23 @@ function oneEvaluation(src, a, b, variable) {
 function freshEachIteration(variable, loop) {
   if (!variable || variable.defs.length === 0) return false;
   // Inside the repeated BODY, not merely inside the loop (round 16). A
-  // `let` in a `for` HEADER is copied forward from the previous pass
-  // rather than re-initialised, so `for (let end = at('e'); next(); ) {
-  // if (on()) end = 320; else s.slice(0, end); }` carries the fixed
-  // write into the next iteration and the arms are not exclusive across
-  // them. Position inside the loop node was true of both and told them
-  // apart not at all.
+  // `let` in a classic `for` HEADER is re-created each pass with the
+  // PREVIOUS pass's value copied in, so `for (let end = at('e');
+  // next(); ) { if (on()) end = 320; else s.slice(0, end); }` carries
+  // the fixed write into the next iteration. Position inside the loop
+  // node was true of that and of a body-local `let` and told them apart
+  // not at all.
+  //
+  // A `for…of` / `for…in` header binding IS fresh in the language — it
+  // is bound to the next element with nothing carried across — and is
+  // still excluded here, deliberately (round 17). Such a binding never
+  // reaches this question: it has no initialiser to read, because its
+  // value comes from iterating, so the resolver has already reported it
+  // as having no value that stands. Measured, not assumed — plain,
+  // `const`, destructured and `for…in` forms are all refused for that
+  // reason on both sides of this change. Admitting the slot here would
+  // be a branch that cannot fire, which is the shape three of this
+  // change's deletions were about.
   const body = loop.body;
   if (!body) return false;
   return variable.defs.every(
