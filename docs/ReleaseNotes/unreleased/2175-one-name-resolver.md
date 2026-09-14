@@ -97,7 +97,17 @@ It now reads the declaration that actually stands, so a name provably
 holding the beginning of the text is accepted as such. The old answer was
 not conservative, it was wrong.
 
-Beyond those three, no behaviour changes. The rules that were correct are
+Two TIGHTENINGS join them, both found the same way and both closing
+windows that were open before this change rather than introduced by it. A
+value reached by reading a property of something is no longer accepted as
+the text being searched — what a property holds when a line runs is not a
+question this can answer, which the work preceding this change had
+already concluded elsewhere. And a built-in that the file itself writes
+over is no longer treated as the built-in: assigning to a name that was
+never declared creates nothing to see, so the name looked untouched while
+it had been replaced outright.
+
+Beyond those five, no behaviour changes. The rules that were correct are
 correct in the same cases; they now say why in terms anyone can check.
 
 Three behaviour changes where a first draft claimed one is itself worth

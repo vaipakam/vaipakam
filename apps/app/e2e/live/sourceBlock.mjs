@@ -919,13 +919,18 @@ const UNBOUND = 'unbound';
 /** Whether this file ASSIGNS to an undeclared name — which creates no
  *  binding, so the scope analyser still calls every reference global. */
 function globalIsAssigned(src, name) {
-  const { nodes } = astOf(src, 'globalIsAssigned');
+  const { nodes, variableOf } = astOf(src, 'globalIsAssigned');
+  // The assignment must be to the GLOBAL, not to a local that merely
+  // shares the spelling. `function f() { let String; String = {}; }`
+  // cannot touch the intrinsic, and matching on the name alone marked
+  // an untouched built-in as unreadable everywhere else — this rule
+  // reaching one step past its own question, which is the pattern this
+  // PR keeps finding.
+  const global = (id) => id?.type === 'Identifier' && id.name === name && !variableOf.get(id);
   return nodes.some(
     (n) =>
-      (n.type === 'AssignmentExpression' &&
-        n.left?.type === 'Identifier' &&
-        n.left.name === name) ||
-      (n.type === 'UpdateExpression' && n.argument?.type === 'Identifier' && n.argument.name === name),
+      (n.type === 'AssignmentExpression' && global(n.left)) ||
+      (n.type === 'UpdateExpression' && global(n.argument)),
   );
 }
 
@@ -1098,9 +1103,17 @@ export function bindingOf(src, node) {
   // manufactures its own value, a rest parameter is an array, and a
   // definition inside a branch may never have run, and all three shared
   // one reason with a plain parameter.
+  // Only the definitions that can SUPPLY a value count. `function
+  // region(text) { var text; }` redeclares without assigning anything —
+  // the value still comes entirely from the caller — and requiring
+  // EVERY definition to be a parameter let that empty redeclaration
+  // erase the provenance and refuse a correct region.
+  const supplying = defs.filter(
+    (d) => d.node?.init || d.type === 'Parameter' || d.type === 'ImportBinding',
+  );
   const fromCaller =
-    defs.length > 0 &&
-    defs.every(
+    supplying.length > 0 &&
+    supplying.every(
       (d) =>
         // A plain parameter, written directly in the parameter list.
         (d.type === 'Parameter' && parents.get(d.name) === d.node) ||
@@ -2058,7 +2071,16 @@ function visiblyNotText(src, node, seen) {
   // this list. Fourth round on this category, and the first where the
   // answer was already sitting in the file.
   if (node?.type === 'ChainExpression') return visiblyNotText(src, node.expression, seen);
-  if (node?.type === 'AssignmentExpression') return visiblyNotText(src, node.right, seen);
+  if (node?.type === 'AssignmentExpression') {
+    // A LOGICAL assignment (`||=`, `&&=`, `??=`) may not assign at all,
+    // and then it evaluates to the LEFT operand it already held. Reading
+    // only the right side saw the harmless half of
+    // `fake ||= 'text'` and passed the stand-in through.
+    if (node.operator !== '=') {
+      return visiblyNotText(src, node.left, seen) || visiblyNotText(src, node.right, seen);
+    }
+    return visiblyNotText(src, node.right, seen);
+  }
   if (node?.type === 'AwaitExpression') return visiblyNotText(src, node.argument, seen);
   if (node?.type === 'ParenthesizedExpression') return visiblyNotText(src, node.expression, seen);
   if (node?.type === 'TSAsExpression' || node?.type === 'TSNonNullExpression') {
@@ -2087,6 +2109,15 @@ function visiblyNotText(src, node, seen) {
   // which for a member expression is not the same as knowing its value,
   // so it defeats the exemption on the unestablished ground.
   if (r.value.type === 'MemberExpression') return true;
+  // A CALL WRITTEN AT THE ARGUMENT is the same: knowing the call is not
+  // knowing what it returns. Asked of the ORIGINAL node rather than the
+  // resolved value, because a NAME that holds a call's result is how
+  // every one of these drives receives its source (`const src = read()`)
+  // and refusing that would refuse nearly everything — the name carries
+  // the file's convention, an inline call carries nothing.
+  const written = node?.type === 'ChainExpression' ? node.expression : node;
+  if (written?.type === 'CallExpression' || written?.type === 'NewExpression') return true;
+  if (written?.type === 'TaggedTemplateExpression') return true;
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out — the `/x/` stand-in this guard has had an
   // open case about — and a number, boolean or null is not text either.

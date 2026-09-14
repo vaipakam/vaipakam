@@ -2199,6 +2199,44 @@ describe('#2175 — one resolver, three answers', () => {
     expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
   });
 
+  // Round 7. Two of these reverse tightenings this PR itself introduced
+  // one and two rounds earlier — both were rules reaching one step past
+  // their own question, which is the pattern this review keeps finding.
+  it('does not let its own tightenings refuse correct work', () => {
+    // A nested local sharing a built-in's spelling cannot touch the
+    // built-in, and matching on the NAME alone said it had.
+    const shadowed = 'function f() { let String; String = {}; }\nconst t = String.raw`x`;';
+    expect(sliceCallsIn(shadowed)).toEqual([]);
+
+    // An empty `var` redeclaration of a parameter supplies no value, so
+    // the value still comes entirely from the caller.
+    const redeclared =
+      "const s = f();\nfunction region(text) { var text; return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(redeclared, sliceCallsIn(redeclared).at(-1))).toBe(false);
+  });
+
+  // A LOGICAL assignment may not assign at all, and then evaluates to
+  // the left operand it already held; a CALL WRITTEN AT THE ARGUMENT is
+  // not established by knowing the call.
+  it('sees a stand-in through a logical assignment and an inline call', () => {
+    const lead =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const at = recv => recv.indexOf('end');\n";
+    for (const [why, tail] of [
+      [
+        'a logical assignment that may keep its left operand',
+        "let fake = { indexOf: () => start + 320 };\nconst r = s.slice(start, at(fake ||= 'text'));",
+      ],
+      [
+        'a call written at the argument',
+        'const make = () => ({ indexOf: () => start + 320 });\nconst r = s.slice(start, at(make()));',
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
