@@ -720,6 +720,16 @@ contract DeployDiamond is Script {
         AccessControlFacet(diamond).initializeAccessControl();
         console.log("AccessControl initialized.");
 
+        // 5a-bis. #1566 slice 4 PR B (Codex #2186 r4) — record the COMPLETE
+        // cut on chain: the custody protocol version and the routed facet
+        // set, now that every facet is cut and its routing verified, still
+        // under the born-paused state. `activateRewardCustody` and the
+        // bootstrap writers refuse on any other set, so a partial refresh can
+        // never switch custody onto the holder while a reward path that does
+        // not know it is still routed.
+        RewardCustodyFacet(diamond).stampRewardCustodyCutover();
+        console.log("Reward custody complete-cut record stamped.");
+
         // 5b. Set treasury address
         AdminFacet(diamond).setTreasury(treasury);
         console.log("Treasury set:", treasury);
@@ -3036,7 +3046,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](35);
+        s = new bytes4[](37);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3076,6 +3086,9 @@ contract DeployDiamond is Script {
         s[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
         // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
         s[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
+        s[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        s[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

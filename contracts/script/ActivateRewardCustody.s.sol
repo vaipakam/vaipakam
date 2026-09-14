@@ -8,6 +8,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
@@ -154,6 +155,18 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             RewardCustodyFacet(diamond).armedFreshPaidRebased(),
             "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
         );
+        // Mirrors the contract's complete-cut gate BEFORE anything is sent
+        // (Codex #2186 r4 P1): activation and the bootstrap writers refuse
+        // unless the routed facet set is the one a complete refresh recorded
+        // under this tree's custody protocol version.
+        {
+            (uint32 stampedV, uint32 requiredV, bytes32 stampedSet, bytes32 routedSet) =
+                RewardCustodyFacet(diamond).rewardCustodyCutoverStatus();
+            require(
+                stampedV == requiredV && stampedSet == routedSet,
+                "ActivateRewardCustody: the routed facet set is not the one a COMPLETE refresh recorded (RefreshAllFacetsInPlace / DeployDiamond) -- the custody facet was cut alone, a curated partial cut ran since, or the record is from an older tree; run the complete refresh, then activate"
+            );
+        }
         // Mirrors the contract's canonical prerequisite BEFORE anything is
         // sent (Codex #2186 r2 P2): a canonical chain whose recovery
         // attribution was never armed (a partial refresh) would otherwise
@@ -218,6 +231,22 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         );
     }
 
+    /// @dev The VPFI token the ceremony approves and funds in: the artifact's,
+    ///      REQUIRED to be the Diamond's configured one (Codex #2186 r4 P2).
+    ///      A pre-activation rotation is permitted and leaves `addresses.json`
+    ///      stale; an approval serialised against the stale token would let
+    ///      the pause and the relocations mine before a funded row failed
+    ///      for lack of allowance — a partially applied ceremony. Refused
+    ///      here, before anything is sent or staged, exactly as the holder is.
+    function _vpfiToken(address diamond) internal view returns (address vpfi) {
+        vpfi = Deployments.readVpfiToken();
+        address live = VPFITokenFacet(diamond).getVPFIToken();
+        require(
+            vpfi == live,
+            "ActivateRewardCustody: the artifact's vpfiToken is not the Diamond's configured VPFI token -- a rotation ran since the artifact was written; re-export the artifact (or correct VPFI_TOKEN_ADDRESS) before approving or staging against it"
+        );
+    }
+
     function _totalFunding(Answers memory a) internal pure returns (uint256) {
         return a.fundLive + a.fundRecycled + a.fundRecovery + a.fundOverage;
     }
@@ -241,7 +270,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         Figures memory f = _figures(diamond);
         Answers memory a = _answers();
         _preflight(diamond, f, a);
-        address vpfi = Deployments.readVpfiToken();
+        address vpfi = _vpfiToken(diamond);
         uint256 funding = _totalFunding(a);
         if (funding != 0) {
             require(
@@ -291,7 +320,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         Figures memory f = _figures(diamond);
         Answers memory a = _answers();
         _preflight(diamond, f, a);
-        address vpfi = Deployments.readVpfiToken();
+        address vpfi = _vpfiToken(diamond);
         uint256 funding = _totalFunding(a);
 
         console.log("=== Reward custody activation (staged) ===");

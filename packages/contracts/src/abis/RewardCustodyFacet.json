@@ -445,6 +445,34 @@
   },
   {
     "type": "function",
+    "name": "rewardCustodyCutoverStatus",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "stampedVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requiredVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "stampedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "routedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rewardCustodyHolder",
     "inputs": [],
     "outputs": [
@@ -616,6 +644,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stampRewardCustodyCutover",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -816,6 +851,31 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyCutoverStamped",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "facetSet",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "facetCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1429,6 +1489,32 @@
         "name": "role",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresCutover",
+    "inputs": [
+      {
+        "name": "stampedVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requiredVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "stampedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "routedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },

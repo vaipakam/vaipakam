@@ -96,7 +96,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](205); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +4
+        selectors = new bytes4[](206); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -153,6 +153,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
         selectors[n++] = TestMutatorFacet.setRecoveryPositionWithOverageRaw.selector;
         selectors[n++] = TestMutatorFacet.setRewardRoleChangesFrozenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardCustodyCutoverRaw.selector;
         // #1618 r6 — selector-registry pointer for the live lane bound.
         selectors[n++] =
             TestMutatorFacet.setCrossChainMessengerRaw.selector;
@@ -2348,7 +2349,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](37);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2388,6 +2389,9 @@ contract HelperTest {
         selectors[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
         // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
         selectors[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
+        selectors[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        selectors[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

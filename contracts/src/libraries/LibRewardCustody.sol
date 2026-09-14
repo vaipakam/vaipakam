@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
+import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 
 /**
  * @title LibRewardCustody — the ONE seam between the reward ledgers and the
@@ -123,6 +124,72 @@ library LibRewardCustody {
     ///         `Unconfigured` deployment can never do.
     function active(LibVaipakam.Storage storage s) internal view returns (bool) {
         return s.rewardCustodyActivated;
+    }
+
+    // ─── The complete-cut record (Codex #2186 r4) ────────────────────────────
+
+    /// @notice The custody protocol version every reward consumer in this
+    ///         tree implements. Bump it whenever the set of facets that read
+    ///         or debit the holder changes shape (a new consumer, a changed
+    ///         seam), so an activation can never run against a complete cut
+    ///         that predates the consumers it needs.
+    uint32 internal constant CUTOVER_VERSION = 1;
+
+    /// @notice A complete facet cut recorded the custody protocol version and
+    ///         the routed facet set it installed.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyCutoverStamped(uint32 version, bytes32 facetSet, uint256 facetCount);
+
+    /// @notice The routed facet set as one hash: every facet address the
+    ///         Diamond currently routes to, sorted so the order the loupe
+    ///         happens to hold them in cannot matter. Any cut that installs a
+    ///         facet at a new address — a Replace onto new bytecode, an Add of
+    ///         a new facet — changes it; a cut that only retires selectors
+    ///         from a facet that keeps others does not.
+    function routedFacetSet() internal view returns (bytes32 set, uint256 count) {
+        address[] storage addrs = LibDiamond.diamondStorage().facetAddresses;
+        count = addrs.length;
+        address[] memory sorted = new address[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            address a = addrs[i];
+            uint256 j = i;
+            while (j > 0 && sorted[j - 1] > a) {
+                sorted[j] = sorted[j - 1];
+                --j;
+            }
+            sorted[j] = a;
+        }
+        set = keccak256(abi.encodePacked(sorted));
+    }
+
+    /// @notice Refuse unless the complete-cut record is CURRENT — the stamped
+    ///         version is this tree's and the stamped facet set is the one
+    ///         routed now. The gate on activation and on every bootstrap
+    ///         write. Why a record and not the ledger alone (Codex #2186 r4
+    ///         P1): the ledger figures say nothing about WHICH facets are
+    ///         routed, and a custody facet cut without the claim, sweep,
+    ///         remittance, compensation and recycle facets that read the
+    ///         holder would activate custody those stale consumers never
+    ///         debit, spending the Diamond's own balance beside a funded
+    ///         holder. The record is written only by the two complete-cut
+    ///         paths after their last cut, and any cut after it invalidates
+    ///         it until the complete refresh runs again.
+    function requireCutover(LibVaipakam.Storage storage s) internal view {
+        (bytes32 routed, ) = routedFacetSet();
+        if (s.rewardCustodyCutoverVersion != CUTOVER_VERSION || s.rewardCustodyCutoverFacetSet != routed) {
+            revert IVaipakamErrors.RewardCustodyActivationRequiresCutover(
+                s.rewardCustodyCutoverVersion, CUTOVER_VERSION, s.rewardCustodyCutoverFacetSet, routed
+            );
+        }
+    }
+
+    /// @notice Record the complete cut: this tree's custody protocol version
+    ///         and the facet set routed now.
+    function stampCutover(LibVaipakam.Storage storage s) internal returns (bytes32 set, uint256 count) {
+        (set, count) = routedFacetSet();
+        s.rewardCustodyCutoverVersion = CUTOVER_VERSION;
+        s.rewardCustodyCutoverFacetSet = set;
+        emit RewardCustodyCutoverStamped(CUTOVER_VERSION, set, count);
     }
 
     /// @notice One attribution row.

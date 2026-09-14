@@ -883,6 +883,11 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role == LibVaipakam.RewardRole.Canonical && !s.recoveryAttributionArmed) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresRecoveryArming();
         }
+        // The complete-cut record must be current (Codex #2186 r4 P1): the
+        // ledger figures below say nothing about WHICH facets are routed,
+        // and a custody facet cut without the reward paths that read the
+        // holder would switch custody that those stale paths never debit.
+        LibRewardCustody.requireCutover(s);
         _requireRowBacked(s, LibVaipakam.RewardCustodyRow.Recycled, s.recycleBucket);
         _requireRowBacked(
             s,
@@ -1193,6 +1198,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
         // Every row, not only the live one: one window for every bootstrap
         // write is the rule an operator can hold in mind.
         if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyBootstrapRequiresRebase();
+        // And the complete-cut record must be current (Codex #2186 r4 P1):
+        // nothing moves into the holder's rows on a deployment whose reward
+        // paths may not know the holder — the same window as the activation.
+        LibRewardCustody.requireCutover(s);
         if (row == LibVaipakam.RewardCustodyRow.LiveFresh) {
             if (!allowLiveFresh) revert IVaipakamErrors.RewardCustodyBootstrapRowNotAllowed(uint8(row));
             uint256 received = s.rewardBudgetArmedFreshReceived;
@@ -1348,6 +1357,47 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ///         cleared by slice 4 PR C's backfill).
     function rewardRoleChangesFrozen() external view returns (bool) {
         return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
+    }
+
+    /**
+     * @notice Record the COMPLETE facet cut (Codex #2186 r4): this tree's
+     *         custody protocol version and the hash of every facet address
+     *         the Diamond routes to, as they stand now. Activation and every
+     *         bootstrap write refuse unless this record is current, so
+     *         custody can never be switched onto the holder while a reward
+     *         path that does not know the holder is still routed.
+     * @dev    ADMIN, MANUAL pause. Called by the two complete-cut paths —
+     *         `DeployDiamond` after its routing verification and
+     *         `RefreshAllFacetsInPlace` after its last cut and migration,
+     *         both under the pause the cut ran under — and by nothing else:
+     *         no curated partial refresh records a cut, and a partial cut
+     *         after a record invalidates it (the routed set changes) until
+     *         the complete refresh runs again. What the record cannot prove
+     *         is that the caller's cut WAS complete: that is the complete
+     *         refresh's own parity guard (`RefreshScriptFacetParityTest` pins
+     *         its selector set to the deploy's). Read it as the refresh's
+     *         completion attestation bound to the set it installed, not as
+     *         an on-chain proof of every facet's bytecode.
+     */
+    function stampRewardCustodyCutover() external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibPausable.requireManuallyPaused();
+        LibRewardCustody.stampCutover(LibVaipakam.storageSlot());
+    }
+
+    /// @notice The complete-cut record beside what is routed now, for the
+    ///         ceremony pre-flight and for a reader: activation and the
+    ///         bootstrap writers require `stampedVersion == requiredVersion`
+    ///         and `stampedFacetSet == routedFacetSet`.
+    function rewardCustodyCutoverStatus()
+        external
+        view
+        returns (uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedFacetSet, bytes32 routedFacetSet)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        stampedVersion = s.rewardCustodyCutoverVersion;
+        requiredVersion = LibRewardCustody.CUTOVER_VERSION;
+        stampedFacetSet = s.rewardCustodyCutoverFacetSet;
+        (routedFacetSet, ) = LibRewardCustody.routedFacetSet();
     }
 
     /**

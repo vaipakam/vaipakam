@@ -246,6 +246,73 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().activateRewardCustody(epoch, false);
     }
 
+    /// Activation and every bootstrap write require the COMPLETE-cut record
+    /// to be current (Codex #2186 r4 P1): the version this tree's consumers
+    /// implement, and the routed facet set as the complete cut left it. A cut
+    /// after the record — one selector re-routed to a mock — and a stale
+    /// version each refuse with the four values named; re-recording under
+    /// the pause, as the complete refresh does, admits the activation again;
+    /// and the record itself is taken under the manual pause only.
+    function test_Activation_RequiresTheCompleteCutRecord() public {
+        _becomeCanonical();
+        _seedDiamond(1e18);
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(0, epoch);
+        (uint32 stampedV, uint32 requiredV, bytes32 stampedSet, bytes32 routedSet) =
+            _custody().rewardCustodyCutoverStatus();
+        assertEq(stampedV, requiredV, "the build recorded this tree's version");
+        assertEq(stampedSet, routedSet, "the build recorded the routed set");
+
+        // A partial cut after the record: the routed set moves, the record does not.
+        RevertingRollupForCutover mock = new RevertingRollupForCutover();
+        bytes4[] memory sel = new bytes4[](1);
+        sel[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(mock),
+            action: IDiamondCut.FacetCutAction.Replace,
+            functionSelectors: sel
+        });
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        (, , bytes32 stampedAfterCut, bytes32 routedAfterCut) = _custody().rewardCustodyCutoverStatus();
+        assertEq(stampedAfterCut, stampedSet, "a cut does not touch the record");
+        assertTrue(routedAfterCut != stampedSet, "the routed set moved");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stampedSet, routedAfterCut
+            )
+        );
+        _custody().activateRewardCustody(epoch, false);
+        _mut().setRecycleBucketRaw(1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyActivationRequiresCutover.selector, requiredV, requiredV, stampedSet, routedAfterCut
+            )
+        );
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
+
+        // Re-recorded under the pause; then a stale VERSION refuses on its own.
+        _custody().stampRewardCustodyCutover();
+        _mut().setRewardCustodyCutoverRaw(0, routedAfterCut);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardCustodyActivationRequiresCutover.selector, 0, requiredV, routedAfterCut, routedAfterCut
+            )
+        );
+        _custody().activateRewardCustody(epoch, false);
+
+        _custody().stampRewardCustodyCutover();
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
+        _custody().activateRewardCustody(epoch, false);
+        assertTrue(_custody().rewardCustodyActivated(), "activated once the record is current");
+
+        _admin().unpause();
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
+        _custody().stampRewardCustodyCutover();
+    }
+
     /// A bucket with tokens still in the Diamond's balance refuses activation
     /// until the ceremony relocates them into the recycled row — bounded by
     /// the figure, never a wei more — and the holder then backs the bucket.

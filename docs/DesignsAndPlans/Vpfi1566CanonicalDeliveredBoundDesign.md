@@ -6203,6 +6203,25 @@ PR C.**
 > after activation — the legacy fallback is gone; and both holder-side
 > relations are exact, with no tolerance (the bucket, the one rounding
 > source the tolerance absorbs, is the holder's on an activated chain).
+> Review r4: activation and every bootstrap write require the COMPLETE-CUT
+> RECORD to be current — `stampRewardCustodyCutover` (ADMIN, manual
+> pause) writes this tree's custody protocol version
+> (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the routed facet
+> set (every facet address the loupe holds, sorted), and is called only by
+> the two complete-cut paths after their last cut: `DeployDiamond` after
+> its routing verification and `RefreshAllFacetsInPlace` after its last
+> cut and migration, both under the pause the cut ran under.
+> `RewardCustodyActivationRequiresCutover` names the four values. A
+> custody facet cut alone, a curated partial refresh before or after the
+> record, or a record from an older tree all refuse until the complete
+> refresh runs again — the ledger figures say nothing about which facets
+> are routed, and stale consumers would never debit a funded holder. The
+> record is the refresh's completion attestation bound to the set it
+> installed, not an on-chain proof of every facet's bytecode; that its cut
+> IS complete is `RefreshScriptFacetParityTest`'s pin. The ceremony
+> pre-flight mirrors the gate, and `stage()` / `run()` refuse an artifact
+> VPFI token that is not the Diamond's configured one (`getVPFIToken`),
+> so an approval is never serialised against a rotated-away token.
 > The two holder invariants, the
 > recycled-row and live-row identities and the untouched Diamond balance
 > are pinned by `RewardCustodyInvariant`; the design's test list is

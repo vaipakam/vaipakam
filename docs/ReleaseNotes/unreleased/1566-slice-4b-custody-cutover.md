@@ -15,7 +15,11 @@ that gives its inbound packets a rule. Backing a position ahead of the
 activation waits for the paid-side migration whose result the figures
 depend on, and a position that a moved figure leaves over-backed before the
 activation can be released back to the platform's own balance, by at most
-the excess, so nothing is stranded at the address. The canonical chain now bounds reward payouts by what
+the excess, so nothing is stranded at the address. Activation and the
+backing of a position also require the deployment's whole facet set to be
+the one a complete refresh or deploy recorded, so a partial refresh can
+never switch custody onto the address while a reward path that does not
+know it is still installed. The canonical chain now bounds reward payouts by what
 has actually been funded minus what has been paid, where funding is one
 explicit administrator transfer into the address that credits the received
 side in the same act (refused above the pool's lifetime cap), so a

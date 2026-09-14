@@ -2611,6 +2611,32 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyActivationRequiresCutover",
+    "inputs": [
+      {
+        "name": "stampedVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requiredVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "stampedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "routedFacetSet",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationRequiresRebase",
     "inputs": []
   },

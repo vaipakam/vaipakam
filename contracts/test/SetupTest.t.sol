@@ -980,6 +980,14 @@ contract SetupTest is Test {
         // Initialize AccessControl roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
+        // #1566 slice 4 PR B (Codex #2186 r4) — the test Diamond IS a
+        // complete cut: record it under the born-paused state exactly as
+        // `DeployDiamond` does, so the activation gate has a current record
+        // to verify. A suite that cuts its own mock facets afterwards changes
+        // the routed set; `activateRewardCustodyForTest` re-records under the
+        // pause it activates in, as a re-run of the complete refresh would.
+        RewardCustodyFacet(address(diamond)).stampRewardCustodyCutover();
+
         // Init vault factory with impl
         VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
@@ -1403,7 +1411,9 @@ contract SetupTest is Test {
     ///      does, on a Diamond whose reward role is ALREADY configured (the
     ///      freeze arms at activation, so configure first): manual pause →
     ///      bind the holder if unbound → consume the paid-side rebase with
-    ///      zero if not consumed → activate at the live pause epoch →
+    ///      zero if not consumed → re-record the complete cut (a suite's
+    ///      own mock cuts change the routed set) → activate at the live
+    ///      pause epoch →
     ///      unpause. Then funds the pool through the registered writer when
     ///      `fund` is non-zero (this contract mints and approves). A
     ///      canonical Diamond that never funds pays nothing: its delivered
@@ -1423,6 +1433,7 @@ contract SetupTest is Test {
         if (!custody.armedFreshPaidRebased()) {
             custody.rebaseArmedFreshPaid(0, epoch);
         }
+        custody.stampRewardCustodyCutover();
         custody.activateRewardCustody(epoch, false);
         admin.unpause();
         if (fund != 0) fundRewardPoolForTest(vpfi, fund);
