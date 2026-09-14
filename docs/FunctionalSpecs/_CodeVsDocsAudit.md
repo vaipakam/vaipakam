@@ -799,5 +799,49 @@ table four Workers read.
 **What it does not mean.** The pass does not treat these rows as confirmed
 running, which was the original defect: before #2190 an orphaned row read as a
 healthy active loan on every pass forever, and the count disagreement it caused
-was silent. It is now named, on every tick, with the loan ids. The gap is that
-naming it does not yet stop it being published.
+was silent. It is named, with the loan ids, WHENEVER THE ROTATION EXAMINES IT AND THE
+PASS FINISHES — not on every tick. (The second qualifier is #2203: a pass
+that fails its cursor write discards every diagnostic it collected, so a row
+can be examined, correctly identified as unresolvable, and still not named.) The pass looks at one or three rows a turn, so on a larger live
+set a known orphan can go unmentioned for most of a lap. The gap is that
+naming it does not stop it being published, and that the naming itself is
+periodic rather than continuous.
+
+---
+
+## A correction's "settled point" is a guess when the source cannot supply one (#2199 r4)
+
+Recorded here rather than by weakening
+[`Alpha02ConnectedApp.md`](Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and that editing the spec to match the code
+needs an explicit human decision. Found by review of the documentation for
+the change that introduced the intent.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"The chain state a correction relies on must therefore be read at a point the chain treats as settled, never at whatever the source last saw and never at a point derived from how far the index itself has read."* | The scan asks the source for its settled point and falls back to a fixed step back from the latest block whenever that request FAILS FOR ANY REASON — the `catch` is unconditional, so a timeout or a momentary error from a source that normally answers takes it just as an old node does. That is derived from what the source last saw — the thing the sentence forbids — and it is a heuristic finality margin rather than the chain's own statement. Against a reorganisation deeper than the margin it can report an ending that later disappears. | #2201 |
+
+**BOTH consumers are exposed, and an earlier version of this entry said
+otherwise.** It claimed the ordinary scan self-corrects — cursor re-read,
+events replay, record converges — and used that to argue the heuristic was
+tolerable for the scan and not for the correction. That is wrong, and the
+scan's own code comment says so: the cursor advances monotonically from
+`lastBlock + 1`, so a reorganised-out block is never revisited and "the next
+cron run … would skip the reorged block, leaving the stale row in D1
+forever". Both consumers turn a wrong read into a permanent wrong record;
+they differ only in which record.
+
+What remains true is that the correction's wrong record is the more
+alarming one — a position published as closed when it is open — and that
+the correction cannot even be corrected by the mechanism that wrote it,
+since it selects only live rows. But that is a difference of severity, not
+of recoverability, and the fix must cover both.
+
+**When the fallback engages is wider than it first appears.** The `catch`
+around the settled-point request is unconditional, so it is taken not only
+by a source that cannot answer the question but by ANY failure of it — a
+timeout, a momentary error — from a source that normally can. Supporting the
+settled tag therefore does not exempt a deployment; it only makes the
+contingency rarer. An earlier version of this entry said the deployed
+configuration "reads a settled point normally", which is true on the ordinary
+path and was doing the work of an exemption it does not provide.
