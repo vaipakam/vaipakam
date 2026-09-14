@@ -56,7 +56,7 @@ two exits, the release that reconciles a position a moved figure left
 over-backed, the complete-cut record, and the expiry clock reading the
 address rather than the platform's own balance.
 
-The remaining four entries are the day's work on the live-drive tooling —
+The next four entries are the day's work on the live-drive tooling —
 the scripts that exercise the deployed app and testnet after a deploy.
 Each is about a verdict that had been silently wrong: a drive that did not
 finish is now reported as not fully reviewed — its earlier results kept,
@@ -1224,11 +1224,20 @@ defaulted or been repaid.
 
 ### What now happens
 
-On each scheduled tick the index asks the chain how many loans it considers
-running and compares that to its own count. If the two differ it examines a
-handful of its records; if they agree it still examines one. Where the chain
-says a loan has ended and the record says otherwise, the record is
-corrected.
+On each scheduled tick where it has finished reading new blocks, the index
+asks the chain how many loans it considers running and compares that to its
+own count. If the two differ it examines a handful of its records; if they
+agree it still examines one. Where the chain says a loan has ended and the
+record says otherwise, the record is corrected.
+
+That qualification is deliberate and is the one place this check is weakest
+exactly where it is most needed. A service that has been down long enough to
+miss an ending comes back needing several passes to read the blocks it
+slept through, and the comparison waits until that is done — so the records
+this exists to repair are repaired after the catching-up, not during it. The
+alternative is worse rather than better: reading the chain's present state
+while the index is still applying months-old events would have the two
+disagreeing about which moment they describe.
 
 How many chains that covers per tick depends on how the service takes in
 data. As currently configured every chain is serviced on every tick, so the
@@ -1288,8 +1297,12 @@ scheduled into it can exceed what the platform allows, before this
 correction is added at all. That is a separate fault, raised on its own, not
 something this change introduced or repairs; taking the smallest possible
 share is what this change can honestly do about it, and it does not pretend
-that makes the slot safe. Either way every record is eventually reached; the
-difference is how many turns it takes.
+that makes the slot safe. Where the slot is not over its allowance, every
+record is eventually reached and the difference is only how many turns it
+takes. Where it is, the promise does not hold: work can be cut off before
+the turn advances, and the same records can be missed repeatedly. That is
+the separate fault, and until it is fixed the rotation on that arrangement
+is best-effort rather than assured.
 
 The check also runs on a **quiet** chain — one producing no new blocks
 between ticks — and that is not a detail. An earlier version ran it only
@@ -1306,7 +1319,10 @@ still be sent a "payment due" or "overdue" reminder that nothing would ever
 retract. And a correction now announces itself to anyone watching the
 position, the same way any other change does — without that, the record was
 put right while every open screen kept showing the old one until it happened
-to refresh. The announcement names the corrected loan, which sounds like a
+to refresh. That announcement belongs to the current arrangement for reading
+the chain, which is the one in use; on the fallback there is no live
+announcement to make and no channel to carry it, so a corrected screen there
+waits for its next refresh. Worth knowing before choosing to fall back. The announcement names the corrected loan, which sounds like a
 detail and is not: the announcement is filtered down to the people it
 concerns, and a corrected loan is by definition an OLD one that appears
 nowhere else in that tick's work. Left unnamed, the one announcement that
@@ -1455,8 +1471,12 @@ the next one does the work.
 Two answers it treats as neither running nor ended. A record for a loan the
 chain has never heard of — one indexed once from something later undone —
 reads, through the chain's own interface, exactly like a running loan; those
-are now named in the operator's log as unresolvable rather than counted as
-running forever. And a state this build does not recognise, which a newer
+are now named in the operator's log as unresolvable. Being named is not
+yet being withdrawn, and the difference matters: the record keeps its
+running state, so it is still counted and still published as open. What has
+changed is that it is no longer mistaken for a confirmed running loan on
+every pass in silence. Withdrawing it needs a record state the platform does
+not have, which is raised separately. And a state this build does not recognise, which a newer
 deployment could introduce, is named rather than passed over in silence: if
 such a state turns out to be an ending, quietly skipping it would leave the
 record published as open while every check reported perfect health.
