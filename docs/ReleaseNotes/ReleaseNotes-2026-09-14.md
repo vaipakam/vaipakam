@@ -8,14 +8,21 @@ that chains carrying history need before the cutover. Nothing in it moves
 reward value yet — no payout, gate or funding path reads the holder, and no
 writer can fund it — which is why it could be reviewed to convergence and
 merged ahead of the change that will. What it does settle is the shape of
-every irreversible step around the holder: each is bound to the platform's
-manual pause and to a count of pause transitions the platform now keeps, so
-no tooling can pair a stale operator answer with whatever pause happens to
-be in force, and the in-place refresh that carries it pauses first,
-simulates every chain before broadcasting to any, and restores service only
-through an unpause that checks nothing else touched the pause meanwhile.
-The one gate this change deliberately leaves off chain — pausing the facet
-cuts themselves — is tracked as #2179.
+the irreversible steps around the holder, and the safeguard each one
+carries differs, so they are worth stating separately. Replacing the holder
+and sweeping its unattributed remainder to the treasury require the
+platform's manual pause. The paid-side rebase and the older seed require
+that manual pause and also refuse a stale pause-transition count — a count
+the platform now keeps — so no tooling can pair a stale operator answer
+with whatever pause happens to be in force. The administrator-only
+recoveries of a foreign token, native currency, an NFT or predecessor VPFI
+carry no pause gate at all; each is verified at both ends of the move
+instead. The in-place refresh that carries all of this pauses as its first
+transaction, simulates every chain before broadcasting to any, and restores
+service only through an unpause that checks, by that same count, that
+nothing else touched the pause meanwhile. The one gate this change
+deliberately leaves off chain — pausing the facet cuts themselves — is
+tracked as #2179.
 
 ## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #2158)
 
