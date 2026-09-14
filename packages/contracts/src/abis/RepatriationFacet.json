@@ -1003,6 +1003,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {

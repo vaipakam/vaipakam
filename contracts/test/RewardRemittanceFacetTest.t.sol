@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -78,6 +79,9 @@ contract RewardRemittanceFacetTest is SetupTest {
         chainIds[1] = CHAIN_ARB;
         chainIds[2] = CHAIN_OP;
         RewardAggregatorFacet(address(diamond)).setExpectedSourceChainIds(chainIds);
+        // #1566 slice 4 PR B — a canonical chain remits out of the custody
+        // holder, bounded by what was funded: activate and fund the pool.
+        activateRewardCustodyForTest(address(vpfiTok), 10_000_000 ether);
 
         vm.deal(address(this), 10 ether);
         vm.deal(keeper, 10 ether);
@@ -224,6 +228,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         (uint256 expected, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
 
         uint256 diamondBefore = vpfiTok.balanceOf(address(diamond));
+        address holder = RewardCustodyFacet(address(diamond)).rewardCustodyHolder();
+        uint256 holderBefore = vpfiTok.balanceOf(holder);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
 
         // CCIP captured a single token-bearing send with the exact slice.
@@ -233,12 +239,13 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(toks[0].token, address(vpfiTok), "vpfi");
         assertEq(toks[0].amount, expected, "delivered == slice");
 
-        // VPFI pulled from the Diamond; accounting recorded.
-        assertEq(
-            vpfiTok.balanceOf(address(diamond)),
-            diamondBefore - expected,
-            "diamond debited"
-        );
+        // #1566 slice 4 PR B — VPFI leaves the custody HOLDER (through the
+        // Diamond to the messenger in one transaction); the Diamond's own
+        // balance is untouched. Accounting recorded.
+        assertEq(vpfiTok.balanceOf(holder), holderBefore - expected, "holder debited");
+        assertEq(vpfiTok.balanceOf(address(diamond)), diamondBefore, "diamond untouched");
+        (, uint256 paidAfter) = RewardCustodyFacet(address(diamond)).armedFreshLedger();
+        assertEq(paidAfter, expected, "the fresh share charged the delivered ledger");
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), expected, "marked");
         assertEq(rlens.getRewardBudgetRemittedTotal(CHAIN_ARB), expected, "total");
         assertEq(rlens.getRewardBudgetRemittedGlobal(), expected, "global");
@@ -334,7 +341,10 @@ contract RewardRemittanceFacetTest is SetupTest {
 
     function test_Remit_RevertsOnMirror() public {
         _finalizeDay1();
-        // Flip to a mirror deploy — remittance is Base-only.
+        // Flip to a mirror deploy — remittance is Base-only. (#1566 slice 4
+        // PR B: the setUp's activation froze the role; lifted raw here, since
+        // the flip itself is not what this test pins.)
+        TestMutatorFacet(address(diamond)).setRewardRoleChangesFrozenRaw(false);
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
         vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);

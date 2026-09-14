@@ -2238,6 +2238,138 @@
   },
   {
     "type": "error",
+    "name": "RewardBaseChainRebindRequiresDetach",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "requested",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardBaseDeploymentRebindRequiresDetach",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresConfiguredRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresRebase",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationRequiresRecoveryArming",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyAlreadyActivated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBalanceUnreadable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBaselineNotVerified",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapExceedsLedger",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "room",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyBootstrapRowNotAllowed",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyErc721NotAtHolder",
     "inputs": [
       {
@@ -2296,6 +2428,33 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyFundingExceedsCap",
+    "inputs": [
+      {
+        "name": "resulting",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyFundingRequiresActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyHolderAlreadyBound",
     "inputs": []
   },
@@ -2343,12 +2502,102 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyNotActivated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyOnlyDiamondInternal",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyOverageExceedsRecorded",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyPayoutTokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "given",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyRecoverTargetsBoundHolder",
     "inputs": [
       {
         "name": "holder",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRowShort",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRowUnbacked",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -2390,6 +2639,22 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyUnderHeld",
+    "inputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
   },
@@ -2413,6 +2678,22 @@
     "type": "error",
     "name": "RewardMigrationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardRoleChangeFrozen",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "requested",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

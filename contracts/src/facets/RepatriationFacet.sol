@@ -811,8 +811,9 @@ contract RepatriationFacet is
 
         // CEI: the one-shot marker precedes every effect and interaction.
         s.repatInstructionState[key] = INSTR_EXECUTED;
-        LibVpfiRecycle.debitRepatriationSurplus(s, amount);
-        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        // #1566 slice 4 PR B — the primitive moves the tokens itself (from
+        // the holder's recycled row on an activated deployment).
+        LibVpfiRecycle.debitRepatriationSurplus(s, amount, sender);
         messageId = IVpfiReturnSender(sender).sendRepatriationReturn{
             value: msg.value
         }(dst, issuingBase, authId, amount, refundAddress);

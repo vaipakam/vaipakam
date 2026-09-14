@@ -3,6 +3,7 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -108,7 +109,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            LibRewardCustody.TransportSource.Live,
+            0
         );
     }
 
@@ -144,22 +150,25 @@ contract RewardCompensationDispatchFacet is
             dayId,
             lenderAmount18,
             borrowerAmount18,
-            true,
+            LibRewardCustody.TransportSource.Recovery,
             sourceRemitId
         );
     }
 
     /// @dev ONE implementation of the manual dispatch — the external
-    ///      wrappers differ only in the funding source flag.
+    ///      wrappers differ only in the NAMED custody source (#1566 slice 4
+    ///      PR B: the source rides through to the shared tail, which debits
+    ///      that custody, so no dispatch can send from an unnamed one).
     function _remitManualBudget(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery,
+        LibRewardCustody.TransportSource source,
         uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bool fromRecovery = source == LibRewardCustody.TransportSource.Recovery;
         // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
         // wire: payout is `localInterest × Δ` per side and Base does not
         // hold the mirror's day interest, so a single scalar would leave
@@ -339,7 +348,8 @@ contract RewardCompensationDispatchFacet is
             dayId,
             remitId,
             lenderAmount18,
-            borrowerAmount18
+            borrowerAmount18,
+            source
         );
 
         emit ManualRewardBudgetRemitted(dstChainId, dayId, amount, remitId);
@@ -380,7 +390,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            LibRewardCustody.TransportSource.Live,
+            0
         );
     }
 
@@ -410,7 +425,7 @@ contract RewardCompensationDispatchFacet is
             dayId,
             lenderAmount18,
             borrowerAmount18,
-            true,
+            LibRewardCustody.TransportSource.Recovery,
             sourceRemitId
         );
     }
@@ -421,10 +436,11 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery,
+        LibRewardCustody.TransportSource source,
         uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bool fromRecovery = source == LibRewardCustody.TransportSource.Recovery;
         uint256 amount = lenderAmount18 + borrowerAmount18;
         if (amount == 0) revert NothingToRemit();
         {
@@ -544,7 +560,8 @@ contract RewardCompensationDispatchFacet is
             dayId,
             remitId,
             lenderAmount18,
-            borrowerAmount18
+            borrowerAmount18,
+            source
         );
 
         emit SupplementalRewardBudgetRemitted(
@@ -713,10 +730,23 @@ contract RewardCompensationDispatchFacet is
         //
         // The tokens are not lost: they stay as ordinary unearmarked
         // balance, which is exactly what the CHARGED dispatch path spends.
-        if (!_receiptPredatesAttribution(s, remitId)) {
+        bool attributable = !_receiptPredatesAttribution(s, remitId);
+        if (attributable) {
             s.rewardBudgetRecovered += credited;
         }
         if (overage != 0) s.strandedReturnOverage += overage;
+        // #1566 slice 4 PR B — the recovery custody switch (design §5d): on
+        // an activated deployment the entitlement-bounded portion is
+        // relocated from this balance into the holder's RECOVERY row and
+        // any excess into the protected OVERAGE row, measured. A
+        // pre-attribution receipt's credit touches no position and stays in
+        // this balance, exactly as before.
+        if (LibRewardCustody.active(s)) {
+            if (attributable) {
+                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, credited);
+            }
+            LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Overage, overage);
+        }
         // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
         // headroom: the mirror's one-shot record retired at the declared
         // amount, so the gap can never re-arrive. Recorded per receipt
@@ -877,7 +907,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 remitId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        LibRewardCustody.TransportSource source
     ) private returns (bytes32 messageId) {
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
@@ -898,14 +929,22 @@ contract RewardCompensationDispatchFacet is
             uint256(c.lapseWindowSeconds),
             uint256(c.dispatchCutoffGap)
         );
+        // #1566 slice 4 PR B — a compensation is fresh-only: a `Live` draw
+        // leaves the live-fresh row (bounded and charged against the
+        // delivered ledger in the tail); a `Recovery` draw leaves the
+        // recovery row, uncharged.
         messageId = LibRewardRemitDispatch.dispatchRemitTail(
             s,
             vpfi,
             messenger,
             dstChainId,
             payload,
-            lenderAmount18 + borrowerAmount18,
-            remitId
+            remitId,
+            LibRewardCustody.TransportDraw({
+                source: source,
+                fresh: lenderAmount18 + borrowerAmount18,
+                recycled: 0
+            })
         );
     }
     /// @notice #1222 M3 — a PENDING reservation was operator-RELEASED.
@@ -1480,9 +1519,15 @@ contract RewardCompensationDispatchFacet is
         bool localStranding
     ) private {
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
-        uint256 earmarks = s.recycleBucket + recycledInflow
-            + (s.rewardBudgetRecovered - s.rewardBudgetRedispatched)
-            + s.strandedReturnOverage + freshInflow;
+        // #1566 slice 4 PR B — on an activated deployment the standing
+        // earmarks are holder custody, not this balance; what must be here
+        // is the inflow itself, which is then relocated (measured) below.
+        bool holderCustody = LibRewardCustody.active(s);
+        uint256 earmarks = holderCustody
+            ? freshInflow + recycledInflow
+            : s.recycleBucket + recycledInflow
+                + (s.rewardBudgetRecovered - s.rewardBudgetRedispatched)
+                + s.strandedReturnOverage + freshInflow;
         if (bal < earmarks) {
             revert CeremonyInflowNotBacked(refId, bal, earmarks);
         }
@@ -1494,6 +1539,9 @@ contract RewardCompensationDispatchFacet is
         // credit no fresh position at all since r6.)
         if (!_receiptPredatesAttribution(s, refId)) {
             s.rewardBudgetRecovered += freshInflow;
+            if (holderCustody) {
+                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
+            }
         }
         if (recycledInflow != 0) {
             LibVpfiRecycle.creditCustodyRelocated(

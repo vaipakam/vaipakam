@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
@@ -534,7 +535,59 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = s.userVaipakamVaults[user];
+        address proxy = _creditableVault(s, user);
+        IERC20(token).safeTransfer(proxy, amount);
+        _recordVaultCredit(s, user, token, proxy, amount);
+    }
+
+    /**
+     * @notice #1566 slice 4 PR B — the HOLDER-sourced sibling of
+     *         {vaultCreditFromDiamondERC20}: pay a reward claim into the
+     *         claimant's vault out of the delivered reward custody, debiting
+     *         the holder's live-fresh and recycled rows by exactly the two
+     *         components and releasing their sum from the holder to the
+     *         vault proxy, measured at both ends — then the same tracked-
+     *         balance record and tier rollup as the Diamond-funded route.
+     * @dev    ONE revert-isolated frame (design §5d): the caller invokes this
+     *         through the Diamond's fallback, so a failure at ANY step — no
+     *         vault, the mandatory-upgrade gate, a row that cannot cover its
+     *         component, a release either end cannot account for, the record,
+     *         the rollup — rolls back the row debits AND the holder release
+     *         before the caller's wallet fallback pays. Exactly one
+     *         destination is ever paid. Same fallback triggers as the sibling
+     *         (`NoVault` / `VaultUpgradeRequired` are not failures); same
+     *         onlyDiamondInternal posture. The token must be the configured
+     *         VPFI: that is the only asset the holder's rows describe.
+     * @param user     Claimant whose vault is credited.
+     * @param token    The configured VPFI token.
+     * @param fresh    The FRESH component, debited from the live-fresh row.
+     * @param recycled The RECYCLED component, debited from the recycled row.
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function vaultCreditFromRewardCustodyERC20(
+        address user,
+        address token,
+        uint256 fresh,
+        uint256 recycled
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address proxy = _creditableVault(s, user);
+        (address holder, address vpfi) = LibRewardCustody.boundHolderAndToken(s);
+        if (token != vpfi) revert IVaipakamErrors.RewardCustodyPayoutTokenMismatch(vpfi, token);
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, proxy);
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, proxy);
+        uint256 amount = fresh + recycled;
+        LibRewardCustody.releaseMeasured(vpfi, holder, proxy, amount);
+        _recordVaultCredit(s, user, token, proxy, amount);
+    }
+
+    /// @dev READ-ONLY vault resolution shared by both protocol-payout credits
+    ///      (see {vaultCreditFromDiamondERC20} for why it never mints).
+    function _creditableVault(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (address proxy) {
+        proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
         if (
             s.mandatoryVaultVersion > 0 &&
@@ -542,10 +595,19 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         ) {
             revert VaultUpgradeRequired();
         }
+    }
 
-        IERC20(token).safeTransfer(proxy, amount);
+    /// @dev The tracked-balance record and the broadcast-free tier rollup
+    ///      both protocol-payout credits end with — one implementation, so
+    ///      the two routes cannot drift on what a vault credit records.
+    function _recordVaultCredit(
+        LibVaipakam.Storage storage s,
+        address user,
+        address token,
+        address proxy,
+        uint256 amount
+    ) private {
         LibVaipakam.recordVaultDeposit(user, token, amount);
-
         if (token == s.vpfiToken) {
             // Post-mutation stamp, clamped against the tracked counter so
             // pre-existing unsolicited dust in the vault still can't inflate

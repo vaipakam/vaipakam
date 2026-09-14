@@ -1166,6 +1166,22 @@ contract RewardReporterFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 slice 4 PR B (design §5c/§5d) — a MIRROR's funding identity
+        // is never rebound directly to a different retained source: the
+        // change must pass through `Detached`. Judged against the last
+        // NONZERO era, never the live config, so disarm-then-rearm cannot
+        // smuggle a rebinding past it (the same yardstick the rotation
+        // detection below uses). Permanent, not only during the freeze.
+        if (
+            baseDeployment != address(0)
+                && s.rewardEraLastNonzero != address(0)
+                && baseDeployment != s.rewardEraLastNonzero
+                && LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Mirror
+        ) {
+            revert IVaipakamErrors.RewardBaseDeploymentRebindRequiresDetach(
+                s.rewardEraLastNonzero, baseDeployment
+            );
+        }
         if (baseDeployment != address(0)) {
             // #1632 r2 — rotation detection against the last NONZERO era
             // (never the live config, so disarm/re-arm cannot smuggle a
@@ -1277,6 +1293,26 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        // #1566 slice 4 PR B (design §5c/§5d) — a mirror's authenticated
+        // source is never rebound DIRECTLY to a different one: the old
+        // residual must retire and delayed packets from the old source must
+        // not be attributed to the new one, which only a pass through
+        // `Detached` guarantees. Permanent, not only during the freeze. A
+        // CANONICAL chain's base chain id is not a funding source (it
+        // receives no remittances), so its rewrite is not a rebinding.
+        if (wasMirror && old != 0 && chainId != 0 && chainId != old) {
+            revert IVaipakamErrors.RewardBaseChainRebindRequiresDetach(old, chainId);
+        }
+        // The role freeze: refuse an EFFECTIVE role change while holder
+        // allocations exist or custody is activated (see
+        // {_requireRoleChangeAllowed}). Computed on the would-be role BEFORE
+        // the write, so a refused call leaves nothing half-written.
+        _requireRoleChangeAllowed(
+            s,
+            s.isCanonicalRewardChain
+                ? LibVaipakam.RewardRole.Canonical
+                : chainId != 0 ? LibVaipakam.RewardRole.Mirror : LibVaipakam.RewardRole.Detached
+        );
         s.baseChainId = chainId;
         // #1566 closure 3 — stamp the role as CONFIGURED. This is what makes
         // `setBaseChainId(0)` resolve to `Detached` (fail-closed) rather than
@@ -1303,6 +1339,24 @@ contract RewardReporterFacet is
             bytes32(uint256(old)),
             bytes32(uint256(chainId))
         );
+    }
+
+    /// @dev #1566 slice 4 PR B — the role freeze (design §5d, "role and
+    ///      SOURCE changes freeze here"): from the first holder attribution
+    ///      or the activation until slice 4 PR C's backfill clears
+    ///      `rewardRoleChangesFrozen`, every EFFECTIVE role change is refused
+    ///      with the two roles named. Why: between the two PRs the residual
+    ///      retirement below can only level `paid` to `received`; it cannot
+    ///      re-key a holder allocation, so a transition would orphan funded
+    ///      custody or re-expose a stale residual after reattachment. One
+    ///      helper on the RESOLVED role, so a third role input inherits it.
+    function _requireRoleChangeAllowed(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardRole next
+    ) private view {
+        if (!s.rewardRoleChangesFrozen) return;
+        LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
+        if (next != current) revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
     }
 
     /// @dev Retire the delivered-fresh residual (`received - paid`) whenever
@@ -1337,6 +1391,19 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        // #1566 slice 4 PR B — the role freeze, on the would-be role (a
+        // false→false write on a never-configured deployment resolves
+        // `Unconfigured` again and is not a change).
+        _requireRoleChangeAllowed(
+            s,
+            on
+                ? LibVaipakam.RewardRole.Canonical
+                : s.baseChainId != 0
+                    ? LibVaipakam.RewardRole.Mirror
+                    : (s.rewardRoleConfigured || old)
+                        ? LibVaipakam.RewardRole.Detached
+                        : LibVaipakam.RewardRole.Unconfigured
+        );
         s.isCanonicalRewardChain = on;
         // #1566 closure 3 — see the twin stamp in {setBaseChainId}. Demoting a
         // canonical chain that has no `baseChainId` lands on the same two

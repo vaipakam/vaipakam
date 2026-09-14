@@ -7387,6 +7387,27 @@ library LibVaipakam {
         ///      on an address, so a previous holder stays reachable for
         ///      recovery while nothing else ever is.
         mapping(address => bool) rewardCustodyHolderConstructed;
+        /// @dev #1566 slice 4 PR B — whether this deployment's reward custody
+        ///      reads and debits the holder. Set ONCE by the per-chain
+        ///      activation ceremony (`RewardCustodyFacet.activateRewardCustody`
+        ///      — ADMIN, under the manual pause, epoch-pinned) after the
+        ///      recovery, overage and recycled positions have been reconciled
+        ///      into the holder's rows; never by a facet refresh. `false` is
+        ///      today's Diamond-custody behaviour, which an `Unconfigured`
+        ///      deployment keeps forever (it cannot activate). Read through
+        ///      `LibRewardCustody.active` only — that is the design's role
+        ///      branch, in one place.
+        bool rewardCustodyActivated;
+        /// @dev #1566 slice 4 PR B — the role and source freeze (design §5d):
+        ///      armed by the first holder attribution or by the activation,
+        ///      whichever comes first; while set, `setBaseChainId` and
+        ///      `setIsCanonicalRewardChain` refuse every EFFECTIVE role change,
+        ///      because the retained residual retirement can level the
+        ///      delivered counters but cannot re-key a holder allocation, so a
+        ///      transition would orphan funded custody. Cleared by slice 4
+        ///      PR C's era-registry backfill as its last step, and by nothing
+        ///      else.
+        bool rewardRoleChangesFrozen;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

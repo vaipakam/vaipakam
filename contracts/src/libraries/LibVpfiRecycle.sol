@@ -5,6 +5,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LibRewardCustody} from "./LibRewardCustody.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title  LibVpfiRecycle
@@ -45,6 +47,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *         releasing a recycled commitment absorbs nothing).
  */
 library LibVpfiRecycle {
+    using SafeERC20 for IERC20;
     /// @notice Recyclable VPFI receipt classes (governor §4). Stable ABI
     ///         ordering — append only. `ExpiredReward` is reserved for the
     ///         RL-3 claim-horizon sweep (#1305).
@@ -197,21 +200,21 @@ library LibVpfiRecycle {
      */
     function creditNotificationFee(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
         _requireInflowDelta(RecycleSource.NotificationFee, amount, balanceBefore);
-        _credit(RecycleSource.NotificationFee, refId, amount);
+        _credit(RecycleSource.NotificationFee, refId, amount, CreditOrigin.Diamond);
     }
 
     /// @notice See {creditNotificationFee} — the Full-tariff `C*` charged into
     ///         Diamond custody at accept (#1352 / #1383).
     function creditFullTariff(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
         _requireInflowDelta(RecycleSource.FullTariff, amount, balanceBefore);
-        _credit(RecycleSource.FullTariff, refId, amount);
+        _credit(RecycleSource.FullTariff, refId, amount, CreditOrigin.Diamond);
     }
 
     /// @notice See {creditNotificationFee} — a spend-gated perk purchase
     ///         (#1204), VPFI spent from the buyer's own vault.
     function creditSpendGatedPerk(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
         _requireInflowDelta(RecycleSource.SpendGatedPerk, amount, balanceBefore);
-        _credit(RecycleSource.SpendGatedPerk, refId, amount);
+        _credit(RecycleSource.SpendGatedPerk, refId, amount, CreditOrigin.Diamond);
     }
 
     /**
@@ -233,7 +236,23 @@ library LibVpfiRecycle {
     function absorbRewardFresh(RecycleSource source, uint256 refId, uint256 fresh) internal {
         if (fresh == 0) return;
         LibInteractionRewards.chargeDeliveredFresh(LibVaipakam.storageSlot(), fresh);
-        _credit(source, refId, fresh);
+        // #1566 slice 4 PR B — on an activated deployment an absorption is an
+        // IN-HOLDER transfer, live-fresh row → recycled row, moving no tokens
+        // (design §5d); the delivered charge above is its ledger half.
+        _credit(source, refId, fresh, CreditOrigin.LiveFresh);
+    }
+
+    /// @notice #1566 slice 4 PR B — where the VPFI behind a bucket credit
+    ///         sits at the moment of the credit: at the DIAMOND (a user's
+    ///         fee just pulled into it, a delivery the receiver forwarded
+    ///         here) and so to be RELOCATED into the holder's recycled row
+    ///         on an activated deployment, or already in the holder's
+    ///         LIVE-FRESH row (a reward absorption) and so re-attributed in
+    ///         place. Deciding it per operation is what keeps a credit from
+    ///         ever describing custody that is somewhere else.
+    enum CreditOrigin {
+        Diamond,
+        LiveFresh
     }
 
     /// @dev The delta check every non-reward inflow operation performs: the
@@ -269,13 +288,30 @@ library LibVpfiRecycle {
     function _credit(
         RecycleSource source,
         uint256 refId,
-        uint256 amount
+        uint256 amount,
+        CreditOrigin origin
     ) private {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
         uint256 needed = s.recycleBucket + amount;
-        if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
+        // #1566 slice 4 PR B — the ledger-slice property is enforced by the
+        // CUSTODY on an activated deployment: the credit is backed by tokens
+        // relocated into the holder's recycled row (measured) or
+        // re-attributed to it from the live-fresh row (refused if that row
+        // cannot cover it), never by a bare balance read. Otherwise today's
+        // Diamond-balance assertion.
+        if (LibRewardCustody.active(s)) {
+            if (origin == CreditOrigin.LiveFresh) {
+                LibRewardCustody.callMove(
+                    LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Recycled, amount
+                );
+            } else {
+                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recycled, amount);
+            }
+        } else {
+            uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
+            if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
+        }
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
         // reported mirror→Base on each day-close so Base's per-chain
@@ -676,6 +712,20 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
+        // #1566 slice 4 PR B — on an ACTIVATED deployment the bucket and the
+        // recovery position are custody of the HOLDER, not of this balance,
+        // so subtracting them here would double-count them against tokens
+        // that are no longer here. The one Diamond-side reservation left is
+        // the stranded-recovery reservation (quarantined compensation
+        // awaiting its return, which the return sender draws from this
+        // balance; its move into the holder is the cutover PR's). The
+        // meaning of the three results is unchanged: live balance, ledger
+        // bucket, and this balance minus its OWN earmarks.
+        if (LibRewardCustody.active(s)) {
+            uint256 quarantined = s.strandedRecoveryReserved;
+            unearmarked = vpfiBalance > quarantined ? vpfiBalance - quarantined : 0;
+            return (vpfiBalance, bucket, unearmarked);
+        }
         // #1555 r4 — this subtracts no further BALANCE-OWNER term beyond
         // the bucket, and that is a DELIBERATE stopping point rather than an
         // oversight. An r3 revision also subtracted `treasuryBalances[vpfi]`;
@@ -778,6 +828,26 @@ library LibVpfiRecycle {
     }
 
     /**
+     * @notice #1566 slice 4 PR B — the FRESH backing room the reward gates
+     *         measure a fresh outflow against (design §5d, "a separate
+     *         reward-funding-room helper for the gates; `backingPosition`
+     *         keeps its meaning"): on an activated deployment it is the
+     *         live-fresh row of the holder — the calling consumer's ELIGIBLE
+     *         attribution (era and transport rows join it with PR C and the
+     *         cutover PR) — and otherwise today's un-earmarked Diamond
+     *         balance. The claim's `InteractionRewardBackingShort` and both
+     *         sweeps' caps read THIS, not {backingPosition}, whose first
+     *         result is a published metric with a documented meaning.
+     */
+    function freshBackingRoom(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        if (LibRewardCustody.active(s)) {
+            return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        }
+        (, , uint256 unearmarked) = backingPosition(s);
+        return unearmarked;
+    }
+
+    /**
      * @notice #1222 M3 B2-d5 — credit the RECYCLED share of an arriving
      *         Base-funded remit into this mirror's bucket as RELOCATED
      *         CUSTODY: real backing for the claim path, but not new
@@ -814,9 +884,18 @@ library LibVpfiRecycle {
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
         uint256 needed = s.recycleBucket + amount;
-        if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
+        // #1566 slice 4 PR B — relocated custody arrives at the DIAMOND (the
+        // receiver forwarded it here; the return landed here; the ceremony
+        // booked it here) and is moved into the holder's recycled row,
+        // measured, on an activated deployment — the same backing rule as
+        // {_credit}, enforced by custody rather than by a balance read.
+        if (LibRewardCustody.active(s)) {
+            LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recycled, amount);
+        } else {
+            uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
+            if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
+        }
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // Keeps the day-0 label pre-launch, unlike {credit} above (#1504).
         // Deliberate, not an oversight: relocation is NOT absorption and
@@ -948,7 +1027,8 @@ library LibVpfiRecycle {
      */
     function debitRepatriationSurplus(
         LibVaipakam.Storage storage s,
-        uint256 amount
+        uint256 amount,
+        address to
     ) internal {
         uint256 bucket = s.recycleBucket;
         uint256 reserved = s.outstandingCommitRecycled +
@@ -967,6 +1047,19 @@ library LibVpfiRecycle {
         s.recycleAccountingSeeded = true;
         s.recycleBucket = bucket - amount;
         s.recycleRepatriatedOutCumulative += amount;
+        // #1566 slice 4 PR B — the token move is part of the primitive, not
+        // adjacent to it in the caller: the surplus leaves the holder's
+        // recycled row (measured) on an activated deployment, or the
+        // Diamond's balance otherwise, so the ledger debit and the custody
+        // debit cannot be paired differently by a second caller.
+        if (LibRewardCustody.active(s)) {
+            LibRewardCustody.callReleaseFromRow(LibVaipakam.RewardCustodyRow.Recycled, to, amount);
+        } else if (to != address(this)) {
+            // A release to the Diamond itself moves nothing on the Diamond
+            // path (the tokens are already here); on the holder path above
+            // it is a real, measured release out of the holder.
+            IERC20(s.vpfiToken).safeTransfer(to, amount);
+        }
     }
 
     function consume(uint256 amount) internal {

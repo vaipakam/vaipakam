@@ -772,8 +772,12 @@ contract DeployDiamond is Script {
         //     refresh that did would leave the attributed balance at the old
         //     address while the Diamond read an empty one. Replacing a holder
         //     is its own paused ceremony (`ReplaceRewardCustodyHolder.s.sol`).
-        //     Nothing reads the holder until PR B's cutover, so binding it
-        //     changes no live behaviour.
+        //     Nothing reads the holder until the chain's custody is ACTIVATED
+        //     (#1566 slice 4 PR B): the role is `Unconfigured` here, and the
+        //     activation ceremony (`ActivateRewardCustody.s.sol`) runs after
+        //     `ConfigureRewardReporter` has given the deployment its reward
+        //     role — a fresh deployment takes the same ceremony as a live one,
+        //     so binding it here changes no live behaviour.
         //
         //     The one-shot paid-side REBASE is consumed with a zero total
         //     for the same reason the P1-b seed is: a fresh deployment has no
@@ -1452,7 +1456,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](33);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1493,6 +1497,8 @@ contract DeployDiamond is Script {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
+        s[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -3030,7 +3036,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](16);
+        s = new bytes4[](31);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3047,6 +3053,23 @@ contract DeployDiamond is Script {
         s[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
         s[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
         s[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
+        // #1566 slice 4 PR B — activation, funding, bootstrap, overage, ledger.
+        s[16] = RewardCustodyFacet.activateRewardCustody.selector;
+        s[17] = RewardCustodyFacet.fundRewardPool.selector;
+        s[18] = RewardCustodyFacet.fundRewardCustodyRow.selector;
+        s[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
+        s[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
+        s[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
+        s[22] = RewardCustodyFacet.rewardRoleChangesFrozen.selector;
+        s[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
+        // #1566 slice 4 PR B — the Diamond-internal custody entry points.
+        s[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
+        s[25] = RewardCustodyFacet.custodyMove.selector;
+        s[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
+        s[27] = RewardCustodyFacet.custodyUncreditFresh.selector;
+        s[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
+        s[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        s[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
