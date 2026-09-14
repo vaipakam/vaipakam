@@ -4,11 +4,20 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
  * RECONCILING INDEXED LOAN STATUS AGAINST THE CHAIN (#2101 part B).
  *
  * The indexer learns a loan is over by seeing its terminal event. An event
- * missed while the Worker was down, rate-limited, or past its catch-up
- * window is missed PERMANENTLY — catching the cursor up restores the
- * cursor, not the rows. `bookCatchUp`'s `MAX_CATCHUP_BLOCKS` fail-open is
- * the right call for liveness and precisely why a repair pass has to exist
- * beside it.
+ * it does not see is missed PERMANENTLY — catching the cursor up restores
+ * the cursor, not the rows, because nothing replays a block the cursor has
+ * already passed.
+ *
+ * WHY one goes unseen is deliberately not asserted here (#2199 r4
+ * `4009907907`). An earlier version of this header blamed the Worker being
+ * down, rate limits, or a catch-up window, and cited a `bookCatchUp`
+ * `MAX_CATCHUP_BLOCKS` fail-open — which does not exist in this tree, and
+ * whose named causes the scan explicitly recovers from: the cursor resumes
+ * at `lastBlock + 1`, a failed `getLogs` bails WITHOUT advancing it, and it
+ * is written only after the handlers succeed. That header is where the
+ * claim reached the release note, so it is corrected at the source. This
+ * pass repairs the RESULT; it does not diagnose the cause, and neither does
+ * this comment.
  *
  * Measured on Base Sepolia on 2026-09-14: the chain reported 6 active
  * loans, `/loans/stats` 7, and `/loans/active` 9 rows. The three extra

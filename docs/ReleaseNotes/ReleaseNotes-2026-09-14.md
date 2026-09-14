@@ -1205,11 +1205,18 @@ correct in the same cases; they now say why in terms anyone can check.
 ## #2101 — the index checks its own loan statuses against the chain (PR #2190)
 
 The indexer learns that a loan has ended by seeing the event announcing
-it. That works until it doesn't see one — because the service was down,
-was being rate-limited, or because the gap grew past the window it is
-willing to scan backwards over. A missed ending is missed permanently.
-Letting the service catch up restores its place in the chain, not the
-records it skipped past while it was behind.
+it. An ending it does not see is missed permanently: letting the service
+catch up restores its place in the chain, not the records it went past,
+because nothing goes back over ground the marker has already crossed.
+
+Why an ending goes unseen is deliberately not claimed here. An earlier
+draft blamed the service being down, being rate-limited, or a gap outgrowing
+what it will scan backwards over — and those are among the things the
+reading explicitly survives: it resumes from the last block it finished,
+a failed read leaves the marker where it was, and the marker moves only
+after the work behind it is done. The note admits further down that the
+check cannot say why an ending was missed; opening by naming causes
+contradicted that, and named the wrong ones.
 
 Nothing checked afterwards. The result, measured on the test network on
 14 September: the chain said six loans were running, one published figure
@@ -1239,9 +1246,12 @@ comparison waits for the last of them.
 How long that takes in real time is NOT something those two numbers give
 you, and it would be worse than useless to imply otherwise — how quickly
 passes follow one another depends on the arrangement. On the one in use a
-backlog drives itself rather than waiting for the next scheduled turn
-between passes; on the fallback each pass waits for its own turn, so the
-same gap takes far longer to close. Neither is a figure this note can
+backlog mostly drives itself rather than waiting for the next scheduled
+turn between passes, though it stops doing so once it is nearly finished
+and leaves the last stretch to the ordinary schedule — so the final wait
+before the comparison runs is a scheduled one however fast the rest went.
+On the fallback every pass waits for its own turn, so the same gap takes
+far longer to close. Neither is a figure this note can
 usefully give, because both depend on values an operator can tune. The
 honest statement is the shape: the gap is closed in bounded passes, and the
 comparison happens once they are finished.
@@ -1450,11 +1460,22 @@ That one-way direction is necessary and it is NOT on its own sufficient, and
 an earlier draft of this note said otherwise. A correction cannot be undone
 by the same check — a record it has ended is no longer one the check looks
 at — so a reading that is wrong rather than merely old is permanent. What
-actually makes it safe is that the chain is always read at a point the chain
-itself treats as settled, never at whatever a machine last saw. Without
-that, a momentary reorganisation could report an ending that then
-disappears, leaving a genuinely open loan recorded as closed with nothing
-that would ever come back to it.
+actually makes it safe is that the chain is read at a point the chain itself
+treats as settled, never at whatever a machine last saw. Without that, a
+momentary reorganisation could report an ending that then disappears,
+leaving a genuinely open loan recorded as closed with nothing that would
+ever come back to it.
+
+That holds while the source can be asked for a settled point, and there is
+one case where it cannot. A source too old to understand the question is
+answered instead by stepping back a fixed distance from the latest block —
+which is a guess at settlement rather than the chain's own word, and against
+a deep enough reorganisation it is the reading this rule exists to forbid.
+It is a pre-existing arrangement rather than anything this change
+introduced, and it is raised separately as #2201; it is stated here because the
+safety the rest of this section claims is exactly what it qualifies, and a
+reader who is told the rule and not its exception has been told the
+comfortable half.
 
 It also refuses to touch a record that has already ended, leaving
 corrections between one ending and another to the event path, which knows
@@ -1517,6 +1538,11 @@ together is the only version with no window. The messages were the last
 thing still written afterwards, and they had the same flaw: a failure there
 left the position corrected and the two people with money in it told nothing,
 permanently.
+
+A failure to look up the two parties is treated the same way as a failed
+write, including the waiting: the correction is abandoned, and the rotation
+has already moved past that record, so it is reached again only when the
+rotation next comes round.
 
 The messages are written only where the correction was actually made by
 this check. If another part of the service recorded the ending first — which
