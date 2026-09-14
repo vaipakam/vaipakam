@@ -1,5 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as acorn from 'acorn';
 import { describe, it, expect } from 'vitest';
 import { confirmWrite, unconfirmedWhy } from './writeConfirm.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * The three answers are the point of the module, so each one is pinned
@@ -167,6 +173,56 @@ describe('confirmWrite', () => {
     ).rejects.toThrow(TypeError);
   });
 
+  it('propagates a failure the classifier calls deterministic', async () => {
+    // A getter that reverted fails identically on every node, so
+    // retrying it to the deadline and reporting "no node would answer"
+    // would blame the endpoint for a contract or ABI regression.
+    const revert = new Error('execution reverted');
+    await expect(
+      confirmWrite(
+        base({
+          getBlockNumber: async () => 100n,
+          read: async () => {
+            throw revert;
+          },
+          retryable: (e) => e !== revert,
+        }),
+      ),
+    ).rejects.toThrow('execution reverted');
+  });
+
+  it('still retries a failure the classifier calls retryable', async () => {
+    let calls = 0;
+    const r = await confirmWrite(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => {
+          calls += 1;
+          if (calls === 1) throw new Error('socket hang up');
+          return 'done';
+        },
+        retryable: () => true,
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it('retries everything when no classifier is supplied', async () => {
+    // The default must not tighten behaviour behind a caller's back —
+    // an unrecognised error is no worse off than before the classifier
+    // existed.
+    const r = await confirmWrite(
+      base({
+        getBlockNumber: async () => 100n,
+        read: async () => {
+          throw new Error('execution reverted');
+        },
+      }),
+    );
+    expect(r.unconfirmed).toBe(true);
+  });
+
   it('asks once even with no budget at all', async () => {
     let asked = 0;
     const r = await confirmWrite(
@@ -238,5 +294,97 @@ describe('unconfirmedWhy', () => {
     });
     expect(s).toMatch(/short reason/);
     expect(s).not.toMatch(/stack frame/);
+  });
+});
+
+/**
+ * The `cacheTime: 0` on every head read is invisible in behaviour — a
+ * cached head produces a plausible UNCONFIRMED rather than an error —
+ * so nothing would notice it being dropped. This asks the tree instead
+ * of the runtime (#2107 round 1 P2).
+ */
+describe('every confirmWrite call site reads a fresh head', () => {
+  const walk = (n, fn) => {
+    if (!n || typeof n.type !== 'string') return;
+    fn(n);
+    for (const k of Object.keys(n)) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach((c) => walk(c, fn));
+      else if (v && typeof v.type === 'string') walk(v, fn);
+    }
+  };
+  const named = (p) =>
+    p.type === 'Property' && !p.computed
+      ? p.key.type === 'Identifier'
+        ? p.key.name
+        : p.key.value
+      : null;
+
+  /** Every `confirmWrite({ … })` in the live directory, by file. */
+  function confirmWriteCalls() {
+    const found = [];
+    for (const f of fs.readdirSync(HERE).filter((n) => n.endsWith('.mjs'))) {
+      if (f.startsWith('writeConfirm')) continue; // the module and its own suite
+      const src = fs.readFileSync(path.join(HERE, f), 'utf8');
+      let ast;
+      try {
+        ast = acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'module' });
+      } catch {
+        continue; // a file this suite cannot parse is not this test's subject
+      }
+      walk(ast, (n) => {
+        if (n.type !== 'CallExpression') return;
+        if (n.callee.type !== 'Identifier' || n.callee.name !== 'confirmWrite') return;
+        found.push({ file: f, arg: n.arguments[0] });
+      });
+    }
+    return found;
+  }
+
+  it('finds the call sites at all', () => {
+    // An empty set would satisfy every assertion below by accident.
+    const calls = confirmWriteCalls();
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect([...new Set(calls.map((c) => c.file))].sort()).toEqual([
+      'live-rate-desk.mjs',
+      'live-signed-book.mjs',
+    ]);
+  });
+
+  it('passes cacheTime: 0 to every head read, and a retryability classifier', () => {
+    for (const { file, arg } of confirmWriteCalls()) {
+      expect(arg?.type, `${file}: confirmWrite takes an object literal`).toBe('ObjectExpression');
+
+      const getHead = arg.properties.find((p) => named(p) === 'getBlockNumber');
+      expect(getHead, `${file}: confirmWrite is given a getBlockNumber`).toBeTruthy();
+
+      let reads = 0;
+      let fresh = 0;
+      walk(getHead.value, (n) => {
+        if (n.type !== 'CallExpression') return;
+        const c = n.callee;
+        const isHead =
+          (c.type === 'MemberExpression' &&
+            !c.computed &&
+            c.property.type === 'Identifier' &&
+            c.property.name === 'getBlockNumber') ||
+          (c.type === 'Identifier' && c.name === 'getBlockNumber');
+        if (!isHead) return;
+        reads += 1;
+        const opts = n.arguments[0];
+        if (opts?.type !== 'ObjectExpression') return;
+        const ct = opts.properties.find((p) => named(p) === 'cacheTime');
+        if (ct?.value.type === 'Literal' && ct.value.value === 0) fresh += 1;
+      });
+      expect(reads, `${file}: getBlockNumber actually reads a head`).toBeGreaterThan(0);
+      expect(fresh, `${file}: every head read passes cacheTime: 0`).toBe(reads);
+
+      // viem caches this action for the client's pollingInterval, which
+      // is LONGER than the retry interval, so consecutive attempts would
+      // reuse one answer. Without the classifier, a reverting getter is
+      // retried to the deadline and reported as an endpoint problem.
+      const retryable = arg.properties.find((p) => named(p) === 'retryable');
+      expect(retryable, `${file}: confirmWrite is given a retryable classifier`).toBeTruthy();
+    }
   });
 });

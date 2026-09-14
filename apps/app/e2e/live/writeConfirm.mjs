@@ -47,6 +47,33 @@
  * `tierZeroAtOrAfter` (Codex #1539 r9); this module is that shape made
  * shared rather than a fourth hand-rolled copy of it.
  *
+ * WHAT "AT OR AFTER" DOES NOT COVER — a HEIGHT is not a chain (#2107
+ * round 1). Two nodes can disagree at one height during a reorg, so a
+ * read pinned to a height is not proof of the write's own history. This
+ * deliberately does not chase that, and the reason is that the outcomes
+ * fall the safe way for the predicates it is asked:
+ *
+ *   - A reorg that DROPPED the write leaves the canonical chain without
+ *     it, so the read answers the pre-write value and this reports a
+ *     WRONG value. That is the correct alarm, not a miss — the write
+ *     really is not in the chain.
+ *   - A transient read from a competing fork answers the same pre-write
+ *     value, so it too reports WRONG. A false alarm, in the direction
+ *     that sends someone to look rather than the direction that tells
+ *     them not to.
+ *   - A false CONFIRM would need a fork on which the state already
+ *     satisfies the predicate. Both predicates in use ("the fill ledger
+ *     is at its ceiling", "the offer's creator is zeroed") describe a
+ *     position that cannot be taken, so a fork satisfying either is a
+ *     fork on which the thing being confirmed is true anyway.
+ *
+ * Adding block-hash ancestry would buy the middle case and cost a
+ * speculative branch on a path where no reorg has been observed —
+ * which is the shape #2149 spent eleven review rounds on before
+ * deleting it. The limit is stated here instead; if a reorg ever does
+ * show up in a drive's output, it needs an owner decision, not a
+ * defensive branch added in advance.
+ *
  * A WRONG VALUE IS FINAL HERE — it is not polled through. That is the
  * one place this deliberately differs from `tierZeroAtOrAfter`, and the
  * difference is not cosmetic. There, the floor comes from an EARLIER
@@ -79,6 +106,12 @@
  * @param {string}   [o.what]          names the state, for the message.
  * @param {number}   [o.timeoutMs]
  * @param {number}   [o.everyMs]
+ * @param {(err: unknown) => boolean} [o.retryable]
+ *        Whether asking again could give a different answer. A failure
+ *        this rejects PROPAGATES instead of being retried to the
+ *        deadline — see the note above it. Defaults to retrying
+ *        everything; `rpcRetryable.mjs` is the viem-aware classifier the
+ *        call sites pass.
  * @param {() => number} [o.now]
  * @param {(ms: number) => Promise<void>} [o.sleep]
  * @returns {Promise<
@@ -93,6 +126,7 @@ export async function confirmWrite({
   minBlock,
   getBlockNumber,
   what = 'the written state',
+  retryable = () => true,
   timeoutMs = 60_000,
   everyMs = 3_000,
   now = () => Date.now(),
@@ -116,10 +150,17 @@ export async function confirmWrite({
         got = true;
       }
     } catch (e) {
-      // Every RPC error retries until the deadline. A node that lacks
-      // the pinned block, a rate limit and a dropped connection are all
-      // the same thing from here — an answer not obtained — and none of
-      // them is evidence about the chain's state.
+      // A node that lacks the pinned block, a rate limit and a dropped
+      // connection are all the same thing from here — an answer not
+      // obtained — and none of them is evidence about the chain's
+      // state, so all of them retry until the deadline.
+      //
+      // A failure every node reproduces is not. A getter that reverted
+      // or return data that would not decode is a contract or ABI
+      // regression, and waiting out the deadline to report "no node
+      // would answer" would blame the endpoint for it — the same
+      // mislabelling this helper exists to stop. It propagates.
+      if (!retryable(e)) throw e;
       lastErr = e;
     }
 

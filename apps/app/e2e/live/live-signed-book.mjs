@@ -111,6 +111,7 @@ import {
   requireSigningRole,
   visit,
 } from './driver.mjs';
+import { rpcRetryable } from './rpcRetryable.mjs';
 import { confirmWrite } from './writeConfirm.mjs';
 
 // Entry-point guard: this executable reads SITE directly, which can run
@@ -374,7 +375,13 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
   confirmWrite({
     what: `signedOfferFilledAmount(${orderHash}) at or above the ceiling ${ceiling}`,
     minBlock,
-    getBlockNumber: () => pub.getBlockNumber(),
+    // `cacheTime: 0` is load-bearing, not tidiness. viem defaults this
+    // action's cache to the client's `pollingInterval` (4 s) while the
+    // retry below asks every 3 s, so consecutive attempts would reuse
+    // ONE head read — and a head cached as behind could still be
+    // returned at the deadline after the chain had caught up, failing
+    // the confirmation because the last request was never made.
+    getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
     read: (blockNumber) => diamondReadAt('signedOfferFilledAmount', [orderHash], blockNumber),
     // AT OR ABOVE the ceiling, which is the drive's own definition of
     // "not fillable" and the predicate the cleanup read already used.
@@ -383,6 +390,7 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
     // direction — a ledger past its ceiling still rests nothing, so
     // failing it would be a second false alarm of the kind this fixes.
     accept: (v) => v >= ceiling,
+    retryable: rpcRetryable,
     timeoutMs: 90_000,
   });
 

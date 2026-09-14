@@ -73,3 +73,44 @@ One drive in this family already did the right thing, for the same
 reason, after an earlier review round. What was missing was that it was
 one drive's private solution rather than something the others could use.
 It is now shared, and the three places above are the first users.
+
+## Two more, found in review
+
+Both were invisible — neither would have shown up as an error, only as
+the wrong verdict.
+
+The first: the question "how far has this machine got?" was being
+answered from a cache. The library keeps that answer for four seconds by
+default, and the check was asking again every three, so what looked like
+a series of fresh attempts was partly one answer repeated. Worse, an
+answer cached while the machine was behind could still be handed back at
+the very end, after the chain had caught up — failing the confirmation
+because the last question was never actually asked. Every attempt now
+insists on a fresh answer.
+
+The second: not every failure to read is a failure to reach. If the
+thing being read has itself broken — a function that now rejects the
+call, a reply that will not decode — every machine gives the same answer,
+and waiting out the deadline to announce that nobody would answer blames
+the network for a fault in the code. Those two specific failures are now
+recognised and reported as what they are. Everything else still retries,
+deliberately: the list of ways a network call can fail has no end, so the
+short, knowable list is the one worth naming, and anything unfamiliar
+behaves exactly as it did before.
+
+A third suggestion was to prove the reading came from the same chain the
+transaction is on, rather than merely from the same height — two machines
+can disagree at one height while the chain reorganises. That is true, and
+it is not fixed here, for a reason written into the code rather than left
+implied: for the two questions actually being asked, every way it can go
+wrong goes wrong in the safe direction. A reorganisation that dropped the
+transaction leaves the state looking untouched, which reports as a
+problem — correctly, because the transaction really is no longer there.
+A momentary reading from a competing branch reports the same, which is a
+false alarm that sends someone to look rather than one that tells them
+not to. And a false all-clear would need a branch on which the answer is
+already the one being hoped for — which, for "this offer can no longer be
+taken", is a branch where it cannot be taken anyway. Guarding against it
+would mean adding a defence against something no run has ever seen, and
+this codebase has a costly recent lesson about exactly that. The limit is
+written down instead.
