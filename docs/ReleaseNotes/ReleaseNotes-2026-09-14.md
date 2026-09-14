@@ -39,8 +39,9 @@ only what has been funded into the address minus what has been paid.
 Every payout leaves the address by its fresh and recycled parts; an
 ordinary remittance leaves by the same two parts and is charged against
 the delivered ledger by its fresh share, while a redispatch funded from
-the recovery position leaves that position alone and is not charged
-again, its original outflow having been charged already. The mesh watcher
+the recovery position is debited from that position — through it alone,
+by the full redispatched amount — and is not charged against the
+delivered ledger again, its original outflow having been charged already. The mesh watcher
 checks the address's balance against its attributions exactly, and treats
 a balance it cannot read as a critical finding rather than as zero. Six review rounds
 shaped it, and what they added is in the entry: the restitution position's
@@ -51,7 +52,8 @@ address rather than the platform's own balance.
 The remaining four entries are the day's work on the live-drive tooling —
 the scripts that exercise the deployed app and testnet after a deploy.
 Each is about a verdict that had been silently wrong: a drive that did not
-finish is now reported as unreviewed rather than as passed or failed; a
+finish is now reported as not fully reviewed — its earlier results kept,
+its later surfaces unexamined — rather than as passed or failed; a
 write whose confirmation could not be read from a lagging endpoint is no
 longer reported as a failed write; a screen whose opening timed out now
 says so instead of hiding among the other ways a screen fails to load; and
