@@ -22,16 +22,26 @@ pause meanwhile. The one gate this change deliberately leaves off chain —
 pausing the facet cuts themselves — is tracked as #2179.
 
 The cutover is behind a per-chain activation rather than a facet cut, and
-the activation refuses until several things are true at once: the
-operator holds the manual pause and names the pause count the figures were
-taken under, the paid-side migration has run, every position the address
-must back is backed exactly, and the deployment's whole facet routing is
-the one a complete refresh or deploy recorded — so the custody surface can
-never be switched on ahead of the reward paths that read it. From the
-activation, the canonical chain pays only what has been funded into the
-address minus what has been paid, every payout and remittance leaves the
-address by its fresh and recycled parts, and the mesh watcher checks the
-address's balance against its attributions exactly. Six review rounds
+the activation refuses until several things are true at once: an
+administrator holds the manual pause and names the pause count the
+figures were taken under; the paid-side migration has run; a canonical
+chain has armed per-receipt recovery attribution — the refresh's own
+migration, without which a canonical activation refuses after everything
+else is in place, which is why the ceremony's pre-flight checks it before
+anything is sent; every position the address must back is settled —
+exactly backed, or for a mirror's imported headroom either funded up to
+the figure or written down to what the address backs; and the
+deployment's whole facet routing is the one a complete refresh or deploy
+recorded — so the custody surface can never be switched on ahead of the
+reward paths that read it. From the activation, the canonical chain pays
+only what has been funded into the address minus what has been paid.
+Every payout leaves the address by its fresh and recycled parts; an
+ordinary remittance leaves by the same two parts and is charged against
+the delivered ledger by its fresh share, while a redispatch funded from
+the recovery position leaves that position alone and is not charged
+again, its original outflow having been charged already. The mesh watcher
+checks the address's balance against its attributions exactly, and treats
+a balance it cannot read as a critical finding rather than as zero. Six review rounds
 shaped it, and what they added is in the entry: the restitution position's
 two exits, the release that reconciles a position a moved figure left
 over-backed, the complete-cut record, and the expiry clock reading the
@@ -291,7 +301,13 @@ single-chain deployment with no reward role never activates and behaves
 exactly as before, and a detached deployment waits for the era registry
 that gives its inbound packets a rule. Backing a position ahead of the activation is itself an
 administrator-only action taken under the manual pause, and it waits for
-the paid-side migration whose result the figures depend on; a position
+the paid-side migration whose result the figures depend on. It takes one
+of two forms, each a different disposition of funds: replacement funding
+the administrator supplies from their own tokens, or a relocation of the
+platform's own historical inventory into the address — which the
+ceremony refuses without a stated provenance record, and which is never
+permitted for a mirror's imported headroom, since that history is not
+money; a position
 that a moved figure leaves over-backed before the activation can be
 released back to the platform's own balance — by an administrator, under
 the manual pause, by at most the excess, and to no other destination — so
@@ -311,12 +327,14 @@ position and only the excess becomes headroom — a position with two recorded e
 accounting error, or a release to the treasury for a genuine deficit —
 each an administrator-only action taken under the platform's manual
 pause, and one that a demoted compensation gives back in full. The reward token cannot be rotated while custody or any
-of the old token remains at the address. The public backing snapshot gains
+of the old token remains at the address, and a rotation is refused
+outright when the old token's balance at the address cannot be read,
+rather than that balance being taken as zero. The public backing snapshot gains
 a versioned form that names the address's balance and attributions; the
 mesh watcher reads only that form — a chain without it is reported as
-unverified rather than judged by the older relation — and alarms exactly,
-with no tolerance, when the address's balance stops covering its
-attributions where custody has moved. Payouts leave the address by
+unverified rather than judged by the older relation — and alarms exactly, with no tolerance, when the address's balance stops
+covering its attributions where custody has moved — and a balance it
+cannot read is itself a critical finding, never a zero. Payouts leave the address by
 their fresh and recycled components in one step, into a vault or a wallet,
 and a failure after the tokens moved rolls the whole leg back before the
 wallet is paid instead; absorptions re-attribute inside the address; user
@@ -327,9 +345,12 @@ Overage — value above any entitlement — gains a disposition to the
 treasury, likewise administrator-only and taken under the manual pause.
 Reward-role changes are frozen from the first custody attribution until the
 era registry lands, and a mirror's source is never rebound directly. The
-activation is its own operator script with direct and staged forms; the
-multi-chain refresh wrapper reports an unactivated chain as not ordinary
-completion and runs the ceremony only when opted in. Stated as not in this
+activation is its own administrator script with direct and staged forms,
+and neither form restores service: the deployment is left paused, and an
+unpauser's own fresh decision resumes it once the record step has
+confirmed the activation. The multi-chain refresh wrapper reports an
+unactivated chain as not ordinary completion and runs the ceremony only
+when opted in. Stated as not in this
 change: a delivery's unattributed remainder, a quarantined compensation and
 a pre-attribution return still rest in the platform's balance, for the
 cutover change that follows. Refs #1566, #1349, #1956.
@@ -817,8 +838,13 @@ There are three answers now, and they are different questions. The name
 stands for something, and here it is. The name has a binding, and what it
 holds at this point cannot be trusted — it was written to earlier, or
 unpacked from a pattern, or declared in a branch that may not have run,
-or defined in terms of itself. Or the name has no binding here at all,
-which means it belongs to another file or to the language itself.
+or defined in terms of itself. Or the name has no binding in this file at all, which means it is a
+global — something the language or the page provides, or a name nothing
+declared. An imported name is not that third answer: the scope analysis
+binds an import, so it comes back as the second answer, a binding whose
+value cannot be followed here; what an import shares with a plain
+parameter is a separate fact the answer carries alongside its state, that
+the value arrives from outside this file.
 
 That third answer is not a kind of failure, and separating it out is half
 the point. A built-in is unbound and perfectly well understood; a local
