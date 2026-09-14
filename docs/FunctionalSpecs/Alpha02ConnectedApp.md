@@ -205,10 +205,12 @@ The app uses chain reads and indexed reads for different jobs.
   data-source warning rather than a confident empty list.
 - Indexed lifecycle status must not drift from the chain's indefinitely.
   A loan's ending is learned from the event announcing it, and an
-  announcement missed while ingestion was down, throttled, or further
-  behind than it is willing to scan back over is missed for good —
-  resuming ingestion restores the reading position, not the records
-  skipped while it was behind. So the index re-examines what it believes
+  announcement the platform does not see is missed for good — resuming
+  ingestion restores the reading position, not the records already behind
+  it. The platform does not assert WHY an announcement goes unseen: the
+  reading survives being stopped, being refused, and falling a long way
+  behind, so naming those as the cause would claim something it has not
+  established. So the index re-examines what it believes
   to be running against the chain on a continuing rotation, and corrects
   a record the chain says has ended. It keeps re-examining even while the
   totals agree, because one missed ending and one missed beginning leave
@@ -289,12 +291,18 @@ The app uses chain reads and indexed reads for different jobs.
   withdrawn once sent, so a position corrected after they were composed
   would have produced a payment reminder for a loan that had already
   ended. A correction is also announced to anyone watching that position,
-  like any other change — a record put right silently would leave every
+  like any other change, wherever the deployment's ingest arrangement carries
+  live announcements at all; where it does not, a corrected screen waits for
+  its own next refresh, and the platform says which arrangement is in use
+  rather than implying the announcement is universal — a record put right
+  silently would leave every
   open screen showing the old one.
-- Both holders of a corrected position receive the ending in their inbox.
-  Without it they receive nothing at all for that position, since the
-  message surface is built from announcements and this ending never had
-  one. Such a message states when the platform FOUND OUT, never when the
+- Every holder of a corrected position the platform can establish receives
+  the ending in their inbox — and where it can establish neither, which is
+  the ordinary outcome once both parties have claimed, nobody is written to
+  and nothing is retried. Without this message an establishable holder
+  receives nothing at all for that position, since the message surface is
+  built from announcements and this ending never had one. Such a message states when the platform FOUND OUT, never when the
   loan ended — the check cannot determine that — and is marked as derived
   from a correction rather than attributed to an announcement nobody saw. A
   bookkeeping position that no person holds produces no message.
@@ -309,8 +317,12 @@ The app uses chain reads and indexed reads for different jobs.
   lost the ending could equally have lost a transfer of the position, so
   that record is stale for the same reason. Where a holder cannot be
   established, that side receives no message rather than one addressed to a
-  guess — and the holder the platform does establish is recorded, so other
-  surfaces stop naming the wrong one.
+  guess — and the holder the platform does establish is recorded, so the
+  surfaces asking who holds a position NOW stop naming the wrong one. The
+  parties a loan began with are published separately and a correction does
+  not revise them, so a position that has changed hands may still show its
+  original names where that half is read; the platform must not present the
+  narrower repair as the wider one.
 - Asking who holds a position has two answers the platform will act on: it
   has an answer naming a holder, or it has no answer. **An answer is acted
   on; a non-answer changes nothing.** The platform does not read a
@@ -346,8 +358,12 @@ The app uses chain reads and indexed reads for different jobs.
   than implying a single pace. Where the chain reading has its own capacity
   the correction examines several records a turn; where it shares capacity
   with the other scheduled work it examines one. Every record is still
-  reached either way. The pace is never raised at the cost of the chain
-  reading itself, because a reading that starts being refused drops the
+  reached either way — but only while the shared arrangement is within the
+  capacity it is allowed. Beyond that the rotation is best-effort, because
+  work can be cut short before the turn advances and the same records can be
+  missed repeatedly; the platform states that rather than presenting an
+  assurance the arrangement cannot keep. The pace is never raised at the cost
+  of the chain reading itself, because a reading that starts being refused drops the
   announcements the correction exists to recover from — and where the
   scheduled work already asks for more capacity than is available, the
   platform says so rather than presenting the smaller share as sufficient.

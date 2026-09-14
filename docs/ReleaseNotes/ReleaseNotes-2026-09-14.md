@@ -1,6 +1,6 @@
 # Release Notes — 2026-09-14
 
-Six entries. The first two are the #1566 slice-4 pair, and they belong
+Seven entries. The first two are the #1566 slice-4 pair, and they belong
 together: the first lands the whole custody-holder lifecycle dark — the
 holder itself, its replacement ceremony, the recoveries for value that
 reaches a holder by no protocol path, and the paid-side rebase that chains
@@ -56,7 +56,7 @@ two exits, the release that reconciles a position a moved figure left
 over-backed, the complete-cut record, and the expiry clock reading the
 address rather than the platform's own balance.
 
-The remaining four entries are the day's work on the live-drive tooling —
+The next four entries are the day's work on the live-drive tooling —
 the scripts that exercise the deployed app and testnet after a deploy.
 Each is about a verdict that had been silently wrong: a drive that did not
 finish is now reported as not fully reviewed — its earlier results kept,
@@ -66,6 +66,18 @@ longer reported as a failed write; a screen whose opening timed out now
 says so instead of hiding among the other ways a screen fails to load; and
 the seven rules that each worked out what a name holds now share one
 resolver that answers in three states, including "could not tell".
+
+The last entry is a different kind of correction: not a verdict that read
+wrongly, but records the platform had stopped checking at all. The index
+learned that a loan was over only by seeing it announced, so an
+announcement it missed was missed for good — and nothing afterwards ever
+compared its own list against the chain's. Measured on the test network the
+morning this was written, three positions were being published as running
+that had already ended, one with a record untouched since early July. It
+now checks, and
+the entry is mostly about what a correction declines to claim: it cannot
+tell when a loan ended and does not pretend to, cannot always tell how, and
+will not address a message to a holder it cannot establish.
 
 ## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #2158)
 
@@ -1190,3 +1202,427 @@ an accidental one unless the note says which.
 Everything else behaves as it did. The rules that were correct are
 correct in the same cases; they now say why in terms anyone can check.
 <!-- assembled-fragment: 2175-one-name-resolver.md sha256=0acc2afcdd3a5a218241f25918ab5637b2a33ff596a5642ae5dc13d5a1df1728 -->
+
+## #2101 — the index checks its own loan statuses against the chain (PR #2190)
+
+The indexer learns that a loan has ended by seeing the event announcing
+it. An ending it does not see is missed permanently: letting the service
+catch up restores its place in the chain, not the records it went past,
+because nothing goes back over ground the marker has already crossed.
+
+Why an ending goes unseen is deliberately not claimed here. An earlier
+draft blamed the service being down, being rate-limited, or a gap outgrowing
+what it will scan backwards over — and those are among the things the
+reading explicitly survives: it resumes from the last block it finished,
+a failed read leaves the marker where it was, and the marker moves only
+after the work behind it is done. The note admits further down that the
+check cannot say why an ending was missed; opening by naming causes
+contradicted that, and named the wrong ones.
+
+Nothing checked afterwards. The result, measured on the test network on
+14 September: the chain said six loans were running, one published figure
+said seven, and the list of running loans had nine entries. Three of those
+entries were loans that had already ended. One of them had a record nobody
+had written to since early July — two months of the platform publishing it
+as running. That date is the last time the RECORD changed, not the date the
+loan ended: the whole point of this check is that the ending's date is
+exactly what cannot be recovered, so quoting it as one would be the same
+mistake the correction refuses to make.
+
+That is not a cosmetic miscount. Each of those entries is a position the
+platform is telling the world is still open, for a loan that has already
+defaulted or been repaid.
+
+Where each one was published is not uniform, and the numbers above already
+say so. All three sat in the list of running loans the platform serves to
+any reader, which filters on state alone — nine rows against the chain's
+six. Only one of them also inflated the running-loan total the analytics
+screen shows, because that total leaves out loans created as sale vehicles
+and two of the three were exactly that — seven against six. One ghost in
+the count, three in the list, from one set of stale records.
+
+Naming the surfaces rather than gesturing at a general reach is deliberate.
+An earlier draft said the ghosts also appeared in the offer book, and they
+do not — that screen is built from the offer list, which is a different
+published set and was never wrong here. A note about a platform publishing something it cannot
+substantiate is a poor place to overstate which surfaces were affected.
+
+### What now happens
+
+On each scheduled tick where it has finished reading new blocks, the index
+asks the chain how many loans it considers running and compares that to its
+own count. If the two differ it examines a handful of its records; if they
+agree it still examines one. Where the chain says a loan has ended and the
+record says otherwise, the record is corrected.
+
+That qualification is deliberate, and it is the one place this check waits
+longest exactly where it is needed most. Old blocks are read in bounded
+passes of about two thousand at a time, so a service that has been down
+comes back needing as many passes as the gap divides into, and the
+comparison waits for the last of them.
+
+How long that takes in real time is NOT something those two numbers give
+you, and it would be worse than useless to imply otherwise — how quickly
+passes follow one another depends on the arrangement. On the one in use a
+backlog mostly drives itself rather than waiting for the next scheduled
+turn between passes, though it stops doing so once it is nearly finished
+and leaves the last stretch to the ordinary schedule — so the final wait
+before the comparison runs is a scheduled one however fast the rest went.
+On the fallback every pass waits for its own turn, so the same gap takes
+far longer to close. Neither is a figure this note can
+usefully give, because both depend on values an operator can tune. The
+honest statement is the shape: the gap is closed in bounded passes, and the
+comparison happens once they are finished.
+
+Why wait at all, rather than compare while catching up? NOT because a
+correction could be invented — it could not, and the platform's own
+statement of intent says so: a source that is behind reports the loan still
+running, which matches the record and changes nothing. The cost is about
+the money rather than the lifecycle. A correction rewrites the whole record,
+amounts included, from the chain as it stands NOW, while the events still
+queued behind it describe a state months earlier. Applying those afterwards
+to a record already corrected leaves the two disagreeing about the figures,
+which is the precise failure this check was rearranged to avoid. Letting the
+queue drain first means the correction is the last word rather than the
+first.
+
+How many chains that covers per tick depends on how the service takes in
+data. As currently configured every chain is serviced on every tick, so the
+check reaches all of them. On the fallback arrangement one chain is taken
+per tick in turn, and the wait before a given chain comes round grows with
+the number of chains. The distinction is stated because it decides how long
+a wrong record can survive, which is the figure an operator would actually
+want.
+
+A correction is the whole record, not just the word "ended". The same
+question that returns the loan's state also returns the money still
+attached to it, so both are written together. That matters because the
+things that move those figures — a part repayment, a forced sale, a
+collateral top-up, a debt written off — announce themselves the same way an
+ending does, and can be missed the same way. A record stale enough to have
+missed an ending has no claim to be current about the amounts, and nothing
+is given up by preferring the chain's: an ending never erases what was
+owed, so where the chain holds a smaller figure, that smaller figure is
+what actually happened. A closed loan also loses everything the
+platform was still offering to act on for it: a collateral sale listing, and
+a committed swap the borrower could still be shown a cancel button for.
+Neither would work against an ended loan, which is no comfort to whoever
+tried.
+
+These two came from consecutive review rounds — first the listing, then the
+swap — so the fix was not to add the second one beside the first. There is
+now a single named clean-up that runs whenever a loan CLOSES, wherever the
+closing was learned; the correction calls that rather than keeping its own
+list of things to tidy, so anything added to it in future is covered without
+the correction changing at all. Ending a listing or a commitment on a loan
+that is still running stays deliberately separate: withdrawing a collateral
+sale is not withdrawing a swap commitment, and the platform must not dispose
+of a position the borrower still holds.
+
+Both halves of the deciding are deliberate. It keeps looking when the totals
+agree because two mistakes cancel — one ending missed and one beginning
+missed leaves the totals equal while both records are wrong — so a check
+that only wakes on a mismatch is one that can be quietly satisfied. And it
+examines only a few records per turn because the scheduled work has a hard
+ceiling on how many outside requests it may make, most of which the
+existing scan has already spoken for. In the ordinary case the whole thing
+costs two of them: one to ask the chain its total, one to read the single
+record it examines anyway.
+
+How many it may spend when the totals DO disagree depends on how the
+deployment ingests, and that is worth stating rather than leaving to be
+inferred. Where the reading of the chain runs in its own slot — which is how
+the service is currently configured — the correction may examine up to three
+records per turn. That figure came down from five when establishing the real
+holder of a corrected position was added: fewer records per turn, and the
+message reaching the right person, is the better of the two. Where it shares a slot with the other scheduled work, it
+examines one.
+
+That second case — the shared slot — deserves a plain statement rather than
+a reassuring one. It is not merely tight: counted properly, the work already
+scheduled into it can exceed what the platform allows, before this
+correction is added at all. That is a separate fault, raised on its own, not
+something this change introduced or repairs; taking the smallest possible
+share is what this change can honestly do about it, and it does not pretend
+that makes the slot safe. Where the slot is not over its allowance, every
+record is eventually reached and the difference is only how many turns it
+takes. Where it is, the promise does not hold: work can be cut off before
+the turn advances, and the same records can be missed repeatedly. That is
+the separate fault, and until it is fixed the rotation on that arrangement
+is best-effort rather than assured.
+
+The check also runs on a **quiet** chain — one producing no new blocks
+between ticks — and that is not a detail. An earlier version ran it only
+where new blocks had just been read, which meant it never ran at all on a
+chain that had gone quiet. The three records this was written for sit on
+exactly such a chain, so the check might never have examined the very
+entries that prompted it.
+
+Where it sits in the tick matters too. It now runs **before** the two
+surfaces that tell people things: the reminder sweep and the inbox. Both
+read the records as they stand and neither withdraws what it has already
+said, so running afterwards meant a loan that had ended months ago could
+still be sent a "payment due" or "overdue" reminder that nothing would ever
+retract. And a correction now announces itself to anyone watching the
+position, the same way any other change does — without that, the record was
+put right while every open screen kept showing the old one until it happened
+to refresh. That announcement belongs to the current arrangement for reading
+the chain, which is the one in use; on the fallback there is no live
+announcement to make and no channel to carry it, so a corrected screen there
+waits for its next refresh. Worth knowing before choosing to fall back. The announcement names the corrected loan, which sounds like a
+detail and is not: the announcement is filtered down to the people it
+concerns, and a corrected loan is by definition an OLD one that appears
+nowhere else in that tick's work. Left unnamed, the one announcement that
+mattered would have been filtered away from exactly the two people it was
+for. Naming it is still not quite enough where the position has changed
+hands in the meantime — the new holder's own view cannot know about a loan
+they have only just been found to own — so a correction also marks its
+announcement as incomplete, which makes it reach everyone rather than only
+those already known to be involved.
+
+Each holder of a corrected position the platform can actually establish
+also gets the ending in their inbox — which for a position both parties have
+already claimed is neither of them, as set out further down. They had
+received nothing: the announcement was missed, so the surface that
+turns announcements into messages never saw one, and a position could be put
+right while the people with money in it were told nothing at all. What
+those messages carefully do not do is pretend to be news of the moment. They
+say the platform found this out now, which is true; they do not carry a date
+for the ending, because the check genuinely cannot work out when it happened;
+and they are marked as coming from a correction rather than from an
+announcement nobody saw.
+
+Where the chain records that a loan is finished but not how it finished —
+the same state is reached by a repayment, by a default and by a forced sale
+— the message says only that it ended. An earlier version said nothing at
+all in that case, on the grounds that anything else would be inventing a
+claim. That was the wrong half of the trade: knowing your position ended,
+from a platform declining to say how, is better than hearing nothing because
+it could not say everything.
+
+Who receives them is asked of the chain, not of the platform's own record of
+who holds what. The same gap that swallowed the ending could equally have
+swallowed a transfer of the position, so that record is untrustworthy for
+exactly the same reason — and the one message a holder gets about their loan
+ending is the worst possible one to send to somebody who has already sold
+out of it. Where a holder cannot be established at all, no message is sent
+for that side rather than one sent to a guess, and the holder it does
+establish is written back, so the surfaces that ask who holds a position now
+stop naming the wrong one. That is narrower than it sounds and the
+difference is worth stating: the record also carries the parties the loan
+STARTED with, those are published too, and a correction does not touch them.
+So a position that changed hands can still show its original names on
+surfaces reading that half. Putting those right needs the same
+held-position history raised separately.
+
+Which half of that gets acted on took two goes to get right, and the rule
+it settled on is worth stating. An earlier version also recorded an
+ABSENCE — nobody holds this side, because that party already took what was
+theirs — and worked out which case it was by inspecting how the reading had
+failed. That test had to be narrowed once, and the narrowing was the
+signal: the same failure also covers an ordinary hiccup, so a version meant
+to stop offering something already claimed would, on a bad minute, erase a
+holder who still owned it. This project has met that shape before and its
+answer is to remove such a test rather than keep sharpening it.
+
+Removing it took the whole write with it, which went too far. The unsafe
+part was concluding a position had been given up from a question that went
+unanswered; an answer that names an actual holder concludes nothing. So the
+correction records a side it got an answer for and leaves a side it did not
+exactly as it was.
+
+The cost of that is stated rather than implied: a side whose holder could
+not be read gets **no message at all, and no later attempt at one.** The
+record is still corrected — the loan stops being published as running,
+which is the harm this whole check exists to end — but that one person is
+not told. Retrying instead is not available, because an unanswered question
+and a position legitimately given up are the same answer here: waiting for
+one would leave the other's record wrong forever, which is the worse of the
+two.
+
+That last point has a consequence for the message above that says only "it
+ended", and it is worth being blunt about: the commonest way of reaching that
+state is a way this message cannot cover. A loan reaches it when both sides
+take what is theirs — which destroys the very holdings ownership is asked
+about — so there is nobody to establish, and nobody is told. The record is
+still corrected. The fix is not to relax any of this and fall back on the
+stale list; it is a record of who HELD a position that no longer exists,
+which the platform does not keep yet
+and which is raised separately.
+
+There IS a route to that same state where the message lands, and it is what
+decides the wording. When a borrower's collateral sale completes, the loan
+finishes without either side claiming — the borrower's position is released
+rather than destroyed, so there is still somebody to tell. That route also
+hands over everything owed as part of the sale, which means the one case
+where this message reaches a reader is precisely the case with nothing left
+to claim. So it says to open the position and see where it stands, rather
+than pointing at a claim that by construction does not exist. Every other
+ending keeps its own wording, because those genuinely do leave something to
+collect.
+
+They also arrive as NEW rather than as something already read. The inbox
+decides what is unread by position in the chain's order, and a message
+carrying no position of its own has to be placed deliberately — placed
+wrongly, it lands behind things the holder has already opened and is never
+shown at all. The reminder messages had already learned this; the correction
+messages repeated the mistake, and the placement rule is now one shared rule
+rather than one each writer has to rediscover.
+
+### What it will not do
+
+It only ever moves a record from "running" to an ending, and only when the
+chain says so. A machine that is behind reports the loan as still running,
+which matches the record, so nothing is written: being out of date can cause
+a correction to be missed, never invented.
+
+That one-way direction is necessary and it is NOT on its own sufficient, and
+an earlier draft of this note said otherwise. A correction cannot be undone
+by the same check — a record it has ended is no longer one the check looks
+at — so a reading that is wrong rather than merely old is permanent. What
+actually makes it safe is that the chain is read at a point the chain itself
+treats as settled, never at whatever a machine last saw. Without that, a
+momentary reorganisation could report an ending that then disappears,
+leaving a genuinely open loan recorded as closed with nothing that would
+ever come back to it.
+
+That holds while the source actually answers when asked for a settled
+point, and there is a case where it does not. Any failure of that question —
+a source too old to understand it, but equally a timeout or a momentary
+error from one that normally does — is answered instead by stepping back a
+fixed distance from the latest block —
+which is a guess at settlement rather than the chain's own word, and against
+a deep enough reorganisation it is the reading this rule exists to forbid.
+It is a pre-existing arrangement rather than anything this change
+introduced, and it is raised separately as #2201; it is stated here because the
+safety the rest of this section claims is exactly what it qualifies, and a
+reader who is told the rule and not its exception has been told the
+comfortable half.
+
+It also refuses to touch a record that has already ended, leaving
+corrections between one ending and another to the event path, which knows
+more. The chain does not distinguish a forced sale from an ordinary
+default, so a record repaired this way may read as the latter where the
+event would have said the former — less precise, never wrong, and much
+better than "still running". That is stated here rather than left to be
+discovered.
+
+And it cannot say WHEN the loan ended, so it does not record a time. An
+earlier version stored the moment it happened to look and called that an
+honest substitute. It is not one: that figure is published, and the list of
+positions with something to claim is ordered and capped by it, so a loan
+whose ending was months old would have presented as freshly ended and pushed
+genuinely
+recent ones out of a limited list. The time is now left empty, which is what
+is true.
+
+Leaving it empty turned out to be only half the job. The list of positions
+with something to claim, finding no ending time, fell back to when the
+record was last written — and a correction writes the record at the moment
+it makes it, so the July loan arrived at the top of that list anyway. Fixing
+the field being written and not the claim being made is how the same defect
+survived its own fix. So the ordering now treats an unknown ending as
+unknown: positions with no known ending time come after every position that
+has one. They are not hidden — where nothing else is competing they are the
+whole list — but an ending nobody can date may not push a genuinely recent
+one out of a limited one.
+
+The correction also stands down entirely when the chain briefly reports a
+settled point BEHIND where the service has already read. That sounds like an
+edge and is not: the same point decides which holder the platform believes
+owns the position, so acting on the older one could correct a record
+perfectly and send its one message to whoever held it at that earlier moment
+— the precise mistake the chain-sourced recipients exist to prevent,
+arriving by the clock instead of by the record. There is no single point that
+is safe for both questions when they disagree, so the turn is skipped and
+the next one does the work.
+
+Two answers it treats as neither running nor ended. A record for a loan the
+chain has never heard of — one indexed once from something later undone —
+reads, through the chain's own interface, exactly like a running loan; those
+are now named in the operator's log as unresolvable. Being named is not
+yet being withdrawn, and the difference matters: the record keeps its
+running state, so it is still counted and still published as open. What has
+changed is that it is no longer mistaken for a confirmed running loan on
+every pass in silence. Withdrawing it needs a record state the platform does
+not have, which is raised separately. And a state this build does not recognise, which a newer
+deployment could introduce, is named rather than passed over in silence: if
+such a state turns out to be an ending, quietly skipping it would leave the
+record published as open while every check reported perfect health.
+
+And it cannot say why an ending was missed in the first place.
+
+The correction, the tidying and whatever messages it owes are a single
+write, which either happens completely or not at all. That is not a refinement: a
+correction that landed on its own would take the record out of the set the
+rotation looks at, so nothing would ever come back to finish the job, and a
+service killed mid-way leaves no failure to report either. Committing them
+together is the only version with no window. The messages were the last
+thing still written afterwards, and they had the same flaw: a failure there
+left the position corrected and whoever it could have told told nothing,
+permanently.
+
+A failure to look up the two parties is treated the same way as a failed
+write, including the waiting: the correction is abandoned, and the rotation
+has already moved past that record, so it is reached again only when the
+rotation next comes round.
+
+The messages are written only where the correction was actually made by
+this check. If another part of the service recorded the ending first — which
+is the very race the check is built to lose gracefully — it stops, rather
+than telling anyone it discovered something it did not. And where
+looking up the parties in its OWN records fails, that is treated as a
+failure rather than as "nobody to tell": the whole correction is abandoned
+instead of going through with the part that is silent, and waits for the
+rotation to come round again as described above.
+
+That applies to its own records and not to the chain, and the difference is
+the point. A query of its own store that fails has unambiguously failed, so
+waiting is safe. Asking the chain who holds a position gives one answer for
+"nobody holds it" and for "the question did not get through", and since
+those cannot be told apart, waiting on the second would mean never
+correcting the first. So that case commits the correction and sends no
+message, as set out above.
+
+One failure it survives rather than prevents: if the write for one record
+fails while others in the same turn succeed, the successful ones stand and
+are reported, and the failed one is left exactly as it was. It is not looked
+at again on the very next turn, though: the rotation has already moved past
+it, so it comes round again when the rotation next comes round — which on a
+long list, or on the arrangement that examines one record a turn, can be a
+considerable wait with the position still published as running.
+An earlier version threw the whole turn away, which quietly discarded
+corrections that had already been made — and because a corrected record
+leaves the set being checked, nothing would ever have gone back to account
+for them.
+
+### Not included
+
+The other half of the original report — that the published list and the
+published count apply different filters, and so answer the same question
+differently — is deliberately not fixed here. Applying that filter first
+would take the list from nine entries to seven while the chain says six:
+the surfaces would still contradict each other, and the remaining ghost
+would be harder to notice because the obvious disagreement had gone. The
+repair is the part that has to land first.
+
+Closes #2101. Seven follow-ups carry what deliberately did not land here.
+Four of them predate this change and were found by documenting it, which is
+itself worth noting: writing down precisely what the platform does surfaced
+four faults that reading the code had not.
+#2194 (a subrequest overrun on the fallback ingest arrangement that
+predates this change), #2195 (the participation and lifecycle records a
+correction does not yet write, and a source for who HELD a position that no
+longer exists), #2196 (making a correction's live announcement survive the
+service dying between the write and the sending) and #2197 (a record state
+for a row the chain has never heard of, so it can stop being published as
+running) and #2201 (a settled point that is guessed rather than asked for
+when the question fails, which can leave a permanently wrong record on
+either the reading or the correction). The last two are recorded in the
+code-versus-docs audit rather than resolved by editing the specification.
+The last two came out of writing this entry: #2202 (two published figures
+name the faster of the two ingest arrangements whenever one half of its
+switch is set, so a deployment can be told a pace it is not running) and
+#2203 (a turn that fails to save its place discards everything it had
+noticed, including a record it had just identified as unsubstantiable).
+<!-- assembled-fragment: 2101-loan-status-reconciliation.md sha256=2e0dd532484d4a9591652908ad99907aae6bd1b6563ac327be4f8d880b66d99a -->

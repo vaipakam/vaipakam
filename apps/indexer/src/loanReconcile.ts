@@ -4,17 +4,28 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
  * RECONCILING INDEXED LOAN STATUS AGAINST THE CHAIN (#2101 part B).
  *
  * The indexer learns a loan is over by seeing its terminal event. An event
- * missed while the Worker was down, rate-limited, or past its catch-up
- * window is missed PERMANENTLY — catching the cursor up restores the
- * cursor, not the rows. `bookCatchUp`'s `MAX_CATCHUP_BLOCKS` fail-open is
- * the right call for liveness and precisely why a repair pass has to exist
- * beside it.
+ * it does not see is missed PERMANENTLY — catching the cursor up restores
+ * the cursor, not the rows, because nothing replays a block the cursor has
+ * already passed.
+ *
+ * WHY one goes unseen is deliberately not asserted here (#2199 r4
+ * `4009907907`). An earlier version of this header blamed the Worker being
+ * down, rate limits, or a catch-up window, and cited a `bookCatchUp`
+ * `MAX_CATCHUP_BLOCKS` fail-open — which does not exist in this tree, and
+ * whose named causes the scan explicitly recovers from: the cursor resumes
+ * at `lastBlock + 1`, a failed `getLogs` bails WITHOUT advancing it, and it
+ * is written only after the handlers succeed. That header is where the
+ * claim reached the release note, so it is corrected at the source. This
+ * pass repairs the RESULT; it does not diagnose the cause, and neither does
+ * this comment.
  *
  * Measured on Base Sepolia on 2026-09-14: the chain reported 6 active
  * loans, `/loans/stats` 7, and `/loans/active` 9 rows. The three extra
- * rows were loans 8 (`Defaulted`, untouched since 2026-07-04), 13 and 14
- * (both `Repaid`). A ghost active loan is not a miscount — it is a
- * position the platform tells the world is still open.
+ * rows were loans 8 (`Defaulted`, its ROW last written 2026-07-04), 13 and
+ * 14 (both `Repaid`). That date is the last WRITE to the row, not the date
+ * the loan ended — this pass cannot recover the latter, so quoting it as
+ * one would be the defect the pass exists to stop. A ghost active loan is
+ * not a miscount; it is a position the platform tells the world is open.
  *
  * THE WRITE DIRECTION IS ONE-WAY, AND THAT IS NOT SUFFICIENT ON ITS OWN.
  * It acts only when the chain reports a state more advanced than the
