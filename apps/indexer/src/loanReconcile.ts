@@ -21,9 +21,11 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
  *
  * Measured on Base Sepolia on 2026-09-14: the chain reported 6 active
  * loans, `/loans/stats` 7, and `/loans/active` 9 rows. The three extra
- * rows were loans 8 (`Defaulted`, untouched since 2026-07-04), 13 and 14
- * (both `Repaid`). A ghost active loan is not a miscount — it is a
- * position the platform tells the world is still open.
+ * rows were loans 8 (`Defaulted`, its ROW last written 2026-07-04), 13 and
+ * 14 (both `Repaid`). That date is the last WRITE to the row, not the date
+ * the loan ended — this pass cannot recover the latter, so quoting it as
+ * one would be the defect the pass exists to stop. A ghost active loan is
+ * not a miscount; it is a position the platform tells the world is open.
  *
  * THE WRITE DIRECTION IS ONE-WAY, AND THAT IS NOT SUFFICIENT ON ITS OWN.
  * It acts only when the chain reports a state more advanced than the

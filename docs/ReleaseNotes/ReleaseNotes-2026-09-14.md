@@ -73,7 +73,8 @@ learned that a loan was over only by seeing it announced, so an
 announcement it missed was missed for good — and nothing afterwards ever
 compared its own list against the chain's. Measured on the test network the
 morning this was written, three positions were being published as running
-that had already ended, one of them since early July. It now checks, and
+that had already ended, one with a record untouched since early July. It
+now checks, and
 the entry is mostly about what a correction declines to claim: it cannot
 tell when a loan ended and does not pretend to, cannot always tell how, and
 will not address a message to a holder it cannot establish.
@@ -1221,8 +1222,12 @@ contradicted that, and named the wrong ones.
 Nothing checked afterwards. The result, measured on the test network on
 14 September: the chain said six loans were running, one published figure
 said seven, and the list of running loans had nine entries. Three of those
-entries were loans that had already ended — one of them two months
-earlier, in early July, and untouched since.
+entries were loans that had already ended. One of them had a record nobody
+had written to since early July — two months of the platform publishing it
+as running. That date is the last time the RECORD changed, not the date the
+loan ended: the whole point of this check is that the ending's date is
+exactly what cannot be recovered, so quoting it as one would be the same
+mistake the correction refuses to make.
 
 That is not a cosmetic miscount. Each of those entries is a position the
 platform is telling the world is still open, in the offer book and in
@@ -1491,7 +1496,8 @@ And it cannot say WHEN the loan ended, so it does not record a time. An
 earlier version stored the moment it happened to look and called that an
 honest substitute. It is not one: that figure is published, and the list of
 positions with something to claim is ordered and capped by it, so a loan
-that ended in July would have presented as freshly ended and pushed genuinely
+whose ending was months old would have presented as freshly ended and pushed
+genuinely
 recent ones out of a limited list. The time is now left empty, which is what
 is true.
 
@@ -1585,8 +1591,10 @@ the surfaces would still contradict each other, and the remaining ghost
 would be harder to notice because the obvious disagreement had gone. The
 repair is the part that has to land first.
 
-Closes #2101. Five follow-ups carry what deliberately did not land here,
-two of which predate this change and were found by documenting it:
+Closes #2101. Seven follow-ups carry what deliberately did not land here.
+Four of them predate this change and were found by documenting it, which is
+itself worth noting: writing down precisely what the platform does surfaced
+four faults that reading the code had not.
 #2194 (a subrequest overrun on the fallback ingest arrangement that
 predates this change), #2195 (the participation and lifecycle records a
 correction does not yet write, and a source for who HELD a position that no
@@ -1597,4 +1605,9 @@ running) and #2201 (a settled point that is guessed rather than asked for
 when the question fails, which can leave a permanently wrong record on
 either the reading or the correction). The last two are recorded in the
 code-versus-docs audit rather than resolved by editing the specification.
+The last two came out of writing this entry: #2202 (two published figures
+name the faster of the two ingest arrangements whenever one half of its
+switch is set, so a deployment can be told a pace it is not running) and
+#2203 (a turn that fails to save its place discards everything it had
+noticed, including a record it had just identified as unsubstantiable).
 <!-- assembled-fragment: 2101-loan-status-reconciliation.md sha256=2e0dd532484d4a9591652908ad99907aae6bd1b6563ac327be4f8d880b66d99a -->
