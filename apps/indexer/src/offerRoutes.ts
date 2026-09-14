@@ -334,10 +334,7 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
             // staleness window (design §4.1.1) instead of hard-coding one.
             // null = legacy inline scan / unknown → clients keep the polling
             // posture (fail-safe).
-            scanCadenceSec:
-              env.CHAIN_INGEST_VIA_DO === 'true'
-                ? EXPECTED_SCAN_CADENCE_SEC
-                : null,
+            scanCadenceSec: env.doIngestEnabled ? EXPECTED_SCAN_CADENCE_SEC : null,
           }
         : null,
     });

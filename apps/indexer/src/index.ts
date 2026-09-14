@@ -64,6 +64,7 @@ import {
   resolveEnv,
   readSecret,
   getChainConfigs,
+  isDoIngestEnabled,
   type WorkerEnv,
   type Env,
   type SecretBinding,
@@ -88,15 +89,13 @@ export { ChainIngestDO } from './chainIngestDO';
 import { DO_PATH_CADENCE_MINUTES, shouldRunCronTick } from './cronRouting';
 
 /**
- * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
- * present AND the `CHAIN_INGEST_VIA_DO` rollout flag, so deploying the new DO
- * doesn't re-route ingest until the operator flips it. The cron and the webhook
- * route consult the SAME gate so they're always consistent (a half-enabled
- * state — webhook→DO while the cron still scans inline — would mean two writers).
+ * #757 — is the DO ingest path active? The DEFINITION moved to `env.ts`
+ * (#2202): the cron and the webhook route must consult the same gate as
+ * everything reading the resolved env, and three route modules were deriving
+ * a half of it from the one field they could see. Re-exported under the
+ * local name so this module's call sites read unchanged.
  */
-function doIngestEnabled(env: WorkerEnv): boolean {
-  return env.CHAIN_INGEST_VIA_DO === 'true' && !!env.CHAIN_INGEST_DO;
-}
+const doIngestEnabled = isDoIngestEnabled;
 import {
   handleOffersStats,
   handleOffersActive,

@@ -1093,10 +1093,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
             // RPC read-diet PR 0 — mirrors /offers/stats: the ingest mode's
             // expected per-chain scan cadence (null = legacy/unknown →
             // clients keep the polling posture).
-            scanCadenceSec:
-              env.CHAIN_INGEST_VIA_DO === 'true'
-                ? EXPECTED_SCAN_CADENCE_SEC
-                : null,
+            scanCadenceSec: env.doIngestEnabled ? EXPECTED_SCAN_CADENCE_SEC : null,
           }
         : null,
     });
