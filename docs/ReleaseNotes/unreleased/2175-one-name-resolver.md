@@ -97,15 +97,19 @@ It now reads the declaration that actually stands, so a name provably
 holding the beginning of the text is accepted as such. The old answer was
 not conservative, it was wrong.
 
-Two TIGHTENINGS join them, both found the same way and both closing
-windows that were open before this change rather than introduced by it. A
-value reached by reading a property of something is no longer accepted as
-the text being searched — what a property holds when a line runs is not a
-question this can answer, which the work preceding this change had
-already concluded elsewhere. And a built-in that the file itself writes
-over is no longer treated as the built-in: assigning to a name that was
-never declared creates nothing to see, so the name looked untouched while
-it had been replaced outright.
+A TIGHTENING joins them, found the same way and closing a window that was
+open before this change rather than introduced by it: a value reached by
+reading a property of something is no longer accepted as the text being
+searched — what a property holds when a line runs is not a question this
+can answer, which the work preceding this change had already concluded
+elsewhere.
+
+A second tightening stood here for several rounds and is now GONE, which
+is recorded rather than quietly dropped because a reader may remember it.
+It made a built-in the file itself writes over stop counting as the
+built-in. That went the way the later check for a rewritten prototype
+went, and for the same reason, described further down: the two were one
+question with no answer, and both are replaced by a stated assumption.
 
 The check on what a caller hands a helper went through five revisions
 before it was abandoned, and the abandonment is described further down —
