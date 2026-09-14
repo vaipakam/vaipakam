@@ -1231,14 +1231,20 @@ mistake the correction refuses to make.
 
 That is not a cosmetic miscount. Each of those entries is a position the
 platform is telling the world is still open, for a loan that has already
-defaulted or been repaid. It is published two ways: as a row in the list of
-running loans the platform serves to anyone reading it, and inside the
-running-loan total, which is what the analytics screen shows a visitor.
+defaulted or been repaid.
 
-Naming those two rather than a general reach is deliberate. An earlier draft
-said the ghosts also appeared in the offer book, and they do not — that
-screen is built from the offer list, which is a different published set and
-was never wrong here. A note about a platform publishing something it cannot
+Where each one was published is not uniform, and the numbers above already
+say so. All three sat in the list of running loans the platform serves to
+any reader, which filters on state alone — nine rows against the chain's
+six. Only one of them also inflated the running-loan total the analytics
+screen shows, because that total leaves out loans created as sale vehicles
+and two of the three were exactly that — seven against six. One ghost in
+the count, three in the list, from one set of stale records.
+
+Naming the surfaces rather than gesturing at a general reach is deliberate.
+An earlier draft said the ghosts also appeared in the offer book, and they
+do not — that screen is built from the offer list, which is a different
+published set and was never wrong here. A note about a platform publishing something it cannot
 substantiate is a poor place to overstate which surfaces were affected.
 
 ### What now happens
@@ -1374,8 +1380,10 @@ they have only just been found to own — so a correction also marks its
 announcement as incomplete, which makes it reach everyone rather than only
 those already known to be involved.
 
-Both holders of a corrected position also get the ending in their inbox.
-They had received nothing: the announcement was missed, so the surface that
+Each holder of a corrected position the platform can actually establish
+also gets the ending in their inbox — which for a position both parties have
+already claimed is neither of them, as set out further down. They had
+received nothing: the announcement was missed, so the surface that
 turns announcements into messages never saw one, and a position could be put
 right while the two people with money in it were told nothing at all. What
 those messages carefully do not do is pretend to be news of the moment. They
