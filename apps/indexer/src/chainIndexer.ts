@@ -1202,17 +1202,32 @@ export async function runChainIndexerForChain(
     // that satisfies both. A regression is transient; the next tick with a
     // recovered head does the work, and the rotation loses nothing but a
     // turn.
-    const quietReconciledIds =
-      lastBlock > head
-        ? []
-        : await runLoanReconcilePass({
-            env,
-            chain,
-            chainId,
-            diamond,
-            head,
-            budget: reconcileBudget,
-          });
+    //
+    // AND IT SAYS SO WHEN IT SKIPS. A silent skip is the failure this whole
+    // pass exists to end, pointed at the pass itself: a provider swapped for
+    // one whose safe head persistently trails our cursor would disable
+    // reconciliation on that chain indefinitely, with every tick reporting
+    // health. One transient regression is noise, so this is `warn` and names
+    // both blocks — an operator seeing it every tick is seeing a stuck
+    // provider, not a passing cloud.
+    let quietReconciledIds: number[] = [];
+    if (lastBlock > head) {
+      console.warn(
+        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: cursor is at ` +
+          `${lastBlock} but the safe head resolved to ${head}. No block is safe ` +
+          `for both the status read and the holder read while those disagree; ` +
+          `retried next tick. Every tick = a stuck or regressed RPC head.`,
+      );
+    } else {
+      quietReconciledIds = await runLoanReconcilePass({
+        env,
+        chain,
+        chainId,
+        diamond,
+        head,
+        budget: reconcileBudget,
+      });
+    }
     const quietCal = await sweepCalendarNotifications(
       env.DB,
       chainId,

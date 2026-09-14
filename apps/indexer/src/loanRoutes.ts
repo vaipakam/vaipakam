@@ -638,6 +638,15 @@ export async function handleClaimables(
     // column I was writing and not the claim the reader makes is what let
     // this survive the first fix.
     //
+    // NULL here means a REPAIRED row and nothing else: `terminal_at` has
+    // existed since migration 0005 created this table (never added later, so
+    // there are no pre-column rows), and every production terminal writer
+    // stamps it in the same UPDATE as the status — `flipLoanStatus`, both
+    // settle paths, the deferred `LoanStatusChanged` edges. No backfill
+    // migration sets a terminal status without it either. So this ordering
+    // demotes exactly the rows whose age is genuinely unknown, and nothing
+    // else.
+    //
     // Unknown-age rows therefore sort AFTER every row with a real terminal
     // time, rather than above them. They are not hidden — nothing else
     // competes for the cap when a wallet's claimables are all of unknown age
