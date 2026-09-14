@@ -948,12 +948,23 @@ const GLOBAL_OBJECTS = ['globalThis', 'window', 'self', 'global'];
  * uncertain one is reported as no alias at all rather than guessed at.
  */
 function globalObjectAlias(variableOf, start) {
+  // Termination is a VISITED SET on binding identity, not a hop count.
+  // A cap is a guess about how many aliases someone might write, and
+  // round 11 walked past an eight-deep chain to show it: the loop ran
+  // out before it reached the unbound name and reported no alias, so a
+  // replaced built-in went unseen. A chain either reaches an unbound
+  // name or comes back to a binding already on it, and both are
+  // decidable — the same correction as every arbitrary bound this guard
+  // has replaced with a question the tree can answer.
+  const seen = new Set();
   let cur = start;
-  for (let hop = 0; hop < 8; hop += 1) {
+  for (;;) {
     if (cur?.type !== 'Identifier') return null;
     const variable = variableOf.get(cur);
     // Unbound: the name itself is the global object's, or it is not.
     if (!variable) return GLOBAL_OBJECTS.includes(cur.name) ? cur : null;
+    if (seen.has(variable)) return null;
+    seen.add(variable);
     const defs = variable.defs;
     if (defs.length !== 1 || defs[0].type !== 'Variable') return null;
     // A reassignment anywhere makes the name's value a question of
@@ -967,7 +978,6 @@ function globalObjectAlias(variableOf, start) {
     if (defs[0].node?.id?.type !== 'Identifier') return null;
     cur = unwrapChain(init);
   }
-  return null;
 }
 
 function globalWrites(src, name) {
@@ -1686,18 +1696,6 @@ function writeReaches(src, writes, useAt) {
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
   const useHost = useNode ? host(useNode) : null;
   return writes.some((w) => {
-    // A write on the OTHER ARM of a branch the use sits in never ran on
-    // the way here (round 10): in `if (on) { var text = standIn; } else
-    // { return text.slice(0, text.indexOf('e')); }` the `else` is
-    // reached only when the `if` was not, so the assignment is not a
-    // possible value of `text` there — and treating it as one erased
-    // the parameter's provenance and refused a correct bound.
-    //
-    // Answered HERE rather than at the one caller that reported it,
-    // because "did this write reach this use" is this function's whole
-    // question and every caller asks it — which is also what the
-    // coverage entry's single-reader claim is for.
-    if (useNode && mutuallyExclusive(parents, w, useNode)) return false;
     if (keyPrecedesStaticValue(parents, w, useNode)) return true;
     const writeHost = host(w);
     // A LOOP repeats, so even one body gives no order; only a shared
@@ -1713,6 +1711,29 @@ function writeReaches(src, writes, useAt) {
       writeHost === useHost &&
       !LOOPS.has(useHost.type) &&
       declaredWithin(src, w, useHost);
+    // A write on the OTHER ARM of a branch the use sits in never ran on
+    // the way here (round 10): in `if (on) { var text = standIn; } else
+    // { return text.slice(0, text.indexOf('e')); }` the `else` is
+    // reached only when the `if` was not, so the assignment is not a
+    // possible value of `text` there — and treating it as one erased
+    // the parameter's provenance and refused a correct bound.
+    //
+    // Answered HERE rather than at the one caller that reported it,
+    // because "did this write reach this use" is this function's whole
+    // question and every caller asks it — which is also what the
+    // coverage entry's single-reader claim is for.
+    //
+    // It holds only within ONE EVALUATION, which is the same lifetime
+    // question the `shared` test above asks and round 11 found this
+    // shortcut jumping over: in `let end = at('e'); function region(on)
+    // { if (on) end = 320; else return s.slice(0, end); } region(true);
+    // region(false);` the two arms are exclusive within a call, and the
+    // FIRST call's write is still there for the second. So exclusivity
+    // applies when the binding is fresh for a shared activation, or when
+    // both sit in straight-line top-level code that runs once — and in
+    // no other case.
+    const oneEvaluation = shared || (useHost === null && writeHost === null);
+    if (oneEvaluation && useNode && mutuallyExclusive(parents, w, useNode)) return false;
     // An assignment evaluates its RIGHT side before it writes (round
     // 27): in `end = s.slice(start, end).length` the bound use sits
     // inside the value being computed, so this write cannot have
@@ -2323,6 +2344,43 @@ function helperArgumentsSound(src, fn, args, seen) {
 }
 
 /**
+ * Slots whose value is DISCARDED — nothing written there can be the
+ * value the construct produces.
+ *
+ * This is an EXCLUSION list where round 6 of #2170 argued for a closed
+ * inclusion list, and the difference is which way a gap fails. There,
+ * the question was what a bound may DENOTE, and anything forgotten would
+ * have been accepted — so the safe list was the one that names what is
+ * allowed. Here the question is what may be SKIPPED, and anything
+ * forgotten is inspected: a missing entry costs a refused region, never
+ * a certified window. So the list names what is provably discarded, and
+ * everything else is conservatively treated as reaching the result.
+ */
+const DISCARDED_SLOTS = {
+  ConditionalExpression: ['test'],
+  IfStatement: ['test'],
+  WhileStatement: ['test'],
+  DoWhileStatement: ['test'],
+  ForStatement: ['test'],
+  SwitchStatement: ['discriminant'],
+  SwitchCase: ['test'],
+};
+
+/** Whether nothing `node` evaluates to can be the value `fn` hands back. */
+function cannotReachResult(parents, fn, node) {
+  for (let c = node, p = parents.get(c); p && c !== fn; c = p, p = parents.get(p)) {
+    // A function the helper merely CREATES does not run when the helper
+    // is called, so nothing inside it reaches the helper's result.
+    if (p !== fn && FUNCTIONS.has(p.type)) return true;
+    const slots = DISCARDED_SLOTS[p.type];
+    if (slots && slots.some((s) => holds(p[s], c))) return true;
+    // A sequence evaluates to its LAST expression; the rest are dropped.
+    if (p.type === 'SequenceExpression' && p.expressions.at(-1) !== c) return true;
+  }
+  return false;
+}
+
+/**
  * The parameter POSITIONS a helper's body uses as a finder receiver.
  *
  * By BINDING, never by spelling. A nested function may reuse one of the
@@ -2332,22 +2390,23 @@ function helperArgumentsSound(src, fn, args, seen) {
  * meant an identity — twice on globals, now here — so it asks the scope
  * analyser which variable the receiver actually is, and whether that
  * variable is a parameter OF THIS function.
+ *
+ * And only where the finder's value CAN REACH the helper's result, which
+ * is the root of three consecutive rounds on this one function rather
+ * than a third exclusion beside the other two. Rounds 9, 10 and 11 each
+ * reported a different node this walk should not have been looking at,
+ * and all three are one question asked about the wrong unit: the walk
+ * was enumerating every finder call UNDER the parameter when what
+ * selects an argument for inspection is a finder whose value can BE the
+ * bound the helper hands back. `cannotReachResult` is that question, in
+ * one place, with one table to extend.
  */
 function searchedParameters(src, fn) {
-  const { variableOf } = astOf(src, 'searchedParameters');
+  const { variableOf, parents } = astOf(src, 'searchedParameters');
   const used = new Set();
-  // A nested function the helper merely CREATES does not run when the
-  // helper is called, so a finder inside one says nothing about the
-  // helper's own result. Walking every descendant attributed those to
-  // the helper and refused ordinary arguments.
-  const nested = new Set();
-  walk(fn.body, (n, parent) => {
-    if (FUNCTIONS.has(n.type) && n !== fn) nested.add(n);
-    if (parent && nested.has(parent)) nested.add(n);
-  });
   walk(fn.body, (n) => {
-    if (nested.has(n)) return;
     if (n.type !== 'CallExpression') return;
+    if (cannotReachResult(parents, fn, n)) return;
     const callee = unwrapChain(n.callee);
     if (callee?.type !== 'MemberExpression' || !FINDERS.has(propertyName(callee))) return;
     const object = unwrapChain(callee.object);

@@ -156,6 +156,31 @@ a correct region. Only the two constructs where the arms truly cannot
 both run are treated this way; a switch falls through, and a catch runs
 because its try block got part of the way, so neither qualifies.
 
+The round after that found two of those very fixes reaching past their
+own question, which is worth stating as the pattern it is rather than as
+two more entries. The branch-arm rule holds only within a SINGLE
+evaluation: where the name being written outlives the function the branch
+is in, the first call's assignment is still there for the second, and the
+rule was stepping over the lifetime test standing next to it. And the
+alias walk gave up after a fixed number of steps — a guess about how many
+names someone might chain together — where the condition that actually
+ends such a walk is reaching a name declared nowhere in the file, or
+coming back to one already on the chain. Both are decidable; a number is
+not.
+
+The third finding of that round was the third in a row against one small
+piece of this: which of a helper's parameters a search actually looks
+through. Each round named a different place the search should not have
+been looking, and all three were the same question asked about the wrong
+thing. What selects an argument for inspection is not a search written
+anywhere inside the helper — it is a search whose result can BE the
+position the helper hands back. A search used only to choose between two
+outcomes that are both genuine landmarks cannot change the answer, and
+neither can one inside a function the helper never calls. That is now one
+question in one place, and the accompanying list names only what is
+provably discarded, so anything missing from it is inspected rather than
+skipped — a gap costs a refused region, never a certified one.
+
 This note ENUMERATES the behaviour changes rather than counting them, and
 that is a correction rather than a preference: a running total beside a
 list is a second place the same fact is recorded, and this one was wrong

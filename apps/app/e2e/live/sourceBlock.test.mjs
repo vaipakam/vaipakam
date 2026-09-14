@@ -2379,6 +2379,48 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
+  // Round 11. Each of the three is the previous round's fix reaching
+  // past its own question — which is the shape, not a coincidence.
+  it('keeps a write that survives the branch it was made in', () => {
+    // The arms are exclusive within ONE call, and the first call's
+    // write is still there for the second.
+    const code =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'function region(on) { if (on) end = 320; else return s.slice(0, end); }\n' +
+      'region(true); region(false);';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+    // Straight-line top-level code runs once, so exclusivity holds there.
+    const once =
+      "const s = f();\nlet end = s.indexOf('e');\n" +
+      'if (on) { end = 320; } else { var r = s.slice(0, end); }';
+    expect(countsCharacters(once, sliceCallsIn(once).at(-1))).toBe(false);
+  });
+
+  it('follows an alias chain to its end rather than to a hop limit', () => {
+    const links = Array.from({ length: 7 }, (_, i) => `const r${i + 1} = r${i};`).join('\n');
+    const code =
+      `const s = f();\nconst r0 = globalThis;\n${links}\n` +
+      'r7.String = { raw: String.prototype.slice };\n' +
+      'const r = String.raw.call(s, 0, 320);';
+    expect(sliceCallsIn(code).length).toBeGreaterThan(0);
+  });
+
+  it('ignores a finder whose value cannot be the bound handed back', () => {
+    // In the TEST of a conditional: both results are source-relative
+    // however the stand-in answers, so it selects no argument.
+    const test =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => text.indexOf('x') ? s.indexOf('a') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(test, sliceCallsIn(test).at(-1))).toBe(false);
+    // In an ARM of one: the stand-in's answer can be the bound.
+    const arm =
+      'const s = f();\nconst fake = make();\n' +
+      "const at = text => on ? text.indexOf('x') : s.indexOf('b');\n" +
+      'const r = s.slice(0, at(fake));';
+    expect(countsCharacters(arm, sliceCallsIn(arm).at(-1))).toBe(true);
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
