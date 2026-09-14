@@ -5919,13 +5919,13 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > and reporting any dust already at the predicted address as unattributed
 > rather than refusing; `rebaseArmedFreshPaid`; a read surface incl. the raw
 > received/paid pair that reports an unreadable balance as unknown), the
-> `RewardCustodyRow` enum and SEVEN appended storage fields — the holder
-> pointer, the attribution rows, the one-shot rebase guard, the registry of
-> Diamond-constructed holders that authenticates every sweep and recovery
-> (review r13; the count said three until review r15), and the three-field
-> single-use inbound pin (`rewardCustodyInboundToken`, `…Id`, `…Amount`)
-> a custody NFT sweep arms when the Diamond is its own treasury (review r29;
-> the count said four until the post-cap review). No externally
+> `RewardCustodyRow` enum and FOUR appended storage fields — the holder
+> pointer, the attribution rows, the one-shot rebase guard and the registry
+> of Diamond-constructed holders that authenticates every sweep and recovery
+> (review r13; the count said three until review r15; a three-field NFT
+> inbound pin added at review r29 was withdrawn again at the post-cap
+> review, since a Diamond-as-treasury has no NFT withdrawal path and the NFT
+> sweeps now refuse it). No externally
 > supplied address is ever accepted as a holder (review r3). Two things the
 > review added to this plan: the in-place refresh runs the rebase itself,
 > paused, after the role backfill and before service resumes
@@ -6013,9 +6013,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > everything but the two paid-side migrations (review r30). A Diamond that is
 > its own treasury has every ERC-20 the sweeps deliver credited to its tracked
 > treasury balance, and the ERC-721 sweep reads ownership before as well as
-> after the release; the native sweep refuses a Diamond-as-treasury
-> destination, and a refresh that found the chain live unpauses only if the
-> transition count shows nothing but its own pause (post-cap review). Simulations neither create nor erase
+> after the release; the native AND the NFT sweeps refuse a
+> Diamond-as-treasury destination (no claim or withdrawal path there), and a
+> refresh that found the chain live restores service through
+> `AdminFacet.unpauseIfPauseEpoch`, which refuses ON CHAIN unless the
+> transition count shows nothing but the run's own pause (post-cap review). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

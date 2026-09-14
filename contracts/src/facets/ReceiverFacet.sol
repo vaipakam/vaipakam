@@ -52,9 +52,7 @@ contract ReceiverFacet {
         uint256 tokenId,
         bytes calldata
     ) external returns (bytes4) {
-        if (!_consumeCustodyPin(msg.sender, tokenId, 1)) {
-            _consumePinOrRevert(msg.sender, tokenId, 1);
-        }
+        _consumePinOrRevert(msg.sender, tokenId, 1);
         return ERC721_RECEIVED;
     }
 
@@ -67,36 +65,8 @@ contract ReceiverFacet {
         uint256 value,
         bytes calldata
     ) external returns (bytes4) {
-        if (!_consumeCustodyPin(msg.sender, id, value)) {
-            _consumePinOrRevert(msg.sender, id, value);
-        }
+        _consumePinOrRevert(msg.sender, id, value);
         return ERC1155_RECEIVED;
-    }
-
-    /// @dev #1566 slice 4 PR A (Codex #2158 r29 P2) — the second, equally
-    ///      tight pin: a reward-custody NFT sweep whose configured treasury is
-    ///      this Diamond arms the exact token, id and amount immediately
-    ///      before the holder releases it, and this consumes the pin on first
-    ///      accept. Anything else falls through to the consolidation pin, so
-    ///      the Diamond is still never an open NFT sink.
-    function _consumeCustodyPin(
-        address token,
-        uint256 tokenId,
-        uint256 amount
-    ) private returns (bool matched) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (
-            s.rewardCustodyInboundToken == address(0) ||
-            token != s.rewardCustodyInboundToken ||
-            tokenId != s.rewardCustodyInboundId ||
-            amount != s.rewardCustodyInboundAmount
-        ) {
-            return false;
-        }
-        s.rewardCustodyInboundToken = address(0);
-        s.rewardCustodyInboundId = 0;
-        s.rewardCustodyInboundAmount = 0;
-        return true;
     }
 
     /// @notice ERC-1155 batch-receiver hook — always reverts during a move.

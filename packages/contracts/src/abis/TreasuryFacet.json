@@ -3568,6 +3568,22 @@
   },
   {
     "type": "error",
+    "name": "PauseEpochMoved",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PeriodicInterestDisabled",
     "inputs": []
   },
@@ -4012,11 +4028,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyInboundNotDelivered",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyMoveUnverified",
     "inputs": [
       {
@@ -4034,6 +4045,11 @@
   {
     "type": "error",
     "name": "RewardCustodyNativeToDiamondTreasury",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyNftToDiamondTreasury",
     "inputs": []
   },
   {

@@ -332,11 +332,6 @@ interface IVaipakamErrors {
     /// @param stated The pause epoch the caller established the figure at.
     /// @param live   The pause library's current transition count.
     error ArmedFreshSeedStalePauseEpoch(uint64 stated, uint64 live);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r29 P2) — an NFT sweep whose
-    ///         treasury is this Diamond armed the inbound pin, but the token
-    ///         never delivered through the Diamond's receiver hook; the pin
-    ///         is cleared and the sweep refused rather than reported.
-    error RewardCustodyInboundNotDelivered();
     /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the ERC-721
     ///         sweep was asked to recover a token the named holder does not
     ///         own, so there is nothing to recover from it.
@@ -349,6 +344,17 @@ interface IVaipakamErrors {
     ///         which has no tracked native balance and no native claim path;
     ///         the currency would be stranded in the raw balance.
     error RewardCustodyNativeToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — an NFT sweep was
+    ///         asked to deliver into a Diamond that is its own treasury, which
+    ///         has no NFT withdrawal path; the token would be stranded there.
+    error RewardCustodyNftToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P1) — a conditional
+    ///         unpause found the pause epoch moved since the caller observed
+    ///         it: someone else paused or unpaused in between, and this
+    ///         unpause must not clear that.
+    /// @param expected The transition count the caller expected.
+    /// @param live     The current transition count.
+    error PauseEpochMoved(uint64 expected, uint64 live);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

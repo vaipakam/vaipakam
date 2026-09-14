@@ -761,11 +761,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyInboundNotDelivered",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyMoveUnverified",
     "inputs": [
       {
@@ -783,6 +778,11 @@
   {
     "type": "error",
     "name": "RewardCustodyNativeToDiamondTreasury",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyNftToDiamondTreasury",
     "inputs": []
   },
   {

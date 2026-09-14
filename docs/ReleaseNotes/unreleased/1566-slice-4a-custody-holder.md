@@ -31,18 +31,17 @@ else could ever move it, so an administrator can recover a single-token NFT or
 multi-token units from any platform-constructed holder to the treasury only —
 and a single-token recovery is reported only after the token reads as owned by
 the treasury, so a token that did not move is refused rather than reported.
-When the platform itself is the configured treasury, its receiver accepts
-exactly the token, id and amount a custody sweep has pinned for that one
-delivery and nothing else, so recovery works in that configuration while the
-platform stays closed to every other inbound NFT; and every token recovered to
-a platform that is its own treasury is credited to the treasury's tracked
-balance, the one its claim path releases, so nothing recovered sits unclaimable
-in the platform's raw balance; native currency has no such claim path on a
-platform that is its own treasury, so the native recovery refuses that
-destination outright rather than strand the value. A refresh that found the
-platform live restores service at the end only if nothing else touched the
-pause state during the run — a pause raised meanwhile, by a watcher or by a
-person, is left in force for a fresh decision. A single-token recovery also refuses a token
+Every token recovered to a platform that is its own treasury is credited to
+the treasury's tracked balance, the one its claim path releases, so nothing
+recovered sits unclaimable in the platform's raw balance; native currency and
+NFTs have no such claim or withdrawal path on a platform that is its own
+treasury, so those recoveries refuse that destination outright — the asset
+stays at the holder, releasable to an external treasury — rather than strand
+it, and the platform stays closed to every inbound NFT. A refresh that found
+the platform live restores service at the end through an unpause that itself
+checks, on chain, that nothing else touched the pause state during the run — a
+pause raised meanwhile, by a watcher or by a person, makes that unpause refuse
+and is left in force for a fresh decision. A single-token recovery also refuses a token
 the named holder does not own, so a token already with the treasury can never
 be reported as recovered from a holder.
 The sweeps act only on holders the platform itself

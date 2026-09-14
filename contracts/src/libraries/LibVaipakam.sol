@@ -7387,15 +7387,6 @@ library LibVaipakam {
         ///      on an address, so a previous holder stays reachable for
         ///      recovery while nothing else ever is.
         mapping(address => bool) rewardCustodyHolderConstructed;
-        /// @dev #1566 slice 4 PR A (Codex #2158 r29 P2) — the single-use pin a
-        ///      custody NFT sweep arms when the configured treasury is the
-        ///      Diamond ITSELF: the token, id and amount the Diamond's receiver
-        ///      hooks may accept next, consumed on first accept, so the sweeps
-        ///      can deliver to a Diamond-as-treasury while the Diamond stays
-        ///      closed to every other inbound NFT. Zero token ⇒ none armed.
-        address rewardCustodyInboundToken;
-        uint256 rewardCustodyInboundId;
-        uint256 rewardCustodyInboundAmount;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

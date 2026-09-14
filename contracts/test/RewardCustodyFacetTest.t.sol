@@ -594,11 +594,12 @@ contract RewardCustodyFacetTest is SetupTest {
         assertTrue(_rep().armedFreshPaidSeeded());
     }
 
-    /// @dev Codex #2158 r29 P2 — with the Diamond itself as the configured
-    ///      treasury, the NFT sweeps deliver through a pinned, single-use
-    ///      inbound the receiver hooks accept; anything unpinned is still
-    ///      refused.
-    function test_Sweep_DeliversNftsToADiamondTreasury() public {
+    /// @dev Codex #2158 post-cap P2 (reversing the r29 pin) — a Diamond that
+    ///      is its own treasury has no NFT withdrawal path, so both NFT
+    ///      sweeps refuse that destination and the tokens stay at the
+    ///      holder, releasable to an external treasury; the Diamond itself
+    ///      stays closed to every inbound NFT.
+    function test_Sweep_RefusesNftsIntoADiamondTreasury() public {
         address holder = _bind();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         address alice = makeAddr("alice");
@@ -607,8 +608,9 @@ contract RewardCustodyFacetTest is SetupTest {
         nft.mint(alice, 1);
         vm.prank(alice);
         nft.transferFrom(alice, holder, 1);
+        vm.expectRevert(IVaipakamErrors.RewardCustodyNftToDiamondTreasury.selector);
         _custody().sweepERC721FromRewardCustody(holder, address(nft), 1);
-        assertEq(nft.ownerOf(1), address(diamond), "recovered into the Diamond treasury");
+        assertEq(nft.ownerOf(1), holder, "stays at the holder");
 
         ERC1155Mock units = new ERC1155Mock();
         address predicted = _nextHolderAddress();
@@ -616,14 +618,31 @@ contract RewardCustodyFacetTest is SetupTest {
         _pause();
         address successor = _custody().replaceRewardCustodyHolder();
         assertEq(successor, predicted);
+        vm.expectRevert(IVaipakamErrors.RewardCustodyNftToDiamondTreasury.selector);
         _custody().sweepERC1155FromRewardCustody(successor, address(units), 7, 3);
-        assertEq(units.balanceOf(address(diamond), 7), 3, "recovered into the Diamond treasury");
+        assertEq(units.balanceOf(successor, 7), 3, "stays at the holder");
 
-        // Unpinned inbound NFTs are still refused by the Diamond.
+        // The Diamond is closed to inbound NFTs.
         nft.mint(alice, 2);
         vm.prank(alice);
         vm.expectRevert();
         nft.safeTransferFrom(alice, address(diamond), 2);
+    }
+
+    /// @dev Codex #2158 post-cap P1 — the conditional unpause refuses ON CHAIN
+    ///      when the pause epoch moved, so a scripted restore of service can
+    ///      never clear a pause someone else raised in between.
+    function test_UnpauseIfPauseEpoch_RefusesAMovedEpoch() public {
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.pause();
+        uint64 expected = _epoch();
+        admin.unpause();
+        admin.pause(); // someone else lifted and re-raised the pause
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PauseEpochMoved.selector, expected, _epoch()));
+        admin.unpauseIfPauseEpoch(expected);
+        assertTrue(admin.paused(), "still paused");
+        admin.unpauseIfPauseEpoch(_epoch());
+        assertFalse(admin.paused());
     }
 
     /// @dev Codex #2158 post-cap P2 — an ERC-20 recovered to a Diamond that is

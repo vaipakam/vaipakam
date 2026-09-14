@@ -1170,18 +1170,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
 
         if (!wasPaused) {
-            (,,, uint64 epochAtEnd) =
-                LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
-            if (epochAtEnd == epochBeforeOurPause + 1) {
-                AdminFacet(diamond).unpause();
-            } else {
-                console.log(
-                    "the pause state changed during this run (a pause was raised or lifted by someone else) - "
-                    "NOT unpausing; the Diamond stays paused for a fresh decision. transitions before/after:",
-                    epochBeforeOurPause,
-                    epochAtEnd
-                );
-            }
+            // The check is ON CHAIN (Codex #2158 post-cap P1): a branch here
+            // runs only while Forge builds the broadcast list, so the
+            // unpause itself carries the count expected after this run's
+            // own pause and REVERTS if anyone moved it in between — the
+            // Diamond then stays paused for a fresh decision, and the run
+            // ends with that revert named rather than an incident cleared.
+            AdminFacet(diamond).unpauseIfPauseEpoch(epochBeforeOurPause + 1);
         }
         if (bootstrapOnly) {
             console.log("");

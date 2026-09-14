@@ -421,6 +421,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        // A Diamond that is its own treasury has no NFT withdrawal path
+        // (Codex #2158 post-cap P2): delivering there would move the token
+        // from a holder that CAN release it into raw Diamond ownership with
+        // no supported exit. Refused, with the reason named; the token stays
+        // at the holder, releasable to an external treasury.
+        if (treasury == address(this)) revert IVaipakamErrors.RewardCustodyNftToDiamondTreasury();
         _requireConstructedHere(s, holder);
         // Ownership is read BEFORE the release too (Codex #2158 post-cap P2):
         // a token that already reports the treasury as owner — or that the
@@ -430,9 +436,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (ownerBefore != holder) {
             revert IVaipakamErrors.RewardCustodyErc721NotAtHolder(token, tokenId, ownerBefore);
         }
-        _armCustodyInbound(s, treasury, token, tokenId, 1);
         RewardCustodyHolder(holder).releaseERC721(token, treasury, tokenId);
-        _requireCustodyInboundConsumed(s, treasury);
         address owner = IERC721(token).ownerOf(tokenId);
         if (owner != treasury) {
             revert IVaipakamErrors.RewardCustodyErc721NotDelivered(token, tokenId, owner);
@@ -464,12 +468,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        // Same refusal as the ERC-721 sweep: no NFT withdrawal path exists on
+        // a Diamond that is its own treasury (Codex #2158 post-cap P2).
+        if (treasury == address(this)) revert IVaipakamErrors.RewardCustodyNftToDiamondTreasury();
         _requireConstructedHere(s, holder);
         uint256 holderBefore = IERC1155(token).balanceOf(holder, id);
         uint256 before = IERC1155(token).balanceOf(treasury, id);
-        _armCustodyInbound(s, treasury, token, id, amount);
         RewardCustodyHolder(holder).releaseERC1155(token, treasury, id, amount);
-        _requireCustodyInboundConsumed(s, treasury);
         uint256 received = IERC1155(token).balanceOf(treasury, id) - before;
         _requireDebited(holder, holderBefore, IERC1155(token).balanceOf(holder, id), amount);
         emit RewardCustodyERC1155Swept(holder, token, treasury, id, amount, received);
@@ -869,37 +874,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
     function _creditDiamondTreasury(LibVaipakam.Storage storage s, address asset, uint256 amount) private {
         if (amount == 0 || s.treasury != address(this)) return;
         s.treasuryBalances[asset] += amount;
-    }
-
-    /// @dev When the configured treasury is this Diamond, its receiver hooks
-    ///      accept only a pinned, single-use inbound (Codex #2158 r29 P2):
-    ///      arm the exact token, id and amount right before the release so
-    ///      the recovery lands, while the Diamond stays closed to every other
-    ///      NFT. An external treasury needs no pin.
-    function _armCustodyInbound(
-        LibVaipakam.Storage storage s,
-        address treasury,
-        address token,
-        uint256 id,
-        uint256 amount
-    ) private {
-        if (treasury != address(this)) return;
-        s.rewardCustodyInboundToken = token;
-        s.rewardCustodyInboundId = id;
-        s.rewardCustodyInboundAmount = amount;
-    }
-
-    /// @dev The pin must have been consumed by the delivery — a token that
-    ///      never called the hook left it armed, and a stale pin must not
-    ///      outlive the sweep that armed it.
-    function _requireCustodyInboundConsumed(LibVaipakam.Storage storage s, address treasury) private {
-        if (treasury != address(this)) return;
-        if (s.rewardCustodyInboundToken != address(0)) {
-            s.rewardCustodyInboundToken = address(0);
-            s.rewardCustodyInboundId = 0;
-            s.rewardCustodyInboundAmount = 0;
-            revert IVaipakamErrors.RewardCustodyInboundNotDelivered();
-        }
     }
 
     /// @dev The source-side rule of EVERY release from a holder, in one place

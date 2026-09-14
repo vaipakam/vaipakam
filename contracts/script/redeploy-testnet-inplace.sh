@@ -1006,14 +1006,19 @@ for slug in $CHAINS; do
   # flag nor a live auto-pause window.
   raw_after="$(cast storage "$diamond3" "$pause_slot" --rpc-url "$rpc" 2>/dev/null || echo '')"
   hex_after="${raw_after#0x}"
-  now_ts="$(date -u +%s)"
-  if [ "${#hex_after}" -ne 64 ]; then
-    info "$slug: in-place redeploy complete -- pause state UNKNOWN (the pause slot could not be read: '${raw_after:-empty}'); verify with 'cast storage <diamond> $pause_slot' before treating this chain as live"
+  # The auto-pause deadline is compared with CHAIN time — the latest block's
+  # timestamp — never the host clock (Codex #2158 post-cap P2): a host ahead
+  # of the chain would call a still-active window elapsed. Unreadable chain
+  # time is UNKNOWN, not "restored".
+  chain_ts="$(cast block latest -f timestamp --rpc-url "$rpc" 2>/dev/null | tr -d '[:space:]' || echo '')"
+  case "$chain_ts" in ''|*[!0-9]*) chain_ts="" ;; esac
+  if [ "${#hex_after}" -ne 64 ] || [ -z "$chain_ts" ]; then
+    info "$slug: in-place redeploy complete -- pause state UNKNOWN (pause slot '${raw_after:-unreadable}', chain time '${chain_ts:-unreadable}'); verify with 'cast storage <diamond> $pause_slot' and the pause views before treating this chain as live"
     paused_chains="${paused_chains:+$paused_chains }$slug(unknown)"
   elif [ "${hex_after:62:2}" != "00" ]; then
     info "$slug: in-place redeploy complete -- the Diamond REMAINS PAUSED (manual): user operations stay disabled until a fresh Unpauser decision (AdminFacet.unpause()) once the migrations are verified; this run does not unpause"
     paused_chains="${paused_chains:+$paused_chains }$slug"
-  elif dec_gt "$(cast to-dec "0x${hex_after:46:16}")" "$now_ts"; then
+  elif dec_gt "$(cast to-dec "0x${hex_after:46:16}")" "$chain_ts"; then
     info "$slug: in-place redeploy complete -- the Diamond is under a watcher AUTO-PAUSE window until $(cast to-dec "0x${hex_after:46:16}") (unix): user operations stay disabled until it lapses or an Unpauser clears it; not ordinary completion"
     paused_chains="${paused_chains:+$paused_chains }$slug(auto-pause)"
   else
