@@ -74,13 +74,18 @@ left in the platform's own balance — a delivery's unattributed remainder,
 a quarantined compensation, and a return for a receipt older than
 per-receipt attribution — now move into the address's unclassified
 attribution as they land; every reward packet is recorded, on every
-deployment, under the identity the transport supplies, and a receipt is
-delivered once; and the platform's manual pause becomes the migration mode
+deployment, under the identity the transport supplies — or, where the
+transport supplies none, under one the platform's own ingress allocates
+in sequence per source — and a receipt is delivered once; and the
+platform's manual pause becomes the migration mode
 the cutover needs, because the receive ingresses are no longer pause-gated
 while every reward consumer still is. The second half — the reconciliation
-of what arrived before the address existed — is still to come. The other
-is the indexer checking its own loan statuses against the chain on every
-tick and correcting a record the chain says has ended: the whole record,
+of everything that arrived before packets were stamped, whether before the
+address existed or after it — is still to come. The other is the indexer
+checking its own loan statuses against the chain on every tick that has
+caught up with it — a tick still draining a backlog after an outage defers
+the check until its scan reaches the safe head — and correcting a record
+the chain says has ended: the whole record,
 with the amounts and the things the platform was still offering to do for
 that loan, rather than trusting that it saw every ending announced.
 
@@ -1283,7 +1288,9 @@ defaulted or been repaid.
 
 ### What now happens
 
-On each scheduled tick the index asks the chain how many loans it considers
+On each scheduled tick whose scan has reached the chain's safe head — a
+tick still draining a backlog after an outage defers this until it has
+caught up — the index asks the chain how many loans it considers
 running and compares that to its own count. If the two differ it examines a
 handful of its records; if they agree it still examines one. Where the chain
 says a loan has ended and the record says otherwise, the record is
