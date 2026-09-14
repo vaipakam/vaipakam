@@ -153,8 +153,8 @@ for a keeper-scoped `wrangler deploy` lacking `--keep-vars`. It was written
 because fixing the package script did not fix the problem — four review rounds
 each found another caller reaching wrangler directly — but asking whether a
 piece of text will run a command means modelling the execution model of every
-interpreter it might be, and it never got there: fourteen open issues, each a
-different parsing edge, four of them false reports that redden a correct tree,
+interpreter it might be, and it never got there: seventeen open issues, each a
+different parsing edge, five of them false reports that redden a correct tree,
 and none naming a real file here. The declaration answers the same question
 without parsing anything, so the scanner and its fixtures (about 23,800 lines)
 are gone. What that gives up is listed by name in the header of
