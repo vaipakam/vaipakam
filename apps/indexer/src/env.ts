@@ -154,6 +154,33 @@ export function isDoIngestEnabled(raw: WorkerEnv): boolean {
 }
 
 /**
+ * The resolved env for a route that must SKIP `resolveEnv`.
+ *
+ * One route does: `/metrics/recycling` bypasses the Secrets Store resolution
+ * for latency, because it needs D1, the ingest gate and the deployment
+ * artifact — none of which come from Secrets Store — and paying for the
+ * secrets binding could push the response past the browser's abort.
+ *
+ * It exists as a named function because the bare cast that used to do this
+ * job got it wrong the moment the gate became a resolved field (#2202 r1):
+ * `raw as unknown as Env` type-checks happily and hands the route
+ * `doIngestEnabled: undefined`, which reads as "legacy" and is a worse
+ * answer than the half-gate it replaced. A double cast defeats the
+ * typechecker, so the only defence is that there is one obvious way to do
+ * this and it is tested.
+ *
+ * This is NOT a workaround for a missing binding: the raw env carries both
+ * halves, so this performs the same resolution `resolveEnv` does. It simply
+ * omits the part that costs latency.
+ */
+export function earlyRouteEnv(raw: WorkerEnv): Env {
+  return {
+    ...(raw as unknown as Env),
+    doIngestEnabled: isDoIngestEnabled(raw),
+  };
+}
+
+/**
  * The RESOLVED env passed to all downstream code. `RPC_*` are plain
  * strings; a missing / unconfigured chain is `undefined` and its
  * chain scan is skipped this tick (see `getChainConfigs`).

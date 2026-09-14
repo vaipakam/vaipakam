@@ -16,7 +16,7 @@
  * exactly why it needs constructing on purpose.
  */
 import { describe, expect, it } from 'vitest';
-import { isDoIngestEnabled, type WorkerEnv } from '../src/env';
+import { earlyRouteEnv, isDoIngestEnabled, type WorkerEnv } from '../src/env';
 
 /** A namespace stands in for the binding; the gate only tests presence. */
 const BINDING = {} as NonNullable<WorkerEnv['CHAIN_INGEST_DO']>;
@@ -58,5 +58,39 @@ describe('isDoIngestEnabled — both halves, or it is off', () => {
 
   it('is OFF for an env carrying neither half', () => {
     expect(isDoIngestEnabled(raw(undefined, false))).toBe(false);
+  });
+});
+
+describe('earlyRouteEnv — the one route that skips resolveEnv', () => {
+  // `/metrics/recycling` bypasses `resolveEnv` for latency. It used to get a
+  // bare `raw as unknown as Env`, which type-checks and yields
+  // `doIngestEnabled: undefined` — falsy, so the route always read "legacy",
+  // a WORSE answer than the half-gate it replaced. These cases exist because
+  // that is precisely what happened the moment the gate became a resolved
+  // field, and a double cast gives the typechecker no way to object.
+
+  it('carries the resolved gate, not undefined', () => {
+    expect(earlyRouteEnv(raw('true', true)).doIngestEnabled).toBe(true);
+  });
+
+  it('resolves it with BOTH halves, exactly as resolveEnv would', () => {
+    // The half-enabled shape again — the bypass must not be a second place
+    // where the flag alone decides.
+    expect(earlyRouteEnv(raw('true', false)).doIngestEnabled).toBe(false);
+    expect(earlyRouteEnv(raw(undefined, true)).doIngestEnabled).toBe(false);
+  });
+
+  it('is never undefined, whatever the raw env looks like', () => {
+    // The specific regression: falsy-by-absence is indistinguishable from a
+    // decided `false` at the call site, so assert the field is actually
+    // present and boolean rather than merely not truthy.
+    for (const e of [raw('true', true), raw('true', false), raw(undefined, false)]) {
+      expect(typeof earlyRouteEnv(e).doIngestEnabled).toBe('boolean');
+    }
+  });
+
+  it('passes the rest of the env through, so the route still has its D1', () => {
+    const db = {} as unknown as WorkerEnv['DB'];
+    expect(earlyRouteEnv({ ...raw('true', true), DB: db } as WorkerEnv).DB).toBe(db);
   });
 });

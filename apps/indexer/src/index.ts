@@ -65,6 +65,7 @@ import {
   readSecret,
   getChainConfigs,
   isDoIngestEnabled,
+  earlyRouteEnv,
   type WorkerEnv,
   type Env,
   type SecretBinding,
@@ -347,18 +348,9 @@ export default {
     if (url.pathname === '/metrics/recycling') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
-        // The ONE route that skips `resolveEnv`, so the one place that has
-        // to stamp the gate itself (#2202 r1). The raw env carries BOTH
-        // halves here, so this is not a workaround for a missing binding —
-        // it is the same resolution `resolveEnv` performs, done at the only
-        // seam that bypasses it. Casting alone would hand the route
-        // `doIngestEnabled: undefined`, which reads as "legacy" and would
-        // make this route WORSE than before the resolved gate existed: it
-        // used to see the flag, and would now see nothing.
-        return handleRecyclingSeries(req, {
-          ...(env as unknown as Env),
-          doIngestEnabled: isDoIngestEnabled(env),
-        });
+        // The ONE route that skips `resolveEnv` — see `earlyRouteEnv` for
+        // why it is a named function rather than a cast (#2202 r1).
+        return handleRecyclingSeries(req, earlyRouteEnv(env));
       }
       return new Response('Not found', { status: 404 });
     }
