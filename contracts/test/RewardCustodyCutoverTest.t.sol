@@ -185,6 +185,21 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 1. activation ───────────────────────────────────────────────────────
 
+    /// A Detached deployment does not activate in this slice: its receive
+    /// ingresses do not yet refuse by role, so activation waits for PR C's
+    /// era registry (Codex #2186 r1 P1).
+    function test_Activation_RefusesADetachedDeployment() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(0, epoch);
+        _rep().setBaseChainId(0); // detach: no allocation yet, so not frozen
+        assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Detached), "detached");
+        vm.expectRevert(RewardCustodyActivationDetachedNotSupported.selector);
+        _custody().activateRewardCustody(epoch, false);
+    }
+
     /// An Unconfigured deployment can never activate: its column stays at
     /// Diamond custody by design, and nothing here changes what it pays.
     function test_Activation_RefusesAnUnconfiguredDeployment() public {
@@ -725,7 +740,146 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _rep().setBaseRewardDeployment(eraA); // re-arming the same era: allowed
     }
 
-    // ─── 8. the ledger view ──────────────────────────────────────────────────
+    // ─── 8. restitution: the unwind and the two dispositions ─────────────────
+
+    /// A demotion gives back the WHOLE credit still in the holder — the live
+    /// portion first, then the restitution portion — to the Diamond, where
+    /// the stranded reservation describes it (Codex #2186 r1 P1); only what
+    /// was already paid out stays out.
+    function test_UncreditFresh_ReturnsLiveThenRestitution() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+        fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
+        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+
+        vm.prank(address(diamond)); // the Diamond-internal entry, as the demotion reaches it
+        _custody().custodyUncreditFresh(9e18);
+        assertEq(_live(), 0, "live gave back all 4");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 1e18, "restitution gave back 5 of 6");
+        assertEq(vpfi.balanceOf(address(diamond)) - diamondBefore, 9e18, "the Diamond received the whole unwound credit");
+        (uint256 received, ) = _ledger();
+        assertEq(received, 1e18, "received unwound");
+    }
+
+    /// The corrective disposition: `amount` of paid never happened, so the
+    /// paid side falls and only the headroom that reappears moves from
+    /// restitution to live — straddled: with the deficit still open the
+    /// first correction creates no headroom, the second does.
+    function test_Restitution_PaidCorrection_MovesOnlyTheHeadroomCreated() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+        fundRewardPoolForTest(address(vpfi), 4e18); // all restitution; received 4, paid 6
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 4e18, "covering tokens");
+        assertEq(_live(), 0, "no headroom");
+
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyRestitutionCorrectionExceedsPaid.selector, 7e18, 6e18));
+        _custody().releaseRestitutionAsPaidCorrection(7e18, bytes32("d0"));
+        _custody().releaseRestitutionAsPaidCorrection(1e18, bytes32("d1")); // deficit 2 -> 1: no headroom yet
+        assertEq(_live(), 0, "still no headroom");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 4e18, "restitution untouched");
+        _custody().releaseRestitutionAsPaidCorrection(3e18, bytes32("d2")); // paid 2: headroom 2
+        (uint256 received, uint256 paid) = _ledger();
+        assertEq(paid, 2e18, "paid corrected");
+        assertEq(_live(), 2e18, "exactly the headroom created moved to live");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 2e18, "the rest still covers paid");
+        assertEq(_live(), received - paid, "the live row is the bound");
+    }
+
+    /// The genuine-deficit disposition: restitution routes to the treasury
+    /// with paid retained and no headroom created.
+    function test_Restitution_ReleaseToTreasury_RetainsPaid() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+        fundRewardPoolForTest(address(vpfi), 4e18);
+        _admin().pause();
+        _custody().releaseRestitutionToTreasury(3e18, bytes32("genuine"));
+        assertEq(vpfi.balanceOf(treasury), 3e18, "treasury received it");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 1e18, "row debited");
+        (uint256 received, uint256 paid) = _ledger();
+        assertEq(paid, 6e18, "paid retained");
+        assertEq(received, 4e18, "received untouched");
+        assertEq(_live(), 0, "no headroom created");
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardCustodyRowShort.selector, uint8(LibVaipakam.RewardCustodyRow.Restitution), 2e18, 1e18)
+        );
+        _custody().releaseRestitutionToTreasury(2e18, bytes32("over"));
+    }
+
+    // ─── 9. the token rotation guard ─────────────────────────────────────────
+
+    /// The VPFI token cannot be rotated while any row is funded or the holder
+    /// still holds the old token; once both are drained it can.
+    function test_SetVPFIToken_RefusesRotationWhileCustodyExists() public {
+        _becomeCanonical();
+        activateRewardCustodyForTest(address(vpfi), 5e18);
+        address newToken = address(new VPFIToken());
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyTokenRotationBlocked.selector, 5e18, 5e18));
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+
+        // Drain the rows: an in-holder absorption then a surplus release
+        // leaves attribution zero but tokens at the holder — still refused.
+        _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 5e18);
+        _mut().debitRepatriationSurplusRaw(5e18);
+        assertEq(_held(), 0, "holder drained through the surplus release");
+        (, , , , uint256 attributed) = _custody().rewardCustodySnapshot();
+        assertEq(attributed, 0, "rows drained");
+        vpfi.mint(_holder(), 1); // an unsolicited wei at the holder
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyTokenRotationBlocked.selector, 0, 1));
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+        _admin().pause();
+        _custody().sweepUnattributedVpfiFromRewardCustody(1);
+        _admin().unpause();
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken); // drained: allowed
+        assertEq(VPFITokenFacet(address(diamond)).getVPFIToken(), newToken, "rotated");
+    }
+
+    // ─── 10. the versioned backing snapshot ──────────────────────────────────
+
+    /// V2 carries the legacy eight fields unchanged plus the activation flag
+    /// and the holder's balance and attributed total.
+    function test_BackingSnapshotV2_ExposesTheHolderSide() public {
+        _becomeCanonical();
+        (bool act0, , , ) = _v2Tail();
+        assertFalse(act0, "inactive");
+        activateRewardCustodyForTest(address(vpfi), 5e18);
+        _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 2e18);
+        (uint256 vpfiBalance, uint256 bucket, uint256 unearmarked, , , , uint256 reserved, uint256 position, bool act, bool known, uint256 held, uint256 attributed) =
+            _custody().getRecycleBackingSnapshotV2();
+        (uint256 v1Balance, uint256 v1Bucket, uint256 v1Unearmarked, , , , uint256 v1Reserved, uint256 v1Position) =
+            InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+        assertEq(vpfiBalance, v1Balance, "legacy field unchanged");
+        assertEq(bucket, v1Bucket, "legacy field unchanged");
+        assertEq(unearmarked, v1Unearmarked, "legacy field unchanged");
+        assertEq(reserved, v1Reserved, "legacy field unchanged");
+        assertEq(position, v1Position, "legacy field unchanged");
+        assertEq(bucket, 2e18, "bucket is the recycled row");
+        assertTrue(act, "activated");
+        assertTrue(known, "holder readable");
+        assertEq(held, 5e18, "holder balance");
+        assertEq(attributed, 5e18, "attributed");
+    }
+
+    function _v2Tail() internal view returns (bool act, bool known, uint256 held, uint256 attributed) {
+        (, , , , , , , , act, known, held, attributed) = _custody().getRecycleBackingSnapshotV2();
+    }
+
+    // ─── 11. the ledger view ─────────────────────────────────────────────────
 
     function test_Ledger_ReportsActivationAndEveryRow() public {
         _becomeCanonical();

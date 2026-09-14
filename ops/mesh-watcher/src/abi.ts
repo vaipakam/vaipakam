@@ -28,6 +28,7 @@ import type { Abi, AbiFunction } from 'viem';
 import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
 import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
 import interactionRewardsLensAbi from '../../../packages/contracts/src/abis/InteractionRewardsLensFacet.json';
+import rewardCustodyAbi from '../../../packages/contracts/src/abis/RewardCustodyFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
@@ -46,6 +47,14 @@ export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
 export const INTERACTION_REWARDS_LENS_ABI =
   interactionRewardsLensAbi as unknown as Abi;
 
+/** #1566 slice 4 PR B — the custody facet, for the VERSIONED backing snapshot
+ *  (`getRecycleBackingSnapshotV2`): the legacy eight fields plus the
+ *  activation flag and the holder's balance / attributed total, which the
+ *  recovery-reservation check needs once a chain's reward custody has moved
+ *  onto the holder. Its own import for the same attribution reason as the
+ *  lens ABI. */
+export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
+
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
  * `outputs` lists `name:type` pairs in declaration order — the assertion
@@ -59,7 +68,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
   /** Which compiled facet ABI carries the view (default: aggregator). */
-  readonly facet?: 'repatriation' | 'lens';
+  readonly facet?: 'repatriation' | 'lens' | 'custody';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -193,6 +202,33 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     ],
     facet: 'lens',
   },
+  // #1566 slice 4 PR B — the VERSIONED backing snapshot on the custody
+  // facet: the legacy eight fields unchanged, then the activation flag and
+  // the holder's balance (reported unknown rather than zero when it cannot
+  // be read) and attributed total. On an ACTIVATED chain the bucket and the
+  // recovery position are custody of the holder, so the legacy relation
+  // `vpfiBalance >= bucket + reserved + recovery` no longer holds there by
+  // design; the reader's positional casts of [8]..[11] must fail at startup
+  // on any drift.
+  {
+    name: 'getRecycleBackingSnapshotV2',
+    inputs: [],
+    outputs: [
+      'vpfiBalance:uint256',
+      'bucket:uint256',
+      'unearmarked:uint256',
+      'outstandingRecycled:uint256',
+      'paidOutRecycled:uint256',
+      'keeperBudget:uint256',
+      'strandedRecoveryReserved:uint256',
+      'recoveryPositionReserved:uint256',
+      'custodyActivated:bool',
+      'holderBalanceKnown:bool',
+      'holderBalance:uint256',
+      'holderAttributed:uint256',
+    ],
+    facet: 'custody',
+  },
 ] as const;
 
 /** Names of the views asserted above — handy for tests and diagnostics. */
@@ -217,6 +253,7 @@ export function assertAbiShape(
   abi: Abi = REWARD_AGGREGATOR_ABI,
   repatAbi: Abi = REPATRIATION_ABI,
   lensAbi: Abi = INTERACTION_REWARDS_LENS_ABI,
+  custodyAbi: Abi = REWARD_CUSTODY_ABI,
 ): void {
   const problems: string[] = [];
 
@@ -226,7 +263,9 @@ export function assertAbiShape(
         ? repatAbi
         : expected.facet === 'lens'
           ? lensAbi
-          : abi;
+          : expected.facet === 'custody'
+            ? custodyAbi
+            : abi;
     const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,

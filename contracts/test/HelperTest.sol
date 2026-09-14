@@ -2348,7 +2348,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](34);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2382,6 +2382,10 @@ contract HelperTest {
         selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
         selectors[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
+        selectors[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        selectors[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        selectors[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

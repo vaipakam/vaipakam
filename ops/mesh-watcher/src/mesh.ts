@@ -13,6 +13,7 @@ import {
   INTERACTION_REWARDS_LENS_ABI,
   REPATRIATION_ABI,
   REWARD_AGGREGATOR_ABI,
+  REWARD_CUSTODY_ABI,
 } from './abi';
 import {
   isCoverageGap,
@@ -425,29 +426,73 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         vpfiBalance: bigint;
         strandedRecoveryReserved: bigint;
         recoveryPositionReserved: bigint;
+        custodyActivated?: boolean;
+        holderBalanceKnown?: boolean;
+        holderBalance?: bigint;
+        holderAttributed?: bigint;
       }
     | undefined;
+  // #1566 slice 4 PR B — the VERSIONED snapshot first: on a chain whose
+  // reward custody moved onto the holder, the bucket and the recovery
+  // position are the holder's and the relation to alarm on changes
+  // (`checkHardInvariants` branches on `custodyActivated`). A chain not yet
+  // carrying the custody facet's V2 fails this read with a missing selector
+  // and takes the legacy tuple below, exactly as before; any OTHER failure
+  // of V2 is reported as the gap, since the legacy read cannot substitute
+  // for an activation flag it does not carry.
+  let v2Err: unknown;
   try {
     const snap = await readView<
       readonly [
         bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+        boolean, boolean, bigint, bigint,
       ]
     >(
       target.client,
       target.diamond,
-      'getRecycleBackingSnapshot',
+      'getRecycleBackingSnapshotV2',
       [],
       blockNumber,
-      INTERACTION_REWARDS_LENS_ABI,
+      REWARD_CUSTODY_ABI,
     );
     backing = {
       vpfiBalance: snap[0],
       strandedRecoveryReserved: snap[6],
       recoveryPositionReserved: snap[7],
+      custodyActivated: snap[8],
+      holderBalanceKnown: snap[9],
+      holderBalance: snap[10],
+      holderAttributed: snap[11],
     };
   } catch (err) {
+    v2Err = err;
     backing = undefined;
-    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
+  }
+  if (backing === undefined && v2Err !== undefined && !isMissingSelector(v2Err)) {
+    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, v2Err));
+  } else if (backing === undefined) {
+    try {
+      const snap = await readView<
+        readonly [
+          bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+        ]
+      >(
+        target.client,
+        target.diamond,
+        'getRecycleBackingSnapshot',
+        [],
+        blockNumber,
+        INTERACTION_REWARDS_LENS_ABI,
+      );
+      backing = {
+        vpfiBalance: snap[0],
+        strandedRecoveryReserved: snap[6],
+        recoveryPositionReserved: snap[7],
+      };
+    } catch (err) {
+      backing = undefined;
+      viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
+    }
   }
 
   return {

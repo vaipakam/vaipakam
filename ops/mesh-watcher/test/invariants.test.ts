@@ -250,6 +250,11 @@ type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
     vpfiBalance: bigint;
     strandedRecoveryReserved: bigint;
     recoveryPositionReserved?: bigint;
+    // #1566 slice 4 PR B — the versioned snapshot's holder-side fields.
+    custodyActivated?: boolean;
+    holderBalanceKnown?: boolean;
+    holderBalance?: bigint;
+    holderAttributed?: bigint;
   } | null;
 };
 
@@ -2746,6 +2751,81 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
     expect(hits).toHaveLength(1);
     expect(hits[0]?.severity).toBe('critical');
     expect(hits[0]?.detail).toContain('spoken for');
+  });
+
+  // #1566 slice 4 PR B — on an ACTIVATED chain the bucket and the recovery
+  // position are the holder's, so the legacy relation is replaced.
+  it('activated custody: healthy holder rows above the Diamond balance do NOT fire the legacy relation', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        // Legacy relation would fire: 100 < bucket + 50 + 300.
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        recoveryPositionReserved: 300n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 900n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('activated custody: a holder below its attributed rows fires CRITICAL', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 850n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    const hits = findings.filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('attributed');
+  });
+
+  it('activated custody: an unreadable holder balance fires, and a spent arrival reservation fires separately', () => {
+    const unreadable = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: false,
+        holderBalance: 0n,
+        holderAttributed: 10n * E,
+      },
+    });
+    const a = checkHardInvariants(obsWith(unreadable), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(a).toHaveLength(1);
+    expect(a[0]?.detail).toContain('could not be read');
+
+    const spent = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 40n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 900n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const b = checkHardInvariants(obsWith(spent), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(b).toHaveLength(1);
+    expect(b[0]?.detail).toContain('arrival reservation');
   });
 
   it('a healthy reservation does not fire', () => {

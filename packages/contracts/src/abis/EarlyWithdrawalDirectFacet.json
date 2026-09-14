@@ -2074,6 +2074,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyActivationDetachedNotSupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationRequiresConfiguredRole",
     "inputs": [
       {
@@ -2365,6 +2370,22 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyRestitutionCorrectionExceedsPaid",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyRowShort",
     "inputs": [
       {
@@ -2430,6 +2451,22 @@
     "type": "error",
     "name": "RewardCustodySweepIsVpfi",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyTokenRotationBlocked",
+    "inputs": [
+      {
+        "name": "attributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "heldInOldToken",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

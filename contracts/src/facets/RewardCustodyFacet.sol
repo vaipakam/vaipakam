@@ -9,6 +9,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 
@@ -774,6 +775,27 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 overageAfter
     );
 
+    /// @notice A restitution correction: `amount` of the paid side was
+    ///         recorded as a payment that never happened, and `toLive` of
+    ///         restitution custody became live backing (the headroom the
+    ///         correction created).
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRestitutionCorrected(
+        uint256 amount,
+        uint256 toLive,
+        uint256 paidAfter,
+        bytes32 indexed dispositionId
+    );
+
+    /// @notice Restitution custody was released to the treasury under a
+    ///         genuine-deficit disposition; the paid side is retained.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRestitutionReleased(
+        address indexed treasury,
+        uint256 amount,
+        bytes32 indexed dispositionId
+    );
+
     /**
      * @notice ONE-SHOT, PAUSED (the MANUAL pause), epoch-pinned: switch this
      *         chain's reward custody reads and debits onto the holder
@@ -834,6 +856,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role == LibVaipakam.RewardRole.Unconfigured) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresConfiguredRole(uint8(role));
         }
+        // A DETACHED chain does not activate in this slice (Codex #2186 r1
+        // P1): its value-bearing receive ingresses still accept the
+        // configured receiver without a role check, so a delayed packet
+        // would relocate custody into rows a zero bound can never spend,
+        // while the freeze this arms blocks the re-attachment that could —
+        // the intended-era ingress gates land with slice 4 PR C.
+        if (role == LibVaipakam.RewardRole.Detached) {
+            revert IVaipakamErrors.RewardCustodyActivationDetachedNotSupported();
+        }
         if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyActivationRequiresRebase();
         if (role == LibVaipakam.RewardRole.Canonical && !s.recoveryAttributionArmed) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresRecoveryArming();
@@ -854,13 +885,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
             if (received != paid) revert IVaipakamErrors.RewardCustodyBaselineNotVerified(received, paid);
             _requireRowBacked(s, LibVaipakam.RewardCustodyRow.LiveFresh, 0);
         } else {
-            // `Mirror`: the imported gap; `Detached`: zero (its bound is zero,
-            // and a detached chain carrying history could not have rebased).
-            uint256 gap = role == LibVaipakam.RewardRole.Mirror && received > paid
-                ? received - paid
-                : 0;
+            // `Mirror`: the imported gap.
+            uint256 gap = received > paid ? received - paid : 0;
             if (live != gap) {
-                if (writeDownMirrorGap && role == LibVaipakam.RewardRole.Mirror && live < gap) {
+                if (writeDownMirrorGap && live < gap) {
                     // The write-down form: history retained in the event, the
                     // usable headroom reduced to what the holder actually
                     // backs (design §5c, "an imported POSITIVE received − paid
@@ -1010,6 +1038,69 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Overage, treasury, amount);
         LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
         emit RewardCustodyOverageReleased(treasury, amount, recorded - amount);
+    }
+
+    /// @notice The restitution row's corrective disposition (design §5c, "an
+    ///         evidenced ACCOUNTING error"): `amount` of the paid side is
+    ///         recorded as a payment that never happened — the counter is
+    ///         reduced — and the headroom that reappears is re-attributed
+    ///         from restitution to live custody, in one act, under a named
+    ///         disposition.
+    /// @dev    ADMIN, MANUAL pause, activated. The live row gains exactly
+    ///         the headroom the correction creates (`received − paid` after
+    ///         minus before), never `amount` itself: with a deficit still
+    ///         open, part of the correction only shrinks the deficit and
+    ///         creates no headroom, so those tokens stay in restitution
+    ///         where they still cover it. Refuses when restitution cannot
+    ///         cover the reattribution (the covering tokens were already
+    ///         released to the treasury) rather than publishing live backing
+    ///         the holder does not hold. Bounded by the paid counter.
+    /// @param  amount        The evidenced overstatement of `paid`.
+    /// @param  dispositionId The owner's disposition reference, for the record.
+    function releaseRestitutionAsPaidCorrection(
+        uint256 amount,
+        bytes32 dispositionId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibPausable.requireManuallyPaused();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!LibRewardCustody.active(s)) revert IVaipakamErrors.RewardCustodyNotActivated();
+        if (amount == 0) revert IVaipakamErrors.InvalidAmount();
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        if (amount > paid) revert IVaipakamErrors.RewardCustodyRestitutionCorrectionExceedsPaid(amount, paid);
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 boundBefore = received > paid ? received - paid : 0;
+        uint256 paidAfter = paid - amount;
+        uint256 boundAfter = received > paidAfter ? received - paidAfter : 0;
+        s.rewardBudgetArmedFreshPaid = paidAfter;
+        uint256 toLive = boundAfter - boundBefore;
+        LibRewardCustody.move(
+            s, LibVaipakam.RewardCustodyRow.Restitution, LibVaipakam.RewardCustodyRow.LiveFresh, toLive
+        );
+        emit RewardCustodyRestitutionCorrected(amount, toLive, paidAfter, dispositionId);
+    }
+
+    /// @notice The restitution row's other disposition (design §5c, "a
+    ///         GENUINE deficit"): the tokens route to the harmed side — here,
+    ///         the configured treasury — with `paid` RETAINED and no headroom
+    ///         created. Never a release into live backing by ledger surgery.
+    /// @dev    ADMIN, MANUAL pause, activated. Delivers to the configured
+    ///         treasury and nowhere else; a Diamond-as-treasury receives it
+    ///         as a tracked, claimable balance.
+    /// @param  amount        How much restitution custody to release.
+    /// @param  dispositionId The owner's disposition reference, for the record.
+    function releaseRestitutionToTreasury(
+        uint256 amount,
+        bytes32 dispositionId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibPausable.requireManuallyPaused();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!LibRewardCustody.active(s)) revert IVaipakamErrors.RewardCustodyNotActivated();
+        if (amount == 0) revert IVaipakamErrors.InvalidAmount();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Restitution, treasury, amount);
+        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
+        emit RewardCustodyRestitutionReleased(treasury, amount, dispositionId);
     }
 
     /// @dev The activation's per-row verification: the row EQUALS the ledger
@@ -1163,6 +1254,57 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ///         cleared by slice 4 PR C's backfill).
     function rewardRoleChangesFrozen() external view returns (bool) {
         return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
+    }
+
+    /**
+     * @notice #1566 slice 4 PR B — the recycle backing snapshot, VERSIONED
+     *         for holder custody (Codex #2186 r1 P2): the eight results of
+     *         `InteractionRewardsLensFacet.getRecycleBackingSnapshot`, with
+     *         the same meaning each, PLUS the three figures a watcher needs
+     *         to recompose the backing relation on an activated deployment,
+     *         where the bucket and the recovery position are custody of
+     *         the HOLDER and no longer a subtrahend of the Diamond's own
+     *         balance: `custodyActivated`, and the holder's balance and
+     *         attributed total (the balance reported unknown rather than
+     *         zero when it cannot be read).
+     * @dev    On an activated deployment the relation to alarm on is
+     *         `holderBalance ≥ holderAttributed` (the holder backs every
+     *         row) and `vpfiBalance ≥ strandedRecoveryReserved` (the one
+     *         Diamond-side reservation left); before activation it is the
+     *         legacy `vpfiBalance ≥ bucket + strandedRecoveryReserved +
+     *         recoveryPositionReserved`. The legacy view is untouched, so
+     *         an existing eight-field reader keeps decoding.
+     */
+    function getRecycleBackingSnapshotV2()
+        external
+        view
+        returns (
+            uint256 vpfiBalance,
+            uint256 bucket,
+            uint256 unearmarked,
+            uint256 outstandingRecycled,
+            uint256 paidOutRecycled,
+            uint256 keeperBudget,
+            uint256 strandedRecoveryReserved,
+            uint256 recoveryPositionReserved,
+            bool custodyActivated,
+            bool holderBalanceKnown,
+            uint256 holderBalance,
+            uint256 holderAttributed
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (vpfiBalance, bucket, unearmarked) = LibVpfiRecycle.backingPosition(s);
+        outstandingRecycled = s.outstandingCommitRecycled;
+        paidOutRecycled = s.paidOutRecycled;
+        keeperBudget = s.recycleKeeperBudget;
+        strandedRecoveryReserved = s.strandedRecoveryReserved;
+        recoveryPositionReserved = s.rewardBudgetRecovered
+            - s.rewardBudgetRedispatched
+            + s.strandedReturnOverage;
+        custodyActivated = s.rewardCustodyActivated;
+        (holderBalanceKnown, holderBalance) = LibRewardCustody.tryBalance(s.vpfiToken, s.rewardCustodyHolder);
+        holderAttributed = LibRewardCustody.attributedTotal(s);
     }
 
     /**

@@ -3036,7 +3036,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](31);
+        s = new bytes4[](34);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3070,6 +3070,10 @@ contract DeployDiamond is Script {
         s[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         s[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
         s[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
+        s[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        s[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        s[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

@@ -484,35 +484,47 @@ library LibRewardCustody {
     /**
      * @notice Reverse a fresh credit (a provisional compensation being
      *         demoted): the received side unwinds by `amount`, saturating
-     *         as it always has, and the live-fresh row gives back what it
-     *         still holds of that credit — at most `amount`, less if part of
-     *         it was already paid out or went to restitution at credit time.
-     * @dev    The restitution portion is NOT reversed: restitution custody
-     *         moves only through its own disposition rules, and the deficit
-     *         it covered re-opens with the received unwind exactly as it
-     *         would have without the split. After the unwind the live row
-     *         again equals `received − paid`: if the row held at least
-     *         `amount`, both fall by `amount`; if it held less, the row falls
-     *         to zero and the bound saturates at zero too.
-     *         The tokens the live row gives back are released to the
-     *         DIAMOND, measured, because the demote path re-attributes them
-     *         to the Diamond-side stranded-recovery reservation (the
+     *         as it always has, and the holder gives back what it still
+     *         holds of that credit — from the live-fresh row first, then
+     *         from the restitution row — at most `amount`, less only where
+     *         part of it was already paid out.
+     * @dev    Both rows give back, because the demotion re-attributes the
+     *         WHOLE credited amount to the Diamond-side stranded-recovery
+     *         reservation, which the return sender then transfers from the
+     *         Diamond's balance in full (Codex #2186 r1 P1): a demotion that
+     *         released only the live portion would leave the deficit-covering
+     *         part in the holder while the reservation described it at the
+     *         Diamond, so the return would spend unrelated ambient VPFI or
+     *         revert. The deficit the restitution portion covered re-opens
+     *         with the received unwind, exactly as it would have without
+     *         the split, and the tokens go where the reservation says they
+     *         are. Whatever was already paid out cannot come back, exactly
+     *         as before; the reservation is short by that much, as before.
+     *         After the unwind the live row again equals `received − paid`.
+     *         The tokens are released to the DIAMOND, measured (the
      *         quarantine custody stays where the return sender draws it
      *         from; its move into the holder is the cutover PR's).
-     * @return fromLive What the live row gave back and the Diamond received.
+     * @return returned What the holder gave back and the Diamond received.
      */
     function uncreditFresh(
         LibVaipakam.Storage storage s,
         uint256 amount
-    ) internal returns (uint256 fromLive) {
+    ) internal returns (uint256 returned) {
         if (amount == 0) return 0;
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received > amount ? received - amount : 0;
         uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
-        fromLive = amount < live ? amount : live;
+        uint256 fromLive = amount < live ? amount : live;
         if (fromLive != 0) {
             releaseFromRow(s, LibVaipakam.RewardCustodyRow.LiveFresh, address(this), fromLive);
         }
+        uint256 rest = amount - fromLive;
+        uint256 restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
+        uint256 fromRestitution = rest < restitution ? rest : restitution;
+        if (fromRestitution != 0) {
+            releaseFromRow(s, LibVaipakam.RewardCustodyRow.Restitution, address(this), fromRestitution);
+        }
+        returned = fromLive + fromRestitution;
     }
 
     // ─── Cross-facet entry (every facet but RewardCustodyFacet and the vault

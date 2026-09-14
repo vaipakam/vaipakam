@@ -20,8 +20,10 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
  * @title  ActivateRewardCustody — the per-chain custody cutover ceremony
  *         (#1566 slice 4 PR B, design §5d "the migration ceremony per
  *         deployment")
- * @notice Runs ONCE per chain whose reward role is configured (`Canonical`,
- *         `Mirror` or `Detached`), after the facet refresh that cut PR B and
+ * @notice Runs ONCE per chain whose reward role is ACTIVE (`Canonical` or
+ *         `Mirror` — a `Detached` chain waits for slice 4 PR C's era
+ *         registry, whose ingress gates the activation needs), after the
+ *         facet refresh that cut PR B and
  *         after the holder is bound, under the MANUAL pause. It reconciles
  *         every ledger figure the holder must back into the holder's rows —
  *         each by an EXPLICIT operator answer, never a default — and then
@@ -145,6 +147,10 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             "ActivateRewardCustody: this deployment's reward role is Unconfigured -- it keeps Diamond custody by design and never activates; configure the role first if it is meant to have one"
         );
         require(
+            f.role != uint8(LibVaipakam.RewardRole.Detached),
+            "ActivateRewardCustody: this deployment is Detached -- activation waits for slice 4 PR C (the receive ingresses do not yet refuse by role, and the freeze would block re-attachment); re-attach first, or wait"
+        );
+        require(
             RewardCustodyFacet(diamond).armedFreshPaidRebased(),
             "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
         );
@@ -175,8 +181,6 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
                     "ActivateRewardCustody: the mirror's imported received - paid gap is not backed by the live-fresh row -- state REWARD_CUSTODY_FUND_LIVE_FRESH (custody-only replacement funding, up to the gap) or REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP=true to write received down to what the holder backs"
                 );
             }
-        } else {
-            require(f.rowLive == 0 && a.fundLive == 0 && !a.writeDown, "ActivateRewardCustody: a Detached chain activates with an EMPTY live-fresh row (its bound is zero)");
         }
     }
 
@@ -295,11 +299,20 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             console.logBytes(approveCall);
             vm.serializeBytes(obj, "step2_timelock_vpfiApprove", approveCall);
         }
-        bytes memory applyCalls = abi.encode(
-            a.fundLive, a.fundRecycled, a.relocRecycled, a.fundRecovery, a.relocRecovery, a.fundOverage, a.relocOverage
-        );
-        console.log("  3. Timelock  fundRewardCustodyRow / relocateRewardCustodyRow per non-zero answer (amounts below, in row order live, recycled(fund, relocate), recovery(fund, relocate), overage(fund, relocate))");
-        vm.serializeBytes(obj, "step3_timelock_rowAnswers_abiEncoded", applyCalls);
+        // Every non-zero answer is serialised as the EXACT calldata the
+        // Timelock executes against the Diamond, one entry per call, in the
+        // order to execute them (Codex #2186 r1 P2): an operator executes
+        // the record, never reconstructs a fund-moving call from amounts.
+        console.log("  3. Timelock  one call per non-zero answer, against the Diamond, in this order:");
+        vm.serializeAddress(obj, "target_diamond", diamond);
+        vm.serializeAddress(obj, "target_vpfi", vpfi);
+        _stageRowCall(obj, "step3a_timelock_fundRewardCustodyRow_liveFresh", LibVaipakam.RewardCustodyRow.LiveFresh, a.fundLive, false);
+        _stageRowCall(obj, "step3b_timelock_fundRewardCustodyRow_recycled", LibVaipakam.RewardCustodyRow.Recycled, a.fundRecycled, false);
+        _stageRowCall(obj, "step3c_timelock_relocateRewardCustodyRow_recycled", LibVaipakam.RewardCustodyRow.Recycled, a.relocRecycled, true);
+        _stageRowCall(obj, "step3d_timelock_fundRewardCustodyRow_recovery", LibVaipakam.RewardCustodyRow.Recovery, a.fundRecovery, false);
+        _stageRowCall(obj, "step3e_timelock_relocateRewardCustodyRow_recovery", LibVaipakam.RewardCustodyRow.Recovery, a.relocRecovery, true);
+        _stageRowCall(obj, "step3f_timelock_fundRewardCustodyRow_overage", LibVaipakam.RewardCustodyRow.Overage, a.fundOverage, false);
+        _stageRowCall(obj, "step3g_timelock_relocateRewardCustodyRow_overage", LibVaipakam.RewardCustodyRow.Overage, a.relocOverage, true);
         bytes memory activateCall = abi.encodeCall(RewardCustodyFacet.activateRewardCustody, (a.pauseEpoch + 1, a.writeDown));
         console.log("  4. Timelock  activateRewardCustody(epoch + 1, writeDown)");
         console.logBytes(activateCall);
@@ -308,31 +321,99 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         vm.serializeAddress(obj, "holder", holder);
         vm.serializeString(obj, "mode", "staged");
         vm.serializeUint(obj, "stagedAtBlock", block.number);
+        vm.serializeUint(obj, "role", f.role);
+        vm.serializeUint(obj, "pauseEpochStated", a.pauseEpoch);
+        vm.serializeBool(obj, "writeDownMirrorGap", a.writeDown);
         string memory json = vm.serializeString(obj, "provenance", a.provenance);
         _writeRecord(KIND, json, false);
     }
 
+    /// @dev One executable row call in the staged record: the calldata for
+    ///      `fundRewardCustodyRow` or `relocateRewardCustodyRow` against the
+    ///      Diamond, logged and serialised under `key`; nothing for a zero
+    ///      answer.
+    function _stageRowCall(
+        string memory obj,
+        string memory key,
+        LibVaipakam.RewardCustodyRow row,
+        uint256 amount,
+        bool relocate
+    ) internal {
+        if (amount == 0) return;
+        bytes memory data = relocate
+            ? abi.encodeCall(RewardCustodyFacet.relocateRewardCustodyRow, (row, amount))
+            : abi.encodeCall(RewardCustodyFacet.fundRewardCustodyRow, (row, amount));
+        console.log("    ", key, amount);
+        console.logBytes(data);
+        vm.serializeBytes(obj, key, data);
+    }
+
+    /// @notice After the transactions confirmed: verify the chain against
+    ///         the pending record BEFORE anything is promoted, and keep a
+    ///         durable record that separates what was STAGED from what the
+    ///         chain CONFIRMED (Codex #2186 r1 P2): the pending record's
+    ///         figures and answers are intent; the live holder, role,
+    ///         activation, ledger and rows are read now and written beside
+    ///         them under their own names, so a superseded or partially
+    ///         executed bundle can never be filed as fact.
     function record() external {
         string memory json = _readRecord(KIND);
         address diamond = vm.parseJsonAddress(json, ".diamond");
+        address stagedHolder = vm.parseJsonAddress(json, ".holder");
+        uint256 stagedRole = vm.parseJsonUint(json, ".role");
+        bool stagedWriteDown = vm.parseJsonBool(json, ".writeDownMirrorGap");
         console.log("=== Reward custody activation (record) ===");
         console.log("Diamond:", diamond);
+        RewardCustodyFacet c = RewardCustodyFacet(diamond);
         require(
-            RewardCustodyFacet(diamond).rewardCustodyActivated(),
+            c.rewardCustodyActivated(),
             "ActivateRewardCustody: the Diamond does not report the custody activated -- the bundle has not executed"
         );
+        address liveHolder = c.rewardCustodyHolder();
+        require(
+            liveHolder == stagedHolder,
+            "ActivateRewardCustody: the bound holder is not the one the ceremony record names -- a replacement ran meanwhile; the record does not describe this activation"
+        );
+        uint8 liveRole = RewardReporterFacet(diamond).getRewardRole();
+        require(
+            uint256(liveRole) == stagedRole,
+            "ActivateRewardCustody: the reward role is not the one the ceremony record names -- the record does not describe this activation"
+        );
+        (uint256 received, uint256 paid) = c.armedFreshLedger();
         (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , ) =
-            RewardCustodyFacet(diamond).rewardCustodyLedger();
-        console.log("Activated:", activated);
-        console.log("Role changes frozen:", frozen);
-        console.log("Rows -- live:", live);
-        console.log("        recycled:", recycled);
-        console.log("        recovery:", recovery);
-        console.log("        overage:", overage);
+            c.rewardCustodyLedger();
+        // The one ledger fact a write-down leaves behind: `received` equals
+        // `paid + live row` at the moment of activation. Checked for a
+        // write-down record only while nothing has moved the ledger since
+        // (received still at or below paid + live); a record that claims a
+        // write-down over a chain whose ledger shows none refuses.
+        if (stagedWriteDown) {
+            require(
+                received <= paid + live,
+                "ActivateRewardCustody: the record claims a mirror-gap write-down but the live ledger still carries received above paid + live row -- the write-down did not execute as staged"
+            );
+        }
+        console.log("Confirmed -- activated:", activated, "frozen:", frozen);
+        console.log("Confirmed -- received / paid:", received, paid);
+        console.log("Confirmed rows -- live / recycled:", live, recycled);
+        console.log("Confirmed rows -- recovery / overage:", recovery, overage);
         string memory durable = string.concat("deployments/", Deployments.chainSlug(), "/reward-custody-activated.json");
         if (_nonBroadcastWritesEnabled()) {
-            vm.writeFile(durable, json);
-            console.log("Durable activation record:", durable);
+            string memory obj = "confirmed";
+            vm.serializeAddress(obj, "confirmedHolder", liveHolder);
+            vm.serializeUint(obj, "confirmedRole", liveRole);
+            vm.serializeBool(obj, "confirmedActivated", activated);
+            vm.serializeBool(obj, "confirmedRoleChangesFrozen", frozen);
+            vm.serializeUint(obj, "confirmedReceived", received);
+            vm.serializeUint(obj, "confirmedPaid", paid);
+            vm.serializeUint(obj, "confirmedRowLiveFresh", live);
+            vm.serializeUint(obj, "confirmedRowRecycled", recycled);
+            vm.serializeUint(obj, "confirmedRowRecovery", recovery);
+            vm.serializeUint(obj, "confirmedRowOverage", overage);
+            vm.serializeUint(obj, "confirmedAtBlock", block.number);
+            string memory confirmed = vm.serializeString(obj, "stagedRecord", json);
+            vm.writeFile(durable, confirmed);
+            console.log("Durable activation record (staged intent + confirmed chain state):", durable);
         } else {
             console.log("writes are off for this run -- durable activation record NOT written:", durable);
         }
@@ -354,6 +435,10 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         vm.serializeString(obj, "mode", mode);
         vm.serializeUint(obj, "preparedAtBlock", block.number);
         vm.serializeUint(obj, "role", f.role);
+        vm.serializeUint(obj, "rowLiveFresh", f.rowLive);
+        vm.serializeUint(obj, "rowRecycled", f.rowRecycled);
+        vm.serializeUint(obj, "rowRecovery", f.rowRecovery);
+        vm.serializeUint(obj, "rowOverage", f.rowOverage);
         vm.serializeUint(obj, "received", f.received);
         vm.serializeUint(obj, "paid", f.paid);
         vm.serializeUint(obj, "bucket", f.bucket);

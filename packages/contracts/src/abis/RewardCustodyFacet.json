@@ -230,6 +230,74 @@
   },
   {
     "type": "function",
+    "name": "getRecycleBackingSnapshotV2",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "vpfiBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unearmarked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidOutRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeperBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "strandedRecoveryReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recoveryPositionReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "custodyActivated",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "holderBalanceKnown",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "holderBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holderAttributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rebaseArmedFreshPaid",
     "inputs": [
       {
@@ -259,6 +327,42 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRestitutionAsPaidCorrection",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRestitutionToTreasury",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -973,6 +1077,62 @@
   },
   {
     "type": "event",
+    "name": "RewardCustodyRestitutionCorrected",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRestitutionReleased",
+    "inputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispositionId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyRowBootstrapped",
     "inputs": [
       {
@@ -1206,6 +1366,16 @@
   {
     "type": "error",
     "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationDetachedNotSupported",
     "inputs": []
   },
   {
@@ -1475,6 +1645,22 @@
         "name": "holder",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyRestitutionCorrectionExceedsPaid",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

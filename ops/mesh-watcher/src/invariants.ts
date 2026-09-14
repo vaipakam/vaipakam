@@ -157,6 +157,19 @@ export interface LocalLedger {
     strandedRecoveryReserved: bigint;
     // #1434 P2-w5 — the Base recovery-position earmark (zero on mirrors).
     recoveryPositionReserved: bigint;
+    /**
+     * #1566 slice 4 PR B — from the VERSIONED snapshot only (absent when a
+     * chain still serves the legacy tuple): whether reward custody moved
+     * onto the holder, and the holder's balance (known or not) and
+     * attributed total. On an activated chain the bucket and the recovery
+     * position are the HOLDER's, so the legacy relation is replaced by
+     * `holderBalance >= holderAttributed` plus
+     * `vpfiBalance >= strandedRecoveryReserved`.
+     */
+    custodyActivated?: boolean;
+    holderBalanceKnown?: boolean;
+    holderBalance?: bigint;
+    holderAttributed?: bigint;
   };
   outstandingFresh: bigint;
   armedFromDay: bigint;
@@ -938,6 +951,59 @@ export function checkHardInvariants(
   // snapshot could not be read (pre-P2-w2 lens or transport failure).
   for (const local of obs.allLocals.values()) {
     if (!local.backing) continue;
+    // #1566 slice 4 PR B — an ACTIVATED chain: the holder must back every
+    // attributed row, and the Diamond's own balance must still cover the
+    // one Diamond-side reservation left (quarantined compensation awaiting
+    // its return). The legacy relation below would page a false CRITICAL
+    // here whenever healthy holder rows exceed the unrelated Diamond
+    // balance, so it is not applied.
+    if (local.backing.custodyActivated) {
+      const b = local.backing;
+      if (!b.holderBalanceKnown) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-balance-unreadable',
+          identity: [local.chainId, b.holderAttributed ?? 0n],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder balance cannot be read',
+          detail:
+            `reward custody is ACTIVATED on this chain but the holder's VPFI balance could not be read (unbound holder, unset or non-conforming token) — the rows attribute ${fmt(b.holderAttributed ?? 0n)} and nothing substantiates it\n` +
+            `  attributed  = ${fmt(b.holderAttributed ?? 0n)}`,
+        }));
+      } else if ((b.holderBalance ?? 0n) + bucketToleranceWei < (b.holderAttributed ?? 0n)) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-below-attributed',
+          identity: [local.chainId, b.holderBalance ?? 0n, b.holderAttributed ?? 0n],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder no longer covers its attributed rows',
+          detail:
+            `holderBalance + tolerance < attributed rows — tokens the custody ledger attributes to live funding, recycled runway, recovery, overage or restitution have left the holder\n` +
+            `  holder      = ${fmt(b.holderBalance ?? 0n)}\n` +
+            `  attributed  = ${fmt(b.holderAttributed ?? 0n)}\n` +
+            `  shortfall   = ${fmt((b.holderAttributed ?? 0n) - (b.holderBalance ?? 0n))}\n` +
+            `  tolerance   = ${fmt(bucketToleranceWei)}`,
+        }));
+      }
+      if (b.vpfiBalance + bucketToleranceWei < b.strandedRecoveryReserved) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'balance-below-reservation',
+          identity: [local.chainId, b.vpfiBalance, b.strandedRecoveryReserved],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Balance no longer covers the arrival reservation',
+          detail:
+            `balance + tolerance < strandedRecoveryReserved (the arrival reservation) on an activated chain — quarantined compensation awaiting its return has been spent from the Diamond's own balance\n` +
+            `  balance     = ${fmt(b.vpfiBalance)}\n` +
+            `  reserved    = ${fmt(b.strandedRecoveryReserved)}\n` +
+            `  tolerance   = ${fmt(bucketToleranceWei)}`,
+        }));
+      }
+      continue;
+    }
     const spoken =
       local.bucket +
       local.backing.strandedRecoveryReserved +

@@ -6069,7 +6069,12 @@ PR C.**
 > `RewardCustodyFacet.activateRewardCustody(pauseEpoch, writeDownMirrorGap)`
 > (ADMIN, the MANUAL pause, epoch-pinned, one-shot) is the ceremony's
 > "switch custody reads to the holder" step, and `LibRewardCustody.active`
-> is the ONE role branch every read and debit consults. The library's
+> is the ONE role branch every read and debit consults. Only an ACTIVE
+> role activates in this slice — a `Detached` chain is refused (review r1:
+> its value-bearing receive ingresses do not yet refuse by role, so a
+> delayed packet would relocate custody into rows a zero bound can never
+> spend while the freeze blocks re-attachment; the intended-era ingress
+> gates are PR C's, and Detached activation lands with them). The library's
 > MUTATIONS are hosted on `RewardCustodyFacet` as Diamond-internal entry
 > points (`custodyRelocateToRow`, `custodyMove`,
 > `custodyRelocateFreshIngress`, `custodyUncreditFresh`,
@@ -6099,7 +6104,22 @@ PR C.**
 > balance, measured at both ends, bounded the same way, NEVER the live row
 > — history is not money; the provenance proof is the ceremony record's,
 > not the contract's); the write-down form for a mirror's gap is the
-> activation's flag (`received := paid + liveRow`). `fundRewardPool(amount)`
+> activation's flag (`received := paid + liveRow`). The RESTITUTION row
+> has its two dispositions from the start (review r1 — a row with no exit
+> would strand every deficit-covering credit):
+> `releaseRestitutionAsPaidCorrection(amount, dispositionId)` for an
+> evidenced accounting error — `paid` falls by `amount` and only the
+> headroom that reappears (the bound after minus before, never `amount`
+> itself while a deficit is still open) moves restitution → live, refused
+> if restitution cannot cover it — and
+> `releaseRestitutionToTreasury(amount, dispositionId)` for a genuine
+> deficit, `paid` retained, no headroom created. A demotion of a
+> provisional compensation unwinds the WHOLE credit still in the holder —
+> live first, then restitution — back to the Diamond where the stranded
+> reservation describes it (review r1). `VPFITokenFacet.setVPFIToken`
+> refuses a rotation while any row is funded or the holder still holds
+> the old token (review r1): the rows are denominated in the configured
+> token, so the rotation runbook's drain is now a rule. `fundRewardPool(amount)`
 > is the registered writer: ADMIN, activated, an active role, the transfer
 > delta-checked against the HOLDER, `received` credited in the same act
 > under the §5c deficit split (restitution first, the excess live), the
@@ -6144,7 +6164,21 @@ PR C.**
 > Diamond-side, as today — their protection into the `Unclassified` row
 > is the cutover PR's UNCLASSIFIED ingress attribution; era rows are PR
 > C's; the Diamond-side balance-attribution invariant is #2141's (its own
-> text sequences it after slice 4). The two holder invariants, the
+> text sequences it after slice 4). The
+> public backing snapshot is versioned (review r1):
+> `RewardCustodyFacet.getRecycleBackingSnapshotV2` returns the legacy eight
+> fields unchanged plus the activation flag and the holder's balance and
+> attributed total, the legacy lens keeps its shape and documents that on an
+> activated deployment its relation no longer holds by design, and
+> `ops/mesh-watcher` reads V2 first (falling back to the legacy tuple on a
+> chain not yet refreshed) and alarms on `holderBalance ≥ holderAttributed`
+> and `vpfiBalance ≥ strandedRecoveryReserved` there instead of the legacy
+> relation. The staged ceremony record carries one executable calldata per
+> non-zero answer, and `record()` verifies the holder, the role, the
+> activation and a claimed write-down against live state before promoting
+> the record, filing the confirmed figures beside the staged intent under
+> their own names (review r1). The wrapper resolves every activation answer
+> per chain, suffixed with the chain's prefix (review r1). The two holder invariants, the
 > recycled-row and live-row identities and the untouched Diamond balance
 > are pinned by `RewardCustodyInvariant`; the design's test list is
 > `RewardCustodyCutoverTest`.

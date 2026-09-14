@@ -459,6 +459,23 @@ interface IVaipakamErrors {
     ///         revert data (the entry point is not routed, or the Diamond's
     ///         fallback refused it).
     error RewardCustodyCallFailed();
+    /// @notice #1566 slice 4 PR B — activation was attempted on a `Detached`
+    ///         deployment. Its value-bearing receive ingresses do not yet
+    ///         refuse by role (the intended-era gates land with slice 4 PR
+    ///         C's era registry), so a delayed packet could relocate custody
+    ///         into rows a zero bound can never spend while the freeze
+    ///         blocks re-attachment; activation waits for that slice.
+    error RewardCustodyActivationDetachedNotSupported();
+    /// @notice #1566 slice 4 PR B — a restitution correction claims more of
+    ///         the paid side than the ledger holds.
+    error RewardCustodyRestitutionCorrectionExceedsPaid(uint256 requested, uint256 paid);
+    /// @notice #1566 slice 4 PR B — the VPFI token cannot be rotated while
+    ///         the custody holder's rows describe the current token or the
+    ///         holder still holds it: every row is denominated in the
+    ///         configured token, so a rotation would relabel live custody.
+    ///         Drain the rows and the holder (the token-rotation runbook)
+    ///         first.
+    error RewardCustodyTokenRotationBlocked(uint256 attributed, uint256 heldInOldToken);
     /// @notice #1566 slice 4 PR B — an overage release exceeds the recorded
     ///         overage position.
     error RewardCustodyOverageExceedsRecorded(uint256 requested, uint256 recorded);
