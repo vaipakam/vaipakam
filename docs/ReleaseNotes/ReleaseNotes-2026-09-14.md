@@ -320,13 +320,18 @@ still installed or a required one has been removed. The canonical chain now boun
 has actually been funded minus what has been paid, where funding is one
 explicit administrator transfer into the address that credits the received
 side in the same act (refused above the pool's lifetime cap), so a
-canonical chain that has not been funded refuses claims and remittances
-rather than paying them from other value; a funding that lands against a
+canonical chain that has not been funded refuses claims and ordinary
+live-funded remittances rather than paying them from other value — a
+redispatch funded from the recovery position draws on that position, not
+on this headroom, and is not refused by it; a funding that lands against a
 paid-over-received deficit closes that deficit into a separate restitution
 position and only the excess becomes headroom — a position with two recorded exits — a correction of an evidenced
 accounting error, or a release to the treasury for a genuine deficit —
 each an administrator-only action taken under the platform's manual
-pause, and one that a demoted compensation gives back in full. The reward token cannot be rotated while custody or any
+pause, and one from which a demoted compensation gives back what it still
+holds — the live headroom and the restitution part alike — while whatever
+was already paid out before the demotion stays paid and leaves the return
+short by that much. The reward token cannot be rotated while custody or any
 of the old token remains at the address, and a rotation is refused
 outright when the old token's balance at the address cannot be read,
 rather than that balance being taken as zero. The public backing snapshot gains
@@ -343,8 +348,9 @@ repatriation surplus leaves it; each outbound remittance names the custody
 it draws on and is refused beyond the headroom before anything is approved.
 Overage — value above any entitlement — gains a disposition to the
 treasury, likewise administrator-only and taken under the manual pause.
-Reward-role changes are frozen from the first custody attribution until the
-era registry lands, and a mirror's source is never rebound directly. The
+Reward-role changes are frozen from the first custody attribution or from
+the activation itself, whichever comes first — an activation with every
+position still zero freezes them too — until the era registry lands, and a mirror's source is never rebound directly. The
 activation is its own administrator script with direct and staged forms,
 and neither form restores service: the deployment is left paused, and an
 unpauser's own fresh decision resumes it once the record step has
