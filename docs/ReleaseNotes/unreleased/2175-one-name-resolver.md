@@ -108,16 +108,18 @@ never declared creates nothing to see, so the name looked untouched while
 it had been replaced outright.
 
 The check on what a caller hands a helper went through five revisions
-before it found its shape, and the last one is the only one worth
-describing. Each earlier version asked the same crude question of EVERY
-argument — is this visibly not a piece of text — which was wrong twice
-over: it condemned an ordinary numeric search offset passed alongside the
-text, and it never asked which parameter a stand-in would actually land
-on. The question was always narrower. Which parameter does the helper
-search THROUGH, and what was passed for that one. It asks that now, and
-the two things it had been confusing — what an expression hands over, and
-whether that value is a stand-in — are two separate readings with two
-separate names, which is the same correction this whole change is about.
+before it was abandoned, and the abandonment is described further down —
+this paragraph records only what those revisions were reaching for, since
+a later section replaces the answer and not the question. Each version
+asked the same crude thing of EVERY argument — is this visibly not a
+piece of text — which was wrong twice over: it condemned an ordinary
+numeric search offset passed alongside the text, and it never asked which
+parameter a stand-in would actually land on. The narrower question those
+revisions settled on was which parameter the helper searches THROUGH, and
+what was passed for that one. What did survive all of it is the
+separation: what an expression hands over, and whether that value is a
+stand-in, are two readings with two names, which is the same correction
+this whole change is about.
 
 One consequence of separating them is worth recording: the rule about
 what counts as a piece of text now lives in one place, with the rule
@@ -218,6 +220,39 @@ otherwise needs exactly the tracing that produced five rounds of findings.
 The cost is a refused region on shapes that appear nowhere in this
 codebase; the direction is the safe one, and the alternative was a rule
 whose edges had no end.
+
+The review after that found two holes in the short rule that replaced all
+of it — and both are the very mistake this whole change exists to remove,
+made inside the rule that removed the last one.
+
+The claim that a simple value carries no search of its own is false when
+the file gives it one: a number handed a property is briefly wrapped in an
+object, so a file that attaches a search to that wrapper makes every
+number answer with whatever it likes. That is the same mechanism as
+replacing a built-in outright, which this guard already refuses one level
+up, and it is refused the same blunt way — by asking whether the file
+contains such an attachment at all, not by working out which values it
+could reach. Working that out is the tracing that had just been removed.
+
+The second is plainer and worse. The same number written two ways got two
+answers: one spelled as a bare digit was accepted, and one spelled with a
+leading plus was refused. Nothing about the value differs. Deciding from
+how something is written rather than from what it produces is the defect
+this change is named after, and it had been reintroduced in the fix for
+it. Every form whose result is a simple value whatever its parts — the
+arithmetic and comparison forms, the negations, the increments, an
+ordinary template — is now read as one. A template with a function
+attached to it is deliberately not, because that function returns
+whatever it likes.
+
+The same review found the branch rule reaching only one of the two places
+that need it. A name given its value where it is declared is not recorded
+as having been written to — the two are different things to the machinery
+underneath — so a declaration on the arm of a branch the reader is not on
+never reached the rule that would have discounted it, and was refused by a
+neighbouring test instead. It is one shared piece of reasoning now, which
+is the fifth time on this change that one rule turned out to be answered
+at one site and not at its sibling.
 
 This note ENUMERATES the behaviour changes rather than counting them, and
 that is a correction rather than a preference: a running total beside a

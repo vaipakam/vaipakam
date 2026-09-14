@@ -1275,10 +1275,19 @@ export function bindingOf(src, node) {
   // reaching the use proves the second ran, so the first cannot be what
   // `end` holds — and poisoning the binding refused correct work.
   const certain = [...withInit].reverse().find((d) => alwaysRunsBefore(src, d.node, node));
+  // A definition on an arm the use EXCLUDES did not run, so it is not
+  // uncertain — it is absent (round 13). An initializer is not among a
+  // binding's writes at all (the scope analyser marks it `init`), so
+  // `var end = s.indexOf('e'); if (on) { var end = 320; } else {
+  // s.slice(0, end); }` never reached the branch rule in `writeReaches`
+  // and was refused here instead — the same rule answered at one site
+  // and not its sibling, for the fifth time on this PR, which is why it
+  // is a shared function rather than a second copy.
   const uncertain = withInit.some(
     (d) =>
       !alwaysRunsBefore(src, d.node, node) &&
       !definitelyAfter(src, d.node, node) &&
+      !excludedByBranch(src, d.node, node) &&
       !(certain && certain.node.start > d.node.end),
   );
   const initialised = uncertain
@@ -1661,6 +1670,48 @@ export function markedStatement(src, stmt, marker) {
   });
 }
 
+/** The innermost deferred ancestor — the function or loop body a node
+ *  runs inside. Two nodes sharing one are in the SAME invocation, where
+ *  ordinary position order holds again (round 23): deferring a function
+ *  says nothing about the order of statements within a single call of
+ *  it, and treating every use inside one as unordered refused correct
+ *  code outright. */
+function deferredHost(parents, n) {
+  for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (inGuardedSlot(DEFERRED, p, c)) return p;
+  }
+  return null;
+}
+
+/**
+ * Whether `write` sits on an arm of a branch that the use EXCLUDES, so
+ * it cannot have run on the way there.
+ *
+ * Round 13 moved this out of `writeReaches`, where round 10 had put it,
+ * because a second caller needed the same answer and was not getting it:
+ * a declaration INITIALIZER is not among a binding's writes at all (it
+ * is marked `init`), so `var end = s.indexOf('e'); if (on) { var end =
+ * 320; } else { s.slice(0, end); }` reached the uncertainty test in
+ * `bindingOf` instead and refused a bound the branch rule accepts one
+ * line away. One rule answered at one site and not its sibling — the
+ * fifth time on this PR, and the reason it is a shared function now.
+ *
+ * It holds only within ONE EVALUATION, which is the lifetime question
+ * `writeReaches` asks next door: in `let end = at('e'); function
+ * region(on) { if (on) end = 320; else return s.slice(0, end); }
+ * region(true); region(false);` the arms are exclusive within a call and
+ * the FIRST call's write is still there for the second. So it applies
+ * when the binding is fresh for a shared activation, or when both sit in
+ * straight-line top-level code that runs once — and in no other case.
+ */
+function excludedByBranch(src, write, use, shared) {
+  const { parents } = astOf(src, 'excludedByBranch');
+  const fresh =
+    Boolean(shared) ||
+    (deferredHost(parents, write) === null && deferredHost(parents, use) === null);
+  return fresh && mutuallyExclusive(parents, write, use);
+}
+
 /**
  * Whether a write to `variable` could reach the use at `useAt`.
  *
@@ -1689,12 +1740,7 @@ function writeReaches(src, writes, useAt) {
   // says nothing about the order of statements within a single call of
   // it, and treating every use inside one as unordered refused correct
   // code outright.
-  const host = (n) => {
-    for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
-      if (inGuardedSlot(DEFERRED, p, c)) return p;
-    }
-    return null;
-  };
+  const host = (n) => deferredHost(parents, n);
   let useNode = null;
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
   const useHost = useNode ? host(useNode) : null;
@@ -1726,17 +1772,9 @@ function writeReaches(src, writes, useAt) {
     // question and every caller asks it — which is also what the
     // coverage entry's single-reader claim is for.
     //
-    // It holds only within ONE EVALUATION, which is the same lifetime
-    // question the `shared` test above asks and round 11 found this
-    // shortcut jumping over: in `let end = at('e'); function region(on)
-    // { if (on) end = 320; else return s.slice(0, end); } region(true);
-    // region(false);` the two arms are exclusive within a call, and the
-    // FIRST call's write is still there for the second. So exclusivity
-    // applies when the binding is fresh for a shared activation, or when
-    // both sit in straight-line top-level code that runs once — and in
-    // no other case.
-    const oneEvaluation = shared || (useHost === null && writeHost === null);
-    if (oneEvaluation && useNode && mutuallyExclusive(parents, w, useNode)) return false;
+    // It holds only within ONE EVALUATION — see `excludedByBranch`, which
+    // both callers of this reasoning now share.
+    if (useNode && excludedByBranch(src, w, useNode, shared)) return false;
     // An assignment evaluates its RIGHT side before it writes (round
     // 27): in `end = s.slice(start, end).length` the bound use sits
     // inside the value being computed, so this write cannot have
@@ -2329,17 +2367,66 @@ function suspectValue(src, node, seen) {
     const r = resolutionOf(src, node);
     return r.state === RESOLVED ? suspectValue(src, r.value, seen) : !r.fromCaller;
   }
-  // A PRIMITIVE cannot carry a finder that lies. A string's `indexOf` is
-  // the real one and the string is genuine text; a number, boolean, null
-  // or bigint has no such method at all, so a helper handed one fails
-  // loudly rather than returning a fixed window. A REGULAR EXPRESSION is
-  // an object written out and stays refused — it carries no `indexOf`
-  // either, but the receiver rule refuses it (#2174) and one value
-  // answered two ways at two sites is the shape this PR exists to
-  // remove.
+  // A PRIMITIVE cannot carry a finder that lies — UNLESS THIS FILE PUTS
+  // ONE ON A PROTOTYPE (round 13). A primitive is boxed on property
+  // access, so `Number.prototype.indexOf = () => 320` makes `at(1)`
+  // return a fixed bound, and round 12 asserted flatly that a number
+  // "carries no such method at all". It does if the file gives it one.
+  //
+  // This is the same mechanism as a built-in the file WRITES, which this
+  // guard already refuses one level up: assigning to a global replaces
+  // it, and assigning to a prototype replaces what every value of that
+  // type answers. Asked the same way too — does this file write it —
+  // rather than by reasoning about which prototype a value would reach.
+  //
+  // A REGULAR EXPRESSION stays refused as an object written out: it
+  // carries no `indexOf` either, but the receiver rule refuses it
+  // (#2174) and one value answered two ways at two sites is the shape
+  // this PR exists to remove.
+  if (finderPlantedOnAPrototype(src)) return true;
   if (node.type === 'Literal') return node.regex !== undefined;
-  if (node.type === 'TemplateLiteral') return false;
+  // …and the same value written as an EXPRESSION rather than a literal
+  // (round 13 again). `at(s, +1)` and `at(s, 1)` denote the same number,
+  // and deciding from literal syntax alone answered them differently —
+  // the defect class this whole PR is about, committed inside the rule
+  // that replaced the last one. These forms are necessarily primitive
+  // whatever their operands are: every unary operator here yields a
+  // number, string, boolean or undefined; every binary operator yields a
+  // number, string or boolean; an update yields a number; a template
+  // yields a string. A TAGGED template is absent on purpose — its tag
+  // returns whatever it likes.
+  if (PRIMITIVE_RESULTS.has(node.type)) return false;
   return true;
+}
+
+/** Expression forms whose result is a primitive whatever the operands. */
+const PRIMITIVE_RESULTS = new Set([
+  'TemplateLiteral',
+  'UnaryExpression',
+  'BinaryExpression',
+  'UpdateExpression',
+]);
+
+/**
+ * Whether this file assigns a FINDER onto anything — which is how a
+ * primitive acquires one (`Number.prototype.indexOf = …`).
+ *
+ * Deliberately whole-file and deliberately blunt: it asks whether such
+ * an assignment EXISTS, not which values it could reach. Working out
+ * that a given `1` boxes to the `Number` whose prototype was written is
+ * the tracing round 12 removed, and it would have the same unbounded
+ * edges. The cost of the blunt version is that a file assigning any
+ * `.indexOf` loses the primitive exemption entirely — which is a refused
+ * region, and no file in this tree does it.
+ */
+function finderPlantedOnAPrototype(src) {
+  const { nodes } = astOf(src, 'finderPlantedOnAPrototype');
+  return nodes.some(
+    (n) =>
+      n.type === 'AssignmentExpression' &&
+      n.left?.type === 'MemberExpression' &&
+      FINDERS.has(propertyName(n.left)),
+  );
 }
 
 /**

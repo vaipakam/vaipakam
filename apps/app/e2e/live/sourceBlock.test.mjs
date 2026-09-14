@@ -2478,6 +2478,51 @@ describe('#2175 — one resolver, three answers', () => {
     expect(sliceCallsIn(code).length).toBeGreaterThan(0);
   });
 
+  // Round 13. Two holes in the closed list round 12 introduced, and the
+  // branch rule missing from the second of its two sites.
+  it('refuses a primitive once this file plants a finder on a prototype', () => {
+    // A primitive is BOXED on property access, so a written prototype
+    // makes `1` answer with a fixed number. Round 12 said flatly that a
+    // number carries no such method; it does if the file gives it one.
+    const planted =
+      'const s = f();\nNumber.prototype.indexOf = () => 320;\n' +
+      "const at = recv => recv.indexOf('end');\nconst r = s.slice(0, at(1));";
+    expect(countsCharacters(planted, sliceCallsIn(planted).at(-1))).toBe(true);
+    // Without one, the ordinary numeric offset is still accepted.
+    const plain =
+      "const at = (text, from) => text.indexOf('e', from);\n" +
+      'export function region(s) { return s.slice(0, at(s, 1)); }';
+    expect(countsCharacters(plain, sliceCallsIn(plain).at(-1))).toBe(false);
+  });
+
+  it('judges a primitive by its result, not by its syntax', () => {
+    const lead = "const at = (text, from) => text.indexOf('e', from);\n";
+    // `+1` and `1` denote the same number; deciding from literal syntax
+    // alone answered them differently.
+    for (const expr of ['+1', 'void 0', '!flag', 'typeof flag', '2 - 1']) {
+      const code = lead + `export function region(s) { return s.slice(0, at(s, ${expr})); }`;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), expr).toBe(false);
+    }
+    // A TAGGED template is not necessarily primitive — the tag decides.
+    const tagged = lead + 'export function region(s) { return s.slice(0, at(s, tag`x`)); }';
+    expect(countsCharacters(tagged, sliceCallsIn(tagged).at(-1))).toBe(true);
+  });
+
+  it('applies the branch rule to a declaration initializer too', () => {
+    // An initializer is not among a binding's writes, so this never
+    // reached the branch rule and was refused by the uncertainty test
+    // instead — one rule, two sites, one answer.
+    const excluded =
+      "const s = f();\nvar end = s.indexOf('e');\n" +
+      'if (on) { var end = 320; } else { var r = s.slice(0, end); }';
+    expect(countsCharacters(excluded, sliceCallsIn(excluded).at(-1))).toBe(false);
+    // Outside the branch, the redeclaration still counts.
+    const reached =
+      "const s = f();\nvar end = s.indexOf('e');\n" +
+      'if (on) { var end = 320; }\nvar r = s.slice(0, end);';
+    expect(countsCharacters(reached, sliceCallsIn(reached).at(-1))).toBe(true);
+  });
+
   // A LITERAL is text only when it is a STRING. A regular expression is
   // an object written out, and reading the node type alone called every
   // literal unknown — the `/x/` stand-in this guard has had an open
