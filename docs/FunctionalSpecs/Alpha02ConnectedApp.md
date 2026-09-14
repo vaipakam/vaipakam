@@ -313,8 +313,12 @@ The app uses chain reads and indexed reads for different jobs.
   lost the ending could equally have lost a transfer of the position, so
   that record is stale for the same reason. Where a holder cannot be
   established, that side receives no message rather than one addressed to a
-  guess — and the holder the platform does establish is recorded, so other
-  surfaces stop naming the wrong one.
+  guess — and the holder the platform does establish is recorded, so the
+  surfaces asking who holds a position NOW stop naming the wrong one. The
+  parties a loan began with are published separately and a correction does
+  not revise them, so a position that has changed hands may still show its
+  original names where that half is read; the platform must not present the
+  narrower repair as the wider one.
 - Asking who holds a position has two answers the platform will act on: it
   has an answer naming a holder, or it has no answer. **An answer is acted
   on; a non-answer changes nothing.** The platform does not read a

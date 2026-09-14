@@ -1237,24 +1237,26 @@ comes back needing as many passes as the gap divides into, and the
 comparison waits for the last of them.
 
 How long that takes in real time is NOT something those two numbers give
-you, and it would be worse than useless to imply otherwise. A backlog does
-not wait for the next scheduled turn between passes — it drives itself,
-re-arming on a much shorter clock until it is nearly done and leaving only
-the tail to the ordinary schedule, and work started by an incoming
-notification runs to yet another rhythm. So the honest statement is the
-mechanism rather than a figure: the gap is closed in bounded passes that
-chase each other, and the comparison happens once they are finished.
+you, and it would be worse than useless to imply otherwise — how quickly
+passes follow one another depends on the arrangement. On the one in use a
+backlog drives itself rather than waiting for the next scheduled turn
+between passes; on the fallback each pass waits for its own turn, so the
+same gap takes far longer to close. Neither is a figure this note can
+usefully give, because both depend on values an operator can tune. The
+honest statement is the shape: the gap is closed in bounded passes, and the
+comparison happens once they are finished.
 
-Why wait at all, rather than compare while catching up? Not because a
+Why wait at all, rather than compare while catching up? NOT because a
 correction could be invented — it could not, and the platform's own
 statement of intent says so: a source that is behind reports the loan still
-running, which matches the record and changes nothing. The cost is a
-different one. A correction rewrites the whole record, including the money,
-from the chain as it stands NOW; the events still queued behind it are
-months older and their handlers only touch a record that is still open. Run
-the comparison first and those handlers find a record already closed and
-skip it, leaving one that is correctly ended and wrong about the amounts —
-which is the precise failure this check was rearranged to avoid.
+running, which matches the record and changes nothing. The cost is about
+the money rather than the lifecycle. A correction rewrites the whole record,
+amounts included, from the chain as it stands NOW, while the events still
+queued behind it describe a state months earlier. Applying those afterwards
+to a record already corrected leaves the two disagreeing about the figures,
+which is the precise failure this check was rearranged to avoid. Letting the
+queue drain first means the correction is the last word rather than the
+first.
 
 How many chains that covers per tick depends on how the service takes in
 data. As currently configured every chain is serviced on every tick, so the
@@ -1375,7 +1377,13 @@ exactly the same reason — and the one message a holder gets about their loan
 ending is the worst possible one to send to somebody who has already sold
 out of it. Where a holder cannot be established at all, no message is sent
 for that side rather than one sent to a guess, and the holder it does
-establish is written back so every other screen stops naming the wrong one.
+establish is written back, so the surfaces that ask who holds a position now
+stop naming the wrong one. That is narrower than it sounds and the
+difference is worth stating: the record also carries the parties the loan
+STARTED with, those are published too, and a correction does not touch them.
+So a position that changed hands can still show its original names on
+surfaces reading that half. Putting those right needs the same
+held-position history raised separately.
 
 Which half of that gets acted on took two goes to get right, and the rule
 it settled on is worth stating. An earlier version also recorded an
@@ -1528,7 +1536,11 @@ message, as set out above.
 
 One failure it survives rather than prevents: if the write for one record
 fails while others in the same turn succeed, the successful ones stand and
-are reported, and the failed one is left exactly as it was for the next turn.
+are reported, and the failed one is left exactly as it was. It is not looked
+at again on the very next turn, though: the rotation has already moved past
+it, so it comes round again when the rotation next comes round — which on a
+long list, or on the arrangement that examines one record a turn, can be a
+considerable wait with the position still published as running.
 An earlier version threw the whole turn away, which quietly discarded
 corrections that had already been made — and because a corrected record
 leaves the set being checked, nothing would ever have gone back to account
