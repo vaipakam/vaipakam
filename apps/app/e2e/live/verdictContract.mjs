@@ -16,12 +16,27 @@
  * that could exist was a `console.log` at startup. That warning prints
  * on a batch run, which happens before a testnet release and not on a
  * pull request, so a driver could be added, reviewed, merged and run for
- * weeks with its BLOCKED reported as a product FAIL. The operator
- * reading that row has no way to tell.
+ * weeks with its BLOCKED reported as a product FAIL.
+ *
+ * The row is not SILENT about it — the runner appends "undeclared driver
+ * — may be infrastructure" and repeats the point in its summary, and an
+ * earlier draft here said the operator had no way to tell, which
+ * overstated it. What is wrong is the VERDICT: a hedged claim that a
+ * defect was found is still a claim that a defect was found, and a hedge
+ * asks the reader to discount a verdict rather than giving them the
+ * right one.
  *
  * Splitting the data out is what makes a check possible at all, and
  * `verdictContract.test.mjs` is the check: it fails on a driver nobody
  * has classified.
+ *
+ * BE PRECISE ABOUT ITS FORCE. That suite runs on every change and is
+ * meant to be treated as blocking by reviewers, but it is not among the
+ * checks that mechanically prevent a merge — `app-vitest.yml` says so in
+ * its own header, and says not to describe it as a gate that does. So
+ * this closes the gap of nobody NOTICING, which is what went wrong: a
+ * warning that printed only during a release run. Making it mechanical
+ * is a separate decision about which checks are required.
  *
  * The runner's CLASSIFICATION is untouched — an exit code still becomes
  * the same verdict it always did. Its REPORTING did change, and an

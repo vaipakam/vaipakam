@@ -26,7 +26,15 @@ the second. The runner printed a warning naming unlisted drives — but it
 printed it during a batch run, which happens before a release and not
 when someone proposes a change. So a drive could be added, reviewed,
 merged, and run for weeks with its "did not finish" reported as "found a
-defect", and the person reading that row had no way to know.
+defect".
+
+The row is not silent about it — it carries a note saying the drive is
+undeclared and the result may be infrastructure, and the summary repeats
+that. An earlier draft of this note said the reader had no way to know,
+which was an overstatement worth correcting rather than quietly dropping.
+What is wrong is the VERDICT ITSELF: a row saying a defect was found,
+hedged, is still a row saying a defect was found, and a hedge asks the
+reader to discount a verdict instead of giving them the right one.
 
 Now there are two lists: the drives that speak the third verdict, and the
 drives that deliberately do not, each with its reason written down. A
@@ -38,23 +46,27 @@ drive that opted out is reported with its reason, and no longer carries
 the "might be infrastructure" hedge that belongs on a drive nobody has
 classified.
 
+Be precise about that check's force, because the workflow it runs in says
+in its own header not to overstate it, and an earlier draft of this note
+did exactly that. The suite it belongs to is visible on every change and
+is meant to be treated as blocking by reviewers, but it is not one of the
+checks that mechanically prevents a merge. So this closes the gap of
+nobody NOTICING — which is what actually went wrong, a warning that
+printed only during a release run — and not the gap of somebody
+overriding a red check on purpose. Making it mechanical is a separate
+decision about which checks are required, and belongs to whoever owns
+that list.
+
 One drive turned out to be in exactly the gap this describes, and listing
 it needed two fixes to the drive first — which is the most useful thing
 this change found.
 
-It does speak the third verdict, in four places. But it also records
-defects as it goes, and most of those four places sit AFTER the first
-checks that can record one. So a run that caught a real problem early and
-then could not open a window later would have ended on the third verdict:
-reporting that it did not finish, and burying a defect it had already
-found. Listing it would have turned an accidentally-right answer into a
-wrong one. A finding now outranks a later setup failure — the reason is
-still printed and only the verdict changes, because nothing observed is
-lost by reporting the defect, while everything observed is lost by
-reporting the incompletion.
-
-The second fix is the same error by the opposite door, and it kept going
-until none of the drive's own checks was left on the wrong side.
+It ended each of four checks with the third verdict, and all four turned
+out to be wrong. Three rounds of review reached that from three
+directions: a defect found early and then buried by a later check; a
+defect reported as an incompletion because the check that ended the run
+came FIRST, before anything had been recorded; and finally the last two,
+on evidence that needed no judgement.
 
 None of those four checks is a precondition. Each of them runs only after
 a page has been served, and each asks whether what was served is right:

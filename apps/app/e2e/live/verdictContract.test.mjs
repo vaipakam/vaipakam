@@ -2,8 +2,10 @@
  * The batch runner classifies each driver's exit code against a
  * hand-maintained list, and a driver missing from it has its BLOCKED
  * reported as a product FAIL — "this drive found a defect" said about a
- * drive that did not complete. The operator reading that row cannot
- * tell, and goes looking for a bug the list invented.
+ * drive that did not complete. The row is not silent (the runner hedges
+ * it as possibly infrastructure), but a hedged wrong verdict is still a
+ * wrong verdict, and it asks the reader to discount a row rather than
+ * giving them the right one.
  *
  * BLOCKED means the drive did not complete, NOT that it observed
  * nothing: a driver can pass every scenario for one role and then hit a
@@ -17,7 +19,15 @@
  * not enough, and the reason is WHERE it printed: on a batch run, which
  * happens before a testnet release and not on a pull request. A driver
  * could be added, reviewed, merged and run for weeks in that state
- * (#2099). This file is the same question asked where it fails.
+ * (#2099). This file is the same question asked where somebody sees it
+ * on the change that introduces it.
+ *
+ * NOT a mechanical gate, and the workflow says not to call it one:
+ * `app-vitest.yml` is visible on every change and meant to be treated as
+ * blocking by reviewers, but it is not among the required checks. What
+ * this closes is nobody NOTICING; it does not stop a deliberate
+ * override, and claiming otherwise would be the same kind of overstated
+ * assurance this whole change is about.
  */
 import { describe, expect, it } from 'vitest';
 
