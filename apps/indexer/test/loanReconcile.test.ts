@@ -17,6 +17,7 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from '../src/loanStatusProjection';
 import {
   CHAIN_STATUS_TO_ROW_STATUS,
   decideRepair,
+  ReconcilePartialError,
   reconcileChainLoans,
   type ReconcileDeps,
   type ReconcileRow,
@@ -63,6 +64,8 @@ function fakeDeps(
   const sideTablesCleared: number[] = [];
   /** Loan ids whose repair write should throw. */
   const writeFails = new Set<number>();
+  /** Make the post-loop cursor write throw. */
+  let pointerWriteFails = false;
   let pointer = 0;
   let lapEnd = 0;
   const deps: ReconcileDeps = {
@@ -125,6 +128,7 @@ function fakeDeps(
       return pointer;
     },
     async writePointer(_c, v) {
+      if (pointerWriteFails) throw new Error('D1 unavailable for the cursor');
       pointer = v;
     },
   };
@@ -134,6 +138,7 @@ function fakeDeps(
     rows,
     sideTablesCleared,
     writeFails,
+    failPointerWrite() { pointerWriteFails = true; },
     get pointer() { return pointer; },
     get lapEnd() { return lapEnd; },
   };
@@ -517,5 +522,34 @@ describe('a failing write does not discard the repairs that landed', () => {
     const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
     expect(r.unread).toEqual([8]);
     expect(r.writeFailed).toEqual([9]);
+  });
+});
+
+describe('a failure after the repairs landed still reports them', () => {
+  it('carries the repaired ids out on the error', async () => {
+    // #2190 r6 `4007752788`. Each repair is its own committed transaction
+    // and a repaired row has LEFT the live set, so a throw in the cursor
+    // write would otherwise lose those corrections from every count and
+    // broadcast permanently — no later pass can rediscover them to report.
+    const rows: ReconcileRow[] = [
+      { loan_id: 8, status: 'active' },
+      { loan_id: 9, status: 'active' },
+    ];
+    const f = fakeDeps(rows, { 8: 2, 9: 1 }, 0);
+    f.failPointerWrite();
+    // ONE call, inspected — running it twice would find the rows already
+    // repaired and report nothing, which is the test lying rather than the
+    // code failing.
+    let caught: unknown;
+    try {
+      await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ReconcilePartialError);
+    const report = (caught as ReconcilePartialError).report;
+    // The rows really were corrected; only the pointer failed to move.
+    expect(report.repaired.map((r) => r.loanId).sort()).toEqual([8, 9]);
+    expect(rows.every((r) => r.status !== 'active')).toBe(true);
   });
 });

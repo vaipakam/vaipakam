@@ -43,7 +43,11 @@ import {
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { reconcileAfterScan, type ReconcileOptions } from './loanReconcile';
+import {
+  reconcileAfterScan,
+  ReconcilePartialError,
+  type ReconcileOptions,
+} from './loanReconcile';
 // #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
@@ -880,7 +884,17 @@ async function runLoanReconcilePass(input: {
     // mismatch budget on every tick forever. Reported once the lap has been
     // round — a mid-lap mismatch is expected, since the repairs that would
     // settle it have not been made yet.
-    if (!report.agreed && report.wrappedLap && report.repaired.length === 0) {
+    // `wrappedLap` OR an EMPTY EXAMINED SET (#2190 r6 `4007752774`). The
+    // lap gate alone is unsatisfiable in the case that matters most: when
+    // the missed event was a `LoanInitiated`, D1 can hold ZERO live rows,
+    // so the pointer and the lap boundary stay at zero, no lap ever
+    // completes, and the chain/index disagreement stays silent on every
+    // tick forever — the exact shape this warning was added for.
+    if (
+      !report.agreed &&
+      report.repaired.length === 0 &&
+      (report.wrappedLap || report.examined.length === 0)
+    ) {
       console.warn(
         `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
           `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
@@ -898,6 +912,27 @@ async function runLoanReconcilePass(input: {
   } catch (err) {
     // A repair failure must not wedge the scan that found nothing wrong;
     // the rotation returns to these rows.
+    //
+    // REPAIRS THAT ALREADY COMMITTED ARE STILL RETURNED (#2190 r6
+    // `4007752788`). Per-row isolation covers a failing write, but the
+    // cursor and lap-boundary writes come AFTER the loop and can throw too
+    // — and by then the repaired rows have left the live set, so no retry
+    // can rediscover them. Returning an empty set there would lose their
+    // `loan.updated` frame permanently: the corrections would be in D1 and
+    // announced to nobody.
+    const partial =
+      err instanceof ReconcilePartialError
+        ? err.report.repaired.map((r) => r.loanId)
+        : [];
+    if (partial.length > 0) {
+      console.error(
+        `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
+          `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
+          `broadcast; the rotation pointer may not have advanced`,
+        err,
+      );
+      return partial;
+    }
     console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
     return [];
   }

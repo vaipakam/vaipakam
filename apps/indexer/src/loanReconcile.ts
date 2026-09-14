@@ -149,6 +149,26 @@ export function decideRepair(indexedStatus: string, chainStatus: number): string
  *  selector and the compare-and-set cannot drift from `decideRepair`. */
 export const LIVE_ROW_STATUSES = [...REPAIRABLE_FROM];
 
+/**
+ * A failure that happened AFTER repairs had already committed.
+ *
+ * It carries the report so the caller can still count and broadcast what
+ * landed. Without it the whole pass reads as "nothing happened" while the
+ * corrections sit in D1 unannounced — and because a repaired row is no
+ * longer live, no later pass can find them to report.
+ */
+export class ReconcilePartialError extends Error {
+  constructor(
+    readonly report: ReconcileReport,
+    readonly cause: unknown,
+  ) {
+    super(
+      `reconcile failed after repairing ${report.repaired.length} loan(s) on chain ${report.chainId}`,
+    );
+    this.name = 'ReconcilePartialError';
+  }
+}
+
 export interface ReconcileRow {
   loan_id: number;
   status: string;
@@ -402,12 +422,23 @@ export async function reconcileChainLoans(
     report.repaired.push({ loanId: row.loan_id, from, to });
   }
 
-  await deps.writePointer(chainId, report.nextPointer);
+  // THE CURSOR WRITES COME LAST AND CAN FAIL AFTER REAL WORK LANDED.
+  // Each repair above is its own committed transaction, and a repaired row
+  // has left the live set — so a throw here loses those corrections from
+  // every downstream count and broadcast, permanently, with no retry able
+  // to rediscover them. The report travels with the error instead
+  // (#2190 r6 `4007752788`); the pointer simply does not advance, and the
+  // rotation re-examines rows it has already fixed, which is a no-op.
+  try {
+    await deps.writePointer(chainId, report.nextPointer);
   // The boundary is rewritten every pass, not only on a wrap: a lap that
   // began before this deploy has none stored, and one that just wrapped has
   // a new one. Zero means "capture a fresh boundary next pass", which is
   // what a completed lap with nothing left to examine should leave behind.
-  await deps.writeLapEnd(chainId, report.nextPointer > 0 ? lapEnd : 0);
+    await deps.writeLapEnd(chainId, report.nextPointer > 0 ? lapEnd : 0);
+  } catch (err) {
+    throw new ReconcilePartialError(report, err);
+  }
   return report;
 }
 
@@ -597,6 +628,7 @@ export async function reconcileAfterScan(
         .prepare(
           `UPDATE loans
               SET status = ?, principal = ?, collateral_amount = ?,
+                  lender_token_id = ?, borrower_token_id = ?,
                   terminal_block = ?, terminal_at = ?, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
@@ -605,6 +637,17 @@ export async function reconcileAfterScan(
           repair.status,
           repair.principal,
           repair.collateralAmount,
+          // THE POSITION-TOKEN IDS TOO (#2190 r6 `4007865953`). A missed
+          // window can contain a `LoanObligationTransferred` before the
+          // missed terminal, which mints the incoming borrower a NEW token
+          // and burns the old one — and the event handler that normally
+          // persists that also never ran. Writing status and amounts while
+          // leaving the stale id is how `claimables` goes on serving the
+          // OLD token, rejecting it as burned, and hiding the new
+          // borrower's claim entirely. The read already returns both; they
+          // belong in the same write for the same reason the amounts do.
+          repair.lenderTokenId,
+          repair.borrowerTokenId,
           Number(ctx.head),
           at,
           at,
