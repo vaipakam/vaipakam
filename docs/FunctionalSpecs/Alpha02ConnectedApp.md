@@ -367,6 +367,20 @@ The app uses chain reads and indexed reads for different jobs.
   would never be reached. A run therefore continues past records it cannot send
   for, up to a stated limit of its own, and reaches the ones behind them in the
   same run.
+- Where the deployment's own configuration prevents a channel from working at
+  all, a run says so rather than silently not using it. A subscriber who has
+  asked for a channel the deployment cannot sign for can never be reached on
+  it, and a run that marks such records as handled while delivering nothing is
+  the hardest failure for an operator to notice. The count is reported once per
+  network per run, naming the setting — not once per record, which would train
+  a real misconfiguration into background noise.
+- A run that COMPLETES also reports, whenever anything happened that someone
+  would want to know about — records nobody could be told about, attempts
+  confirmed to nobody, unconfirmed channels, records the chain declined,
+  records waiting on the platform's own to catch up, records it could not read.
+  A run that reaches nobody never stops early, because reaching nobody costs
+  nothing, so reporting only on an early stop is silent in exactly the case
+  that most needs a person. A run where everything went right stays silent.
 - A run will not begin a record it might not be able to finish, even when some
   allowance remains. Stopping between one party's message and the other's
   would mark the reminder as delivered with one side never told, and that

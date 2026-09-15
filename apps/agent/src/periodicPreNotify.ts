@@ -511,6 +511,7 @@ async function preNotifyChain(
   let rejected = 0;
   let checkpointLag = 0;
   let unreadable = 0;
+  let pushUnconfigured = 0;
   let batches = 0;
   let batchFailed = false;
   while (
@@ -552,6 +553,7 @@ async function preNotifyChain(
     rejected += outcome.rejected;
     checkpointLag += outcome.checkpointLag;
     unreadable += outcome.unreadable;
+    pushUnconfigured += outcome.pushUnconfigured;
     cursor += outcome.consumed;
   }
 
@@ -599,6 +601,46 @@ async function preNotifyChain(
         `hundreds awaiting the indexer is the indexer being behind, which ` +
         `needs nothing done to the rows themselves.`,
     );
+  } else if (noRoute + unreached + failedRails + rejected + checkpointLag + unreadable > 0) {
+    // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
+    // r19 `4014677438`). The summary above only fires on an early stop, on the
+    // reasoning that a finished window needs no explanation — which is true of
+    // a finished window in which everything went right, and false of one that
+    // reached nobody. A tick that quietly stamps forty loans as handled having
+    // delivered nothing is the failure this lane is least able to notice, and
+    // it is the ORDINARY shape of a misconfigured deployment: nothing is
+    // capped, nothing is unreadable, the scan finishes every time.
+    //
+    // Still silent on a clean tick. The condition is "did anything happen that
+    // someone would want to know about", not "did the scan end early".
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: scan complete — ` +
+        `${examined} examined, ${reminded} reminded, ${unreached} reached ` +
+        `nobody, ${noRoute} with nobody to tell, ${failedRails} rail(s) ` +
+        `unconfirmed, ${rejected} rejected by the chain, ${checkpointLag} ` +
+        `awaiting the indexer, ${unreadable} unreadable.`,
+    );
+  }
+
+  // THE DEPLOYMENT'S OWN CONFIGURATION, SAID OUT LOUD (#2213 r19
+  // `4014677438`). Once per chain per tick with a count, never per loan: this
+  // is one fact about the Worker, and printing it per subscriber is how a real
+  // misconfiguration becomes background noise.
+  //
+  // It went missing by a route worth remembering. `sendPush` used to log
+  // "PUSH_CHANNEL_PK unset" when it was reached with no signer. Moving that
+  // check up into the condition that decides whether a request happens was
+  // correct — it is what stopped the lane charging its allowance for requests
+  // it never made — but `sendPush` was then never reached, and the diagnostic
+  // went with it. A fix to the accounting silently removed a disclosure.
+  if (pushUnconfigured > 0) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured} ` +
+        `subscriber(s) this tick have a Push channel set while this ` +
+        `deployment has no PUSH_CHANNEL_PK, so no Push was sent to them and ` +
+        `none can be. They were reached on Telegram or not at all. Set the ` +
+        `signer, or the Push channel on those subscriptions is inert.`,
+    );
   }
 }
 
@@ -631,6 +673,7 @@ async function messageBatch(
   rejected: number;
   checkpointLag: number;
   unreadable: number;
+  pushUnconfigured: number;
 }> {
   let reminded = 0;
   let unreached = 0;
@@ -639,13 +682,14 @@ async function messageBatch(
   let rejected = 0;
   let checkpointLag = 0;
   let unreadable = 0;
+  let pushUnconfigured = 0;
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
-        rejected, checkpointLag, unreadable,
+        rejected, checkpointLag, unreadable, pushUnconfigured,
       };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
@@ -768,6 +812,8 @@ async function messageBatch(
       noRoute += 1;
     }
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
+    pushUnconfigured +=
+      (borrowerOutcome.pushUnconfigured ? 1 : 0) + (lenderOutcome.pushUnconfigured ? 1 : 0);
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -841,6 +887,7 @@ async function messageBatch(
     rejected,
     checkpointLag,
     unreadable,
+    pushUnconfigured,
   };
 }
 
@@ -1231,6 +1278,22 @@ interface DeliveryOutcome {
    * Telegram kept working — which is the outage an operator most needs to see.
    */
   unconfirmedRails: number;
+  /**
+   * The subscriber asked for Push and the DEPLOYMENT has no signer.
+   *
+   * Carried out of here rather than logged here (#2213 r19 `4014677438`),
+   * because it is a property of the deployment and not of this loan: logging
+   * per loan would print the same line for every subscriber on every tick,
+   * which is how a real misconfiguration gets trained into background noise.
+   * The chain pass reports it once, with a count.
+   *
+   * It exists at all because moving `PUSH_CHANNEL_PK` into the condition that
+   * decides whether a request happens — correct, and what stopped the lane
+   * charging for requests it never made — also stopped `sendPush` being
+   * reached, and `sendPush` was where the "unset" diagnostic lived. The charge
+   * fix silently took the disclosure with it.
+   */
+  pushUnconfigured: boolean;
 }
 
 async function pushIfSubscribed(
@@ -1266,14 +1329,20 @@ async function pushIfSubscribed(
     sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
   }
   if (!sub) {
-    return { status: 'none', attempted: false, delivered: false, unconfirmedRails: 0 };
+    return {
+      status: 'none', attempted: false, delivered: false,
+      unconfirmedRails: 0, pushUnconfigured: false,
+    };
   }
   // #1033 — the connected app Alerts card exposes this as a real opt-out;
   // honor it before any rail fires. Reported distinctly so the
   // caller can leave the checkpoint unstamped (a re-enable before
   // the deadline must still get its reminder).
   if (sub.notify_maturity_approaching === 0) {
-    return { status: 'opted-out', attempted: false, delivered: false, unconfirmedRails: 0 };
+    return {
+      status: 'opted-out', attempted: false, delivered: false,
+      unconfirmedRails: 0, pushUnconfigured: false,
+    };
   }
 
   const cadenceLabel = cadenceI18nLabel(loan.periodic_interest_cadence);
@@ -1387,6 +1456,10 @@ async function pushIfSubscribed(
     attempted,
     delivered,
     unconfirmedRails,
+    // The subscriber WANTED push (they have a channel) and the deployment
+    // cannot sign for it. Distinct from "no channel": that is the user's
+    // choice, this is the operator's configuration.
+    pushUnconfigured: Boolean(sub.push_channel) && !env.PUSH_CHANNEL_PK,
   };
 }
 

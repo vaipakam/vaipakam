@@ -341,6 +341,41 @@ which in turn would have stopped the reader advancing — leaving that chain
 frozen on one block until the database change landed. Everything that touches
 the new memory, read or write, now asks first whether it is there.
 
+**A deployment that cannot send one kind of message now says so.** The
+platform reaches people over two channels, and one of them needs a signing
+credential the operator configures. A subscriber who has asked for that
+channel while the deployment has no credential could never be reached on it —
+and, once the run stopped charging itself for messages it was not going to
+send, stopped being mentioned anywhere either. The diagnostic used to live
+inside the sending step, and moving the check out of that step to fix the
+accounting took the disclosure with it. So a run could mark forty records as
+handled, deliver nothing, and say nothing, which is the ordinary shape of a
+misconfigured deployment rather than an exotic one. The run now reports the
+count once, naming the setting.
+
+**And a completed run reports too, when it has something to report.** The
+summary only appeared when a run stopped early, on the reasoning that a run
+which finished needs no explanation. That is true of a run where everything
+went right and false of one that reached nobody — and the second kind never
+stops early, because reaching nobody costs nothing. A run that finishes now
+says what it saw whenever anything happened that a person would want to know
+about, and stays silent otherwise. One of the tests written earlier in this
+change had asserted that silence as correct.
+
+**A record can also be released long after the fact,** and the pass that does
+it no longer writes to a table it has established is missing. During the
+deploy window the release step built one instruction per settled record
+against a table that does not yet exist — failing every pass, then describing
+the consequences in terms of withholding, while the reminder lane was
+simultaneously and correctly reporting that nothing was being withheld,
+because there is nowhere to withhold anything. Two parts of the platform
+contradicting each other about one table is worse than either going quiet. The
+answer to "does this table exist" was already established earlier in the same
+pass; it is now consulted before anything is built. A pass that could not
+establish it still tries, because a question that failed is not evidence of
+absence — and where it then fails, it says the state could not be established
+rather than asserting one.
+
 A third lane that messages users — the health alerts about a loan's safety
 margin — needed no change, and the reason is worth stating: it works from the
 chain's own list of open loans rather than from the platform's records, and

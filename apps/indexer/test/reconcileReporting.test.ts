@@ -25,6 +25,7 @@ import {
   _reportQuarantineForChain,
   _reportReconcilePass,
   _runLoanReconcilePass,
+  _resetQuarantineWriteProbe,
 } from '../src/chainIndexer';
 import { ReconcilePartialError, type ReconcileReport } from '../src/loanReconcile';
 import type { ChainConfig, Env } from '../src/env';
@@ -299,6 +300,48 @@ describe('the join, not just the wording', () => {
     expect(
       seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
     ).toBe(true);
+  });
+
+  it('writes NOTHING to a quarantine table it has established is absent', async () => {
+    // #2213 r19 `4014677444`. The probe at the top of the pass already knew
+    // migration 0049 was missing, and this built a DELETE per settled row
+    // against a table that does not exist — failing every pass, then
+    // describing the fallout in terms of withholding, while the calendar lane
+    // was simultaneously and correctly telling the operator that nothing was
+    // being withheld because there is nowhere to withhold anything. Two lanes
+    // contradicting each other about one table is worse than either going
+    // quiet.
+    _resetQuarantineWriteProbe();
+    const seen: string[] = [];
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          seen.push(sql);
+          return {
+            bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+            // The probe's answer: no such table. A DEFINITE negative, which
+            // is the only case that skips — `unknown` still attempts, because
+            // a question that failed is not evidence the table is missing.
+            first: async () => null,
+          };
+        },
+        batch: async () => {
+          throw new Error('nothing may be written when the table is known absent');
+        },
+      },
+    } as unknown as Env;
+    scanBehaviour = async () => noticed();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await _runLoanReconcilePass({ ...passInput(), env });
+    // The pass still did its real work and still returned normally...
+    expect(outcome.established).toBe(true);
+    // ...no statement was ever built against the table...
+    expect(seen.some((q) => /DELETE[\s\S]*loan_reconcile_quarantine/.test(q))).toBe(false);
+    expect(seen.some((q) => /INSERT[\s\S]*loan_reconcile_quarantine/.test(q))).toBe(false);
+    // ...and nothing claimed anything about withholding, since there is no
+    // withholding to describe.
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).not.toContain('withheld');
   });
 
   it('refuses outright on a head the chain did not call settled', async () => {

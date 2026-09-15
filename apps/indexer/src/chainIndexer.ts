@@ -1385,30 +1385,57 @@ export async function _runLoanReconcilePass(input: {
     // operations no longer share a catch because they no longer share a
     // place.
     const nowSec = Math.floor(Date.now() / 1000);
-    try {
-      const writes = quarantineStatements(env.DB, chainId, report, nowSec);
-      if (writes.length > 0) await env.DB.batch(writes);
-    } catch (err) {
-      // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
-      // batch carries two opposite operations — marks that START withholding
-      // and releases that STOP it — so a fixed message describes the wrong
-      // one half the time, and is nonsense on a batch that carried only
-      // releases. Both counts come from the report the batch was built from.
-      const marks = _unestablishedRows(report).length;
-      const releases = settledRows(report).length;
-      const effects = [
-        marks > 0
-          ? `${marks} row(s) this pass could not settle are NOT withheld until a later pass records them`
-          : null,
-        releases > 0
-          ? `${releases} row(s) it settled stay withheld until a later pass releases them`
-          : null,
-      ].filter(Boolean);
-      console.error(
-        `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
-          `${effects.join('; ')}`,
-        err,
-      );
+    // ASKED BEFORE BUILDING THE BATCH (#2213 r19 `4014677444`). The probe is
+    // memoised per isolate and the close-out path already consults it, so this
+    // costs nothing and removes a guaranteed failure: with migration 0049
+    // DEFINITIVELY absent, this built a `DELETE` per settled row against a
+    // table that does not exist, failed every pass, and then described the
+    // consequences in terms of withholding — while the calendar lane was
+    // simultaneously and correctly telling the operator that nothing was being
+    // withheld, because there is nowhere to withhold anything. Two lanes
+    // contradicting each other about the same table is worse than either being
+    // silent.
+    //
+    // ONLY on `absent`. `unknown` still attempts, because this is a
+    // fail-open withholding mechanism and a probe that could not answer is not
+    // evidence the table is missing.
+    const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
+    if (writeAvailability !== 'absent') {
+      try {
+        const writes = quarantineStatements(env.DB, chainId, report, nowSec);
+        if (writes.length > 0) await env.DB.batch(writes);
+      } catch (err) {
+        // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
+        // batch carries two opposite operations — marks that START withholding
+        // and releases that STOP it — so a fixed message describes the wrong
+        // one half the time, and is nonsense on a batch that carried only
+        // releases. Both counts come from the report the batch was built from.
+        const marks = _unestablishedRows(report).length;
+        const releases = settledRows(report).length;
+        // AND IT ONLY SPEAKS AS CONFIDENTLY AS THE PROBE DID (#2213 r19
+        // `4014677444`). Reaching here on `unknown` means the table's
+        // existence was never established, so "stay withheld" would assert a
+        // state this pass cannot see. On `present` the marks are known to be
+        // there and the confident wording is the accurate one.
+        const sure = writeAvailability === 'present';
+        const effects = [
+          marks > 0
+            ? `${marks} row(s) this pass could not settle are NOT withheld until a later pass records them`
+            : null,
+          releases > 0
+            ? sure
+              ? `${releases} row(s) it settled stay withheld until a later pass releases them`
+              : `${releases} row(s) it settled may still be withheld — whether the ` +
+                `quarantine table exists could not be established, so a later ` +
+                `pass releases them if it does`
+            : null,
+        ].filter(Boolean);
+        console.error(
+          `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
+            `${effects.join('; ')}`,
+          err,
+        );
+      }
     }
   }
 
@@ -5471,7 +5498,21 @@ export function _closedLoanSideTableStatements(
  * of "this database has the table", and they are asked at different moments.
  * Caching only a TRUE means they converge as soon as the migration lands.
  */
-const quarantineAvailableForWrites = createQuarantineAvailability();
+let quarantineAvailableForWrites = createQuarantineAvailability();
+
+/**
+ * Test seam — the probe latches on a TRUE and is otherwise unobservable.
+ *
+ * The calendar lane has carried `_resetQuarantineTableProbe` for its own
+ * probe since it grew one; this module needed the same and did not have it
+ * (#2213 r19). Without it a suite is order-dependent in the worst direction:
+ * one earlier case answering "the table is there" latches `present` for the
+ * whole file, so a later case that means to exercise the ABSENT path silently
+ * exercises the present one and passes for the wrong reason.
+ */
+export function _resetQuarantineWriteProbe(): void {
+  quarantineAvailableForWrites = createQuarantineAvailability();
+}
 
 async function _clearClosedLoanSideTables(
   env: Env,

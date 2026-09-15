@@ -636,10 +636,15 @@ describe('what counts as a send, and what only looks like one', () => {
     expect(sends).toEqual([]);
     // Stamped exactly as before — the semantics that existed are preserved.
     expect(stamped.length).toBe(10);
-    // Nothing sent, so the allowance is untouched and there is no stop-early
-    // warning to read a count out of. That is why the NEXT test exists: this
-    // assertion alone would pass whatever the count did.
-    expect(said).toBe('');
+    // THIS ASSERTION USED TO BE `toBe('')`, and that was pinning the defect
+    // (#2213 r19 `4014677438`). Its own comment said the quiet part: nothing
+    // was sent, so the allowance was untouched, so no early-stop summary fired
+    // and there was "no warning to read a count out of". A tick that stamps
+    // ten loans as handled having reached nobody is precisely what an operator
+    // needs told, and the completed-scan path now tells them.
+    expect(said).toContain('scan complete');
+    expect(said).toContain('10 with nobody to tell');
+    expect(said).not.toContain('reminded, 10');
   });
 
   it('reports only the loans that actually sent, when the tick stops early', async () => {
@@ -1300,6 +1305,36 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('nobody had a usable route');
     expect(said).not.toContain('a reminder was delivered');
     expect(said).not.toContain('will send it again');
+  });
+
+  it('discloses a Push channel the deployment cannot sign for', async () => {
+    // #2213 r19 `4014677438`. `sendPush` used to log "PUSH_CHANNEL_PK unset"
+    // when reached without a signer. Moving that check up into the condition
+    // that decides whether a request happens was right — it stopped the lane
+    // charging for requests it never made — but `sendPush` was then never
+    // reached and the diagnostic went with it. A fix to the accounting
+    // silently removed a disclosure, and these subscribers WANT Push.
+    loanRows = tenLoans().slice(-2);
+    const { said } = await run({ PUSH_CHANNEL_PK: undefined });
+    expect(said).toContain('no PUSH_CHANNEL_PK');
+    // Telegram still worked, so this is a disclosure and not an outage.
+    expect(sends.some((x) => x.startsWith('tg:'))).toBe(true);
+    expect(sends.some((x) => x.startsWith('push:'))).toBe(false);
+  });
+
+  it('reports a COMPLETED scan that reached nobody', async () => {
+    // The summary used to fire only on an early stop, on the reasoning that a
+    // finished window needs no explanation. True of a window where everything
+    // went right; false of one that stamped every loan as handled having
+    // delivered nothing — which is the ORDINARY shape of a misconfigured
+    // deployment, where nothing is ever capped and the scan finishes each time.
+    subscriberFor = () => null;
+    loanRows = tenLoans().slice(-4);
+    const { said, stamped } = await run();
+    expect(sends.length).toBe(0);
+    expect(stamped.length).toBe(4); // handled, so the scan does move on
+    expect(said).toContain('scan complete');
+    expect(said).toContain('4 with nobody to tell');
   });
 
   it('says nothing about a cap it did not reach', async () => {
