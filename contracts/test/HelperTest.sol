@@ -2408,7 +2408,8 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
+        selectors[11] = RewardReconciliationFacet.getQueueState.selector;
         selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;

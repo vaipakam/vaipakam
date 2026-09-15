@@ -6274,8 +6274,9 @@ PR C.**
 > as its messenger, with the artifact's address second), the three
 > value-bearing Diamond ingresses gain it too, and the Diamond records
 > every reward-budget packet — a delivery, a compensation, a stranded
-> return, a ceremony inflow; NOT the planned-surplus repatriation return,
-> which credits recycled custody only (#2204) — under
+> return, the fresh share of a pre-attribution ceremony inflow; NOT the
+> planned-surplus repatriation return, a ceremony inflow for an attributed
+> receipt, or any recycled ceremony inflow (#2204) — under
 > `keccak256(sourceChainId, transportMessageId)` — or,
 > for a transport without an id, a per-source sequence the authenticated
 > ingress allocates itself — a replayed stamp refuses whole
@@ -6340,15 +6341,34 @@ PR C.**
 > the two component caps (operator-stated for the classifiable part, fixed
 > by the first entry, their sum bounded by that part) stay, because a wrong
 > SPLIT still passes the total. **(2) The FIFO's sequencing counters are
-> NEW and MONOTONE.** Both headroom aggregates this tree keeps —
-> `rewardBudgetArmedFreshPaid` (the restitution paid-correction lowers it)
-> and `paidOutRecycled` (the released-remit restore lowers it) — are
-> decremented today, which the FIFO's soundness rule forbids; the epoch
-> therefore reads `freshOutflowSeqByEra` and `recycledOutflowSeq`, advanced
-> at the outflow sites and never decremented, and an entry's position is its
-> ORIGINAL credit position in the queue (the sum of the credits classified
-> before it), outflow measured from the queue's first entry — the form under
-> which the A-then-B example above holds. **(3) One era.** No era registry
+> NEW, MONOTONE and count OUTFLOWS only.** Both headroom aggregates this
+> tree keeps — `rewardBudgetArmedFreshPaid` (the restitution paid-correction
+> lowers it) and `paidOutRecycled` (the released-remit restore lowers it) —
+> are decremented today, which the FIFO's soundness rule forbids; the epoch
+> therefore reads `freshOutflowSeqByEra`, `recycledConsumedSeq` and
+> `recycledRepatriatedSeq`, advanced at the outflow sites and never
+> decremented, and NEVER moved by a reattribution (Codex #2206 r1: bumping
+> the destination's counter for an inherited debit double-counted one
+> historical outflow on a round trip) — an inherited debit is instead the
+> entry's own per-side INHERITED figure, spent without any outflow of that
+> side, unwound by the reverse move. A queue is EVERY credit of its side in
+> order, as this section says of the recycled side ("packet-classified,
+> aggregate-bootstrap, and non-packet alike"): an entry's position counts
+> the unspent backing standing at the front when the queue opened (the
+> live row; the bucket) plus every credit since — deliveries, fundings,
+> absorptions, relocations, classifications — not only the classified ones
+> (fresh from a new credit cumulative; recycled from the bucket's own
+> stored cumulatives, seeded at the opening), and a queue opens on its
+> first POSITIVE credit so an earlier outflow can never read a later first
+> credit as spent. On the recycled side, whose outflow is of two kinds,
+> consumption is attributed FIRST in queue order from its own counter, net
+> of the consumption the fresh side already inherited from that entry, and
+> only that much (plus what was inherited from fresh) may move to the fresh
+> side as a debit; credit that left by surplus repatriation has no fresh
+> ledger to inherit it and stays where it left from. The bucket's derived
+> absorption floor nets the two reattribution cumulatives exactly as it
+> nets relocated custody, so a correction on an unseeded Diamond reports no
+> absorption it did not make. **(3) One era.** No era registry
 > exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
 > **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
 > they are a PR of their own, before PR C: the non-splittable trio ("doing

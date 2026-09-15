@@ -7442,29 +7442,47 @@ library LibVaipakam {
         mapping(uint256 => uint256) ingressSequence;
         /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
         ///      epoch. The classification log (append-only; the order is the
-        ///      immutable thing), the two MONOTONE outflow sequencing
-        ///      counters the FIFO spent-ness reads — `freshOutflowSeqByEra`
-        ///      advanced by every fresh outflow charge, `recycledOutflowSeq`
-        ///      by every bucket consumption or surplus repatriation; NEVER
-        ///      decremented, unlike the headroom aggregates
-        ///      (`rewardBudgetArmedFreshPaid`, `paidOutRecycled`) that take
-        ///      registered corrective debits (design §5c) — each queue's base
-        ///      (the sequencing counter's value when the queue's first entry
-        ///      landed) and cumulative original-credit position, the
-        ///      per-entry replay guard, the envelopes, and the two
-        ///      reattribution cumulatives that keep the bucket's composition
-        ///      identity stated: `bucket == credited + relocated +
-        ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
-        ///      (+ the released-remit correction).
+        ///      immutable thing), the MONOTONE outflow sequencing counters
+        ///      the FIFO spent-ness reads (NEVER decremented, unlike the
+        ///      headroom aggregates `rewardBudgetArmedFreshPaid` and
+        ///      `paidOutRecycled`, which take registered corrective debits —
+        ///      design §5c), each queue's opening record, the per-entry
+        ///      replay guard, the envelopes, and the two reattribution
+        ///      cumulatives that keep the bucket's composition identity
+        ///      stated: `bucket == credited + relocated + reattributedIn −
+        ///      paidOut − repatriatedOut − reattributedOut` (+ the
+        ///      released-remit correction), with the derived absorption
+        ///      floor netting the same two terms.
         ReconciliationEntry[] reconciliationLog;
+        /// @dev The OUTFLOW sequencing counters (Codex #2206 r1: outflows
+        ///      only — a reattribution never moves them). Fresh: every
+        ///      delivered-fresh charge, per era. Recycled: consumption and
+        ///      surplus repatriation kept APART, so the FIFO can attribute
+        ///      consumption before repatriation in queue order and inherit
+        ///      only consumption into the fresh side.
         mapping(uint64 => uint256) freshOutflowSeqByEra;
-        uint256 recycledOutflowSeq;
-        mapping(uint64 => uint256) freshQueueBaseByEra;
+        uint256 recycledConsumedSeq;
+        uint256 recycledRepatriatedSeq;
+        /// @dev The fresh side's CREDIT cumulative, per era — every credit
+        ///      to the received side in order (ingress, funding, envelope,
+        ///      classification), so an entry's queue position counts every
+        ///      credit before it, not only the classified ones. (The
+        ///      recycled side derives its positions from the bucket's own
+        ///      stored cumulatives: absorption plus relocated custody.)
+        mapping(uint64 => uint256) freshCreditCumulativeByEra;
+        /// @dev Each queue opens on its first POSITIVE credit and records
+        ///      the sequencing counter, the credit cumulative and the
+        ///      unspent backing standing at that moment (the live row; the
+        ///      bucket), which occupies the front of the queue.
         mapping(uint64 => bool) freshQueueOpenByEra;
-        mapping(uint64 => uint256) freshQueuePosByEra;
-        uint256 recycledQueueBase;
+        mapping(uint64 => uint256) freshQueueSeqBaseByEra;
+        mapping(uint64 => uint256) freshQueuePosBaseByEra;
+        mapping(uint64 => uint256) freshQueueLiveAtOpenByEra;
         bool recycledQueueOpen;
-        uint256 recycledQueuePos;
+        uint256 recycledQueueConsumedBase;
+        uint256 recycledQueueRepatriatedBase;
+        uint256 recycledQueuePosBase;
+        uint256 recycledQueueBucketAtOpen;
         mapping(bytes32 => bool) reconciliationEntryUsed;
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
         uint256 recycleReattributedInCumulative;
@@ -7616,6 +7634,18 @@ library LibVaipakam {
         uint256 recycledPos;
         int256 freshShift;
         int256 recycledShift;
+        /// @dev Codex #2206 r1 — the part of each side's credit that is
+        ///      SPENT BY INHERITANCE: a debit a correction moved in from the
+        ///      other side. It is spent without any outflow of this side
+        ///      having consumed it, so it is kept apart from the FIFO's
+        ///      derivation; moving it back is a reversal, always allowed.
+        uint256 freshInherited;
+        uint256 recycledInherited;
+        /// @dev The CONSUMPTION units of this entry's recycled credit that
+        ///      the fresh side has inherited and still carries, so the
+        ///      consumption-first attribution does not offer them again;
+        ///      unwound when they return.
+        uint256 recycledConsumedInherited;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the

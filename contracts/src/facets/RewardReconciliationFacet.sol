@@ -143,12 +143,15 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         }
         // The three effects, atomically: the step-down (packet remainder,
         // row figure, global aggregate — each exact), the fresh credit under
-        // the split, the bucket credit as relocated custody.
+        // the split, the bucket credit as relocated custody. The entry's
+        // queue positions are taken BEFORE its credits land, so it sits
+        // behind every credit that preceded it.
+        (uint256 freshPos, uint256 recycledPos) = _openQueues(s, freshShare, recycledShare);
         LibRewardCustody.takeFromUnclassified(s, packetHash, freshShare, recycledShare);
         (uint256 toLive, uint256 toRestitution) =
-            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare);
+            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare, true);
         LibVpfiRecycle.creditCustodyFromUnclassified(p.remitId, recycledShare);
-        uint256 index = _appendEntry(s, packetHash, freshShare, recycledShare);
+        uint256 index = _pushEntry(s, packetHash, freshShare, recycledShare, freshPos, recycledPos);
         emit LegacyPacketClassified(packetHash, entryId, index, freshShare, recycledShare, toLive, toRestitution);
     }
 
@@ -183,9 +186,13 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        (uint256 freshSpent, uint256 recycledSpent, , ) = _spent(s, index);
+        (uint256 freshSpent, uint256 recycledSpent, uint256 recycledInheritable, , ) = _spent(s, index);
         uint256 credit = freshToRecycled ? e.freshCredit : e.recycledCredit;
         if (amount > credit) revert ReconciliationExceedsCredit(index, amount, credit);
+        // Unspent credit moves first, with its tokens; only then spent
+        // credit, as an inherited debit — so what an entry keeps after any
+        // move that took spent units is all spent, and the FIFO rereads it
+        // so with no counter touched.
         uint256 unspent = credit - (freshToRecycled ? freshSpent : recycledSpent);
         uint256 movingUnspent = amount < unspent ? amount : unspent;
         uint256 movingSpent = amount - movingUnspent;
@@ -197,19 +204,34 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             LibVpfiRecycle.creditBucketReattributed(refId, movingUnspent, false);
             LibRewardCustody.inheritFreshDebitAsRecycled(s, movingSpent);
             LibVpfiRecycle.creditBucketReattributed(refId, movingSpent, true);
+            // Spent units leave the source's INHERITED figure first (a
+            // reversal of an earlier move: those units return to the
+            // destination's own FIFO part, whose outflow still counts them);
+            // the rest were consumed here and become inherited there.
+            uint256 reversing = movingSpent < e.freshInherited ? movingSpent : e.freshInherited;
+            e.freshInherited -= reversing;
+            e.recycledConsumedInherited -= reversing; // those consumption units re-enter the recycled FIFO
+            e.recycledInherited += movingSpent - reversing;
             e.freshCredit -= amount;
             e.recycledCredit += amount;
             e.freshShift -= int256(movingUnspent);
-            e.recycledShift += int256(amount);
+            e.recycledShift += int256(movingUnspent);
         } else {
+            if (movingSpent > recycledInheritable) {
+                revert ReconciliationSpentRecycledNotInheritable(index, movingSpent, recycledInheritable);
+            }
             LibVpfiRecycle.debitBucketReattributed(refId, movingUnspent, false);
-            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, movingUnspent);
+            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, movingUnspent, false);
             LibVpfiRecycle.debitBucketReattributed(refId, movingSpent, true);
-            LibRewardCustody.inheritRecycledDebitAsFresh(s, e.era, movingSpent);
+            LibRewardCustody.inheritRecycledDebitAsFresh(s, movingSpent);
+            uint256 reversing = movingSpent < e.recycledInherited ? movingSpent : e.recycledInherited;
+            e.recycledInherited -= reversing;
+            e.recycledConsumedInherited += movingSpent - reversing; // consumption units now carried by fresh
+            e.freshInherited += movingSpent - reversing;
             e.recycledCredit -= amount;
             e.freshCredit += amount;
             e.recycledShift -= int256(movingUnspent);
-            e.freshShift += int256(amount);
+            e.freshShift += int256(movingUnspent);
         }
         emit ReconciliationEntryReclassified(index, entryId, freshToRecycled, movingUnspent, movingSpent);
     }
@@ -255,12 +277,15 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (stated != netTotal) revert LegacyEnvelopeMismatch(snapshotId, stated, netTotal);
         s.rewardBudgetFreshUncounted = raw - netTotal;
         uint256 refId = uint256(snapshotId);
+        uint256 freshTotal = relocateFresh + replaceFresh;
+        uint256 recycledTotal = relocateRecycled + replaceRecycled;
+        (uint256 freshPos, uint256 recycledPos) = _openQueues(s, freshTotal, recycledTotal);
         LibRewardCustody.relocateFreshIngress(s, relocateFresh);
         LibVpfiRecycle.creditCustodyRelocated(refId, relocateRecycled, LibVpfiRecycle.RecycleSource.LegacyReconciliation);
         LibRewardCustody.pullFromCaller(s, msg.sender, replaceFresh + replaceRecycled);
         LibRewardCustody.creditFreshIngress(s, replaceFresh);
         LibVpfiRecycle.creditCustodyFundedInHolder(refId, replaceRecycled);
-        uint256 index = _appendEntry(s, snapshotId, relocateFresh + replaceFresh, relocateRecycled + replaceRecycled);
+        uint256 index = _pushEntry(s, snapshotId, freshTotal, recycledTotal, freshPos, recycledPos);
         env.importedAt = uint64(block.timestamp);
         env.rawUncounted = raw;
         env.holderUncounted = holderUncounted;
@@ -345,29 +370,76 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return s.reconciliationLog[index];
     }
 
-    /// @notice An entry's spent-ness under the live-queue FIFO, per side,
-    ///         with the effective positions it was read at. Scans the
-    ///         entries before it — operator reads and paused corrections
-    ///         only; the outflows themselves stay O(1).
+    /// @notice An entry's spent-ness under the live-queue FIFO, per side —
+    ///         each side's inherited figure plus what the side's outflow
+    ///         since the queue opened attributes to it in order — the part
+    ///         of the recycled spent-ness a fresh-side correction may
+    ///         inherit (consumption attributed first in queue order, plus
+    ///         what was inherited from fresh), and the effective positions
+    ///         it was read at. Scans the entries before it — operator reads
+    ///         and paused corrections only; the outflows themselves stay O(1).
     function getReconciliationEntrySpent(
         uint256 index
     )
         external
         view
-        returns (uint256 freshSpent, uint256 recycledSpent, uint256 freshEffectivePos, uint256 recycledEffectivePos)
+        returns (
+            uint256 freshSpent,
+            uint256 recycledSpent,
+            uint256 recycledInheritable,
+            uint256 freshEffectivePos,
+            uint256 recycledEffectivePos
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
         return _spent(s, index);
     }
 
-    /// @notice The two monotone sequencing counters and the queue bases the
-    ///         FIFO measures outflow from.
+    /// @notice The monotone sequencing counters: fresh outflow per era,
+    ///         recycled consumption, recycled surplus repatriation.
     function getSideOutflow(
         uint64 era
-    ) external view returns (uint256 freshSeq, uint256 recycledSeq, uint256 freshQueueBase, uint256 recycledQueueBase) {
+    ) external view returns (uint256 freshSeq, uint256 recycledConsumedSeq, uint256 recycledRepatriatedSeq) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.freshOutflowSeqByEra[era], s.recycledOutflowSeq, s.freshQueueBaseByEra[era], s.recycledQueueBase);
+        return (s.freshOutflowSeqByEra[era], s.recycledConsumedSeq, s.recycledRepatriatedSeq);
+    }
+
+    /// @notice Each queue's opening record: whether it is open, the
+    ///         sequencing counter(s) and the credit cumulative it measures
+    ///         from, and the unspent backing that stood at its front when it
+    ///         opened.
+    function getQueueState(
+        uint64 era
+    )
+        external
+        view
+        returns (
+            bool freshOpen,
+            uint256 freshSeqBase,
+            uint256 freshPosBase,
+            uint256 freshLiveAtOpen,
+            uint256 freshCreditCumulative,
+            bool recycledOpen,
+            uint256 recycledConsumedBase,
+            uint256 recycledRepatriatedBase,
+            uint256 recycledPosBase,
+            uint256 recycledBucketAtOpen
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.freshQueueOpenByEra[era],
+            s.freshQueueSeqBaseByEra[era],
+            s.freshQueuePosBaseByEra[era],
+            s.freshQueueLiveAtOpenByEra[era],
+            s.freshCreditCumulativeByEra[era],
+            s.recycledQueueOpen,
+            s.recycledQueueConsumedBase,
+            s.recycledQueueRepatriatedBase,
+            s.recycledQueuePosBase,
+            s.recycledQueueBucketAtOpen
+        );
     }
 
     /// @notice The log's length and the bucket's two reattribution
@@ -430,52 +502,102 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         emit LegacyPacketCapsFixed(packetHash, freshCap, recycledCap, budget);
     }
 
-    /// @dev Append a log entry at the two queues' current positions, opening
-    ///      a queue (its base = the sequencing counter now) on its first entry.
-    function _appendEntry(
+    /// @dev Open each queue on its first POSITIVE credit (Codex #2206 r1: a
+    ///      zero-credit side opens nothing, so an outflow before the side's
+    ///      first real credit can never read that credit as spent) and
+    ///      return the positions the new entry takes — behind every credit
+    ///      that preceded it, including the unspent backing standing at the
+    ///      front when the queue opened (the live row; the bucket).
+    function _openQueues(
+        LibVaipakam.Storage storage s,
+        uint256 fresh,
+        uint256 recycled
+    ) private returns (uint256 freshPos, uint256 recycledPos) {
+        uint64 era = PRE_BACKFILL_ERA;
+        if (fresh != 0 && !s.freshQueueOpenByEra[era]) {
+            s.freshQueueOpenByEra[era] = true;
+            s.freshQueueSeqBaseByEra[era] = s.freshOutflowSeqByEra[era];
+            s.freshQueuePosBaseByEra[era] = s.freshCreditCumulativeByEra[era];
+            s.freshQueueLiveAtOpenByEra[era] = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        }
+        if (recycled != 0 && !s.recycledQueueOpen) {
+            LibVpfiRecycle.seedCreditedCumulative();
+            s.recycledQueueOpen = true;
+            s.recycledQueueConsumedBase = s.recycledConsumedSeq;
+            s.recycledQueueRepatriatedBase = s.recycledRepatriatedSeq;
+            s.recycledQueuePosBase = LibVpfiRecycle.creditPosition(s);
+            s.recycledQueueBucketAtOpen = s.recycleBucket;
+        }
+        freshPos = _freshPosition(s, era);
+        recycledPos = _recycledPosition(s);
+    }
+
+    /// @dev The next fresh position: the unspent backing at the opening plus
+    ///      every credit since. Zero while the queue is not open.
+    function _freshPosition(LibVaipakam.Storage storage s, uint64 era) private view returns (uint256) {
+        if (!s.freshQueueOpenByEra[era]) return 0;
+        return s.freshQueueLiveAtOpenByEra[era] + (s.freshCreditCumulativeByEra[era] - s.freshQueuePosBaseByEra[era]);
+    }
+
+    /// @dev The next recycled position, from the bucket's own stored credit
+    ///      cumulatives. Zero while the queue is not open.
+    function _recycledPosition(LibVaipakam.Storage storage s) private view returns (uint256) {
+        if (!s.recycledQueueOpen) return 0;
+        return s.recycledQueueBucketAtOpen + (LibVpfiRecycle.creditPosition(s) - s.recycledQueuePosBase);
+    }
+
+    /// @dev Append a log entry at the positions taken before its credits.
+    function _pushEntry(
         LibVaipakam.Storage storage s,
         bytes32 key,
         uint256 fresh,
-        uint256 recycled
+        uint256 recycled,
+        uint256 freshPos,
+        uint256 recycledPos
     ) private returns (uint256 index) {
-        uint64 era = PRE_BACKFILL_ERA;
-        if (!s.freshQueueOpenByEra[era]) {
-            s.freshQueueOpenByEra[era] = true;
-            s.freshQueueBaseByEra[era] = s.freshOutflowSeqByEra[era];
-        }
-        if (!s.recycledQueueOpen) {
-            s.recycledQueueOpen = true;
-            s.recycledQueueBase = s.recycledOutflowSeq;
-        }
         index = s.reconciliationLog.length;
         s.reconciliationLog.push(
             LibVaipakam.ReconciliationEntry({
                 key: key,
-                era: era,
+                era: PRE_BACKFILL_ERA,
                 landedAt: uint64(block.timestamp),
                 freshCredit: fresh,
                 recycledCredit: recycled,
-                freshPos: s.freshQueuePosByEra[era],
-                recycledPos: s.recycledQueuePos,
+                freshPos: freshPos,
+                recycledPos: recycledPos,
                 freshShift: 0,
-                recycledShift: 0
+                recycledShift: 0,
+                freshInherited: 0,
+                recycledInherited: 0,
+                recycledConsumedInherited: 0
             })
         );
-        s.freshQueuePosByEra[era] += fresh;
-        s.recycledQueuePos += recycled;
     }
 
-    /// @dev Spent-ness over the LIVE queue (design §5c): the outflow since
-    ///      the queue began, less the entry's effective position, clamped to
-    ///      its credit. The effective position is the recorded one plus the
-    ///      shifts of every earlier entry of the same queue.
+    /// @dev Spent-ness over the LIVE queue (design §5c): each side's
+    ///      inherited figure, plus what the side's outflow since the queue
+    ///      opened attributes to the entry in order — the outflow less the
+    ///      entry's effective position, clamped to the credit that is not
+    ///      already inherited. The effective position is the recorded one
+    ///      plus the shifts of every earlier entry of the same queue. On the
+    ///      recycled side the outflow is consumption plus repatriation; the
+    ///      INHERITABLE part attributes consumption first in queue order,
+    ///      from its own counter, less the consumption the fresh side
+    ///      already inherited from this entry, plus what was inherited
+    ///      from fresh.
     function _spent(
         LibVaipakam.Storage storage s,
         uint256 index
     )
         private
         view
-        returns (uint256 freshSpent, uint256 recycledSpent, uint256 freshEffectivePos, uint256 recycledEffectivePos)
+        returns (
+            uint256 freshSpent,
+            uint256 recycledSpent,
+            uint256 recycledInheritable,
+            uint256 freshEffectivePos,
+            uint256 recycledEffectivePos
+        )
     {
         LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
         int256 freshShift;
@@ -487,10 +609,16 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         }
         freshEffectivePos = _shifted(e.freshPos, freshShift);
         recycledEffectivePos = _shifted(e.recycledPos, recycledShift);
-        uint256 freshOut = s.freshOutflowSeqByEra[e.era] - s.freshQueueBaseByEra[e.era];
-        uint256 recycledOut = s.recycledOutflowSeq - s.recycledQueueBase;
-        freshSpent = _clampSpent(freshOut, freshEffectivePos, e.freshCredit);
-        recycledSpent = _clampSpent(recycledOut, recycledEffectivePos, e.recycledCredit);
+        uint256 freshOut = s.freshOutflowSeqByEra[e.era] - s.freshQueueSeqBaseByEra[e.era];
+        uint256 consumedOut = s.recycledConsumedSeq - s.recycledQueueConsumedBase;
+        uint256 recycledOut = consumedOut + (s.recycledRepatriatedSeq - s.recycledQueueRepatriatedBase);
+        freshSpent = e.freshInherited + _clampSpent(freshOut, freshEffectivePos, e.freshCredit - e.freshInherited);
+        uint256 recycledFifo = e.recycledCredit - e.recycledInherited;
+        recycledSpent = e.recycledInherited + _clampSpent(recycledOut, recycledEffectivePos, recycledFifo);
+        // Consumption already inherited by the fresh side is not offered
+        // again: it counts as consumption this entry has already passed on.
+        recycledInheritable = e.recycledInherited
+            + _clampSpent(consumedOut, recycledEffectivePos + e.recycledConsumedInherited, recycledFifo);
     }
 
     function _shifted(uint256 pos, int256 shift) private pure returns (uint256) {

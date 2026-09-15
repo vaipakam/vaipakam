@@ -569,6 +569,11 @@ library LibRewardCustody {
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r1) — every fresh credit
+        // takes the next position in the era's queue, so a classification
+        // entry's position counts the deliveries before it, not only the
+        // classified ones. Era 0 until slice 4 PR C keys it.
+        s.freshCreditCumulativeByEra[0] += amount;
         credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
         credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
@@ -900,15 +905,20 @@ library LibRewardCustody {
     ///         tokens move in-holder under the deficit split — the absorbed
     ///         portion to restitution, only the excess to live backing.
     ///         The in-holder form of {creditFreshIngress}, same split.
+    /// @param  queued True for a NEW credit (a classification), which takes
+    ///         the next queue position; false for credit moved in by a
+    ///         correction, which keeps its entry's original position.
     function creditFreshFromRow(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow from,
-        uint256 amount
+        uint256 amount,
+        bool queued
     ) internal returns (uint256 toLive, uint256 toRestitution) {
         if (amount == 0) return (0, 0);
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
+        if (queued) s.freshCreditCumulativeByEra[0] += amount;
         move(s, from, LibVaipakam.RewardCustodyRow.LiveFresh, toLive);
         move(s, from, LibVaipakam.RewardCustodyRow.Restitution, toRestitution);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
@@ -937,10 +947,10 @@ library LibRewardCustody {
     ///         the recycled side's consumed accounting: `received` and
     ///         `paid` fall together (the headroom aggregate takes the
     ///         registered corrective debit), the live row unchanged, no
-    ///         custody moved — the tokens left long ago. The FRESH
-    ///         sequencing counter is RETAINED (design §5c, "the ordering
-    ///         counter only ever grows"); the recycled side's rises with
-    ///         the consumption it inherits ({LibVpfiRecycle}).
+    ///         custody moved — the tokens left long ago. NO sequencing
+    ///         counter moves (design §5c, "the ordering counter only ever
+    ///         grows"; Codex #2206 r1): the moved units are spent on the
+    ///         other side by the entry's own inherited figure.
     function inheritFreshDebitAsRecycled(LibVaipakam.Storage storage s, uint256 amount) internal {
         if (amount == 0) return;
         uint256 received = s.rewardBudgetArmedFreshReceived;
@@ -953,15 +963,15 @@ library LibRewardCustody {
 
     /// @notice The reverse: a corrected SPENT recycled split's debit is
     ///         inherited by the fresh side — `received` and `paid` rise
-    ///         together, the live row unchanged, and the fresh sequencing
-    ///         counter of `era` advances by the consumption it now carries
-    ///         (the moved-in credit sits at the entry's original position
-    ///         and is spent there, so later entries read exactly as before).
-    function inheritRecycledDebitAsFresh(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+    ///         together, the live row unchanged, no sequencing counter
+    ///         moved: the moved-in units sit at the entry's original
+    ///         position and are spent there by its inherited figure, so a
+    ///         round trip restores the entry's original spent-ness instead
+    ///         of counting one historical outflow twice (Codex #2206 r1).
+    function inheritRecycledDebitAsFresh(LibVaipakam.Storage storage s, uint256 amount) internal {
         if (amount == 0) return;
         s.rewardBudgetArmedFreshReceived += amount;
         s.rewardBudgetArmedFreshPaid += amount;
-        s.freshOutflowSeqByEra[era] += amount;
     }
 
     // ─── Cross-facet entry (every facet but RewardCustodyFacet and the vault

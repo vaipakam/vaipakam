@@ -1435,13 +1435,13 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _classify(_packetHash(id), fresh, 4e18, fresh, 4e18, keccak256("e-spent"));
         vm.prank(alice);
         (uint256 claimed, , ) = _claim().claimInteractionRewards();
-        (uint256 fs, uint256 rs, , ) = _recon().getReconciliationEntrySpent(0);
+        (uint256 fs, uint256 rs, , , ) = _recon().getReconciliationEntrySpent(0);
         assertEq(fs, claimed, "the claim spent the entry's fresh credit, in order");
         assertEq(rs, 0);
         (uint256 received0, uint256 paid0) = _ledger();
         uint256 bucket0 = _bucket();
         uint256 paidOut0 = _paidOutRecycled();
-        (uint256 freshSeq0, uint256 recycledSeq0, , ) = _recon().getSideOutflow(0);
+        (uint256 freshSeq0, uint256 consumedSeq0, ) = _recon().getSideOutflow(0);
         _reclassify(0, true, fresh, keccak256("r-spent"));
         uint256 unspent = fresh - claimed;
         (uint256 received1, uint256 paid1) = _ledger();
@@ -1450,17 +1450,18 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_live(), 0, "the unspent part left the live row");
         assertEq(_bucket() - bucket0, unspent, "and entered the bucket with its tokens");
         assertEq(_paidOutRecycled() - paidOut0, claimed, "the spent part is inherited recycled consumption");
-        (uint256 freshSeq1, uint256 recycledSeq1, , ) = _recon().getSideOutflow(0);
+        (uint256 freshSeq1, uint256 consumedSeq1, ) = _recon().getSideOutflow(0);
         assertEq(freshSeq1, freshSeq0, "the fresh sequencing counter is retained");
-        assertEq(recycledSeq1 - recycledSeq0, claimed, "the recycled one carries the inherited consumption");
+        assertEq(consumedSeq1, consumedSeq0, "and the recycled one does not move for an inherited debit");
         LibVaipakam.ReconciliationEntry memory e = _recon().getReconciliationEntry(0);
         assertEq(e.freshCredit, 0);
         assertEq(e.recycledCredit, 4e18 + fresh);
         assertEq(e.freshShift, -int256(unspent));
-        assertEq(e.recycledShift, int256(fresh));
-        (fs, rs, , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(e.recycledShift, int256(unspent), "later entries shift by the unspent part only");
+        assertEq(e.recycledInherited, claimed, "the spent part is the entry's inherited figure");
+        (fs, rs, , , ) = _recon().getReconciliationEntrySpent(0);
         assertEq(fs, 0);
-        assertEq(rs, claimed, "the moved-in spent credit reads spent at its position");
+        assertEq(rs, claimed, "the moved-in spent credit reads spent by inheritance");
         (, uint256 reIn, ) = _recon().getReconciliationTotals();
         assertEq(reIn, fresh);
     }
@@ -1482,8 +1483,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _reclassify(0, true, each, keccak256("rA")); // A, still unspent, moved out whole
         vm.prank(alice);
         (uint256 claimed, , ) = _claim().claimInteractionRewards();
-        (uint256 fsA, , , ) = _recon().getReconciliationEntrySpent(0);
-        (uint256 fsB, , uint256 effB, ) = _recon().getReconciliationEntrySpent(1);
+        (uint256 fsA, , , , ) = _recon().getReconciliationEntrySpent(0);
+        (uint256 fsB, , , uint256 effB, ) = _recon().getReconciliationEntrySpent(1);
         assertEq(effB, 0, "B's effective position fell to the front");
         assertEq(fsB, claimed, "the payout consumed B");
         assertEq(fsA, 0);
@@ -1525,10 +1526,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 45, id);
         _classify(_packetHash(id), 0, 10e18, 0, 10e18, keccak256("e-r"));
         _mut().consumeRecycleRaw(4e18);
-        (, uint256 rs, , ) = _recon().getReconciliationEntrySpent(0);
+        (, uint256 rs, uint256 inheritable, , ) = _recon().getReconciliationEntrySpent(0);
         assertEq(rs, 4e18, "the consumption spent the entry, in order");
+        assertEq(inheritable, 4e18, "consumption is inheritable");
         (uint256 received0, uint256 paid0) = _ledger();
-        (uint256 freshSeq0, uint256 recycledSeq0, , ) = _recon().getSideOutflow(0);
+        (uint256 freshSeq0, uint256 consumedSeq0, ) = _recon().getSideOutflow(0);
         _reclassify(0, false, 10e18, keccak256("r-r"));
         (uint256 received1, uint256 paid1) = _ledger();
         assertEq(received1 - received0, 10e18, "received rose by the whole credit");
@@ -1536,13 +1538,152 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_live(), 6e18, "the unspent part is live backing");
         assertEq(_bucket(), 0);
         assertEq(_paidOutRecycled(), 0, "the recycled consumption gave the debit back");
-        (uint256 freshSeq1, uint256 recycledSeq1, , ) = _recon().getSideOutflow(0);
-        assertEq(recycledSeq1, recycledSeq0, "the recycled sequencing counter is retained");
-        assertEq(freshSeq1 - freshSeq0, 4e18, "the fresh one carries the inherited consumption");
-        (uint256 fs, , , ) = _recon().getReconciliationEntrySpent(0);
-        assertEq(fs, 4e18, "and the moved-in credit reads spent by exactly that");
+        (uint256 freshSeq1, uint256 consumedSeq1, ) = _recon().getSideOutflow(0);
+        assertEq(consumedSeq1, consumedSeq0, "the recycled sequencing counter is retained");
+        assertEq(freshSeq1, freshSeq0, "and the fresh one does not move for an inherited debit");
+        (uint256 fs, , , , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(fs, 4e18, "the moved-in credit reads spent by exactly the inherited part");
+        assertEq(_recon().getReconciliationEntry(0).freshInherited, 4e18);
         (, , uint256 reOut) = _recon().getReconciliationTotals();
         assertEq(reOut, 10e18);
+    }
+
+    /// Codex #2206 r1 — a round trip restores the entry's original
+    /// spent-ness: five of ten spent, moved to recycled and back, still reads
+    /// five spent, with the ledgers back where they were and no sequencing
+    /// counter moved.
+    function test_Reclassify_RoundTrip_RestoresSpentness() public {
+        _activatedMirror();
+        (, uint256 expected) = _seedPayable(alice);
+        uint256 fresh = expected + 5e18;
+        _seedDiamond(fresh);
+        bytes32 id = keccak256("legacy-round");
+        _untyped(fresh, 50, id);
+        _classify(_packetHash(id), fresh, 0, fresh, 0, keccak256("e-round"));
+        vm.prank(alice);
+        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        (uint256 received0, uint256 paid0) = _ledger();
+        (uint256 freshSeq0, uint256 consumed0, uint256 repatriated0) = _recon().getSideOutflow(0);
+        _reclassify(0, true, fresh, keccak256("r-out"));
+        _reclassify(0, false, fresh, keccak256("r-back"));
+        (uint256 received1, uint256 paid1) = _ledger();
+        assertEq(received1, received0, "received restored");
+        assertEq(paid1, paid0, "paid restored");
+        assertEq(_live(), fresh - claimed, "the unspent part is live again");
+        assertEq(_bucket(), 0);
+        (uint256 fs, uint256 rs, , , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(fs, claimed, "the original spent-ness, not double");
+        assertEq(rs, 0);
+        LibVaipakam.ReconciliationEntry memory e = _recon().getReconciliationEntry(0);
+        assertEq(e.freshInherited + e.recycledInherited, 0, "the inherited figures unwound");
+        assertEq(e.freshShift, 0);
+        assertEq(e.recycledShift, 0);
+        (uint256 freshSeq1, uint256 consumed1, uint256 repatriated1) = _recon().getSideOutflow(0);
+        assertEq(freshSeq1, freshSeq0);
+        assertEq(consumed1, consumed0);
+        assertEq(repatriated1, repatriated0);
+    }
+
+    /// Codex #2206 r1 — credit that left by surplus REPATRIATION is spent
+    /// but not inheritable: consumption is attributed first in queue order
+    /// from its own counter, and only that much (plus what was inherited)
+    /// may move to fresh as a debit.
+    function test_Reclassify_RepatriatedCreditIsNotInheritable() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("legacy-repat");
+        _untyped(10e18, 51, id);
+        _classify(_packetHash(id), 0, 10e18, 0, 10e18, keccak256("e-repat"));
+        _mut().debitRepatriationSurplusRaw(6e18); // left for Base: spent, not consumption
+        (, uint256 rs, uint256 inheritable, , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(rs, 6e18, "spent by the repatriation");
+        assertEq(inheritable, 0, "none of it is consumption");
+        _mut().consumeRecycleRaw(2e18); // 2 more spent, and those 2 read as consumption, first in order
+        (, rs, inheritable, , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(rs, 8e18);
+        assertEq(inheritable, 2e18, "consumption attributed first in queue order");
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationSpentRecycledNotInheritable.selector, 0, 8e18, 2e18));
+        _recon().reclassifyReconciliationEntry(0, false, 10e18, keccak256("r-repat"));
+        _admin().unpause();
+        (uint256 received0, uint256 paid0) = _ledger();
+        _reclassify(0, false, 4e18, keccak256("r-repat-4")); // 2 unspent with tokens + 2 consumption inherited
+        assertEq(_live(), 2e18, "the unspent part moved with its tokens");
+        assertEq(_bucket(), 0);
+        (uint256 received1, uint256 paid1) = _ledger();
+        assertEq(received1 - received0, 4e18);
+        assertEq(paid1 - paid0, 2e18, "the fresh side inherited the consumption");
+        assertEq(_paidOutRecycled(), 0, "which the recycled consumption gave back");
+        LibVaipakam.ReconciliationEntry memory e = _recon().getReconciliationEntry(0);
+        assertEq(e.freshInherited, 2e18);
+        assertEq(e.recycledConsumedInherited, 2e18);
+        (, rs, inheritable, , ) = _recon().getReconciliationEntrySpent(0);
+        assertEq(rs, 6e18, "what remains is the repatriated part");
+        assertEq(inheritable, 0, "and consumption already passed on is not offered again");
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationSpentRecycledNotInheritable.selector, 0, 1e18, 0));
+        _recon().reclassifyReconciliationEntry(0, false, 1e18, keccak256("r-repat-1"));
+        _admin().unpause();
+    }
+
+    /// Codex #2206 r1 — a zero-credit side opens no queue: an outflow before
+    /// the side's first real credit cannot read that credit as spent.
+    function test_Reclassify_AZeroCreditSideDoesNotOpenItsQueue() public {
+        _activatedMirror();
+        (, uint256 expected) = _seedPayable(alice);
+        _seedDiamond(expected + 30e18);
+        _untyped(10e18, 52, keccak256("R"));
+        _classify(_packetHash(keccak256("R")), 0, 10e18, 0, 10e18, keccak256("e-R")); // recycled only
+        (bool freshOpen, , , , , bool recycledOpen, , , , ) = _recon().getQueueState(0);
+        assertFalse(freshOpen, "the fresh queue stays closed");
+        assertTrue(recycledOpen);
+        // A fresh outflow happens before any fresh classification exists.
+        _deliverStamped(expected + 1e18, expected + 1e18, 0, 53, keccak256("D")); // counted: live backing
+        vm.prank(alice);
+        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        assertGt(claimed, 0);
+        _untyped(10e18, 54, keccak256("F"));
+        _classify(_packetHash(keccak256("F")), 10e18, 0, 10e18, 0, keccak256("e-F")); // the first fresh credit
+        (uint256 fs, , , , ) = _recon().getReconciliationEntrySpent(1);
+        assertEq(fs, 0, "the earlier outflow did not consume the later credit");
+    }
+
+    /// Codex #2206 r1 — every credit of a side occupies a queue position, not
+    /// only the classified ones: classify A for 10, absorb a fee for 10,
+    /// classify B for 10, consume 15 — A is spent, the fee took 5, B none.
+    function test_Reclassify_EveryBucketCreditOccupiesAPosition() public {
+        _activatedMirror();
+        _seedDiamond(20e18);
+        _untyped(10e18, 55, keccak256("A"));
+        _classify(_packetHash(keccak256("A")), 0, 10e18, 0, 10e18, keccak256("e-A"));
+        uint256 before = vpfi.balanceOf(address(diamond));
+        vpfi.mint(address(diamond), 10e18);
+        _mut().creditInflowRawWithBefore(LibVpfiRecycle.RecycleSource.NotificationFee, 1, 10e18, before); // a fee, in between
+        _untyped(10e18, 56, keccak256("B"));
+        _classify(_packetHash(keccak256("B")), 0, 10e18, 0, 10e18, keccak256("e-B"));
+        assertEq(_recon().getReconciliationEntry(1).recycledPos, 20e18, "B sits behind A and the fee");
+        _mut().consumeRecycleRaw(15e18);
+        (, uint256 rsA, , , ) = _recon().getReconciliationEntrySpent(0);
+        (, uint256 rsB, , , ) = _recon().getReconciliationEntrySpent(1);
+        assertEq(rsA, 10e18, "A consumed first");
+        assertEq(rsB, 0, "the fee absorbed the rest, B untouched");
+    }
+
+    /// Codex #2206 r1 (P1) — a reattribution is not absorption: on a chain
+    /// whose stored cumulative is unseeded because its bucket is relocated
+    /// custody only, moving credit into and out of the bucket leaves the
+    /// reported cumulative exactly where it was.
+    function test_Reclassify_DoesNotMoveTheReportedAbsorption() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        _untyped(10e18, 57, keccak256("legacy-abs"));
+        _classify(_packetHash(keccak256("legacy-abs")), 10e18, 0, 10e18, 0, keccak256("e-abs"));
+        uint256 reported0 = _cfg().getRecycleCreditedCumulative();
+        _reclassify(0, true, 6e18, keccak256("r-abs-in")); // unspent, with tokens: bucket 6
+        assertEq(_bucket(), 6e18);
+        assertEq(_cfg().getRecycleCreditedCumulative(), reported0, "nothing absorbed");
+        _reclassify(0, false, 6e18, keccak256("r-abs-out"));
+        assertEq(_cfg().getRecycleCreditedCumulative(), reported0, "still nothing");
     }
 
     /// The envelope: the inventory that arrived BEFORE the activation

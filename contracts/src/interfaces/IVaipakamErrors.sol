@@ -474,6 +474,11 @@ interface IVaipakamErrors {
     error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
     /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
     error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice Spent recycled credit moves to fresh only as far as
+    ///         CONSUMPTION (attributed first in queue order) or an inherited
+    ///         debit covers it; credit that left by surplus repatriation has
+    ///         no fresh-side ledger to inherit it.
+    error ReconciliationSpentRecycledNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
     /// @notice The envelope under this snapshot id was already imported.
     error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
     /// @notice The stated dispositions do not resolve the envelope exactly.

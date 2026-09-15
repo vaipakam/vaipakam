@@ -156,9 +156,10 @@ contract RewardCustodyInvariant is SetupTest {
     /// reads never fall: whatever the last action was (a reclassification
     /// included), each is at least what it read at that action's start.
     function invariant_OutflowSequencingCountersAreMonotone() public view {
-        (uint256 freshSeq, uint256 recycledSeq, , ) = RewardReconciliationFacet(address(diamond)).getSideOutflow(0);
+        (uint256 freshSeq, uint256 consumed, uint256 repatriated) =
+            RewardReconciliationFacet(address(diamond)).getSideOutflow(0);
         assertGe(freshSeq, handler.freshSeqAtActionStart(), "fresh sequencing counter never falls");
-        assertGe(recycledSeq, handler.recycledSeqAtActionStart(), "recycled sequencing counter never falls");
+        assertGe(consumed + repatriated, handler.recycledSeqAtActionStart(), "recycled sequencing counters never fall");
     }
 
     /// Reward flows never touch the Diamond's own balance: it holds exactly
@@ -222,8 +223,10 @@ contract RewardCustodyHandler is Test {
 
     function _start() internal {
         calls++;
-        (freshSeqAtActionStart, recycledSeqAtActionStart, , ) =
+        (uint256 freshSeq, uint256 consumed, uint256 repatriated) =
             RewardReconciliationFacet(diamond).getSideOutflow(0);
+        freshSeqAtActionStart = freshSeq;
+        recycledSeqAtActionStart = consumed + repatriated;
     }
 
     function fund(uint256 seed) external {

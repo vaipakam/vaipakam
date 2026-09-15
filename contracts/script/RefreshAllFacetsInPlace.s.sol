@@ -801,6 +801,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address remitReceiverP2 =
                 _readAddrOptional(".rewardRemittanceReceiver");
             if (liveRecvP2 != address(0)) {
+                // #1566 closure 2 cutover PR 2 (Codex #2200 r7) — the LIVE
+                // receiver is probed FIRST, then a distinct artifact address:
+                // a stale record naming a proxy this signer can no longer
+                // upgrade must not abort the run before the live receiver is
+                // reached. Same order as every other probe.
+                _probeUpgradeRemitReceiver(liveRecvP2);
                 if (
                     remitReceiverP2 != address(0)
                         && remitReceiverP2 != liveRecvP2
@@ -823,7 +829,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 remitReceiverP2 != address(0) || isCanonicalRewardP2,
                 "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
             );
-            _probeUpgradeRemitReceiver(remitReceiverP2);
+            // The artifact-only case (no live receiver registered): the live
+            // one, where it exists, was probed first above.
+            if (liveRecvP2 == address(0)) _probeUpgradeRemitReceiver(remitReceiverP2);
         }
 
         // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──

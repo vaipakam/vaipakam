@@ -3113,7 +3113,8 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
+        s[11] = RewardReconciliationFacet.getQueueState.selector;
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
