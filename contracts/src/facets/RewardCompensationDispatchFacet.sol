@@ -2000,9 +2000,15 @@ contract RewardCompensationDispatchFacet is
         // the derived floor can manufacture the very value that is missing out
         // of `bucket + paidOut`, which is exactly how a short counter slipped
         // through the one-sided check.
-        uint256 destinations = bucket + s.paidOutRecycled + accum;
-        uint256 claimed = s.recycleCreditedCumulative
-            + s.recycleCustodyRelocatedCumulative;
+        //
+        // The identity's ONE implementation (Codex #2206 r9): the stranded
+        // total was assigned above, so both sides read the seeded figure,
+        // and the repatriated-out destination (#1568 C2) and the two
+        // reattribution terms of a reclassification (#1566 closure 2
+        // cutover PR 2) are in it — a correction landing before the
+        // ceremony completes, a legitimate action on an upgraded Diamond,
+        // no longer reads as a divergence and blocks the backfill for good.
+        (uint256 claimed, uint256 destinations) = LibVpfiRecycle.compositionSides(s);
         if (claimed > destinations) revert SeedDoesNotReconcile();
         if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
             revert SeedDoesNotReconcile();

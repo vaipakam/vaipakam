@@ -6403,11 +6403,24 @@ PR C.**
 > record another take had charged, Codex #2206 r7), and its release
 > reverses exactly that on exactly those records: the recycled charge
 > first, then what a correction had meanwhile moved to the entry's fresh
-> record as an inherited debit — that charge is cleared too and stranded
-> THERE (`received` and `paid` fall together, no headroom; a later
-> correction can never inherit a payout that never happened) — and none of
-> it is given back on the bucket's payout figure a second time (Codex #2206
-> r6, r7). What each queue's pending takes still hold is a counter the
+> record as an inherited debit — that inheritance is UNDONE: the units
+> return to the recycled record, spent and uncharged (stranded like the
+> rest of the take; a later correction can never inherit a payout that
+> never happened), the fresh ledger's `received` and `paid` fall together
+> (no headroom), and the bucket's payout figure takes the consumption back
+> as a reattribution, so the release then gives up the remit's WHOLE sent
+> share and the stranded figure carries the full physical loss the
+> coverage relation must see (Codex #2206 r6, r7, r9 — stranding the part
+> on the fresh side instead left the coverage allowance short by exactly
+> it, on a commitment restored in full to the recycled side). The
+> bucket-composition identity has ONE implementation,
+> `LibVpfiRecycle.compositionSides` — credited + relocated + reattributed-in
+> = bucket + paid-out + stranded + repatriated-out + reattributed-out —
+> which the one-time stranded seed's completion reads, so a correction
+> landing before that ceremony completes no longer blocks the backfill
+> (r9); the mesh watcher restates it with the same two terms. The fresh
+> view answers only an era that exists (r9). What each queue's pending
+> takes still hold is a counter the
 > outflow adds to and the walk subtracts from, never a scan of the backlog
 > (Codex #2206 r7). An inherited debit arrives
 > spent and charged; only spent credit the side's ledger charged — fresh

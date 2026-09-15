@@ -74,6 +74,7 @@ export interface CoverageGap {
     | 'own-ledger'
     | 'own-ledger-composition'
     | 'own-ledger-repat'
+    | 'own-ledger-reattribution'
     | 'own-ledger-backing';
   detail: string;
   /**

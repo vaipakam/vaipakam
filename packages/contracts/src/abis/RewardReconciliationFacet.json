@@ -159,11 +159,6 @@
         "name": "restitutionRow",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "strandedInherited",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -612,18 +607,7 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "found",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "stranded",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -816,6 +800,31 @@
       },
       {
         "name": "spentMoved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReconciliationInheritanceUndone",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "entryIndex",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2950,6 +2959,17 @@
         "name": "inheritable",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationUnknownEra",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

@@ -495,6 +495,11 @@ interface IVaipakamErrors {
     error ReconciliationQueueBehind(uint8 side);
     /// @notice A queue side that does not exist (0 fresh, 1 recycled).
     error ReconciliationUnknownSide(uint8 side);
+    /// @notice The fresh queue is per era, and only the pre-backfill era
+    ///         exists until the transport epochs land: a view asked about any
+    ///         other era refuses rather than pairing an empty era-specific
+    ///         queue with the global custody figures (Codex #2206 r9).
+    error ReconciliationUnknownEra(uint64 era);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
     ///         fresh credit a correction may move with its tokens is bounded
     ///         by the live row net of the outstanding fresh commitments, the

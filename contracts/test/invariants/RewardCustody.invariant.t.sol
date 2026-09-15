@@ -165,7 +165,7 @@ contract RewardCustodyInvariant is SetupTest {
     function invariant_SpentFiguresFallOnlyByACorrection() public view {
         if (handler.lastActionWasCorrection()) return;
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
-        (, , uint256 freshSpent, , , , , , uint256 released, , ) = recon.getFreshQueueState(0);
+        (, , uint256 freshSpent, , , , , , uint256 released, ) = recon.getFreshQueueState(0);
         (, , uint256 recycledSpent, , , ) = recon.getRecycledQueueState();
         assertGe(freshSpent, handler.freshSpentAtActionStart(), "the fresh spent figure never falls");
         assertGe(recycledSpent, handler.recycledSpentAtActionStart(), "the recycled spent figure never falls");
@@ -180,7 +180,7 @@ contract RewardCustodyInvariant is SetupTest {
     /// disagree, under every interleaving.
     function invariant_UnspentQueuesAreBacked() public view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
-        (, uint256 freshUnspent, uint256 freshSpent, uint256 freshPaid, , uint256 liveRow, , uint256 unreleased, , uint256 restitutionRow, ) =
+        (, uint256 freshUnspent, uint256 freshSpent, uint256 freshPaid, , uint256 liveRow, , uint256 unreleased, , uint256 restitutionRow) =
             recon.getFreshQueueState(0);
         (, uint256 recycledUnspent, uint256 recycledSpent, uint256 consumed, , ) = recon.getRecycledQueueState();
         assertLe(freshPaid, freshSpent, "paid <= spent");
@@ -208,7 +208,7 @@ contract RewardCustodyInvariant is SetupTest {
     function _freshQueueMatchesTheLog() internal view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         (uint256 entries, , ) = recon.getReconciliationTotals();
-        (uint256 frontier, uint256 unspent, uint256 spent, uint256 paid, uint256 pending, , , , , , ) =
+        (uint256 frontier, uint256 unspent, uint256 spent, uint256 paid, uint256 pending, , , , , ) =
             recon.getFreshQueueState(0);
         uint256 sumUnspent;
         uint256 sumSpent;
@@ -265,7 +265,7 @@ contract RewardCustodyInvariant is SetupTest {
     function _absorbedRecordsMatchTheLog() internal view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         (uint256 entries, , ) = recon.getReconciliationTotals();
-        (, , , , uint256 pending, , uint256 frontier, uint256 unreleased, , , ) = recon.getFreshQueueState(0);
+        (, , , , uint256 pending, , uint256 frontier, uint256 unreleased, , ) = recon.getFreshQueueState(0);
         uint256 sumHeld;
         for (uint256 i = 0; i < entries; ++i) {
             RewardReconciliationFacet.Spent memory sp = recon.getReconciliationEntrySpent(i);
@@ -375,7 +375,7 @@ contract RewardCustodyHandler is Test {
     function _start() internal {
         calls++;
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
-        (, , uint256 freshSpent, , , , , , uint256 released, , ) = recon.getFreshQueueState(0);
+        (, , uint256 freshSpent, , , , , , uint256 released, ) = recon.getFreshQueueState(0);
         (, , uint256 recycledSpent, , , ) = recon.getRecycledQueueState();
         freshSpentAtActionStart = freshSpent;
         recycledSpentAtActionStart = recycledSpent;

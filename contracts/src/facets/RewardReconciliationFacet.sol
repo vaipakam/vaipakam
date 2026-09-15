@@ -112,6 +112,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     event ReconciliationEntryReclassified(
         uint256 indexed entryIndex, bytes32 indexed entryId, bool freshToRecycled, uint256 unspentMoved, uint256 spentMoved
     );
+    /// @notice A released remit's consumption that a correction had
+    ///         inherited to an entry's fresh record was un-inherited by the
+    ///         release: the payout never happened, so the units returned to
+    ///         the recycled record, spent and uncharged (Codex #2206 r9).
+    /// @custom:event-category state-change/reward-custody
+    event ReconciliationInheritanceUndone(uint256 indexed remitId, uint256 indexed entryIndex, uint256 amount);
     /// @notice The pre-stamp envelope was imported, whole and once.
     /// @custom:event-category state-change/reward-custody
     event LegacyEnvelopeImported(
@@ -215,8 +221,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (!LibRewardCustody.queueSettled(s, LibRewardCustody.SIDE_RECYCLED, era)) {
             revert ReconciliationQueueBehind(LibRewardCustody.SIDE_RECYCLED);
         }
-        (uint256 movingUnspent, uint256 movingSpent) =
-            freshToRecycled ? _moveToRecycled(s, index, amount) : _moveToFresh(s, index, amount);
+        uint256 movingUnspent;
+        uint256 movingSpent;
+        if (freshToRecycled) {
+            (movingUnspent, movingSpent) = _splitFreshMove(s, index, amount);
+            _moveToRecycled(s, index, movingUnspent, movingSpent);
+        } else {
+            (movingUnspent, movingSpent) = _moveToFresh(s, index, amount);
+        }
         emit ReconciliationEntryReclassified(index, entryId, freshToRecycled, movingUnspent, movingSpent);
     }
 
@@ -348,10 +360,48 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         );
     }
 
-    /// @notice Diamond-internal: {LibRewardCustody.reverseRemitTake}.
-    function reconciliationReverseRemitTake(uint256 remitId) external returns (uint256 found, uint256 stranded) {
+    /// @notice Diamond-internal: a released remit's recorded consumption
+    ///         reversed on exactly the records its take wrote, by exactly
+    ///         what it wrote there (its payout never happened). A record's
+    ///         recycled charge is lowered first; what is no longer there a
+    ///         correction had meanwhile moved to the entry's FRESH record as
+    ///         an inherited debit, and that inheritance is UNDONE — the units
+    ///         return to the recycled record, spent and uncharged (stranded
+    ///         like the rest of the take, never inheritable), the fresh
+    ///         ledger's `received` and `paid` fall together, and the bucket's
+    ///         payout figure takes the consumption back as a reattribution —
+    ///         so the caller then reverses the remit's WHOLE sent share and
+    ///         the stranded figure carries the full physical loss the
+    ///         coverage relation must see (Codex #2206 r7, r9). What neither
+    ///         record holds is a defect (an entry's charges always sum to
+    ///         the consumption attributed to it) and refuses. The
+    ///         reservation's record is cleared: a release is one-shot.
+    function reconciliationReverseRemitTake(uint256 remitId) external {
         _requireDiamondInternal();
-        return LibRewardCustody.reverseRemitTake(LibVaipakam.storageSlot(), remitId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256[] storage takes = r.classifiedTakes;
+        uint256 n = takes.length;
+        uint256 found;
+        for (uint256 i = 0; i < n; ++i) {
+            uint256 packed = takes[i];
+            uint256 index = packed >> 128;
+            uint256 amount = packed & type(uint128).max;
+            LibVaipakam.SideRecord storage rec = s.recycledRecords[index];
+            uint256 c = rec.charged;
+            if (amount > c) {
+                uint256 inherited = amount - c;
+                if (inherited > s.freshRecords[index].charged) {
+                    revert ReconciliationQueueInconsistent(LibRewardCustody.SIDE_RECYCLED);
+                }
+                _moveToRecycled(s, index, 0, inherited);
+                emit ReconciliationInheritanceUndone(remitId, index, inherited);
+            }
+            rec.charged = uint128(rec.charged - amount);
+            found += amount;
+        }
+        s.recycledConsumedTotal -= found;
+        delete r.classifiedTakes;
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────
@@ -471,8 +521,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         still hold unwritten (a counter, never a scan), the live row;
     ///         the absorbed records'
     ///         frontier, unreleased and released figures, the restitution
-    ///         row; and what a released remit's inherited consumption
-    ///         stranded on the fresh ledger. Invariants: `paid ≤ spent`,
+    ///         row. Only a known era is answered — the pre-backfill era
+    ///         until the transport epochs land — an unknown one refusing
+    ///         rather than pairing an empty era-keyed queue with the global
+    ///         custody figures (Codex #2206 r9). Invariants: `paid ≤ spent`,
     ///         `unspent ≤ liveRow`, `unreleased ≤ restitutionRow`, every
     ///         entry before a frontier exhausted.
     function getFreshQueueState(
@@ -490,10 +542,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             uint256 absorbedFrontier,
             uint256 absorbedUnreleased,
             uint256 absorbedReleased,
-            uint256 restitutionRow,
-            uint256 strandedInherited
+            uint256 restitutionRow
         )
     {
+        LibRewardCustody.requireKnownEra(era);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
             s.freshFrontierByEra[era],
@@ -505,8 +557,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             s.absorbedFrontier,
             s.absorbedUnreleased,
             s.absorbedReleasedTotal,
-            s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution],
-            s.freshStrandedInheritedCumulative
+            s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution]
         );
     }
 
@@ -605,21 +656,17 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         uint256 recycledInheritable;
     }
 
-    /// @dev Fresh → recycled. The absorbed part still held is restitution
-    ///      custody: not a correction's to move. Unspent credit moves first,
-    ///      with its tokens; only then spent credit, as an inherited debit
-    ///      — so what an entry keeps after any move that took spent units is
-    ///      all spent, which is the correct-at-ingress result (design §5c).
-    ///      The queues move FIRST: the units leave the entry's fresh record
-    ///      and enter its recycled record — at its own position, the
-    ///      recycled frontier moving back to it if it now has anything
-    ///      free; the row primitive then records nothing for the token move.
-    function _moveToRecycled(
+    /// @dev A correction's fresh → recycled split. The absorbed part still
+    ///      held is restitution custody: not a correction's to move. Unspent
+    ///      credit moves first, with its tokens; only then spent credit, as
+    ///      an inherited debit — and only what the fresh ledger charged — so
+    ///      what an entry keeps after any move that took spent units is all
+    ///      spent, which is the correct-at-ingress result (design §5c).
+    function _splitFreshMove(
         LibVaipakam.Storage storage s,
         uint256 index,
         uint256 amount
-    ) private returns (uint256 movingUnspent, uint256 movingSpent) {
-        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
+    ) private view returns (uint256 movingUnspent, uint256 movingSpent) {
         LibVaipakam.SideRecord storage f = s.freshRecords[index];
         uint256 free = f.amount - f.spent;
         uint256 movable = free + f.spent;
@@ -627,6 +674,24 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         movingUnspent = amount < free ? amount : free;
         movingSpent = amount - movingUnspent;
         if (movingSpent > f.charged) revert ReconciliationSpentFreshNotInheritable(index, movingSpent, f.charged);
+    }
+
+    /// @dev Fresh → recycled by an explicit split: a correction's
+    ///      ({_splitFreshMove}), or a release's un-inheritance of spent
+    ///      credit alone (Codex #2206 r9). The queues move FIRST: the units
+    ///      leave the entry's fresh record and enter its recycled record —
+    ///      at its own position, the recycled frontier moving back to it if
+    ///      it now has anything free; the row primitive then records nothing
+    ///      for the token move.
+    function _moveToRecycled(
+        LibVaipakam.Storage storage s,
+        uint256 index,
+        uint256 movingUnspent,
+        uint256 movingSpent
+    ) private {
+        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
+        LibVaipakam.SideRecord storage f = s.freshRecords[index];
+        uint256 amount = movingUnspent + movingSpent;
         f.amount -= uint128(amount);
         f.spent -= uint128(movingSpent);
         f.charged -= uint128(movingSpent);

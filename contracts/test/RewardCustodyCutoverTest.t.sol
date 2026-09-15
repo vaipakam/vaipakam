@@ -18,6 +18,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -1132,6 +1133,9 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     function _recon() internal view returns (RewardReconciliationFacet) {
         return RewardReconciliationFacet(address(diamond));
     }
+    function _agg() internal view returns (RewardAggregatorFacet) {
+        return RewardAggregatorFacet(address(diamond));
+    }
     /// An untyped (old-wire) delivery: no shares, the whole amount lands in
     /// the `Unclassified` row on an activated deployment.
     function _untyped(uint256 amount, uint256 remitId, bytes32 id) internal {
@@ -1169,7 +1173,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         view
         returns (uint256 frontier, uint256 unspent, uint256 spent, uint256 paid, uint256 pending, uint256 liveRow)
     {
-        (frontier, unspent, spent, paid, pending, liveRow, , , , , ) = _recon().getFreshQueueState(0);
+        (frontier, unspent, spent, paid, pending, liveRow, , , , ) = _recon().getFreshQueueState(0);
     }
     /// The absorbed records: frontier, unreleased, released, the restitution
     /// row.
@@ -1178,7 +1182,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         view
         returns (uint256 frontier, uint256 unreleased, uint256 released, uint256 restitutionRow)
     {
-        (, , , , , , frontier, unreleased, released, restitutionRow, ) = _recon().getFreshQueueState(0);
+        (, , , , , , frontier, unreleased, released, restitutionRow) = _recon().getFreshQueueState(0);
     }
     /// The recycled queue: frontier, unspent, spent, consumed, pending.
     function _rqueue()
@@ -2433,15 +2437,19 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_spentOf(2).recycledInheritable, 10e18, "C: its remit stands");
     }
 
-    /// Codex #2206 r6 (P1) — a released remit whose consumption a correction
-    /// had already moved to the fresh ledger reverses nothing of another
-    /// remit's units: R1 consumed A; A was lifted to fresh (the debit
-    /// inherited, the bucket's payout figure given back); B was consumed by
-    /// R2. Releasing R1 finds nothing in [A, A], strands the inherited part
-    /// on the fresh ledger (`received` and `paid` fall together, no
-    /// headroom), leaves the bucket's payout figure — R2's — alone, and B
-    /// stays inheritable.
-    function test_Reclassify_AReleasedRemitStrandsItsInheritedPartOnFresh() public {
+    /// Codex #2206 r6 (P1), r9 (P1) — a released remit whose consumption a
+    /// correction had already moved to the fresh ledger reverses nothing of
+    /// another remit's units, and UN-INHERITS its own: R1 consumed A; A was
+    /// lifted to fresh (the debit inherited, the bucket's payout figure
+    /// given back); B was consumed by R2. Releasing R1 finds nothing charged
+    /// on A's recycled record, so the inherited 10 return to it — spent and
+    /// uncharged, never inheritable — the fresh ledger's `received` and
+    /// `paid` fall together (no headroom), the payout figure takes the
+    /// consumption back and gives up the WHOLE sent share in one release,
+    /// and the stranded figure carries the full physical loss, so bucket +
+    /// stranded covers the restored commitment. R2's payout and B stay
+    /// untouched.
+    function test_Reclassify_AReleasedRemitUndoesTheInheritanceOfItsTake() public {
         _activatedMirror();
         _seedDiamond(20e18);
         bytes32 hA = _packetHash(keccak256("A"));
@@ -2455,27 +2463,46 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_spentOf(0).freshInheritable, 10e18, "on A's fresh record, charged");
         assertEq(_paidOutRecycled(), 0, "the bucket's payout figure gave R1's payout back");
         (uint256 received0, uint256 paid0) = _ledger();
+        (, uint256 reIn0, uint256 reOut0) = _recon().getReconciliationTotals();
         _untyped(10e18, 83, keccak256("B"));
         _evidence(hB, 10e18);
         _classify(hB, 0, 10e18, keccak256("e-B"));
         _mut().consumeRecycleRawAsRemit(10e18, 922); // R2: B's 10
         assertEq(_paidOutRecycled(), 10e18, "R2's payout");
+        (, uint256 stranded0, , , ) = _agg().getRecycleCompositionPosition();
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardReconciliationFacet.ReconciliationInheritanceUndone(921, 0, 10e18);
         _mut().restoreReleasedRemitRaw(10e18, 10e18, 921); // R1 released
-        _mut().setOutstandingCommitRaw(0, 0);
         assertEq(_spentOf(1).recycledInheritable, 10e18, "B untouched: its consumption is R2's");
-        assertEq(_paidOutRecycled(), 10e18, "R2's payout figure untouched: R1's was given back already");
+        assertEq(_paidOutRecycled(), 10e18, "R2's payout figure untouched: R1's was taken back and given up in one release");
+        RewardReconciliationFacet.Spent memory sp = _spentOf(0);
+        assertEq(sp.freshSpent, 0, "nothing of A is fresh any more");
+        assertEq(sp.freshUnspent, 0);
+        assertEq(sp.recycledSpent, 10e18, "A's 10 are back on its recycled record, spent");
+        assertEq(sp.recycledInheritable, 0, "and uncharged: the payout never happened");
+        LibVaipakam.ReconciliationEntry memory e = _entry(0);
+        assertEq(e.freshCredit, 0, "the entry follows");
+        assertEq(e.recycledCredit, 10e18);
+        (, , uint256 cf, uint256 cr, ) = _packet(hA);
+        assertEq(cf, 0, "and the packet");
+        assertEq(cr, 10e18);
         (uint256 received1, uint256 paid1) = _ledger();
-        assertEq(received0 - received1, 10e18, "stranded on the fresh side: received fell");
+        assertEq(received0 - received1, 10e18, "the fresh ledger no longer carries the inherited debit: received fell");
         assertEq(paid0 - paid1, 10e18, "and paid with it: no headroom created");
-        (, , , , , , , , , , uint256 stranded) = _recon().getFreshQueueState(0);
-        assertEq(stranded, 10e18, "recorded");
-        assertEq(_spentOf(0).freshSpent, 10e18, "A's inherited debit stands on its fresh record, spent");
-        assertEq(_spentOf(0).freshInheritable, 0, "but no longer charged: the payout never happened");
-        (, , , uint256 freshPaid, , ) = _queue();
-        assertEq(freshPaid, 0, "the fresh paid figure fell with it");
+        (, , uint256 freshSpentTotal, uint256 freshPaid, , ) = _queue();
+        assertEq(freshSpentTotal, 0, "the fresh figures fell with it");
+        assertEq(freshPaid, 0);
+        (, uint256 reIn1, uint256 reOut1) = _recon().getReconciliationTotals();
+        assertEq(reIn1 - reIn0, 10e18, "the un-inheritance is a reattribution into the bucket's figures");
+        assertEq(reOut1, reOut0);
+        (, uint256 stranded1, , , ) = _agg().getRecycleCompositionPosition();
+        assertEq(stranded1 - stranded0, 10e18, "the stranded figure carries the whole sent share");
+        (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
+        assertEq(outstandingRecycled, 10e18, "the restored commitment");
+        assertGe(_bucket() + stranded1, outstandingRecycled, "bucket + stranded covers it: coverage sees the whole loss");
         _admin().pause();
-        vm.expectRevert(abi.encodeWithSelector(ReconciliationSpentFreshNotInheritable.selector, 0, 10e18, 0));
-        _recon().reclassifyReconciliationEntry(0, true, 10e18, keccak256("r-A-back"));
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationSpentRecycledNotInheritable.selector, 0, 10e18, 0));
+        _recon().reclassifyReconciliationEntry(0, false, 10e18, keccak256("r-A-again"));
         _admin().unpause();
     }
 
@@ -2621,6 +2648,47 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_spentOf(40).recycledInheritable, 5e18, "entry 40 keeps the claim's 5");
         assertEq(_spentOf(41).recycledInheritable, 0, "entry 41's 5 were the remit's");
         assertEq(_spentOf(40).recycledSpent + _spentOf(41).recycledSpent, 15e18, "all still spent");
+    }
+
+    /// Codex #2206 r9 (P1) — the one-time stranded seed completes across a
+    /// correction: on an upgraded Diamond whose ceremony has not run, a
+    /// reclassification moves the bucket (or its payout figure) and the
+    /// reattribution terms, and the ceremony's postcondition reads the
+    /// identity's one implementation — the same sides every checker
+    /// restates — so a legitimate correction no longer blocks the backfill
+    /// for good.
+    function test_Seed_CompletesAcrossACorrection() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 h = _packetHash(keccak256("seed-A"));
+        _untyped(10e18, 84, keccak256("seed-A"));
+        _evidence(h, 10e18);
+        _classify(h, 0, 10e18, keccak256("e-seed"));
+        assertEq(_mut().consumeRecycleRawAsRemit(4e18, 1), 4e18); // R1: 4 of A
+        _mut().restoreReleasedRemitRaw(4e18, 4e18, 1); // released
+        _mut().setRemitReservationReleasedRaw(1, 4e18); // the history the ceremony scans
+        _mut().setReleasedRemitStrandedRaw(0); // the pre-upgrade shape: the release recorded nothing
+        _mut().setOutstandingCommitRaw(0, 0); // the restored commitment is the re-remit's; not under test
+        _reclassify(0, false, 3e18, keccak256("r-seed-out")); // 3 unspent to fresh, with their tokens
+        _reclassify(0, true, 1e18, keccak256("r-seed-in")); // 1 of them back
+        (, uint256 reIn, uint256 reOut) = _recon().getReconciliationTotals();
+        assertEq(reIn, 1e18);
+        assertEq(reOut, 3e18);
+        RewardCompensationDispatchFacet(address(diamond)).seedReleasedRemitStranded(1);
+        (, uint256 stranded, , , ) = _agg().getRecycleCompositionPosition();
+        assertEq(stranded, 4e18, "the release's whole sent share, backfilled");
+    }
+
+    /// Codex #2206 r9 (P2) — the fresh view answers only a known era: until
+    /// the transport epochs land that is the pre-backfill era alone, and a
+    /// typo refuses rather than pairing an empty era-keyed queue with the
+    /// global custody figures.
+    function test_View_FreshQueueRefusesAnUnknownEra() public {
+        _activatedMirror();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationUnknownEra.selector, uint64(1)));
+        _recon().getFreshQueueState(1);
+        (uint256 frontier, , , , , , , , , ) = _recon().getFreshQueueState(0); // the known era answers
+        assertEq(frontier, 0);
     }
 
     // ─── 6. the transports ───────────────────────────────────────────────────

@@ -648,65 +648,6 @@ library LibRewardCustody {
         return s.recycledPendingHead == s.recycledPending.length;
     }
 
-    /// @notice Reverse a released remit's recorded consumption on exactly the
-    ///         records it wrote, by exactly what it wrote there (its payout
-    ///         never happened): a record's recycled charge is lowered first;
-    ///         what is no longer there a correction had moved to the entry's
-    ///         FRESH record as an inherited debit, and that charge is
-    ///         lowered too and STRANDED on the fresh ledger — `received` and
-    ///         `paid` fall together, no headroom — so a later correction can
-    ///         never inherit a payout that never happened (Codex #2206 r7).
-    ///         What neither record holds is a defect (the entry's charges
-    ///         always sum to the consumption attributed to it) and refuses.
-    ///         The reservation's record is cleared: a release is one-shot.
-    /// @return found    Reversed on the recycled records.
-    /// @return stranded Reversed on the fresh records and stranded there.
-    function reverseRemitTake(
-        LibVaipakam.Storage storage s,
-        uint256 remitId
-    ) internal returns (uint256 found, uint256 stranded) {
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        uint256[] storage takes = r.classifiedTakes;
-        uint256 n = takes.length;
-        for (uint256 i = 0; i < n; ++i) {
-            uint256 packed = takes[i];
-            uint256 index = packed >> 128;
-            uint256 remaining = packed & type(uint128).max;
-            LibVaipakam.SideRecord storage rec = s.recycledRecords[index];
-            uint256 c = rec.charged;
-            uint256 u = remaining < c ? remaining : c;
-            rec.charged = uint128(c - u);
-            found += u;
-            remaining -= u;
-            if (remaining == 0) continue;
-            LibVaipakam.SideRecord storage fr = s.freshRecords[index];
-            uint256 fc = fr.charged;
-            if (remaining > fc) revert IVaipakamErrors.ReconciliationQueueInconsistent(SIDE_RECYCLED);
-            fr.charged = uint128(fc - remaining);
-            s.freshPaidTotalByEra[s.reconciliationLog[index].era] -= remaining;
-            stranded += remaining;
-        }
-        s.recycledConsumedTotal -= found;
-        strandInheritedFresh(s, stranded);
-        delete r.classifiedTakes;
-    }
-
-    /// @notice A released remit's consumption the fresh ledger already
-    ///         carries as an inherited debit: the payout never happened and
-    ///         the tokens are stranded in the transport pool, so `received`
-    ///         and `paid` fall together — nothing becomes headroom — and the
-    ///         amount is recorded.
-    function strandInheritedFresh(LibVaipakam.Storage storage s, uint256 amount) internal {
-        if (amount == 0) return;
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        if (amount > received) revert IVaipakamErrors.ReconciliationReceivedShort(amount, received);
-        uint256 paid = s.rewardBudgetArmedFreshPaid;
-        if (amount > paid) revert IVaipakamErrors.ReconciliationPaidShort(amount, paid);
-        s.rewardBudgetArmedFreshReceived = received - amount;
-        s.rewardBudgetArmedFreshPaid = paid - amount;
-        s.freshStrandedInheritedCumulative += amount;
-    }
-
     // ─── Measured token moves ───────────────────────────────────────────────
 
     /**
@@ -1011,6 +952,15 @@ library LibRewardCustody {
     /// @dev The one era every reconciliation entry keys until slice 4 PR C's
     ///      registry assigns real ids; the row hook records into it.
     uint64 internal constant PRE_BACKFILL_ERA = 0;
+
+    /// @notice The one predicate for "this era exists" — the pre-backfill
+    ///         era alone until the transport epochs' registry replaces this
+    ///         body. A caller-supplied era that does not exist refuses here
+    ///         rather than reading an empty era-keyed queue beside the
+    ///         global custody figures as if it were one (Codex #2206 r9).
+    function requireKnownEra(uint64 era) internal pure {
+        if (era != PRE_BACKFILL_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
+    }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
 
@@ -1479,12 +1429,12 @@ library LibRewardCustody {
         took = abi.decode(ret, (uint256));
     }
 
-    /// @dev {reverseRemitTake} through the reconciliation facet; returns what
-    ///      was reversed on the recycled records and what was stranded on
-    ///      the fresh ledger.
-    function callReverseRemitTake(uint256 remitId) internal returns (uint256 found, uint256 stranded) {
-        bytes memory ret = _custodyReturning(abi.encodeWithSignature("reconciliationReverseRemitTake(uint256)", remitId));
-        (found, stranded) = abi.decode(ret, (uint256, uint256));
+    /// @dev The released remit's take reversed through the reconciliation
+    ///      facet ({RewardReconciliationFacet.reconciliationReverseRemitTake}):
+    ///      every record it wrote, and the inheritance a correction had
+    ///      meanwhile made of it, undone.
+    function callReverseRemitTake(uint256 remitId) internal {
+        _custody(abi.encodeWithSignature("reconciliationReverseRemitTake(uint256)", remitId));
     }
 
     /// @dev {releaseFromRow} through the custody facet.

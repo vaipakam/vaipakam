@@ -407,6 +407,43 @@ library LibVpfiRecycle {
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
 
+    /**
+     * @notice The bucket-composition identity's two sides, from the RAW
+     *         slots — its ONE implementation (#1566 closure 2 cutover PR 2,
+     *         Codex #2206 r9). Every recycled credit lands in the bucket
+     *         exactly once, so what the cumulatives CLAIM can never exceed
+     *         where the tokens WENT:
+     *
+     *           credited + custodyRelocated + reattributedIn
+     *             <= bucket + paidOut + releasedRemitStranded
+     *                + repatriatedOut + reattributedOut
+     *
+     *         `credit` and `creditCustodyRelocated` add to one term on each
+     *         side; `consume` moves bucket → paidOut; {restoreReleasedRemit}
+     *         moves paidOut → stranded; {debitRepatriationSurplus} moves
+     *         bucket → repatriatedOut (#1568 C2); a reclassification moves
+     *         credit between the bucket (or its payout figure) and the fresh
+     *         side, counted on the reattribution term of the side it left or
+     *         joined. The seed ceremony's postcondition reads this; the
+     *         external checkers (`ops/mesh-watcher`, the mesh invariants)
+     *         restate it from the published terms. The RAW credited counter
+     *         deliberately, never {creditedCumulative}: the derived floor
+     *         can manufacture out of `bucket + paidOut` the very value a
+     *         short counter is missing (#1448 r5).
+     * @return claimed      What the cumulatives claim landed in the bucket.
+     * @return destinations Where the tokens are, or went.
+     */
+    function compositionSides(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256 claimed, uint256 destinations)
+    {
+        claimed = s.recycleCreditedCumulative + s.recycleCustodyRelocatedCumulative
+            + s.recycleReattributedInCumulative;
+        destinations = s.recycleBucket + s.paidOutRecycled + s.recycleReleasedRemitStrandedCumulative
+            + s.recycleRepatriatedOutCumulative + s.recycleReattributedOutCumulative;
+    }
+
     /// @notice #1218 M5 — {backingPosition} cannot read a balance because the
     ///         VPFI token address is unset. Distinct from a zero balance on
     ///         purpose: an unconfigured Diamond and a drained one are
@@ -1408,25 +1445,27 @@ library LibVpfiRecycle {
             uint256 cumulative = creditedCumulative(s);
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5–r7) — a reversed
-        // payout is consumption that paid nobody: exactly THIS remit's take
-        // of the classified queue, on exactly the records it wrote (noted at
-        // its send), stops being inheritable — no other take's units. What
-        // a record no longer holds, a correction had moved to the entry's
-        // fresh record as an inherited debit (the bucket's payout figure
-        // gave it back then): that part is stranded on the fresh side — the
-        // fresh charge cleared, `received` and `paid` falling together, no
-        // headroom — and is NOT reversed on the bucket's payout figure a
-        // second time. The units stay SPENT: their tokens sit in the
-        // transport pool, not the bucket.
-        (, uint256 inherited) = LibRewardCustody.callReverseRemitTake(remitId);
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5–r7, r9) — a
+        // reversed payout is consumption that paid nobody: exactly THIS
+        // remit's take of the classified queue, on exactly the records it
+        // wrote (noted at its send), stops being inheritable — no other
+        // take's units. What a record no longer holds, a correction had
+        // meanwhile inherited to the entry's fresh record (the bucket's
+        // payout figure gave it back then): the release UN-INHERITS it
+        // first — the units return to the recycled record, spent and
+        // uncharged, the fresh ledger's `received` and `paid` fall together,
+        // and the payout figure takes the consumption back as a
+        // reattribution — so the reversal below is the remit's WHOLE sent
+        // share, and the stranded figure carries the full physical loss the
+        // coverage relation must see (r9). The units stay SPENT: their
+        // tokens sit in the transport pool, not the bucket.
+        LibRewardCustody.callReverseRemitTake(remitId);
         uint256 paid = s.paidOutRecycled;
         // Record the ACTUAL decrement, not the request: the reversal floors
         // at zero, and counting `recycledSent` on an exhausted counter would
         // overstate the correction term (same rule `consume` applies to
         // `retired`).
-        uint256 toReverse = recycledSent - inherited;
-        uint256 reversed = paid > toReverse ? toReverse : paid;
+        uint256 reversed = paid > recycledSent ? recycledSent : paid;
         s.paidOutRecycled = paid - reversed;
         s.recycleReleasedRemitStrandedCumulative += reversed;
     }

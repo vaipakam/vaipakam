@@ -60,15 +60,27 @@ fresh side, consumed on the recycled side) may be inherited by the other
 side: recycled value that left by a surplus repatriation, or whose payout
 was later reversed (a released remit reverses exactly its own
 consumption on exactly the value it took, no other's; the part a
-correction had meanwhile moved to the fresh side is stranded there — no
-longer inheritable, the fresh side's received and paid figures falling
-together), and fresh
+correction had meanwhile moved to the fresh side is un-inherited by the
+release — it returns to the entry's recycled side, spent and no longer
+inheritable, the fresh side's received and paid figures falling together
+— so the release gives up the remit's whole sent share and the coverage
+allowance carries the full loss), and fresh
 value a demotion unwound, are never inherited, and consumption made
 while nothing classified was in the backing is nobody's. Value a
 correction moves keeps its original place in the order. Recording what
 an outflow took is bounded in work per outflow — the remainder is
 carried and written by later steps that anyone may take, and a
 correction waits for it — so no payout is ever held up by the record.
+The one-time backfill of the released-remittance stranded figure that an
+in-place upgrade needs completes across a correction: its completion
+check states the same custody identity every checker states — a
+correction's movements and a repatriation's included — so a legitimate
+correction made before the ceremony runs no longer blocks it for good.
+The mesh watcher reads a correction's two movement figures from the
+reconciliation facet and states the same identity, and where it cannot
+read them it reports the gap and leaves the two checks that need them
+unrun rather than substituting zero. A view of the fresh side answers
+only an era that exists.
 Unspent value moves with its tokens only up to what the backing holds
 beyond its standing commitments, on either side. The part of a classification that a standing deficit absorbed
 into the restitution position is neither counted as spendable nor movable

@@ -6055,6 +6055,16 @@ library LibVaipakam {
         //   VPFI that physically left the bucket and did not come back: it
         //   sits in the transport's custody.
         //
+        //   The WHOLE sent share, a correction notwithstanding (Codex #2206
+        //   r9): consumption a correction had meanwhile inherited to the
+        //   fresh side is UN-INHERITED by the release first — the units
+        //   return to the entry's recycled record, spent and uncharged, and
+        //   the payout figure takes the consumption back through
+        //   `recycleReattributedInCumulative` — so the reversal recorded here
+        //   is the full physical loss and the coverage relation below sees
+        //   all of it. A fresh-side twin of this counter is therefore not
+        //   needed: nothing a release strands is the fresh side's.
+        //
         //   Deliberately the SENT share, never the pre-clamp `recycledFull`
         //   (Codex #1448 r1 P1). A liability-clamped remit sends only part of
         //   its recycled commitment; `consume` debits that part while
@@ -6079,11 +6089,21 @@ library LibVaipakam {
         //
         //   2. BUCKET COMPOSITION — checked in BOTH directions:
         //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
-        //          <= recycleBucket + paidOutRecycled + <this>          (exact)
+        //          + recycleReattributedInCumulative
+        //          <= recycleBucket + paidOutRecycled + <this>
+        //             + recycleRepatriatedOutCumulative
+        //             + recycleReattributedOutCumulative               (exact)
         //      and the reverse, with its own slack:
         //        recycleBucket + paidOutRecycled + <this>
-        //          <= recycleCreditedCumulative
-        //             + recycleCustodyRelocatedCumulative + slack
+        //          + recycleRepatriatedOutCumulative + recycleReattributedOutCumulative
+        //          <= recycleCreditedCumulative + recycleCustodyRelocatedCumulative
+        //             + recycleReattributedInCumulative + slack
+        //      The two sides have ONE implementation,
+        //      {LibVpfiRecycle.compositionSides}, which the seed ceremony's
+        //      postcondition reads; the external checkers restate it from
+        //      the published terms. #1568 C2 added the repatriated-out
+        //      destination; #1566 closure 2 cutover PR 2 the two
+        //      reattribution terms of a reclassification (Codex #2206 r9).
         //
         //      The REVERSE direction is the one that catches an arrival
         //      raising `recycleBucket` WITHOUT advancing
@@ -7492,14 +7512,6 @@ library LibVaipakam {
         uint256 absorbedFrontier;
         uint256 absorbedUnreleased;
         uint256 absorbedReleasedTotal;
-        /// @dev Codex #2206 r6 — a released remit's consumption that a
-        ///      correction had already moved to the fresh ledger as an
-        ///      inherited debit: the payout never happened and its tokens are
-        ///      stranded in the transport pool, so `received` and `paid` fall
-        ///      together on the fresh side (no headroom is created) and the
-        ///      amount is recorded here, the fresh-side twin of
-        ///      `recycleReleasedRemitStrandedCumulative`.
-        uint256 freshStrandedInheritedCumulative;
         /// @dev Codex #2206 r7 — what each side's pending takes still hold
         ///      unwritten, kept as counters (an outflow adds, the walk
         ///      subtracts) so the queue views never scan a backlog.

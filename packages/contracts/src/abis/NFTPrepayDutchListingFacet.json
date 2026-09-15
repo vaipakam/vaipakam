@@ -2616,6 +2616,17 @@
   },
   {
     "type": "error",
+    "name": "ReconciliationUnknownEra",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReconciliationUnknownSide",
     "inputs": [
       {
