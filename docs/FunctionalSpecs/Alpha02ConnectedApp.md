@@ -312,8 +312,19 @@ The app uses chain reads and indexed reads for different jobs.
   for as long as the load lasted. The order is what makes the bound safe: a
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
-  same records every run and the ones behind them never. A run that hits the
-  bound says how many were waiting and how many it took.
+  same records every run and the ones behind them never.
+- The bound is on reminders SENT, never on records examined. A record the
+  chain declines to confirm costs nothing to send, so charging it against the
+  bound would let a handful of permanently unconfirmable records at the front
+  of the order consume every run — examined again each time, never resolved,
+  and blocking the healthy loans behind them indefinitely. A run therefore
+  continues past records it cannot send for, up to a stated limit of its own,
+  and reaches the ones behind them in the same run.
+- A run that stops early says which limit stopped it, and separates what it
+  found: examined, reminded, declined by the chain, and unreadable. Those need
+  different remedies — a run reporting many declines is reporting records the
+  platform holds wrongly, not load — so they are never flattened into one
+  "deferred" count.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

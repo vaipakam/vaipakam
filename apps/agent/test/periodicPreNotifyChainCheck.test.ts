@@ -29,6 +29,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 let answer: (loanId: number) => { id: bigint; status: number } | null;
 /** When set, the whole batched call throws — the RPC being unreachable. */
 let batchError: Error | null = null;
+/** How many batched `aggregate3` calls the lane made this run. */
+let batchedReads = 0;
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
 let loanRows: Record<string, unknown>[] = [];
 /** Per-chain override of the above, for the multi-chain allowance tests. */
@@ -78,6 +80,7 @@ vi.mock('viem', async (importOriginal) => {
           throw new Error(`the lane must batch its reads; saw a bare ${functionName}`);
         }
         if (batchError) throw batchError;
+        batchedReads += 1;
         const calls = (args?.[0] ?? []) as { callData: `0x${string}` }[];
         return calls.map((c) => {
           const decoded = actual.decodeFunctionData({ abi, data: c.callData });
@@ -168,6 +171,7 @@ async function run(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   answer = (id) => ({ id: BigInt(id), status: 0 });
   batchError = null;
+  batchedReads = 0;
   loanRows = [dueLoan];
   loanRowsByChain = null;
 });
@@ -287,8 +291,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect([...stamped].sort((a, b) => b - a)).toEqual([100, 99, 98, 97, 96, 95, 94, 93]);
     // SAID, with what happens to the rest — a silently dropped reminder is
     // indistinguishable from one that was never due.
-    expect(said).toContain('10 loan(s) are inside');
-    expect(said).toContain('this invocation can afford 8');
+    expect(said).toContain('10 loan(s) in the notification window');
+    expect(said).toContain('8 examined, 8 reminded');
+    expect(said).toContain('ran out of allowance');
   });
 
   it('matches each answer to the loan it was asked about', async () => {
@@ -353,12 +358,49 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect([...even][0]).not.toBe([...odd][0]);
   });
 
+  it('scans PAST loans the chain rejects, in the same tick', async () => {
+    // #2213 r6 `4012464544`. Round 5 read and messaged inside ONE slice of
+    // `budget.remaining`, so a rejected candidate held a read slot while
+    // spending no allowance. Eight orphans at the head of the deadline order
+    // therefore filled the slice on every tick, forever, and the eligible
+    // loans behind them were never looked at — a cap meant to defer a loan by
+    // a tick deferred those indefinitely.
+    loanRows = tenLoans(); // ids 100…91, nearest deadline first
+    // The nearest eight are orphans: the chain has no such loan. The two
+    // behind them are healthy and inside their own window.
+    const orphans = new Set([100, 99, 98, 97, 96, 95, 94, 93]);
+    answer = (id) => ({ id: orphans.has(id) ? 0n : BigInt(id), status: 0 });
+    const { stamped, said } = await run();
+    expect([...stamped].sort((a, b) => b - a)).toEqual([92, 91]);
+    expect(said).toContain('no such loan');
+    // One batch covered all ten — the scan does not pay a read per loan to do
+    // this.
+    expect(batchedReads).toBe(1);
+  });
+
+  it('stops scanning at the read cap, and says what it found', async () => {
+    // The residue, stated rather than implied: a window whose first three
+    // hundred candidates are all rejected still defers whatever is behind
+    // them. That is a chain with three hundred orphaned rows — an operator
+    // problem the scan REPORTS rather than a load problem it absorbs.
+    loanRows = Array.from({ length: 350 }, (_, k) =>
+      periodicLoan(1000 - k, NOW - 29 * DAY + k * 60),
+    ).reverse();
+    answer = () => ({ id: 0n, status: 0 }); // every one an orphan
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(batchedReads).toBe(3); // 3 × 100, not 350 reads and not one
+    expect(said).toContain('300 examined');
+    expect(said).toContain('300 rejected by the chain');
+    expect(said).toContain('read cap');
+  });
+
   it('says nothing about a cap it did not reach', async () => {
     // The ordinary case: a handful of due loans, everything sent, no warning
     // an operator has to learn to ignore.
     loanRows = tenLoans().slice(-3);
     const { stamped, said } = await run();
     expect(stamped.length).toBe(3);
-    expect(said).not.toContain('can afford');
+    expect(said).not.toContain('in the notification window');
   });
 });

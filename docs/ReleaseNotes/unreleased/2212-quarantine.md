@@ -124,9 +124,27 @@ A cap has to be fair or it is just a quieter way to lose reminders, so the
 order is now **nearest deadline first**, and the run starts at a different
 chain each time. A loan the cap defers is one place nearer the front on the
 next run, and gets there well before its own deadline; without that order the
-same records would be reached every time and the ones behind them never. When
-the cap does bind, the platform says how many records were in the window and
-how many it could take, rather than leaving the difference invisible.
+same records would be reached every time and the ones behind them never.
+
+**The first version of that cap had the fairness defect it was meant to
+prevent**, in a form worth describing because it is easy to reproduce. It
+counted *records looked at* and *reminders sent* as one number. Checking a
+record is cheap and sending is not, but more importantly a record the chain
+**rejects** — one it has never heard of — costs nothing to reject, so it was
+examined again on every run without ever being resolved or moved past. Eight
+such records at the front of the deadline order therefore filled the whole
+run, every run, and healthy loans behind them were never looked at: a cap
+meant to delay a reminder by one run delayed those indefinitely. Checking and
+sending are now separate limits. A run walks past records the chain rejects —
+in batches, so a hundred of them cost one request, not a hundred — and reaches
+the healthy ones behind them on the same run.
+
+When a run does stop early, it says what it saw: how many records were in the
+window, how many it examined, how many it reminded, how many the chain
+rejected, how many it could not read, and which of the two limits stopped it.
+Those are different problems with different remedies — a run that keeps
+reporting hundreds of rejections is reporting stuck records, not load — and
+flattening them into "deferred" would hide the one that needs a person.
 
 **A failing chain would have printed its own access key into the operator
 log.** When a chain read fails, the failure is written to the log so an

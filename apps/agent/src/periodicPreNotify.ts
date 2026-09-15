@@ -53,10 +53,34 @@ const SECONDS_PER_DAY = 86_400;
  *
  * THIS IS A CAP ON A TICK, NOT ON A LOAN. The window is `preNotifyDays` wide
  * (three days by default) and ticks are minutes apart, so a deferred loan has
- * thousands of later chances. What makes that true rather than hopeful is the
- * ORDER — see `candidatesInWindow`.
+ * thousands of later chances. Two things make that true rather than hopeful:
+ * the ORDER (`candidatesInWindow`) and the fact that this allowance bounds
+ * SENDING ONLY — a candidate the chain rejects does not spend it, and does not
+ * hold up the scan behind it either (see `EXAMINE_BATCH` below).
  */
 const MAX_REMINDED_LOANS_PER_INVOCATION = 8;
+
+/**
+ * How many candidates one batched chain read covers, and how many such reads
+ * one chain gets per tick (#2213 r6 `4012464544`).
+ *
+ * These bound the SCAN, and they are deliberately far larger than the message
+ * allowance, because they are a different cost: one `aggregate3` covers a
+ * hundred loans for a single outbound request, where a hundred reminders would
+ * be four hundred. Three batches is three requests and three hundred
+ * candidates — thirty-seven times the message allowance — so the scan can walk
+ * past a long run of rows the chain rejects and still reach the eligible ones
+ * behind them on the SAME tick.
+ *
+ * NOT UNBOUNDED, and the residue is stated rather than implied: a chain whose
+ * window holds more than three hundred candidates the chain rejects, all ahead
+ * of an eligible one in deadline order, still defers that one. That is a
+ * chain with three hundred orphaned rows, which is an operator problem the
+ * scan reports rather than a load problem it absorbs — see the warning at the
+ * end of the scan loop.
+ */
+const EXAMINE_BATCH = 100;
+const MAX_EXAMINE_BATCHES = 3;
 
 /** Cadence enum value → interval in days. Mirrors
  *  `LibVaipakam.intervalDays`. */
@@ -220,30 +244,88 @@ async function preNotifyChain(
   const due = candidatesInWindow(rows.results ?? [], now, windowSec);
   if (due.length === 0) return;
 
-  // WHAT THIS TICK CAN AFFORD, TAKEN FROM THE FRONT OF A DEADLINE ORDER.
-  const slice = due.slice(0, budget.remaining);
-  if (due.length > slice.length) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) are inside ` +
-        `the notification window and this invocation can afford ` +
-        `${slice.length}. The nearest ${slice.length} deadline(s) go first; the ` +
-        `rest are not dropped — nothing is stamped for them, so a later tick ` +
-        `picks them up, and they move to the front as their own deadlines near.`,
-    );
+  // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
+  // of `budget.remaining` candidates and both read and messaged within it,
+  // which quietly made the MESSAGE budget govern the READ pass as well. Those
+  // have opposite cost shapes: a message is up to four outbound requests, a
+  // read is one per HUNDRED loans. Worse, a candidate the chain rejects
+  // consumes a read slot and no message slot — so eight persistent orphans at
+  // the head of the deadline order occupied the whole slice on every tick
+  // while spending nothing, and eligible loans behind them were never looked
+  // at. The cap was supposed to defer a loan by a tick; for those it deferred
+  // it indefinitely, which is the opposite of what this file claims.
+  //
+  // So the read pass now SCANS PAST rejected candidates, in batches, and only
+  // the sends draw on the allowance.
+  let cursor = 0;
+  let reminded = 0;
+  let rejected = 0;
+  let unreadable = 0;
+  let batches = 0;
+  while (cursor < due.length && budget.remaining > 0 && batches < MAX_EXAMINE_BATCHES) {
+    const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
+    batches += 1;
+
+    // ONE CHAIN READ FOR THE WHOLE BATCH (#2213 r5 `4012300071`). An earlier
+    // revision asked per loan, which spends one of the invocation's ~50
+    // outbound subrequests per candidate — so a chain with more due loans than
+    // that exhausted the allowance mid-loop and took every REMAINING chain
+    // down with it, on every tick, forever. Multicall3 turns the batch into a
+    // single call whose per-sub-call failures are reported individually rather
+    // than poisoning the whole of it.
+    const states = await readLoanStates(client, chain, batch.map((c) => c.row.loan_id));
+    if (states === null) return; // the batch itself failed; said so, nothing stamped
+
+    const outcome = await messageBatch(env, chain, batch, states, budget, now);
+    reminded += outcome.reminded;
+    rejected += outcome.rejected;
+    unreadable += outcome.unreadable;
+    cursor += outcome.consumed;
   }
 
-  // ONE CHAIN READ FOR THE WHOLE SLICE (#2213 r5 `4012300071`). The previous
-  // revision asked per loan, inside this loop, which spends one of the
-  // invocation's ~50 outbound subrequests per candidate — so a chain with
-  // more due loans than that exhausted the allowance mid-loop and took every
-  // REMAINING chain down with it, on every tick, forever. Multicall3 turns
-  // the whole slice into a single call whose per-sub-call failures are
-  // reported individually rather than poisoning the batch.
-  const states = await readLoanStates(client, chain, slice.map((c) => c.row.loan_id));
-  if (states === null) return; // the batch itself failed; said so, nothing stamped
+  // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
+  if (cursor < due.length) {
+    const capped = budget.remaining <= 0 ? 'the invocation ran out of allowance' : null;
+    const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
+        `notification window, ${cursor} examined, ${reminded} reminded, ` +
+        `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
+        `${capped ?? scanned ?? 'stopping'}. ` +
+        `The remainder is not dropped: nothing is stamped for it, and it is ` +
+        `nearer the front next tick. A tick that reports the read cap with ` +
+        `hundreds rejected is reporting orphaned rows, not load.`,
+    );
+  }
+}
 
-  for (let i = 0; i < slice.length; i++) {
-    const { row, nextCheckpoint, secsUntil } = slice[i]!;
+/**
+ * Message the eligible loans in one examined batch, and report what happened.
+ *
+ * Split out of the scan loop because the two answer different questions: the
+ * loop asks "have we looked far enough", this asks "who may be told". Keeping
+ * them in one function is what let the message budget silently govern the
+ * scan.
+ *
+ * `consumed` is how far the scan may advance — every row LOOKED AT, including
+ * the rejected ones, and NOT the rows left unexamined when the allowance ran
+ * out mid-batch. Those stay for the next tick; they are eligible, so they will
+ * be at the front of it.
+ */
+async function messageBatch(
+  env: Env,
+  chain: { id: number; name: string; rpc: string; diamond: string },
+  batch: DueLoan[],
+  states: (LoanState | null)[],
+  budget: TickBudget,
+  now: number,
+): Promise<{ consumed: number; reminded: number; rejected: number; unreadable: number }> {
+  let reminded = 0;
+  let rejected = 0;
+  let unreadable = 0;
+  for (let i = 0; i < batch.length; i++) {
+    if (budget.remaining <= 0) return { consumed: i, reminded, rejected, unreadable };
+    const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
     // ASK THE CHAIN BEFORE SAYING SOMETHING THAT CANNOT BE TAKEN BACK
     // (#2213 r3 `4011960593`). `status = 'active'` above is STORED state, and
@@ -284,6 +366,13 @@ async function preNotifyChain(
           `returned nothing (the batched call failed for this loan); not ` +
           `pre-notifying this tick.`,
       );
+      // NOT counted as rejected — the chain did not reject it, it did not
+      // answer. Counted separately and reported separately, because the two
+      // send an operator to different places: a rejection is a row the indexer
+      // has wrong, an unreadable slot is an RPC that could not answer. Both
+      // count as EXAMINED, so the scan moves past them rather than re-reading
+      // the same rows every tick.
+      unreadable += 1;
       continue;
     }
     if (!isPeriodicInterestEligible(detail)) {
@@ -304,13 +393,15 @@ async function preNotifyChain(
           } — no reminder sent. The stored row disagrees with the chain; ` +
           `whether anything corrects it depends on which case this is.`,
       );
+      rejected += 1;
       continue;
     }
 
-    // SPENT HERE, not when the slice was taken. An ineligible loan costs no
-    // outbound message, so charging it would shrink the allowance for reasons
-    // that never used it.
+    // SPENT ONLY HERE. An ineligible loan costs no outbound message, so
+    // charging it would shrink the allowance for reasons that never used it —
+    // and, before r6, would have been the ONLY thing moving a scan past it.
     budget.remaining -= 1;
+    reminded += 1;
 
     const daysUntil = Math.max(1, Math.ceil(secsUntil / SECONDS_PER_DAY));
 
@@ -346,6 +437,7 @@ async function preNotifyChain(
       .bind(nextCheckpoint, now, chain.id, row.loan_id)
       .run();
   }
+  return { consumed: batch.length, reminded, rejected, unreadable };
 }
 
 /** A loan inside the notification window, with the arithmetic already done. */
