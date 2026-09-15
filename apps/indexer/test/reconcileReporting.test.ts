@@ -21,7 +21,11 @@
  * reached, which is a separate claim and was the one going unchecked.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { _reportReconcilePass, _runLoanReconcilePass } from '../src/chainIndexer';
+import {
+  _reportQuarantineForChain,
+  _reportReconcilePass,
+  _runLoanReconcilePass,
+} from '../src/chainIndexer';
 import { ReconcilePartialError, type ReconcileReport } from '../src/loanReconcile';
 import type { ChainConfig, Env } from '../src/env';
 
@@ -255,15 +259,16 @@ describe('the join, not just the wording', () => {
     }
   });
 
-  it('names long-held rows even on a tick it refuses (#2213 r2)', async () => {
-    // Rows in quarantine suppress reminders whatever this tick does, so the
-    // naming cannot be conditional on the tick having produced a report.
-    // Below the refusals it never ran during a backfill, a cursor/head
-    // mismatch, or a stretch with no settled head — the stretches where an
-    // operator most needs to know what is being withheld.
-    scanBehaviour = async () => {
-      throw new Error('the pass must not have got this far');
-    };
+  it('names long-held rows without a chain, and outside the pass (#2213 r3)', async () => {
+    // Rows in quarantine suppress reminders whatever a tick manages to do —
+    // including during an RPC outage, when nothing is being re-examined and
+    // the suppression is at its most invisible. So the naming lives at the
+    // per-chain entry point, above the identity check, and reads D1 only.
+    //
+    // Round 2 put it at the top of the PASS and I called it unconditional; it
+    // was unconditional within that function, and the identity check returns
+    // before the function is reached. This case tests the claim one level up,
+    // where it should have been tested first.
     const seen: string[] = [];
     const env = {
       DB: {
@@ -279,18 +284,11 @@ describe('the join, not just the wording', () => {
         },
       },
     } as unknown as Env;
-    const outcome = await _runLoanReconcilePass({
-      ...passInput(),
-      env,
-      head: { block: 100n, timestamp: 1n, settled: false, fallbackReason: 'TimeoutError' },
-    });
-    expect(outcome.established).toBe(false);
-    // It looked, on a tick that established nothing.
-    //
+    await _reportQuarantineForChain(env, CHAIN);
     // `FROM loan_reconcile_quarantine`, not merely the table's NAME: the
     // availability probe's own SQL mentions the name (in a `sqlite_master`
-    // lookup), so the looser assertion passed with the stale report disabled
-    // — found by mutation, and exactly the class of false pass this suite has
+    // lookup), so the looser assertion passed with the report disabled —
+    // found by mutation, and exactly the class of false pass this suite has
     // caught three times now.
     expect(seen.some((q) => /FROM\s+loan_reconcile_quarantine/.test(q))).toBe(true);
   });

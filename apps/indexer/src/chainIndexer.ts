@@ -54,7 +54,7 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
-import { quarantineStatements, reportStaleQuarantine } from './loanQuarantine';
+import { quarantineStatements, reportStaleQuarantine, settledRows } from './loanQuarantine';
 import { createQuarantineAvailability } from '@vaipakam/lib/reminderEligibility';
 import {
   blockToNumber,
@@ -1086,6 +1086,34 @@ export async function _sweepCalendarIfEstablished(
 }
 
 /**
+ * Name the rows this chain has been withholding reminders for, if any.
+ *
+ * Its own function, called from the per-chain ENTRY POINT rather than from
+ * the reconciliation pass (#2213 r3 `4011960607`). Quarantined rows suppress
+ * reminders whatever else happens on a tick — including during an RPC outage,
+ * when nothing is being re-examined and the suppression is therefore at its
+ * most invisible. A reporter reachable only after a chain check is silent for
+ * exactly as long as the chain is unreachable.
+ *
+ * It reads D1 and nothing else, so it has no reason to sit behind any chain
+ * check at all.
+ */
+export async function _reportQuarantineForChain(env: Env, chainId: number): Promise<void> {
+  if (!(await quarantineAvailableForWrites(env.DB as never))) return;
+  try {
+    await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
+  } catch (err) {
+    // The marks are unaffected: this is the read that NAMES long-held rows.
+    // Withholding continues; what is lost is the operator being told.
+    console.error(
+      `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
+        `withholding is unaffected, but long-held rows are not being named`,
+      err,
+    );
+  }
+}
+
+/**
  * One reconciliation pass: repair what the chain disagrees with, then say
  * what happened.
  *
@@ -1131,6 +1159,8 @@ export async function _runLoanReconcilePass(input: {
   // anything wanting provenance names `settled` explicitly.
   const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
   const head = settled.block;
+  // Already reported once per chain at the entry point (#2213 r3
+  // `4011960607`), which runs even when this pass is never reached.
   // BEFORE ANY REFUSAL (#2213 r2 `4011776398`). Long-held rows go on
   // suppressing reminders whatever this tick does, so naming them cannot be
   // conditional on this tick having produced a report. Placed below the
@@ -1141,21 +1171,6 @@ export async function _runLoanReconcilePass(input: {
   // Guarded on availability rather than caught: in the deploy window the read
   // would throw deterministically, and a catch there would have to say
   // something about withholding it cannot know.
-  const nowSecForQuarantine = Math.floor(Date.now() / 1000);
-  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
-  if (quarantineAvailable) {
-    try {
-      await reportStaleQuarantine(env.DB, chainId, nowSecForQuarantine);
-    } catch (err) {
-      // The marks are unaffected: this is the read that NAMES long-held rows.
-      // Withholding continues; what is lost is the operator being told.
-      console.error(
-        `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
-          `withholding is unaffected, but long-held rows are not being named`,
-        err,
-      );
-    }
-  }
 
   // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
   //
@@ -1228,6 +1243,10 @@ export async function _runLoanReconcilePass(input: {
           : `records are current through ${readThrough}, short of the head ${head}`,
     };
   }
+  // Asked once per pass, before any repair builds its batch: every repair's
+  // close-out statements are gated on the same answer, so a pass cannot half
+  // include the release (#2213 r2 `4011776381`).
+  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1369,10 +1388,24 @@ export async function _runLoanReconcilePass(input: {
       const writes = quarantineStatements(env.DB, chainId, report, nowSec);
       if (writes.length > 0) await env.DB.batch(writes);
     } catch (err) {
+      // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
+      // batch carries two opposite operations — marks that START withholding
+      // and releases that STOP it — so a fixed message describes the wrong
+      // one half the time, and is nonsense on a batch that carried only
+      // releases. Both counts come from the report the batch was built from.
+      const marks = _unestablishedRows(report).length;
+      const releases = settledRows(report).length;
+      const effects = [
+        marks > 0
+          ? `${marks} row(s) this pass could not settle are NOT withheld until a later pass records them`
+          : null,
+        releases > 0
+          ? `${releases} row(s) it settled stay withheld until a later pass releases them`
+          : null,
+      ].filter(Boolean);
       console.error(
-        `[chainIndexer] quarantine WRITE failed for chain ${chainId} — rows ` +
-          `this pass could not settle are NOT withheld from reminders until a ` +
-          `later pass records them`,
+        `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
+          `${effects.join('; ')}`,
         err,
       );
     }
@@ -1485,6 +1518,19 @@ export async function runChainIndexerForChain(
   // Cheap after the first run — one flag SELECT each.
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
+
+  // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
+  // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
+  // during an RPC outage — the outage is precisely when nothing is being
+  // re-examined — so a reporter placed after the identity check is silent for
+  // exactly as long as the condition lasts. It reads D1 only and needs no
+  // chain at all, so there is no reason for it to sit behind a chain check.
+  //
+  // Round 2 moved it above the reconcile pass's own refusals and I called it
+  // unconditional; it was unconditional within that function. This is the
+  // same claim tested one level up, which is where it should have been
+  // tested the first time.
+  await _reportQuarantineForChain(env, chainId);
 
   // #1415 — identity before any chain read: a wrong-network RPC must
   // fail LOUDLY here, not silently as "caught up" below. A transport
