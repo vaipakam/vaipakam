@@ -150,9 +150,17 @@ export async function resolveSettledHead(client: HeadReader): Promise<SettledHea
  * after `head` was rebound from a `bigint` to the object above — and quietly
  * produced `NaN` for the block stamped on every repaired terminal
  * notification (#2211 r2 `4011201400`). A name reverting to its old meaning
- * fixes that site; this makes the class of mistake a compile error wherever
- * a block crosses into D1, which is where it matters, since SQLite takes
- * `NaN` without complaint.
+ * fixes that site; this makes the class of mistake a compile error where a
+ * block crosses into D1, which is where it matters, since SQLite takes `NaN`
+ * without complaint.
+ *
+ * **Applied to the head-derived path, deliberately not swept tree-wide.**
+ * The other ~13 `Number(log.blockNumber)` sites take a `bigint` straight off
+ * a viem log and were never reachable by this substitution, so converting
+ * them is tidiness rather than a fix — and a mid-review-loop refactor is
+ * exactly what the repo's triage rule says not to grow a diff with. Stated
+ * here so the boundary reads as a decision rather than as the sweep running
+ * out of steam.
  */
 export function blockToNumber(block: bigint): number {
   return Number(block);

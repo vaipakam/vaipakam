@@ -191,7 +191,7 @@ async function stampNotifiedWatermark(
       .bind(
         chainId,
         NOTIFIED_CURSOR_KIND,
-        Number(block),
+        blockToNumber(block),
         Math.floor(Date.now() / 1000),
       )
       .run();
@@ -1890,7 +1890,7 @@ export async function runChainIndexerForChain(
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,
-        blocks: [Number(scanFrom), Number(scanTo)],
+        blocks: [blockToNumber(scanFrom), blockToNumber(scanTo)],
         loanIdCount: hintStats.loanIdCount,
         offerIdCount: hintStats.offerIdCount,
         linkCount: hintStats.linkCount,
@@ -4800,7 +4800,7 @@ export async function processLoanLogs(
       `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
-      .bind(terminal, Number(blockNumber), now, now, chainId, loanId)
+      .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     // CLEANUP RUNS WHETHER OR NOT THE UPDATE CHANGED A ROW (#2190 r4
