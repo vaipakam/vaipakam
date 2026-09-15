@@ -6716,26 +6716,38 @@ on the live era alone.
   aggregate, the token delta and the day list's flat-hash commitment (3a's
   field); each materialization call re-supplies the payload, verifies the
   hash and writes one bounded page; retirement is the resumable RETIRING
-  path. This is §5c's compact admission for the OLD wires, and it ships
-  with the indexing it protects; the d6 wire's Merkle root and extent are
-  3d's.
-- **The era term before PR C** (review r1). There is one era and no
+  path. This is §5c's compact admission for EVERY pre-d6 wire — the legacy
+  and d2 shapes, and d5 too (review r2; §5c: existing d5 packets are
+  admitted through the flat-hash path exactly as the older wires are): an
+  over-cap d5 packet dispatched before the cap existed is as
+  transport-executable as any other, and its typed components change
+  nothing about the size of its day list — so 3a's day-list commitment is
+  recorded for d5 arrivals as well. It ships with the indexing it
+  protects; the d6 wire's Merkle root and extent are 3d's.
+- **The era term before PR C** (review r1, r2). There is one era and no
   retired era row, so the middle term of `transportEpoch → eraBalance →
-  liveHeadroom` is the live delivered-fresh ledger itself. 3b puts that
-  read behind one interface — `eraBalance(era)`, returning the live
-  headroom for the pre-backfill era — so the order and the settlement
-  split are in their final shape from the start (`transportPaid / eraPaid
-  / livePaid`, `eraPaid` identically zero until a retired row exists), and
-  PR C inserts the retired-era rows between the two terms without changing
-  either. No balance ships without its debit path: the debit path is
-  3b's, and its middle term is a real read from day one.
+  liveHeadroom` is ZERO: 3b puts the read behind one interface —
+  `eraBalance(era)`, which returns nothing for every era until PR C's
+  registry gives a retired era a row — and the live delivered-fresh ledger
+  stays the third term, read once. The order and the settlement split are
+  in their final shape from the start (`transportPaid / eraPaid /
+  livePaid`, `eraPaid` identically zero because the term it records is),
+  and PR C makes the middle term non-zero for retired eras without
+  changing the order or the split. An alias of the live read in the
+  middle position would count the same headroom twice — 10 live and a
+  15 need reading as 20 available (review r2) — so the pre-C term is
+  zero, not the live figure. No balance ships without its debit path:
+  the debit path is 3b's, and its middle term is a real read that
+  happens to read zero until there is a retired era.
 - **Classification of an old-wire packet is gated on its batch** (§5c:
   the only route is the acknowledged parked-remainder path). The cutover's
   classification entry refuses a packet whose batch still lists an
   outstanding obligation and admits it once the remainder is parked with
   its acknowledgment — at which point `freshAuthenticated` is written from
-  3a's attested caps net of the packet's transport legs. The d5 packets
-  the cutover classifies today carry no batch and are unaffected.
+  3a's attested caps net of the packet's transport legs. A d5 packet's
+  components are typed and credited at ingress, so it holds no untyped
+  batch balance and the gate does not concern it; its day list still
+  passes the compact admission above.
 - The deterministic per-day allocation pass — matching transport drawn
   first per component, scarce transport split by system-wide typed
   shortfall (fresh first on ties), the unarrived-day necessity constraint
@@ -6766,9 +6778,16 @@ on the live era alone.
   obligation, distinct from the one being allocated and itself eligible
   for that batch (review r1: the allocating obligation's own membership
   never contests its own draw, and a batch with unarrived listed days is
-  already excluded by the necessity rule). Uncontested allocations — no
-  such competitor at allocation time — settle at once, as §5c says they
-  must. The alternative is to ship 3b and 3c as one PR so no obligation is
+  already excluded by the necessity rule). The predicate is evaluated
+  when a draw is staged AND AGAIN at final settlement, exactly as the
+  necessity constraint is (review r2): a staged allocation that has
+  become contested by the time its last call settles — a competitor's
+  obligation arrived meanwhile — is not settled; its staged draws unwind
+  as a cancellation does (balance back to batches no cursor has passed,
+  references released) and the obligation is refused with the same named
+  reason until 3c's machinery can take it. Uncontested allocations — no
+  such competitor at staging or at settlement — settle at once, as §5c
+  says they must. The alternative is to ship 3b and 3c as one PR so no obligation is
   ever refused for a machinery gap; the cost is the review surface above.
   Either way no allocation settles that a later plan could have outdone —
   the deferral is the conservative side of the rule 3c completes.
