@@ -343,6 +343,22 @@ describe('the join, not just the wording', () => {
     expect(said).not.toContain('regressed RPC head');
   });
 
+  it('counts a healthy pass that died on its cursor write as ESTABLISHED', async () => {
+    // #2211 r4 `4011404507`. Nothing to repair is the ordinary state of a
+    // healthy chain. The rows WERE checked against the chain at a settled
+    // head; only the bookkeeping after them failed, and a report that
+    // travels with the error says exactly which rows those were.
+    const { outcome } = await drive(async () => {
+      throw new ReconcilePartialError(report({ unread: [13] }), new Error('pointer write failed'));
+    });
+    expect(outcome.established).toBe(true);
+    if (outcome.established) {
+      expect(outcome.repairedLoanIds).toEqual([]);
+      // The one row it could not settle is still withheld from reminders.
+      expect(outcome.unestablishedLoanIds).toEqual([13]);
+    }
+  });
+
   it('still reports what it noticed when the failure is NOT a partial one', async () => {
     // No report to lift off an ordinary throw, so there is nothing to say —
     // but the pass must not wedge the tick, and must name the failure.

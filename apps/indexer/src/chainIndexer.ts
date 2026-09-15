@@ -1053,6 +1053,20 @@ export async function _sweepCalendarIfEstablished(
   }
   // The tick established SOME rows; the ones it did not are named and held
   // back individually (#2211 r3 `4011279296`).
+  //
+  // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT (#2212). The exclusion is
+  // derived from THIS tick's report, and the rotation examines one or three
+  // rows a turn — so on the next turn an unsettled row is simply not in the
+  // report, the set is empty for its id, and the sweep can remind about it.
+  // Closing it needs a quarantine that OUTLIVES the pass that found the row:
+  // a persisted marker, cleared when a later pass settles it, which is a
+  // table, a migration and a clearing lifecycle of its own.
+  //
+  // Recorded rather than quietly left: before this change the row was never
+  // excluded on any tick, so nothing regresses — but a reader must not take
+  // the exclusion for a guarantee. The same aliasing defeats the cruder
+  // remedy too (deferring the WHOLE sweep whenever the report is dirty): the
+  // next tick's report is clean because it looked at different rows.
   return sweepCalendarNotifications(
     env.DB,
     chainId,
@@ -1335,19 +1349,25 @@ export async function _runLoanReconcilePass(input: {
           `broadcast; the rotation pointer may not have advanced`,
         err,
       );
-      // ESTABLISHED, despite the failure. The rows it examined WERE checked
-      // against the chain at a settled head; what failed was the cursor
-      // write. Reporting this as unchecked would defer the calendar sweep on
-      // a tick that did the very work the sweep depends on.
+    }
+    // A CARRIED REPORT MEANS THE ROWS WERE CHECKED, REPAIRS OR NOT (#2211 r4
+    // `4011404507`). `ReconcilePartialError` carries the whole report, so a
+    // pass that examined only healthy rows and then failed its cursor write
+    // has established exactly as much as one that examined them and wrote
+    // its cursor. Keying this on `partial.length` instead treated the common
+    // case — a healthy chain, nothing to repair — as if nothing had been
+    // checked, so a recurring bookkeeping-write failure would have silenced
+    // that chain's reminders for as long as it lasted.
+    if (report) {
       return {
         established: true,
         repairedLoanIds: partial,
-        unestablishedLoanIds: report ? _unestablishedRows(report) : [],
+        unestablishedLoanIds: _unestablishedRows(report),
       };
     }
     console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
-    // A failure BEFORE any repair landed leaves the live set unverified —
-    // the reconcile threw, so nothing was established.
+    // No report at all: the pass threw before producing one, so nothing
+    // about the live set was established.
     return { established: false, reason: 'the reconciliation pass failed' };
   }
 }

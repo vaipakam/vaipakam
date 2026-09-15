@@ -143,6 +143,21 @@ describe('a tick that did establish it', () => {
     expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).not.toContain('DEFERRED');
   });
 
+  it('sweeps after a HEALTHY pass that failed its cursor write, repairing nothing', async () => {
+    // #2211 r4 `4011404507`. The common case on a healthy chain: every row
+    // checked, nothing to repair, and then the bookkeeping write fails.
+    // Keying "established" on whether anything was REPAIRED called that
+    // unchecked, so a recurring cursor-write failure would have silenced
+    // that chain's reminders for as long as it lasted.
+    const { env, prepare } = db();
+    await _sweepCalendarIfEstablished(env, CHAIN, 1_700_000_000, 900, {
+      established: true,
+      repairedLoanIds: [],
+      unestablishedLoanIds: [],
+    }).catch(() => undefined);
+    expect(prepare).toHaveBeenCalled();
+  });
+
   it('sweeps after a pass that repaired rows and THEN failed its cursor write', async () => {
     // Those rows were checked against the chain at a settled head; only the
     // bookkeeping afterwards failed. Treating that as unchecked would defer

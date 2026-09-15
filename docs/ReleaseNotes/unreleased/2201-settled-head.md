@@ -76,6 +76,14 @@ reminded about as normal — withholding everyone's because one record could not
 be read would punish the many for the one, indefinitely if that record stays
 unreadable.
 
+That withholding **narrows the window rather than closing it**, and the note
+says so rather than implying a guarantee. The check looks at a small number of
+records each turn, so a record it could not settle is held back on the turn it
+was noticed and not on the turns that look elsewhere. Closing it needs the
+platform to remember an unsettled record until a later turn settles it, which
+is its own change and is now written down. Nothing here is worse than before —
+previously such a record was never held back at all.
+
 **The operator log would have carried the provider's API key.** The message
 explaining why no settled point could be read quoted what the provider said,
 and providers put the whole request address — key included — inside that text.
