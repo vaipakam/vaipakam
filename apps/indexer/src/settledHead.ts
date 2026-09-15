@@ -35,6 +35,12 @@
  * second commented "mirrors chainIndexer's" — a mirror is a copy that has
  * not drifted YET.
  */
+// `describeFailure` used to be defined here, with the credential hazard
+// explained at length in its doc — and the next PR wrote `String(err)` around
+// a viem read in the agent Worker anyway (#2213 r5 `4012300079`). A rule kept
+// beside one caller protects one caller, so it moved to the shared package;
+// the hazard is documented there now.
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 
 /** How far back from the tip to step when no settled block can be read. */
 export const SAFE_FALLBACK_BUFFER = 32n;
@@ -80,38 +86,6 @@ interface HeadReader {
   getBlock(args: { blockTag: 'safe' }): Promise<{ number: bigint | null; timestamp: bigint }>;
   getBlock(args: { blockNumber: bigint }): Promise<{ number: bigint | null; timestamp: bigint }>;
   getBlockNumber(): Promise<bigint>;
-}
-
-/**
- * A bounded description of a failed settled read, safe to print.
- *
- * NOT the error's message. `chain.rpc` embeds an API key on every hosted
- * provider this deploys against, and viem's `HttpRequestError` /
- * `RpcRequestError` carry the full request URL inside `.message` — so
- * quoting it would leak that key into the operator log, repeatedly, exactly
- * on the providers whose settled read is failing (#2211 r1 `4011103040`).
- *
- * The fields taken instead are a class name and two numbers. That is not a
- * reduced version of the message, it is the identifying part of it: a
- * `TimeoutError` and an `RpcRequestError` carrying -32601 are the two cases
- * worth telling apart, and neither number can contain a secret.
- *
- * The name is still truncated and URL-stripped rather than trusted. It is
- * conventionally a bare identifier, and "conventionally" is not a property
- * of a value arriving from a dependency.
- */
-function describeFailure(err: unknown): string {
-  if (!(err instanceof Error)) return 'a non-Error value was thrown';
-  const e = err as Error & { code?: unknown; status?: unknown };
-  const parts = [redactAndBound(e.name || 'Error')];
-  if (typeof e.code === 'number') parts.push(`rpc code ${e.code}`);
-  if (typeof e.status === 'number') parts.push(`HTTP ${e.status}`);
-  return parts.join(', ');
-}
-
-/** Strip anything URL-shaped and cap the length. Belt and braces for the above. */
-function redactAndBound(text: string): string {
-  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>').slice(0, 80);
 }
 
 /**

@@ -21,6 +21,10 @@
       "types": "./src/reminderEligibility.ts",
       "default": "./src/reminderEligibility.ts"
     },
+    "./errorDescription": {
+      "types": "./src/errorDescription.ts",
+      "default": "./src/errorDescription.ts"
+    },
     "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"

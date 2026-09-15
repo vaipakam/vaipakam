@@ -23,16 +23,40 @@
  * `PERIODIC_PRE_NOTIFY_DAYS_DEFAULT` constant.
  */
 
-import { createPublicClient, http, type Address } from 'viem';
+import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import { LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
 import { sendMessage } from './telegram';
 import { isPeriodicInterestEligible } from '@vaipakam/lib/reminderEligibility';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
+
+/**
+ * The most loans this lane will MESSAGE about in one invocation, across every
+ * chain (#2213 r5 `4012300071`).
+ *
+ * A Worker invocation gets a documented 50 outbound subrequests, shared with
+ * every other lane on the same tick. Messaging one loan costs up to four of
+ * them — push and Telegram, to borrower and lender — so eight loans is about
+ * thirty-two, and the remainder covers this lane's own chain reads plus
+ * whatever else the tick is doing.
+ *
+ * The number is deliberately low rather than tuned to the ceiling. Running
+ * out mid-loop is the failure worth avoiding: the throw lands in the
+ * per-chain catch, so every later chain in the list loses its reminders too,
+ * and it would do so on every tick.
+ *
+ * THIS IS A CAP ON A TICK, NOT ON A LOAN. The window is `preNotifyDays` wide
+ * (three days by default) and ticks are minutes apart, so a deferred loan has
+ * thousands of later chances. What makes that true rather than hopeful is the
+ * ORDER — see `candidatesInWindow`.
+ */
+const MAX_REMINDED_LOANS_PER_INVOCATION = 8;
 
 /** Cadence enum value → interval in days. Mirrors
  *  `LibVaipakam.intervalDays`. */
@@ -79,18 +103,48 @@ interface UserPushRow {
   notify_maturity_approaching: number;
 }
 
+/** What is left of this invocation's message allowance. Mutated as it spends. */
+interface TickBudget {
+  remaining: number;
+}
+
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
     (c) => c.diamond && c.diamond !== '0x0000000000000000000000000000000000000000',
   );
   if (chains.length === 0) return;
 
-  for (const chain of chains) {
+  const budget: TickBudget = { remaining: MAX_REMINDED_LOANS_PER_INVOCATION };
+
+  // START AT A DIFFERENT CHAIN EACH TICK (#2213 r5 `4012300071`). A budget
+  // spent in list order is a budget the first chain spends first, so a busy
+  // chain at the head of the list could hold the allowance every tick and the
+  // chains behind it would never be reached at all. Rotating by the minute
+  // makes the starting point move on its own, with nothing to persist.
+  const offset = chains.length > 1 ? Math.floor(Date.now() / 60_000) % chains.length : 0;
+
+  for (let i = 0; i < chains.length; i++) {
+    const chain = chains[(i + offset) % chains.length]!;
+    if (budget.remaining <= 0) {
+      // SAID, not silently dropped. A chain skipped for want of allowance is
+      // a chain whose borrowers got no reminder this tick, and an operator
+      // seeing this every tick is being told the cap is too low for the load.
+      console.warn(
+        `[periodicPreNotify] chain=${chain.name} skipped: this invocation's ` +
+          `allowance of ${MAX_REMINDED_LOANS_PER_INVOCATION} reminder(s) was ` +
+          `already spent. Its turn comes first on a later tick (the start ` +
+          `rotates), and the notification window is days wide.`,
+      );
+      continue;
+    }
     try {
-      await preNotifyChain(env, chain);
+      await preNotifyChain(env, chain, budget);
     } catch (err) {
+      // BOUNDED, never `String(err)` — this catch is downstream of viem reads
+      // whose messages carry the RPC URL, API key and all (#2213 r5
+      // `4012300079`).
       console.error(
-        `[periodicPreNotify] chain=${chain.name} err=${String(err).slice(0, 300)}`,
+        `[periodicPreNotify] chain=${chain.name} err=${describeFailure(err)}`,
       );
     }
   }
@@ -99,22 +153,23 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
 async function preNotifyChain(
   env: Env,
   chain: { id: number; name: string; rpc: string; diamond: string },
+  budget: TickBudget,
 ): Promise<void> {
   // Pull the configured pre-notify lead time. Fall through to the
   // library default on any read failure so a transient hiccup
   // doesn't turn the lane silent for the entire tick.
   //
   // ONE CLIENT for the whole chain pass: the lead-time read below and the
-  // per-loan status checks further down both use it (#2213 r3).
+  // batched status read further down both use it (#2213 r3).
   //
   // NON-RETRYING, SHORT TIMEOUT (#2213 r4 `4012114109`). viem's defaults are
-  // three retries and a ten-second timeout, and these reads are per LOAN
-  // inside a sequential loop over chains — so one unreachable RPC early in
-  // the list could spend the whole scheduled invocation and cost later,
-  // HEALTHY chains their reminders entirely. That is a bigger outage than the
-  // one the check prevents.
+  // three retries and a ten-second timeout, and this runs inside a sequential
+  // loop over chains — so one unreachable RPC early in the list could spend
+  // the whole scheduled invocation and cost later, HEALTHY chains their
+  // reminders entirely. That is a bigger outage than the one the check
+  // prevents.
   //
-  // Retrying buys nothing here anyway: a failed read skips this loan for this
+  // Retrying buys nothing here anyway: a failed read skips this chain for this
   // tick and the next tick asks again, with days of window left. The same
   // argument the reconciliation pass makes for its own non-retrying client.
   const client = createPublicClient({
@@ -141,6 +196,14 @@ async function preNotifyChain(
   // (any periodic-cadence active loan with a known last-settle stamp)
   // and filter the cron-window check in TS — keeps the SQL simple
   // while the cadence-specific interval math stays out of D1.
+  //
+  // DELIBERATELY UNBOUNDED, and the bound is applied a few lines below
+  // instead. A `LIMIT` here would cap the wrong thing: rows, before the
+  // window filter and before the deadline ordering, so the cap would fall on
+  // whatever the database returned first rather than on what this tick can
+  // afford to send. D1 reads are not outbound subrequests — the allowance
+  // this lane has to respect is spent on chain reads and pushes, and both are
+  // bounded explicitly.
   const rows = await env.DB.prepare(
     `SELECT loan_id, chain_id, lender, borrower,
             periodic_interest_cadence, last_period_settled_at,
@@ -154,18 +217,33 @@ async function preNotifyChain(
     .bind(chain.id)
     .all<LoanRow>();
 
-  for (const row of rows.results ?? []) {
-    const ivlDays = intervalDays(row.periodic_interest_cadence);
-    if (ivlDays === 0) continue;
-    const nextCheckpoint = row.last_period_settled_at + ivlDays * SECONDS_PER_DAY;
-    const secsUntil = nextCheckpoint - now;
-    // Window: 0 < secsUntil <= preNotifyDays. We DON'T pre-notify
-    // after the boundary has already passed (settler can fire any
-    // moment) — that's the SETTLEMENT lane's territory, separate
-    // from this PRE-notify lane.
-    if (secsUntil <= 0 || secsUntil > windowSec) continue;
-    // De-dup: we've already pushed for this exact checkpoint.
-    if (row.period_pre_notified_at === nextCheckpoint) continue;
+  const due = candidatesInWindow(rows.results ?? [], now, windowSec);
+  if (due.length === 0) return;
+
+  // WHAT THIS TICK CAN AFFORD, TAKEN FROM THE FRONT OF A DEADLINE ORDER.
+  const slice = due.slice(0, budget.remaining);
+  if (due.length > slice.length) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) are inside ` +
+        `the notification window and this invocation can afford ` +
+        `${slice.length}. The nearest ${slice.length} deadline(s) go first; the ` +
+        `rest are not dropped — nothing is stamped for them, so a later tick ` +
+        `picks them up, and they move to the front as their own deadlines near.`,
+    );
+  }
+
+  // ONE CHAIN READ FOR THE WHOLE SLICE (#2213 r5 `4012300071`). The previous
+  // revision asked per loan, inside this loop, which spends one of the
+  // invocation's ~50 outbound subrequests per candidate — so a chain with
+  // more due loans than that exhausted the allowance mid-loop and took every
+  // REMAINING chain down with it, on every tick, forever. Multicall3 turns
+  // the whole slice into a single call whose per-sub-call failures are
+  // reported individually rather than poisoning the batch.
+  const states = await readLoanStates(client, chain, slice.map((c) => c.row.loan_id));
+  if (states === null) return; // the batch itself failed; said so, nothing stamped
+
+  for (let i = 0; i < slice.length; i++) {
+    const { row, nextCheckpoint, secsUntil } = slice[i]!;
 
     // ASK THE CHAIN BEFORE SAYING SOMETHING THAT CANNOT BE TAKEN BACK
     // (#2213 r3 `4011960593`). `status = 'active'` above is STORED state, and
@@ -173,10 +251,9 @@ async function preNotifyChain(
     // exactly that — so without this the holder of an ended loan is told a
     // payment is due, and the checkpoint is stamped so it is never revisited.
     //
-    // Asked HERE, after every cheap filter, because by this point the
-    // candidates are the handful of loans actually inside the notification
-    // window rather than the whole active set. One read per message, on a
-    // lane that sends few.
+    // Asked AFTER every cheap filter, because by this point the candidates
+    // are the loans actually inside the notification window rather than the
+    // whole active set.
     //
     // This is the keeper's pattern rather than the indexer's: a lane that can
     // ask the chain needs no cross-Worker suppression list, and does not
@@ -187,18 +264,25 @@ async function preNotifyChain(
     // A FAILED READ SKIPS, and skipping is safe: nothing is stamped, so the
     // next tick asks again while the window is still open. Sending on a
     // failed read would be choosing the unretractable outcome on no evidence.
-    let detail: { id: bigint | number; status: number };
-    try {
-      detail = (await client.readContract({
-        address: chain.diamond as Address,
-        abi: LoanFacetABI,
-        functionName: 'getLoanDetails',
-        args: [BigInt(row.loan_id)],
-      })) as { id: bigint | number; status: number };
-    } catch (err) {
+    //
+    // WHAT THIS CHECK DOES NOT DO, stated because it reads as if it does
+    // (#2213 r5 `4012300082`): it is a POINT-IN-TIME answer. A loan that is
+    // repaid, defaulted or otherwise leaves `Active` between this read and
+    // the sends below is still messaged, and the checkpoint still stamped.
+    // Nothing here serialises against the chain, and nothing could — the
+    // window between a read and a push is not closable from off-chain. What
+    // the check removes is the LARGE case, a row that has been wrong in D1
+    // for hours or days; what remains is a few seconds. Closing that would
+    // take a settlement-aware send, which is a different design.
+    const detail = states[i];
+    if (!detail) {
+      // The batch returned, this slot did not: the sub-call reverted, or its
+      // return data did not decode. Same rule as a failed batch — no evidence,
+      // no message, nothing stamped.
       console.warn(
         `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} status read ` +
-          `failed; not pre-notifying this tick: ${String(err).slice(0, 200)}`,
+          `returned nothing (the batched call failed for this loan); not ` +
+          `pre-notifying this tick.`,
       );
       continue;
     }
@@ -222,6 +306,11 @@ async function preNotifyChain(
       );
       continue;
     }
+
+    // SPENT HERE, not when the slice was taken. An ineligible loan costs no
+    // outbound message, so charging it would shrink the allowance for reasons
+    // that never used it.
+    budget.remaining -= 1;
 
     const daysUntil = Math.max(1, Math.ceil(secsUntil / SECONDS_PER_DAY));
 
@@ -256,6 +345,96 @@ async function preNotifyChain(
     )
       .bind(nextCheckpoint, now, chain.id, row.loan_id)
       .run();
+  }
+}
+
+/** A loan inside the notification window, with the arithmetic already done. */
+interface DueLoan {
+  row: LoanRow;
+  nextCheckpoint: number;
+  secsUntil: number;
+}
+
+/**
+ * The loans this tick could remind about, NEAREST DEADLINE FIRST.
+ *
+ * The order is what makes the invocation cap fair rather than arbitrary
+ * (#2213 r5 `4012300071`). Unordered, a capped pass returns whatever the
+ * database happened to hand back — in practice the same early rows every
+ * tick — so a borrower behind them could be starved of the reminder for the
+ * whole window and then miss the deadline it was for. Ordered by deadline,
+ * the queue drains in the order the deadlines arrive, and a loan deferred
+ * today is nearer the front tomorrow. Ties break on loan id so the order is
+ * total, not merely mostly-determined.
+ *
+ * The cadence arithmetic stays HERE rather than becoming an `ORDER BY` in
+ * SQL, which would be the obvious way to get the same order. `intervalDays`
+ * mirrors `LibVaipakam.intervalDays`, and a second copy of it written as a
+ * SQL `CASE` is a copy that drifts the first time the enum grows a member —
+ * silently, because a mis-ordered query still returns rows.
+ */
+function candidatesInWindow(rows: LoanRow[], now: number, windowSec: number): DueLoan[] {
+  const due: DueLoan[] = [];
+  for (const row of rows) {
+    const ivlDays = intervalDays(row.periodic_interest_cadence);
+    if (ivlDays === 0) continue;
+    const nextCheckpoint = row.last_period_settled_at + ivlDays * SECONDS_PER_DAY;
+    const secsUntil = nextCheckpoint - now;
+    // Window: 0 < secsUntil <= preNotifyDays. We DON'T pre-notify after the
+    // boundary has already passed (a settler can fire any moment) — that's
+    // the SETTLEMENT lane's territory, separate from this PRE-notify lane.
+    if (secsUntil <= 0 || secsUntil > windowSec) continue;
+    // De-dup: we've already pushed for this exact checkpoint.
+    if (row.period_pre_notified_at === nextCheckpoint) continue;
+    due.push({ row, nextCheckpoint, secsUntil });
+  }
+  due.sort((a, b) => a.nextCheckpoint - b.nextCheckpoint || a.row.loan_id - b.row.loan_id);
+  return due;
+}
+
+/** What the chain says about each loan, positionally. `null` where it did not say. */
+type LoanState = { id: bigint | number; status: number };
+
+/**
+ * Read every candidate's state in ONE call.
+ *
+ * `null` (the whole return, not a slot) means the batch itself failed and
+ * this chain says nothing this tick. A `null` SLOT means that one sub-call
+ * failed — `aggregate3` reports per-call success, so one unreadable loan does
+ * not cost the rest of the slice its reminders.
+ *
+ * Multicall3 sits at the same address on every chain in scope. If it is
+ * absent the call reverts, which lands in the batch-failed branch: the lane
+ * goes quiet on that chain and says why every tick, rather than sending on
+ * an answer it does not have.
+ */
+async function readLoanStates(
+  client: PublicClient,
+  chain: { name: string; diamond: string },
+  loanIds: number[],
+): Promise<(LoanState | null)[] | null> {
+  if (loanIds.length === 0) return [];
+  try {
+    return await batchCalls<LoanState>(
+      client,
+      LoanFacetABI as Abi,
+      'getLoanDetails',
+      encodeBatchCalls(
+        chain.diamond as Address,
+        LoanFacetABI as Abi,
+        'getLoanDetails',
+        loanIds.map((id) => [BigInt(id)]),
+      ),
+    );
+  } catch (err) {
+    // BOUNDED DESCRIPTION, never the message: viem puts the full request URL
+    // — API key included — in `HttpRequestError.message` (#2213 r5
+    // `4012300079`).
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name} status read failed for ` +
+        `${loanIds.length} loan(s); not pre-notifying this tick: ${describeFailure(err)}`,
+    );
+    return null;
   }
 }
 
@@ -335,7 +514,8 @@ async function pushIfSubscribed(
       });
     } catch (err) {
       console.error(
-        `[periodicPreNotify] push failed loan=${loan.loan_id} wallet=${wallet} err=${String(err).slice(0, 200)}`,
+        `[periodicPreNotify] push failed loan=${loan.loan_id} wallet=${wallet} ` +
+          `err=${describeFailure(err)}`,
       );
     }
   }
@@ -344,7 +524,8 @@ async function pushIfSubscribed(
       await sendMessage(env.TG_BOT_TOKEN, sub.tg_chat_id, `${title}\n${body}\n${deepLink}`);
     } catch (err) {
       console.error(
-        `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} err=${String(err).slice(0, 200)}`,
+        `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} ` +
+          `err=${describeFailure(err)}`,
       );
     }
   }

@@ -74,7 +74,7 @@ the threshold to come round, a record can pass it without having been looked
 at again, and may settle the moment it is. The report gives its age and when
 it was last examined, and leaves the conclusion to the evidence.
 
-### And two the same review caught in the fix itself
+### And what the same review caught in the fix itself
 
 **A second reminder lane was still speaking.** Due-date and grace reminders
 are not the only unretractable message the platform sends about a loan: a
@@ -92,12 +92,53 @@ present and current, while this one depends on the chain being reachable and
 simply stays quiet for that turn when it is not. Nothing is marked as told, so
 the next turn asks again, and the window is days wide.
 
+**What asking the chain does not give you is a guarantee, and this is worth
+being exact about.** The answer is true at the moment it is read. A loan that
+ends in the seconds between that read and the message going out is still
+messaged, and its checkpoint is still marked as told. Nothing off-chain can
+close that gap — the message is sent from outside the chain, so there is
+always some interval between asking and speaking. What the check removes is
+the large case: a record that has been wrong for hours or days because an
+ending was missed. What remains is a few seconds, on a reminder about a
+payment that is still days away.
+
 The reason for the split is width. The sweep considers up to a hundred records
 per chain each turn, where asking about each one would cost more requests than
 the platform's own budget allows; this lane considers a few. A first attempt
 had it share the memory instead, and three separate problems followed — all of
 them about coordinating two independently-scheduled parts of the system rather
 than about the rule itself.
+
+**Asking once per loan turned out to be the same budget problem in miniature.**
+Each run of this lane has a fixed allowance of outbound requests, shared with
+everything else happening on that run, and "a few" was an assumption about
+load rather than a limit. On a busy day the allowance ran out partway through,
+which does not merely stop that chain — it stops every chain after it in the
+same run, on every run, indefinitely. Two changes make the assumption
+unnecessary: all of a chain's checks now go out as one request instead of one
+per loan, and the number of reminders a single run will send is capped
+outright.
+
+A cap has to be fair or it is just a quieter way to lose reminders, so the
+order is now **nearest deadline first**, and the run starts at a different
+chain each time. A loan the cap defers is one place nearer the front on the
+next run, and gets there well before its own deadline; without that order the
+same records would be reached every time and the ones behind them never. When
+the cap does bind, the platform says how many records were in the window and
+how many it could take, rather than leaving the difference invisible.
+
+**A failing chain would have printed its own access key into the operator
+log.** When a chain read fails, the failure is written to the log so an
+operator can see why the platform went quiet. The failure text produced by the
+library used here contains the full address it tried to reach — which, on
+every hosted provider the platform uses, has an access key embedded in it. So
+the log written *because* a provider was failing would have recorded that
+provider's key, on every affected loan, every run. The log now records only
+the kind of failure and its error code, with anything address-shaped removed;
+that is the identifying part, and none of it can carry a secret. The rule had
+already been written down once, next to the code that first needed it, and was
+not followed the next time the situation arose a Worker away — so it now lives
+in the shared library both sides use.
 
 **Closing a loan could have stopped a chain being read at all.** The release
 added above goes into the same all-or-nothing group of writes as the rest of

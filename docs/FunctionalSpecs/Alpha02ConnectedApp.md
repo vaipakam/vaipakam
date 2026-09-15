@@ -290,6 +290,30 @@ The app uses chain reads and indexed reads for different jobs.
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.
+- The payment-due reminder for a loan paying interest on a schedule is
+  confirmed against the chain before it is sent, rather than against the
+  memory above. It is the other message a person cannot un-receive, it is sent
+  from a different part of the platform on a different schedule, and a rule
+  held in one part does not reach the other. Confirmation means the chain
+  still has that loan and still has it in the one state the interest payment
+  can actually be made from — not merely that it has not ended, since a state
+  that cannot be paid from would invite an action the platform would then
+  refuse.
+- That confirmation is true at the moment it is made, and the platform does
+  not claim more. A loan that ends between the confirmation and the message
+  going out is still messaged. What the confirmation removes is a record that
+  has been wrong for hours or days; what remains is the few seconds in which
+  no off-chain check could have known, on a reminder about a payment still
+  days away.
+- A single run sends a bounded number of these reminders, takes the nearest
+  deadlines first, and does not always begin with the same network. Every run
+  has a fixed allowance of outbound requests, so an unbounded one would stop
+  partway through and take every network after it down with it — on every run,
+  for as long as the load lasted. The order is what makes the bound safe: a
+  reminder deferred by it is nearer the front next time and arrives well
+  before the deadline it concerns, where an arbitrary order would reach the
+  same records every run and the ones behind them never. A run that hits the
+  bound says how many were waiting and how many it took.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

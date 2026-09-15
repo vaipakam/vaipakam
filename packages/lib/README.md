@@ -20,6 +20,14 @@ Current scope:
 - `address`, `cronCadence`, `coingecko`, `prepayOrderShape`, `erasureMessage`,
   `alertsMessage` — see each module's header; they post-date the Stage 2a list
   below and were missing from it.
+- `errorDescription` — how a thrown value may be written to a log. Every RPC
+  URL carries an API key and viem puts the whole request URL inside its error
+  messages, so `String(err)` in a Worker's `catch` prints a credential. It is
+  here rather than beside a caller for the reason `redactAddresses` is: the
+  rule was first written as a private helper in `apps/indexer`, with the
+  hazard documented in full, and the next change wrote `String(err)` around a
+  viem read in `apps/agent` anyway (#2213). One rule, every Worker holding an
+  RPC client.
 - `multicall` — viem-based batched RPC helpers.
 - `decodeContractError` — error normaliser for revert reasons across facets.
 - `chainPlatforms` — `chainId → CoinGecko platform slug` mapping.

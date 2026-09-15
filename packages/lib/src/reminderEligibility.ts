@@ -44,8 +44,10 @@
  * answer that could not distinguish "absent" from "could not ask". None of
  * those are bugs in the rule; they are the cost of coordinating across
  * Workers to answer a question one of them can ask the chain directly. By the
- * time that lane is about to send, its candidates are the handful of loans
- * actually inside the notification window, so it asks.
+ * time that lane is about to send, its candidates are the loans actually
+ * inside the notification window, so it asks — in ONE batched call, and for a
+ * bounded number of loans per invocation (#2213 r5). "The candidate set stays
+ * small" was an assumption about load, and an assumption is not a limit.
  *
  * The calendar sweep keeps this rule, and the difference is width, not
  * principle: its window can hold a hundred rows per chain per tick, so
