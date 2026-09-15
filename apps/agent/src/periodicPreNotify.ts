@@ -43,7 +43,7 @@ import {
 } from '@vaipakam/lib/periodicEligibility';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
-import { verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
+import { isRpcIdentityVerified, verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
@@ -301,6 +301,36 @@ async function preNotifyChain(
   // nothing, so charging for the call rather than the request would invent one
   // per chain per tick. A MISMATCH and an UNANSWERED probe both stop the
   // chain — an endpoint that cannot say what it is could be the mis-pointed one.
+  //
+  // AND THE PROBE'S COST IS KNOWN BEFORE IT IS SPENT (#2213 r24
+  // `4015538606`). r17 moved admission AFTER the verdict so a warm probe was
+  // not charged for — correct, and it left the opposite hole: a COLD chain
+  // that cannot be admitted still burns its probe, and the chain behind it,
+  // whose probe is warm and which could have afforded the whole pass, is then
+  // refused for the request the first one wasted. A mixed cache is the
+  // ordinary state after any capped run, so this is not a corner.
+  //
+  // `isRpcIdentityVerified` answers what the probe will cost without issuing
+  // anything, which makes admission and probing one budget-aware decision
+  // rather than two that disagree.
+  const identityCostsARequest = !isRpcIdentityVerified(chain.id, chain.rpc);
+  const needed =
+    CHAIN_OPENING_REQUESTS_AFTER_IDENTITY +
+    MAX_SENDS_PER_LOAN +
+    (identityCostsARequest ? 1 : 0);
+  if (budget.remaining < needed) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name} skipped: ${budget.remaining} ` +
+        `outbound request(s) left, below the ${needed} needed to ` +
+        `${identityCostsARequest ? 'verify, ' : ''}read this chain and ` +
+        `message about one loan. Nothing is spent on it — including its ` +
+        `identity probe, so a later chain that can afford the pass still ` +
+        `gets it. It takes its turn first on a later tick, and the ` +
+        `notification window is days wide.`,
+    );
+    return;
+  }
+
   const identity = await verifyRpcChainIdentity(
     client,
     chain.id,
@@ -316,23 +346,6 @@ async function preNotifyChain(
             ? `answered eth_chainId=${identity.reported}, which is not this chain`
             : 'could not confirm which chain it serves'
         }. Nothing read from it can justify a reminder.`,
-    );
-    return;
-  }
-
-  // CAN THIS CHAIN AFFORD TO FINISH? Asked HERE, not in the caller, because
-  // until the identity verdict is in, the opening cost is unknown (#2213 r17
-  // `4014237569`). A warm cache makes that probe free, so a caller assuming it
-  // always costs one would skip a chain whose real cost — lead time, head,
-  // one batch and a loan's sends — fits exactly in what is left, and would
-  // print a requirement one higher than the truth while doing it.
-  if (budget.remaining < CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name} skipped: ${budget.remaining} ` +
-        `outbound request(s) left, below the ` +
-        `${CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN} needed ` +
-        `to read this chain and message about one loan. It takes its turn ` +
-        `first on a later tick, and the notification window is days wide.`,
     );
     return;
   }
@@ -405,6 +418,61 @@ async function preNotifyChain(
     return;
   }
 
+  // THE GLOBAL PAUSE IS THE FIRST GATE, AND IT IS ASKED FIRST (#2213 r22
+  // `4015173439`, ordering corrected r24 `4015538614`).
+  //
+  // `settlePeriodicInterest` is declared `nonReentrant whenNotPaused`, and a
+  // MODIFIER RUNS BEFORE THE BODY — so the pause is checked before
+  // `periodicInterestEnabled` is even read. The r18 fix asked the switch and
+  // stopped there, which leaves the paused-but-enabled deployment sending
+  // exactly the instruction that fix exists to prevent.
+  //
+  // It is also the worse case of the two. A global pause is an emergency, and
+  // it closes ORDINARY REPAYMENT as well — so the borrower told to pay before
+  // their collateral is sold has no route at all, not even the fallback they
+  // would otherwise reach for. Telling someone to act during the one window
+  // where they cannot is the failure this lane must never produce.
+  //
+  // Pinned to the same head as everything else, and unreadable is treated as
+  // paused, for the reason the config read already is: not knowing whether
+  // the payment can be made is not permission to demand it.
+  //
+  // ASKED BEFORE THE PERIODIC SWITCH, which r22 got backwards. With the
+  // switch off and the diamond ALSO paused, the periodic gate returned first
+  // and the operator was told only about the switch — the milder of the two
+  // states, and the one that leaves ordinary repayment open. A failed config
+  // read hid the pause entirely. The contract checks the pause first because
+  // `whenNotPaused` is a modifier; this lane now reports in the same order,
+  // which is also what the functional spec says.
+  budget.remaining -= 1; // the pause read below
+  let paused: boolean;
+  try {
+    paused = (await client.readContract({
+      address: chain.diamond as Address,
+      abi: PAUSE_ABI,
+      functionName: 'paused',
+      blockNumber: head,
+    })) as boolean;
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — could not ` +
+        `read whether the diamond is paused (${describeFailure(err)}). A pause ` +
+        `stops settlement before the periodic switch is even consulted, so ` +
+        `this is not a question the lane may skip. Nothing is stamped.`,
+    );
+    return;
+  }
+  if (paused) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the ` +
+        `diamond is PAUSED, so settlement reverts before the periodic switch ` +
+        `is read, and ordinary repayment is closed too. A borrower told to ` +
+        `pay now would have no route at all. Nothing is stamped; reminders ` +
+        `resume when it is unpaused.`,
+    );
+    return;
+  }
+
   // THE LEAD TIME AND THE KILL SWITCH COME BACK TOGETHER (#2213 r18
   // `4014510645`), because this lane needs BOTH before it may say anything and
   // `getPeriodicInterestConfig` already returns both in one call. Reading only
@@ -464,52 +532,6 @@ async function preNotifyChain(
         `every loan on this chain. Existing cadence loans keep their cadence ` +
         `and still look due; telling them to pay would be an instruction the ` +
         `chain refuses. Nothing is stamped; reminders resume when it is on.`,
-    );
-    return;
-  }
-
-  // THE GLOBAL PAUSE IS A SECOND, INDEPENDENT GATE (#2213 r22 `4015173439`).
-  //
-  // `settlePeriodicInterest` is declared `nonReentrant whenNotPaused`, and a
-  // MODIFIER RUNS BEFORE THE BODY — so the pause is checked before
-  // `periodicInterestEnabled` is even read. The r18 fix asked the switch and
-  // stopped there, which leaves the paused-but-enabled deployment sending
-  // exactly the instruction that fix exists to prevent.
-  //
-  // It is also the worse case of the two. A global pause is an emergency, and
-  // it closes ORDINARY REPAYMENT as well — so the borrower told to pay before
-  // their collateral is sold has no route at all, not even the fallback they
-  // would otherwise reach for. Telling someone to act during the one window
-  // where they cannot is the failure this lane must never produce.
-  //
-  // Pinned to the same head as everything else, and unreadable is treated as
-  // paused, for the reason the config read already is: not knowing whether
-  // the payment can be made is not permission to demand it.
-  budget.remaining -= 1; // the pause read below
-  let paused: boolean;
-  try {
-    paused = (await client.readContract({
-      address: chain.diamond as Address,
-      abi: PAUSE_ABI,
-      functionName: 'paused',
-      blockNumber: head,
-    })) as boolean;
-  } catch (err) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — could not ` +
-        `read whether the diamond is paused (${describeFailure(err)}). A pause ` +
-        `stops settlement before the periodic switch is even consulted, so ` +
-        `this is not a question the lane may skip. Nothing is stamped.`,
-    );
-    return;
-  }
-  if (paused) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the ` +
-        `diamond is PAUSED, so settlement reverts before the periodic switch ` +
-        `is read, and ordinary repayment is closed too. A borrower told to ` +
-        `pay now would have no route at all. Nothing is stamped; reminders ` +
-        `resume when it is unpaused.`,
     );
     return;
   }
@@ -593,6 +615,7 @@ async function preNotifyChain(
   let unreached = 0;
   let noRoute = 0;
   let failedRails = 0;
+  let refusedRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
   let staleCheckpoint = 0;
@@ -637,6 +660,7 @@ async function preNotifyChain(
     unreached += outcome.unreached;
     noRoute += outcome.noRoute;
     failedRails += outcome.failedRails;
+    refusedRails += outcome.refusedRails;
     rejected += outcome.rejected;
     checkpointLag += outcome.checkpointLag;
     staleCheckpoint += outcome.staleCheckpoint;
@@ -679,7 +703,8 @@ async function preNotifyChain(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
-        `${failedRails} rail(s) unconfirmed, ` +
+        `${failedRails} rail(s) unconfirmed, ${refusedRails} refused by the ` +
+        `service, ` +
         `${rejected} rejected by the chain, ${checkpointLag} awaiting the ` +
         `indexer, ${staleCheckpoint} with a checkpoint ahead of the chain, ` +
         `${unreadable} unreadable — ` +
@@ -694,7 +719,8 @@ async function preNotifyChain(
         `repairs that on its own.`,
     );
   } else if (
-    noRoute + unreached + failedRails + rejected + checkpointLag + staleCheckpoint + unreadable >
+    noRoute + unreached + failedRails + refusedRails + rejected + checkpointLag +
+      staleCheckpoint + unreadable >
     0
   ) {
     // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
@@ -712,7 +738,8 @@ async function preNotifyChain(
       `[periodicPreNotify] chain=${chain.name}: scan complete — ` +
         `${examined} examined, ${reminded} reminded, ${unreached} reached ` +
         `nobody, ${noRoute} with nobody to tell, ${failedRails} rail(s) ` +
-        `unconfirmed, ${rejected} rejected by the chain, ${checkpointLag} ` +
+        `unconfirmed, ${refusedRails} refused by the service, ` +
+        `${rejected} rejected by the chain, ${checkpointLag} ` +
         `awaiting the indexer, ${staleCheckpoint} with a checkpoint ahead of ` +
         `the chain, ${unreadable} unreadable.`,
     );
@@ -781,6 +808,7 @@ async function messageBatch(
   unreached: number;
   noRoute: number;
   failedRails: number;
+  refusedRails: number;
   rejected: number;
   checkpointLag: number;
   staleCheckpoint: number;
@@ -792,6 +820,7 @@ async function messageBatch(
   let unreached = 0;
   let noRoute = 0;
   let failedRails = 0;
+  let refusedRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
   let staleCheckpoint = 0;
@@ -805,7 +834,7 @@ async function messageBatch(
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
         rejected, checkpointLag, staleCheckpoint, unreadable,
-        pushUnconfigured, tgUnconfigured,
+        refusedRails, pushUnconfigured, tgUnconfigured,
       };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
@@ -938,6 +967,7 @@ async function messageBatch(
       noRoute += 1;
     }
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
+    refusedRails += borrowerOutcome.refusedRails + lenderOutcome.refusedRails;
     pushUnconfigured +=
       (borrowerOutcome.pushUnconfigured ? 1 : 0) + (lenderOutcome.pushUnconfigured ? 1 : 0);
     tgUnconfigured +=
@@ -1012,6 +1042,7 @@ async function messageBatch(
     unreached,
     noRoute,
     failedRails,
+    refusedRails,
     rejected,
     checkpointLag,
     staleCheckpoint,
@@ -1488,6 +1519,16 @@ interface DeliveryOutcome {
    */
   unconfirmedRails: number;
   /**
+   * Rails the service ANSWERED and refused — a rotated token, a stale chat.
+   *
+   * Apart from `unconfirmedRails` because the two need opposite responses
+   * (#2213 r24 `4015538638`): a refusal is a credential or a target to fix and
+   * will keep failing until someone does; an unknown fate may be a passing
+   * incident. Only Telegram can tell them apart today — see where this is
+   * populated — and the summary says so rather than implying Push has none.
+   */
+  refusedRails: number;
+  /**
    * The subscriber asked for Push and the DEPLOYMENT has no signer.
    *
    * Carried out of here rather than logged here (#2213 r19 `4014677438`),
@@ -1552,7 +1593,8 @@ async function pushIfSubscribed(
   if (!sub) {
     return {
       status: 'none', attempted: false, delivered: false,
-      unconfirmedRails: 0, pushUnconfigured: false, tgUnconfigured: false,
+      unconfirmedRails: 0, refusedRails: 0,
+      pushUnconfigured: false, tgUnconfigured: false,
     };
   }
   // #1033 — the connected app Alerts card exposes this as a real opt-out;
@@ -1562,7 +1604,8 @@ async function pushIfSubscribed(
   if (sub.notify_maturity_approaching === 0) {
     return {
       status: 'opted-out', attempted: false, delivered: false,
-      unconfirmedRails: 0, pushUnconfigured: false, tgUnconfigured: false,
+      unconfirmedRails: 0, refusedRails: 0,
+      pushUnconfigured: false, tgUnconfigured: false,
     };
   }
 
@@ -1606,6 +1649,8 @@ async function pushIfSubscribed(
   let attempted = false;
   let delivered = false;
   let unconfirmedRails = 0;
+  /** Rails the service ANSWERED and refused — a credential or target to fix. */
+  let refusedRails = 0;
   // WHETHER THE PUSH RAIL IS USABLE AT ALL, answered by the sender rather than
   // by inspecting the env (#2213 r23 `4015375741`). See where this is returned.
   let pushSignerUnusable = false;
@@ -1658,16 +1703,19 @@ async function pushIfSubscribed(
     attempted = true;
     budget.remaining -= 1;
     try {
-      // `sendMessage` returns whether TELEGRAM ACCEPTED it: false covers both
-      // a definitive rejection (a 401 from a rotated token, a 400 from a stale
-      // chat id) and a network failure. Either way nobody can say the message
-      // arrived, so it is charged and not counted (#2213 r10 `4013087415`).
-      if (await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`)) {
-        delivered = true;
-      } else {
-        unconfirmedRails += 1;
-      }
+      // THREE OUTCOMES, KEPT APART (#2213 r24 `4015538638`). Charged either
+      // way — a request went out — but a service that ANSWERED and said no is
+      // a different operator problem from one that never answered: a rotated
+      // token or a stale chat needs a credential fixed, a transport failure
+      // needs an incident checked. The release note promised these were
+      // counted separately and the code was folding both into one bucket.
+      const tg = await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
+      if (tg === 'accepted') delivered = true;
+      else if (tg === 'refused') refusedRails += 1;
+      else unconfirmedRails += 1;
     } catch (err) {
+      // `sendMessage` swallows its own failures, so reaching here is a throw
+      // it did not expect — nothing is known about the message's fate.
       unconfirmedRails += 1;
       console.error(
         `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} ` +
@@ -1687,6 +1735,7 @@ async function pushIfSubscribed(
     attempted,
     delivered,
     unconfirmedRails,
+    refusedRails,
     // The subscriber WANTED push (they have a channel) and the deployment
     // cannot sign for it. Distinct from "no channel": that is the user's
     // choice, this is the operator's configuration.

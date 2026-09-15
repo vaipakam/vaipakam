@@ -676,12 +676,16 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   // failure here would let the frontend mark the wallet "verified" when
   // the message never arrived, so surface a hard failure as 502 and
   // keep the round-trip honest.
-  const ok = await sendMessage(
+  // EXPLICIT, not truthy (#2213 r24 `4015538638`). `sendMessage` now returns
+  // a verdict rather than a boolean, and every non-accepted verdict is a
+  // non-empty string — so a surviving `if (!ok)` would read a refusal as
+  // success, which is the exact silent-misread this PR keeps finding.
+  const outcome = await sendMessage(
     env.TG_BOT_TOKEN,
     linked.chatId,
     testAlert(linked.locale),
   );
-  if (!ok) {
+  if (outcome !== 'accepted') {
     return json({ error: 'send-failed' }, 502, corsOrigin);
   }
   return json({ ok: true }, 200, corsOrigin);

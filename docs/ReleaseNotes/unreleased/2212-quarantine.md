@@ -210,6 +210,16 @@ are each counted as their own thing. Before this, both were reported as
 reminders, which is precisely the number someone would read while trying to
 work out why nobody had heard from the platform.
 
+A message the service ANSWERED and refused is counted apart from one whose
+fate is unknown, because they need opposite responses: a refusal is a
+credential or a destination to fix and will keep failing until someone does,
+where an unknown may be a passing incident. An earlier version of this note
+promised that separation while the code still had one bucket for both — the
+sending step returned a yes/no, so the distinction was thrown away before
+anything could count it. It returns a verdict now. Only one of the two
+channels can tell the difference today, and the platform says that rather
+than implying the other never refuses.
+
 Failed messages are counted per channel, and separately from whether the
 person was reached at all. Someone told over one channel while the other
 failed is both a reminder and a broken channel; counting only the first would
@@ -253,6 +263,12 @@ reasoning as everywhere else here: not knowing whether a payment can be made
 is not permission to demand one.
 
 **And switching periodic interest off is not the only way settlement closes.**
+The platform-wide halt described next is asked FIRST, because that is the
+order the settlement route itself uses and because it is the more serious of
+the two — a first version of this asked it second, so with both closed the
+reader was told only about the milder one, and a failed read of the
+periodic setting hid the halt completely.
+
 The platform has a second, independent emergency stop that halts everything at
 once — and the settlement route checks it BEFORE it looks at the
 periodic-interest setting, so a deployment can have periodic interest enabled
@@ -419,6 +435,12 @@ accounting took the disclosure with it. So a run could mark forty records as
 handled, deliver nothing, and say nothing, which is the ordinary shape of a
 misconfigured deployment rather than an exotic one. The run now reports the
 count once, naming the setting.
+
+It is also reported ONCE for the whole network per run, and not once per
+recipient. The sending step used to write the same line for every person it
+was asked to reach, which on a wide window buries a real configuration
+failure in its own repetitions — the failure mode where a message that
+matters becomes something people scroll past.
 
 It covers a credential that is PRESENT and unusable as well as one that is
 missing, and the first is the worse case: a missing credential is at least

@@ -47,8 +47,16 @@ const sends: string[] = [];
  * `4012940120`). A stub that always reported success could not see that.
  */
 let pushAttemptFor: (subscriber: string) => 'accepted' | 'failed' | 'not-requested';
-/** Whether Telegram ACCEPTS the message. `false` = a 401/400 or a dead network. */
-let tgAccepts: boolean;
+/**
+ * What Telegram says about the message.
+ *
+ * A VERDICT, not a boolean (#2213 r24 `4015538638`). `refused` is a service
+ * that answered and said no — a rotated token, a stale chat — and `unknown` is
+ * a transport failure that may or may not have delivered. They are counted
+ * apart because they need opposite operator responses, so a stub collapsing
+ * them could not exercise the distinction.
+ */
+let tgAccepts: 'accepted' | 'refused' | 'unknown';
 vi.mock('../src/push', () => ({
   sendPush: vi.fn(async (_pk: string, m: { subscriber: string }) => {
     const attempt = pushAttemptFor(m.subscriber);
@@ -129,6 +137,8 @@ let headBlock: bigint;
 let reportedChainId: number | null;
 /** When set, the identity probe cannot answer at all. */
 let identityThrows: boolean;
+/** How many identity probes actually went out — a chain skipped must spend none. */
+let identityProbes = 0;
 /** When set, stamping the checkpoint throws — the delivery still happened. */
 let stampThrows: boolean;
 /** When set, the loan scan sees nothing — used to warm caches without doing work. */
@@ -201,6 +211,7 @@ vi.mock('viem', async (importOriginal) => {
     http: (url: string) => ({ __stubUrl: url }),
     createPublicClient: ({ transport }: { transport: { __stubUrl: string } }) => ({
       getChainId: async () => {
+        identityProbes += 1;
         if (identityThrows) throw new Error('transport down');
         return reportedChainId ?? Number(/stub-(\d+)/.exec(transport.__stubUrl)?.[1] ?? 84532);
       },
@@ -452,6 +463,7 @@ beforeEach(() => {
   headBlock = 1_000n;
   reportedChainId = null;
   identityThrows = false;
+  identityProbes = 0;
   stampThrows = false;
   warmupOnly = false;
   periodicEnabled = true;
@@ -467,7 +479,7 @@ beforeEach(() => {
   scanOffsets.clear();
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
-  tgAccepts = true;
+  tgAccepts = 'accepted';
   subscriberFor = (w) => bothRails(w);
   loanRows = [dueLoan];
   loanRowsByChain = null;
@@ -843,7 +855,7 @@ describe('what counts as a send, and what only looks like one', () => {
     // — and neither is evidence that anyone was told. Counting them as
     // reminders lets a run report deliveries it has no basis for, which is the
     // number an operator reads while investigating silence.
-    tgAccepts = false;
+    tgAccepts = 'refused';
     pushAttemptFor = () => 'failed';
     const ids = Array.from({ length: 12 }, (_, k) => 400 - k);
     loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
@@ -856,9 +868,14 @@ describe('what counts as a send, and what only looks like one', () => {
     // ...and the report says plainly that nobody was confirmed reached.
     expect(said).toContain('0 reminded');
     expect(said).toContain(`${LOANS_PER_TICK} reached nobody`);
-    // TWO rails failed per loan, but only the loans the allowance reached were
-    // attempted at all — so it is every send this tick made.
-    expect(said).toContain(`${SENDS_PER_TICK} rail(s) unconfirmed`);
+    // AND THE TWO KINDS OF FAILURE ARE APART (#2213 r24 `4015538638`). Both
+    // rails failed on every loan the allowance reached, but they failed
+    // DIFFERENTLY: Telegram answered and refused, which is a credential or a
+    // target to fix, while the Push SDK threw, which says nothing about
+    // whether the message arrived. One bucket could not tell an operator
+    // which of those was happening.
+    expect(said).toContain(`${SENDS_PER_TICK / 2} rail(s) unconfirmed`);
+    expect(said).toContain(`${SENDS_PER_TICK / 2} refused by the service`);
   });
 
   it('counts a loan as reminded when EITHER rail is accepted', async () => {
@@ -867,7 +884,7 @@ describe('what counts as a send, and what only looks like one', () => {
     // the loan is a reminder — one confirmed rail is enough to have told
     // someone.
     pushAttemptFor = () => 'failed';
-    tgAccepts = true;
+    tgAccepts = 'accepted';
     // The SAME shape as the case above — twelve loans, both rails issued,
     // eight of them fitting the allowance — so the two differ in exactly one
     // thing: whether Telegram accepted. That is what makes "0 reminded" above
@@ -1577,6 +1594,66 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // Reported where it belongs: against the deployment, once, with a count.
     expect(said).toContain('4 subscriber(s) this tick have a Push channel set');
     expect(said).toContain('no Push was sent to them');
+  });
+
+  it('reports the PAUSE, not the periodic switch, when both are off', async () => {
+    // #2213 r24 `4015538614`. r22 added the pause read BELOW the periodic
+    // gate, so with both off the periodic gate returned first and the operator
+    // was told only about the switch — the milder of the two states, and the
+    // one that leaves ordinary repayment open. A failed config read hid the
+    // pause entirely. The contract checks the pause first because
+    // `whenNotPaused` is a modifier; this lane now reports in the same order.
+    diamondPaused = true;
+    periodicEnabled = false;
+    loanRows = tenLoans().slice(-3);
+    const { stamped, said } = await run();
+    expect(sends.length).toBe(0);
+    expect(stamped).toEqual([]);
+    expect(said).toContain('diamond is PAUSED');
+    // The weaker state must not be the one reported in its place.
+    expect(said).not.toContain('master switch is off');
+  });
+
+  it('does not spend a COLD identity probe on a chain it cannot admit', async () => {
+    // #2213 r24 `4015538606`. r17 moved admission after the verdict so a warm
+    // probe was not charged for — and left the opposite hole: a cold chain
+    // that cannot be admitted still burns its probe, and the chain behind it,
+    // whose probe is warm and which could have afforded the pass, is then
+    // refused for the request the first one wasted.
+    //
+    // Base leads and spends down; Arb is cold on this first invocation, so its
+    // probe is the request at stake.
+    // The LEAD chain spends the allowance down to below what a cold chain
+    // needs (its opening reads, one loan's sends, AND its probe). The two
+    // behind it are then inadmissible — and the question this pins is whether
+    // they nonetheless burn a probe each on the way to being refused.
+    const lead = Array.from({ length: 7 }, (_, k) =>
+      periodicLoan(600 - k, NOW - 29 * DAY + k * 60),
+    );
+    loanRowsByChain = {
+      84532: lead,
+      421614: [periodicLoan(700, NOW - 29 * DAY)],
+      11155111: [periodicLoan(800, NOW - 29 * DAY)],
+    };
+    const { said } = await run({
+      RPC_ARB_SEPOLIA: 'https://stub-421614.invalid',
+      RPC_SEPOLIA: 'https://stub-11155111.invalid',
+    });
+    expect(said).toContain('skipped');
+    // THE FIX HAS TWO HALVES AND BOTH NEED PINNING. An earlier version of
+    // this test asserted only the WORDING, which is printed either way, so it
+    // passed with the fix reverted — the fifth "passed for the wrong reason"
+    // in this PR, and the same shape each time: the assertion sat where it
+    // could not observe the change.
+    //
+    // Half one — ORDERING: admission runs before the probe, so a chain it
+    // refuses spends nothing. Exactly one probe went out, the lead chain's.
+    expect(identityProbes).toBe(1);
+    // Half two — ARITHMETIC: the requirement INCLUDES the probe for a cold
+    // chain, so the number an operator reads is what the chain would really
+    // have needed. Derived, so it survives the constants moving.
+    const coldNeed = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN + 1;
+    expect(said).toContain(`below the ${coldNeed} needed`);
   });
 
   it('says nothing about a cap it did not reach', async () => {

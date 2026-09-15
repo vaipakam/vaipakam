@@ -13,11 +13,24 @@ const TELEGRAM_API = 'https://api.telegram.org';
  *  band change. Returns whether Telegram accepted the send, so the
  *  UX-012 test-alert round-trip can distinguish a real delivery from a
  *  silent failure (the cron callers simply ignore the boolean). */
+/**
+ * What became of one Telegram send.
+ *
+ * THREE ANSWERS, NOT TWO (#2213 r24 `4015538638`). A boolean flattened a
+ * definitive refusal — a rotated token, a chat the bot was removed from —
+ * into the same value as a transport failure that may or may not have
+ * delivered. They need opposite operator responses: fix a credential, versus
+ * check whether an incident is in progress. This function already knew the
+ * difference structurally (a throw before any response, versus a response
+ * that said no); only the return type threw it away.
+ */
+export type TelegramOutcome = 'accepted' | 'refused' | 'unknown';
+
 export async function sendMessage(
   token: string,
   chatId: string,
   text: string,
-): Promise<boolean> {
+): Promise<TelegramOutcome> {
   let res: Response;
   try {
     res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
@@ -30,18 +43,20 @@ export async function sendMessage(
       }),
     });
   } catch (err) {
-    // Network-level failure (DNS, timeout) — same swallow policy.
+    // Network-level failure (DNS, timeout) — same swallow policy. NOTHING
+    // came back, so whether the message arrived is genuinely unknown.
     console.error(`Telegram sendMessage threw: chat=${chatId} err=${err}`);
-    return false;
+    return 'unknown';
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     console.error(
       `Telegram sendMessage failed: chat=${chatId} status=${res.status} body=${body.slice(0, 200)}`,
     );
-    return false;
+    // The service ANSWERED and said no. Definitive, and actionable.
+    return 'refused';
   }
-  return true;
+  return 'accepted';
 }
 
 export interface TelegramUpdate {

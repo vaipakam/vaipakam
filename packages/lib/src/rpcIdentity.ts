@@ -46,6 +46,19 @@ export type RpcIdentityVerdict =
  */
 const verified = new Set<string>();
 
+/**
+ * Has this pair ALREADY been verified in this isolate?
+ *
+ * Exposed so a caller with a request budget can find out what the probe will
+ * cost BEFORE spending it (#2213 r24 `4015538606`). Charging first and
+ * deciding afterwards means a chain that cannot be admitted still burns the
+ * request, and the chain behind it — whose probe is warm and which could have
+ * afforded the whole pass — is refused for the request the first one wasted.
+ */
+export function isRpcIdentityVerified(chainId: number, rpc: string): boolean {
+  return verified.has(`${chainId}:${rpc}`);
+}
+
 /** Test seam — an isolate's memory is otherwise unobservable. */
 export function _resetRpcIdentityCache(): void {
   verified.clear();

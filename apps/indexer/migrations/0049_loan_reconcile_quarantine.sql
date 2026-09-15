@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS loan_reconcile_quarantine (
   PRIMARY KEY (chain_id, loan_id)
 );
 
--- The read this exists for: "which loans on this chain are quarantined?",
--- asked by every surface that would otherwise act on a stored `active` row.
-CREATE INDEX IF NOT EXISTS idx_loan_quarantine_chain
-  ON loan_reconcile_quarantine(chain_id, loan_id);
+-- NO EXPLICIT INDEX HERE, deliberately (#2213 r24 `4015538634`).
+--
+-- The read this table exists for — "which loans on this chain are
+-- quarantined?" — is served by the autoindex SQLite creates for the composite
+-- PRIMARY KEY (chain_id, loan_id), including through its `chain_id` prefix.
+-- An explicit index on the same columns in the same order adds no access path
+-- and makes every mark, reason update and release maintain a second copy.

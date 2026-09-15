@@ -361,7 +361,10 @@ The app uses chain reads and indexed reads for different jobs.
   its own queries to the chain included — so an unbounded one would stop
   partway through and take every network after it down with it, on every run,
   for as long as the load lasted. A run does not begin work on a network it
-  cannot afford to both query and send for. The order is what makes the bound safe: a
+  cannot afford to both query and send for — including the cost of confirming
+  that network's identity when that has not already been done, so a network it
+  refuses spends nothing at all and the ones behind it keep what it would
+  otherwise have wasted. The order is what makes the bound safe: a
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
   same records every run and the ones behind them never.
@@ -382,10 +385,22 @@ The app uses chain reads and indexed reads for different jobs.
   it, and a run that marks such records as handled while delivering nothing is
   the hardest failure for an operator to notice. The count is reported once per
   network per run, naming the setting — not once per record, which would train
-  a real misconfiguration into background noise.
+  a real misconfiguration into background noise. This covers a credential that
+  is present and unusable as well as one that is missing, and the platform
+  decides which by what the sending step actually did rather than by
+  inspecting the setting.
+- A message the delivery service ANSWERED and refused is counted apart from
+  one whose fate is unknown. They need opposite responses — a refusal is a
+  credential or destination to fix and will keep failing until someone does,
+  where an unknown attempt may be a passing incident — so flattening them
+  leaves a reader unable to tell which is happening. Where a channel cannot
+  distinguish the two, the platform says so rather than implying that channel
+  never refuses.
 - No reminder is sent on a network that is globally halted, which is a
   separate setting from the periodic-interest one and is checked first by the
-  settlement route itself. A network can therefore have periodic interest
+  settlement route itself — and the platform asks it first too, so that when
+  both are closed the reader is told about the halt rather than the milder
+  state, and a failed read of the other setting cannot hide it. A network can therefore have periodic interest
   enabled and still refuse every payment. The halt also closes ordinary
   repayment, so someone told to pay has no route at all — which makes this the
   more serious of the two to get wrong. As with the other setting, a run that

@@ -46,13 +46,21 @@ describe('what sendPush says it did', () => {
     expect(await sendPush(undefined, payload)).toBe('not-requested');
   });
 
-  it('makes no request, and says so, when the channel key is MALFORMED', async () => {
+  it('makes no request, and says so QUIETLY, when the channel key is MALFORMED', async () => {
     // The case the truthiness guard could not see: non-empty, so it looked
     // like a usable rail, and unusable, so nothing was ever sent. No network
     // is touched here — the failure happens building the signer.
+    //
+    // AND IT DOES NOT LOG (#2213 r24 `4015538623`). This is a property of the
+    // DEPLOYMENT, not of this recipient: a malformed key fails for every
+    // subscriber, so a line here printed the identical message once per
+    // attempted recipient — on a wide window, the log flood that turns a real
+    // configuration failure into background noise. The caller reports it once
+    // per chain per run with a count, which is the only place that can see
+    // how many were affected.
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await sendPush('not-a-private-key', payload)).toBe('not-requested');
-    expect(err).toHaveBeenCalled();
+    expect(err).not.toHaveBeenCalled();
   });
 
   it('reports a request it made and the provider accepted', async () => {

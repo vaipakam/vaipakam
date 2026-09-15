@@ -423,7 +423,18 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     // The migration lands, and the loan is quarantined.
     const migration = ALL_MIGRATIONS.find((m) => m.includes('loan_reconcile_quarantine'));
     for (const stmt of (migration ?? '').split(';')) {
-      if (stmt.trim()) h.db.prepare(stmt).run();
+      // SKIP COMMENT-ONLY CHUNKS. Splitting on `;` leaves whatever follows the
+      // last statement as a chunk of its own, so a migration that ENDS in a
+      // comment hands this loop a non-empty string with no SQL in it — which
+      // `prepare` accepts and then fails on, with an error naming the
+      // statement rather than the parse (#2213 r24). Stripping line comments
+      // before the emptiness test makes the splitter judge SQL rather than
+      // characters.
+      const sql = stmt
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('--'))
+        .join('\n');
+      if (sql.trim()) h.db.prepare(sql).run();
     }
     h.db
       .prepare(

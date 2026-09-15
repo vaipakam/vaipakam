@@ -163,14 +163,20 @@ export async function sendPush(
   try {
     ({ signer, channelCaip } = getSignerAndChannel(channelPk));
   } catch (err) {
-    // SEPARATE FROM THE SEND BELOW, for two reasons. It is the branch that
-    // definitely made no request, so the caller must not be charged for it.
-    // And a PRIVATE KEY is the argument in scope here, so the failure is
-    // described by class rather than quoted — the send's own catch keeps its
-    // message, which is the diagnostic there and has no secret in reach.
-    console.error(
-      `[push] channel signer unusable (PUSH_CHANNEL_PK malformed): ${describeFailure(err)}`,
-    );
+    // SEPARATE FROM THE SEND BELOW because it is the branch that definitely
+    // made no request, so the caller must not be charged for it.
+    //
+    // AND IT RETURNS SILENTLY (#2213 r24 `4015538623`). This is a property of
+    // the DEPLOYMENT, not of this recipient: a malformed key fails for every
+    // subscriber, so logging here printed the identical line once per
+    // attempted recipient — on a wide window, the log flood that turns a real
+    // configuration failure into background noise. The caller reports it once
+    // per chain per run with a count, which is the only place that can.
+    //
+    // `err` is deliberately unused rather than described: a PRIVATE KEY is the
+    // argument in scope in this branch, and the one diagnostic that survives
+    // says which SETTING is wrong, which is what an operator acts on.
+    void err;
     return 'not-requested';
   }
   try {
