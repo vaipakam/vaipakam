@@ -368,17 +368,25 @@ The app uses chain reads and indexed reads for different jobs.
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
   same records every run and the ones behind them never.
-- The bound is on OUTBOUND REQUESTS — every request the run issues, its own
-  queries to the chain as well as the messages it sends — never on records
-  examined or records handled. Anything that occupies a slot without issuing a
-  request cannot consume the allowance: a record the chain declines to confirm,
-  one whose recipients have switched these reminders off, one with no
-  subscriber at all. Were the bound on records instead, those would hold the
-  whole run's allowance while never being marked as handled, so the same few
-  would sit at the front of the order on every run and the people behind them
-  would never be reached. A run therefore continues past records it cannot send
-  for, up to a stated limit of its own, and reaches the ones behind them in the
-  same run.
+- The bound is on OUTBOUND REQUESTS — every request the run issues, never on
+  records examined or records handled. "Every request" includes the run's own
+  reads and writes of the platform's records, not only its queries to the
+  chain and the messages it sends: those leave the run just as the others do,
+  and a bound that ignored them would let a run that believed it was rationing
+  its messages exceed the real limit while sending almost none.
+- Anything that occupies a record slot without issuing a request cannot
+  consume the allowance — a record the chain declines to confirm is the case
+  that arises, since nothing is worth asking about a loan the chain has never
+  heard of. A record whose recipients have switched these reminders off DOES
+  cost the run the lookups that established it, because there is no way to
+  know someone opted out without asking; what it never costs is the messages.
+  Were the bound on records instead, a record that sends nothing would hold
+  the whole run's allowance while never being marked as handled, so the same
+  few would sit at the front of the order on every run and the people behind
+  them would never be reached. A run therefore continues past records it
+  cannot send for, up to a stated limit of its own, reaches the ones behind
+  them in the same run, and — because its remembered place advances past them
+  — does not pay for the same prefix on the next run either.
 - Where the deployment's own configuration prevents a channel from working at
   all, a run says so rather than silently not using it. A subscriber who has
   asked for a channel the deployment cannot sign for can never be reached on
@@ -399,6 +407,21 @@ The app uses chain reads and indexed reads for different jobs.
   leaves a reader unable to tell which is happening. Where a channel cannot
   distinguish the two, the platform says so rather than implying that channel
   never refuses.
+- A record whose every attempted message was DEFERRED is left unmarked, so a
+  later run sends it. Saying a message will be retried while marking the
+  record as handled is a contradiction the reader cannot see: a marked record
+  is never revisited, so a brief rate limit would suppress that period's
+  reminder permanently. The two neighbouring cases stay marked, and
+  deliberately: a message the service REFUSED will fail the same way until a
+  person repairs something, so repeating it for the rest of the window reaches
+  nobody; and a record where one party WAS reached is marked whatever the
+  other channel did, because the mark is per record and returning would tell
+  the reached party about the same payment twice.
+- Where a run reports how many subscribers a configuration problem affects, it
+  counts distinct subscribers and not how many records they appear on. One
+  wallet that is a counterparty on many positions is one affected subscriber;
+  reporting it as many turns a single stale subscription into what reads like
+  a deployment-wide outage, and those call for different responses.
 - No reminder is sent on a network that is globally halted, which is a
   separate setting from the periodic-interest one and is checked first by the
   settlement route itself — and the platform asks it first too, so that when

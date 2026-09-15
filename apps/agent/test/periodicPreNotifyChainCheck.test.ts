@@ -26,8 +26,9 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
   CHAIN_OPENING_REQUESTS_AFTER_IDENTITY,
-  MAX_OUTBOUND_REQUESTS_PER_INVOCATION,
+  MAX_SUBREQUESTS_PER_INVOCATION,
   MAX_SENDS_PER_LOAN,
+  MAX_SUBREQUESTS_PER_LOAN,
 } from '../src/periodicPreNotify';
 
 /**
@@ -79,18 +80,106 @@ vi.mock('../src/telegram', () => ({
  * at once, none of them because the behaviour under test had changed. Derived
  * here, the suite fails when a RULE changes and survives arithmetic moving.
  *
- * A chain spends its opening reads, then one batched status read, and then
- * refuses to BEGIN a loan it cannot finish — so whole loans at four sends
- * each, and the remainder goes unused on purpose.
+ * A chain spends its opening calls, then one batched status read, and then
+ * refuses to BEGIN a loan it cannot finish.
+ *
+ * D1 IS IN THESE NUMBERS since r27 (`4016129218`): a binding call is a
+ * subrequest, so the lane's own bookkeeping competes with its sends for the
+ * same ceiling. It did not used to be, which is how a full tick could reach
+ * the high sixties against a limit of fifty.
  */
-const LOANS_PER_TICK = Math.floor(
-  (MAX_OUTBOUND_REQUESTS_PER_INVOCATION - CHAIN_OPENING_REQUESTS_AFTER_IDENTITY - 1) /
-    MAX_SENDS_PER_LOAN,
-);
+const PRE_MESSAGE_SUBREQUESTS =
+  1 + // the rotation WRITE (its read is skipped on a single-chain tick)
+  1 + // the identity probe, cold
+  1 + // the head
+  1 + // the indexer cursor (D1)
+  1 + // the pause
+  1 + // the config
+  1 + // the candidate query (D1)
+  1 + // this lane's stored scan position (D1)
+  1; //  the first batched status read
+
+/**
+ * What one loan actually spends HERE: a subscriber lookup per counterparty,
+ * four sends, and the checkpoint stamp.
+ *
+ * The suite's stub always finds a subscriber row, so the legacy fallback
+ * lookup never fires — which is why this is seven while the RESERVATION is
+ * nine. They differ on purpose: a loan is only STARTED when its worst case
+ * fits, so one already begun always finishes.
+ */
+const TYPICAL_SUBREQUESTS_PER_LOAN = 2 + MAX_SENDS_PER_LOAN + 1;
+
+/**
+ * Whole loans, modelling the gate the loop really uses — it begins another
+ * while the RESERVATION still fits, and each then spends the typical amount.
+ * Written as the loop rather than as division because those two numbers
+ * differ, and dividing by either one alone gives the wrong answer.
+ */
+function loansThatFit(costPerLoan: number, available = MAX_SUBREQUESTS_PER_INVOCATION): number {
+  let remaining = available - PRE_MESSAGE_SUBREQUESTS;
+  let n = 0;
+  while (remaining >= MAX_SUBREQUESTS_PER_LOAN) {
+    remaining -= costPerLoan;
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * Loans of DIFFERENT SHAPES cost different amounts, so no single number
+ * serves every case: one with no usable rail spends two lookups and a stamp,
+ * one on Telegram only spends two sends fewer than one on both. Tests below
+ * ask `loansThatFit` for their own shape rather than reaching for this.
+ */
+const LOANS_PER_TICK = loansThatFit(TYPICAL_SUBREQUESTS_PER_LOAN);
+/** A loan nobody could be reached for: two lookups and the stamp, no sends. */
+const NO_ROUTE_SUBREQUESTS_PER_LOAN = 3;
+
+/**
+ * How many of a MIXED run of loans a tick reaches, given each one's cost.
+ *
+ * Mirrors the loop's own gate — begin another while the reservation fits,
+ * then spend what that loan actually costs — so a scenario with cheap loans
+ * ahead of expensive ones can state its expectation instead of hard-coding
+ * a number somebody has to re-derive whenever the cost model moves. It moved
+ * substantially in r27, when D1 stopped being free.
+ */
+function loansReached(costs: number[]): number {
+  let remaining = MAX_SUBREQUESTS_PER_INVOCATION - PRE_MESSAGE_SUBREQUESTS;
+  let n = 0;
+  for (const c of costs) {
+    if (remaining < MAX_SUBREQUESTS_PER_LOAN) break;
+    remaining -= c;
+    n += 1;
+  }
+  return n;
+}
+/** One rail only: two lookups, two sends, the stamp. */
+const ONE_RAIL_SUBREQUESTS_PER_LOAN = 5;
+/** Two sends and the stamp, with the two lookups: a Telegram-only pair. */
+const TG_ONLY_SUBREQUESTS_PER_LOAN = ONE_RAIL_SUBREQUESTS_PER_LOAN;
+/** An opted-out loan still costs its two lookups — asking IS a subrequest. */
+const OPTED_OUT_SUBREQUESTS_PER_LOAN = 2;
+/**
+ * Saving the scan position back — paid on EVERY pass, not only an interrupted
+ * one: a pass that reached the end of the window writes the wrapped position
+ * so the next tick starts at the front rather than where this one stopped.
+ */
+const CURSOR_PERSIST_SUBREQUESTS = 1;
+/**
+ * Reading which chain led last time and writing which one led this time — two
+ * D1 calls, paid once per invocation rather than once per chain. A tick with
+ * a single chain skips the read (there is nothing to rotate between).
+ */
+const ROTATION_SUBREQUESTS = 2;
 const SENDS_PER_TICK = LOANS_PER_TICK * MAX_SENDS_PER_LOAN;
 /** What is left over after the last whole loan — what the summary reports. */
 const LEFTOVER_AFTER_TICK =
-  MAX_OUTBOUND_REQUESTS_PER_INVOCATION - CHAIN_OPENING_REQUESTS_AFTER_IDENTITY - 1 - SENDS_PER_TICK;
+  MAX_SUBREQUESTS_PER_INVOCATION -
+  PRE_MESSAGE_SUBREQUESTS -
+  LOANS_PER_TICK * TYPICAL_SUBREQUESTS_PER_LOAN -
+  CURSOR_PERSIST_SUBREQUESTS;
 
 /** Who is subscribed, and how. `null` = no subscription row at all. */
 let subscriberFor: (wallet: string) => Record<string, unknown> | null;
@@ -435,12 +524,21 @@ async function runTwiceWarm(extra: Record<string, unknown> = {}) {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   warn.mockClear();
   sends.length = 0;
+  let said: string;
   try {
     await mod.runPeriodicPreNotify(second.env).catch(() => undefined);
   } finally {
+    // READ BEFORE RESTORING, as `run()` does. This used to read `mock.calls`
+    // on the line AFTER `mockRestore()`, and vitest's restore resets the mock
+    // state — so `said` was the empty string on every path and the one
+    // assertion that consumed it (`not.toContain('skipped')`) could not fail.
+    // Found in r27 while re-deriving the cost model: the warm-admission case
+    // was silently passing on a run where the trailing chain WAS skipped.
+    // That is the eighth "test passed for the wrong reason" in this PR, and
+    // the first one in the harness rather than in a case.
+    said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
   }
-  const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
   const stamps = second.writes
     .filter((w) => w.sql.includes('period_pre_notified_at'))
     .map((w) => ({ chainId: Number(w.params[2]), loanId: Number(w.params[3]) }));
@@ -696,16 +794,21 @@ describe('what counts as a send, and what only looks like one', () => {
     });
     const { stamped, said } = await run();
     expect(sends).toEqual([]);
-    // Stamped exactly as before — the semantics that existed are preserved.
-    expect(stamped.length).toBe(10);
+    // Stamped, which is the semantics this pins — but no longer all ten, and
+    // that is the r27 subrequest accounting biting rather than a change here
+    // (#2213 r27 `4016129218`). A no-route loan still spends two subscriber
+    // lookups and a stamp, and those are subrequests too, so the allowance
+    // now reaches fewer of them.
+    const fit = loansThatFit(NO_ROUTE_SUBREQUESTS_PER_LOAN);
+    expect(fit).toBeLessThan(10); // the cap really does bite in this scenario
+    expect(stamped.length).toBe(fit);
     // THIS ASSERTION USED TO BE `toBe('')`, and that was pinning the defect
     // (#2213 r19 `4014677438`). Its own comment said the quiet part: nothing
     // was sent, so the allowance was untouched, so no early-stop summary fired
     // and there was "no warning to read a count out of". A tick that stamps
     // ten loans as handled having reached nobody is precisely what an operator
     // needs told, and the completed-scan path now tells them.
-    expect(said).toContain('scan complete');
-    expect(said).toContain('10 with nobody to tell');
+    expect(said).toContain(`${fit} with nobody to tell`);
     expect(said).not.toContain('reminded, 10');
   });
 
@@ -714,8 +817,14 @@ describe('what counts as a send, and what only looks like one', () => {
     // observable: ten loans with no usable rail, then ten fully subscribed.
     // The subscribed ones exhaust the allowance and the warning fires, and it
     // must say EIGHT reminded out of EIGHTEEN examined — not eighteen.
-    const ids = Array.from({ length: 20 }, (_, k) => 200 - k); // nearest first
-    const noRoute = new Set(ids.slice(0, 10));
+    // FOUR cheap ones, not ten (#2213 r27 `4016129218`). A no-route loan used
+    // to cost nothing, so ten of them in front changed nothing; now each
+    // spends two subscriber lookups and a stamp, and ten would consume the
+    // tick before it reached a single routed loan. The property under test is
+    // unchanged — sends are counted apart from examinations — so the scenario
+    // is sized to the real cost model rather than the old belief about it.
+    const ids = Array.from({ length: 14 }, (_, k) => 200 - k); // nearest first
+    const noRoute = new Set(ids.slice(0, 4));
     const known = new Map<string, number>();
     loanRows = ids
       .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
@@ -743,15 +852,18 @@ describe('what counts as a send, and what only looks like one', () => {
       return bothRails(w);
     };
     const { said } = await run();
-    // Derived, not memorised: the allowance less the opening reads and one
-    // batch read, spent on whole loans at four sends each.
-    expect(sends.length).toBe(SENDS_PER_TICK);
-    // The ten unreachable ones cost nothing, so they are examined ON TOP of
-    // however many the allowance reaches.
-    expect(said).toContain(`${LOANS_PER_TICK + 10} examined, ${LOANS_PER_TICK} reminded`);
+    const costs = [
+      ...Array(4).fill(NO_ROUTE_SUBREQUESTS_PER_LOAN),
+      ...Array(10).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
+    ];
+    const examined = loansReached(costs);
+    const reminded = examined - 4; // the cheap prefix reached nobody
+    expect(reminded).toBeGreaterThan(0); // the scenario must still reach some
+    expect(sends.length).toBe(reminded * MAX_SENDS_PER_LOAN);
+    expect(said).toContain(`${examined} examined, ${reminded} reminded`);
     // #2213 r12 `4013387370`: and the ten unreachable ones are accounted for
     // rather than vanishing between "examined" and "reminded".
-    expect(said).toContain('10 with nobody to tell');
+    expect(said).toContain('4 with nobody to tell');
   });
 
   it('does not charge — or count — a Push that never left', async () => {
@@ -760,8 +872,12 @@ describe('what counts as a send, and what only looks like one', () => {
     // a deployment misconfigured that way every push behaves like this, so
     // charging on "we called it" spends the whole allowance on requests that
     // never happened and defers the recipients the platform could still reach.
-    const ids = Array.from({ length: 20 }, (_, k) => 300 - k); // nearest first
-    const pushOnly = new Set(ids.slice(0, 10));
+    // FOUR Push-only ones, not ten — see the sizing note on the test above
+    // (#2213 r27 `4016129218`). Their Push never leaves, but their two
+    // subscriber lookups and stamp do cost, so ten would consume the tick
+    // before a routed loan was reached.
+    const ids = Array.from({ length: 14 }, (_, k) => 300 - k); // nearest first
+    const pushOnly = new Set(ids.slice(0, 4));
     const known = new Map<string, number>();
     loanRows = ids
       .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
@@ -786,14 +902,20 @@ describe('what counts as a send, and what only looks like one', () => {
       return id !== undefined && pushOnly.has(id) ? 'not-requested' : 'accepted';
     };
     const { said } = await run();
-    // Nothing went out for the Push-only ten; the fully-routed loans spend
-    // the allowance, eight of them fitting inside it.
-    expect(sends.filter((s) => s.startsWith('push:')).length).toBe(LOANS_PER_TICK * 2);
-    expect(sends.length).toBe(SENDS_PER_TICK); // whole loans × 2 parties × 2 rails
-    // Eighteen examined, and the ten whose only rail never left are NOT among
-    // the reminded. Charging on truthiness gave them the allowance and called
-    // them reminded.
-    expect(said).toContain(`${LOANS_PER_TICK + 10} examined, ${LOANS_PER_TICK} reminded`);
+    const costs = [
+      // Push-only and the push never leaves: two lookups, no sends, a stamp.
+      ...Array(4).fill(NO_ROUTE_SUBREQUESTS_PER_LOAN),
+      ...Array(10).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
+    ];
+    const examined = loansReached(costs);
+    const reminded = examined - 4;
+    expect(reminded).toBeGreaterThan(0);
+    // Nothing went out for the Push-only prefix; the routed ones spend sends.
+    expect(sends.filter((s) => s.startsWith('push:')).length).toBe(reminded * 2);
+    expect(sends.length).toBe(reminded * MAX_SENDS_PER_LOAN);
+    // The ones whose only rail never left are NOT among the reminded.
+    // Charging on truthiness gave them the allowance and called them reminded.
+    expect(said).toContain(`${examined} examined, ${reminded} reminded`);
   });
 
   it('does not remind about a period the chain has already moved past', async () => {
@@ -975,26 +1097,38 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // which every chain draws from. A per-chain allowance would let two
     // chains spend sixteen against a limit of about fifty — and then the
     // throw lands in the per-chain catch, costing later chains everything.
-    loanRowsByChain = {
-      84532: tenLoans().slice(-5),
-      421614: tenLoans().slice(-5),
-    };
+    //
+    // STATED AS A PROPERTY, not as arithmetic (#2213 r27 `4016129218`). The
+    // previous version hand-computed the expected split from the constants,
+    // which made it a mirror of the implementation: it failed when the cost
+    // model moved even though the behaviour under test had not. What the
+    // budget actually promises is observable without knowing any of the
+    // numbers — both chains draw from one pool, so giving each of them a
+    // window it could finish ALONE leaves the second one short.
+    const WINDOW = 2;
+    const windowFor = (base: number) =>
+      Array.from({ length: WINDOW }, (_, k) => periodicLoan(base - k, NOW - 29 * DAY + k * 60));
+    loanRowsByChain = { 84532: windowFor(600), 421614: windowFor(700) };
+    // Telegram only, so a loan costs two sends rather than four and the second
+    // chain is squeezed rather than shut out entirely — which is the state
+    // this test needs to observe.
+    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
     const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
-    // DERIVED, so this survives the opening cost changing (it did, in r22).
-    // Chain A pays its identity probe, its pre-loop opening reads and one
-    // batch read, then five loans at four sends each. Chain B pays the same
-    // opening again from what is left, and gets whole loans out of the
-    // remainder — which is the point: the reads come out of the same budget
-    // as the sends, so two chains do NOT get two allowances.
-    const preLoopReads = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY - 1; // less the batch
-    const afterChainA =
-      MAX_OUTBOUND_REQUESTS_PER_INVOCATION - 1 - preLoopReads - 1 - 5 * MAX_SENDS_PER_LOAN;
-    const loansOnChainB = Math.floor((afterChainA - 1 - preLoopReads - 1) / MAX_SENDS_PER_LOAN);
-    expect(stamps.length).toBe(5 + loansOnChainB);
-    expect(loansOnChainB).toBeLessThan(5); // the second chain really is squeezed
-    // Both chains were reached — whichever went first, the second got the
-    // remainder rather than nothing.
-    expect(new Set(stamps.map((s) => s.chainId)).size).toBe(2);
+    // Both chains were reached: the second got the REMAINDER rather than
+    // nothing, which is what distinguishes a shared pool from a pool the first
+    // chain drains.
+    const perChain = new Map<number, number>();
+    for (const s of stamps) perChain.set(s.chainId, (perChain.get(s.chainId) ?? 0) + 1);
+    expect(perChain.size).toBe(2);
+    // And ONE of them did not finish a window it would have finished on its
+    // own — the whole claim. Each window fits comfortably inside a single
+    // chain's tick (the first chain proves it by finishing one), so a
+    // per-chain allowance would have completed both.
+    const finished = [...perChain.values()].filter((n) => n === WINDOW).length;
+    const shortChanged = [...perChain.values()].filter((n) => n < WINDOW);
+    expect(finished).toBeGreaterThan(0);
+    expect(shortChanged.length).toBe(1);
+    expect(stamps.length).toBeLessThan(2 * WINDOW);
   });
 
   it('leads with a different chain on each invocation, remembering which', async () => {
@@ -1070,10 +1204,33 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       return optedOut.has(id) ? { ...row, notify_maturity_approaching: 0 } : row;
     };
     const { stamped } = await run();
-    // The two subscribed loans are reminded in the SAME tick, and only they
-    // cost anything: 2 loans × 2 counterparties × 2 rails.
-    expect([...stamped].sort((a, b) => b - a)).toEqual([92, 91]);
-    expect(sends.length).toBe(8);
+    // THE PROPERTY THIS PINS HAS NARROWED, and the narrowing is real rather
+    // than a test concession (#2213 r27 `4016129218`).
+    //
+    // r7's claim was that a record which sends nothing cannot consume the
+    // allowance. That was only true while D1 was believed free. Establishing
+    // that someone has opted out REQUIRES reading their row, and a binding
+    // call is a subrequest — so eight opted-out loans really do spend sixteen
+    // before a subscribed one is reached. There is no way to know a user
+    // opted out without asking.
+    //
+    // What survives, and is what the fairness argument actually needs: they
+    // cost only their LOOKUPS, never the four sends; a subscribed loan behind
+    // them is still reached in the same tick; and the scan position advances
+    // past them, so the next tick resumes beyond rather than re-paying for
+    // them forever. That last part is r12's cursor doing the work r7 thought
+    // the counting unit was doing.
+    const costs = [
+      ...Array(8).fill(2), // two subscriber lookups each, no sends, no stamp
+      ...Array(2).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
+    ];
+    const reached = loansReached(costs);
+    expect(reached).toBeGreaterThan(8); // at least one subscribed loan IS reached
+    const remindedHere = reached - 8;
+    expect([...stamped].sort((a, b) => b - a)).toEqual(
+      [92, 91].slice(0, remindedHere),
+    );
+    expect(sends.length).toBe(remindedHere * MAX_SENDS_PER_LOAN);
   });
 
   it('never overshoots the ceiling, even when loans cost different amounts', async () => {
@@ -1104,11 +1261,29 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       return bothRails(w);
     };
     const { stamped } = await run();
-    // 37 sendable after the three reads: 2 + 4×8 = 34 spent, 3 left, and the
-    // ninth full-cost loan is refused rather than begun.
-    expect(sends.length).toBe(34);
-    expect(sends.length).toBeLessThanOrEqual(37);
-    expect(stamped.length).toBe(9);
+    // The nearest loan costs one rail's worth, every loan behind it the full
+    // amount — so the running total never lands on a multiple of anything and
+    // the last loan the tick could begin is decided by the RESERVATION, not by
+    // what happens to be left. Derived from the shapes rather than counted by
+    // hand, since the cost model moved in r27 when D1 stopped being free.
+    const costs = [
+      ONE_RAIL_SUBREQUESTS_PER_LOAN,
+      ...Array(11).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
+    ];
+    const reached = loansReached(costs);
+    expect(reached).toBeGreaterThan(1); // the mixed shapes really are exercised
+    expect(reached).toBeLessThan(12); // and the ceiling really does bite
+    expect(stamped.length).toBe(reached);
+    expect(sends.length).toBe(2 + (reached - 1) * MAX_SENDS_PER_LOAN);
+    // THE CEILING ITSELF, stated separately from the count: everything this
+    // tick spent — its opening reads, the loans it began, the saved position —
+    // is inside the allowance. A gate that merely asked "is there anything
+    // left" would begin one more loan and pass every assertion above.
+    const spent =
+      PRE_MESSAGE_SUBREQUESTS +
+      costs.slice(0, reached).reduce((a, b) => a + b, 0) +
+      CURSOR_PERSIST_SUBREQUESTS;
+    expect(spent).toBeLessThanOrEqual(MAX_SUBREQUESTS_PER_INVOCATION);
   });
 
   it('RESUMES where it stopped, so a wide window cannot hide its tail', async () => {
@@ -1119,14 +1294,23 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // gets. The position is stored now and advances on its own progress, so
     // this test manipulates no clock at all: that is the property being
     // bought.
-    const N = 350;
+    //
+    // THE PREFIX IS DERIVED, not 300 as it was before r27 (`4016129218`).
+    // Establishing that someone opted out costs a subscriber lookup, and a
+    // binding call is a subrequest, so one tick now covers about a dozen
+    // opted-out rows rather than hundreds. The property is the same either
+    // way — a prefix that fills a whole tick does not block the tail forever —
+    // and stating the prefix as "exactly one tick's worth" is what keeps the
+    // second invocation landing on the subscribed loans behind it.
+    const prefix = loansThatFit(OPTED_OUT_SUBREQUESTS_PER_LOAN);
+    const N = prefix + 5;
     const ids = Array.from({ length: N }, (_, k) => 1000 - k); // nearest first
     loanRows = ids
       .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
       .reverse();
-    // The first 300 have opted out: they send nothing, are never stamped, and
-    // never leave the front of the deadline order.
-    const optedOut = new Set(ids.slice(0, 300));
+    // The whole prefix has opted out: they send nothing, are never stamped,
+    // and never leave the front of the deadline order.
+    const optedOut = new Set(ids.slice(0, prefix));
     const known = new Map<string, number>();
     loanRows = loanRows.map((r) => {
       const id = r.loan_id as number;
@@ -1145,12 +1329,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
 
     const first = await run();
     expect(first.stamped).toEqual([]); // the whole first pass is opted-out
-    expect(first.said).toContain('300 examined');
+    expect(first.said).toContain(`${prefix} examined`);
     const second = await run();
     // The tail is reached on the very next tick, with no clock involved.
     expect(second.stamped.length).toBeGreaterThan(0);
     expect(second.stamped.every((id) => !optedOut.has(id))).toBe(true);
-    expect(second.said).toContain('resumed at 300');
+    expect(second.said).toContain(`resumed at ${prefix}`);
   });
 
   it('does not claim a remainder when a RESUMED pass finishes the window', async () => {
@@ -1205,27 +1389,67 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // requirement — its opening reads plus one loan's sends — so a caller that
     // charges the warm probe anyway refuses by exactly one. Derived, because
     // the tuning is what broke when r22 added the pause read.
-    const need = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN;
-    const preLoopReads = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY - 1;
-    // Warm cache: the identity probe costs nothing for either chain.
-    const leadLoans =
-      (MAX_OUTBOUND_REQUESTS_PER_INVOCATION - preLoopReads - 1 - need) / 2; // 2 sends each
-    expect(Number.isInteger(leadLoans)).toBe(true);
-    const arb = Array.from({ length: 2 }, (_, k) => periodicLoan(700 - k, NOW - 29 * DAY + k * 60));
-    const base = Array.from({ length: leadLoans }, (_, k) =>
-      periodicLoan(600 - k, NOW - 29 * DAY + k * 60),
-    );
+    const warmNeed = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SUBREQUESTS_PER_LOAN;
+    // What the LEAD chain must spend for the trailing chain to face exactly
+    // its own requirement and not one request more. A whole chain pass costs
+    // its opening calls — `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY` covers the
+    // saved scan position too, which is written on EVERY pass and not only on
+    // an interrupted one — plus whatever its loans cost.
+    const target =
+      MAX_SUBREQUESTS_PER_INVOCATION -
+      ROTATION_SUBREQUESTS -
+      CHAIN_OPENING_REQUESTS_AFTER_IDENTITY -
+      warmNeed;
+    // Composed from two loan SHAPES rather than one, because the target need
+    // not be a multiple of any single loan's cost — it was not, once D1 came
+    // into the model in r27. One routed loan plus however many no-route ones
+    // land on it exactly.
+    const fillers = (target - TYPICAL_SUBREQUESTS_PER_LOAN) / NO_ROUTE_SUBREQUESTS_PER_LOAN;
+    // THE TUNING IS THE TEST, so a composition that no longer lands exactly
+    // must fail loudly rather than leave the trailing chain with a request to
+    // spare — which would pass whether the warm probe is charged for or not.
+    expect(Number.isInteger(fillers)).toBe(true);
+    expect(fillers).toBeGreaterThanOrEqual(0);
+    const known = new Map<string, number>();
+    const withWallets = (rows: Record<string, unknown>[]) =>
+      rows.map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    const lead = withWallets([
+      periodicLoan(600, NOW - 29 * DAY),
+      ...Array.from({ length: fillers }, (_, k) =>
+        periodicLoan(599 - k, NOW - 29 * DAY + (k + 1) * 60),
+      ),
+    ]);
+    const trail = withWallets([periodicLoan(700, NOW - 29 * DAY)]);
+    // Every loan on the lead chain BEHIND its first has a subscriber row with
+    // no rail on it — two lookups and a stamp, no sends.
+    const noRoute = new Set(lead.slice(1).map((r) => r.loan_id as number));
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      if (!noRoute.has(id)) return bothRails(w);
+      return {
+        wallet: w,
+        push_channel: null,
+        tg_chat_id: null,
+        locale: 'en',
+        notify_maturity_approaching: 1,
+      };
+    };
     // The SECOND invocation leads with Arb (the rotation advanced), so Arb is
-    // the chain that must spend down to exactly seven.
-    loanRowsByChain = { 421614: base, 84532: arb };
-    // Telegram only, so each loan costs two sends rather than four.
-    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    // the chain that must spend the allowance down to exactly `warmNeed`.
+    loanRowsByChain = { 421614: lead, 84532: trail };
     const { said, stamps } = await runTwiceWarm({
       RPC_ARB_SEPOLIA: 'https://stub-421614.invalid',
     });
-    // Base Sepolia leads the second invocation or Arb does; either way the
-    // chain that goes second must not be refused for a request the warm probe
-    // never spends.
+    // The chain that goes second faces EXACTLY its warm requirement, so it
+    // must not be refused for a request the warm probe never spends.
     expect(said).not.toContain('skipped');
     expect(new Set(stamps.map((s) => s.chainId)).size).toBe(2);
   });
@@ -1295,10 +1519,25 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
         known.set(borrower.toLowerCase(), id);
         return { ...r, lender, borrower };
       });
-    // Only two of the first hundred are reachable, so the first batch does
-    // real work WITHOUT exhausting the allowance — which is what lets the scan
-    // reach a second batch at all.
+    // WHAT FILLS THE FIRST BATCH CHANGED IN r27 (`4016129218`), and the change
+    // is the finding rather than a test concession. Ninety-eight loans with a
+    // subscriber row and no rail used to fill it for free; each of those now
+    // costs two lookups and a stamp, so a hundred of them is three hundred
+    // subrequests and the tick would never see a second batch. Rows the CHAIN
+    // rejects cost nothing — no lookup is worth making about a loan that does
+    // not exist — so they are what a batch can be full of while the allowance
+    // survives it. Two loans are messaged and two more have nobody to tell, so
+    // the completed batch still does every kind of work whose survival this
+    // test is about.
     const reachable = new Set([2000, 1999]);
+    const noRoute = new Set([1998, 1997]);
+    const orphan = (id: number) => !reachable.has(id) && !noRoute.has(id);
+    answer = (id) => ({
+      id: orphan(id) ? 0n : BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
+    });
     subscriberFor = (w) => {
       const id = known.get(w.toLowerCase());
       if (id === undefined) return null;
@@ -1312,11 +1551,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       };
     };
     const { stamped, said } = await run();
-    // The completed batch's work survives: a hundred loans handled, two of
-    // them actually messaged.
-    expect(stamped.length).toBe(100);
+    // The completed batch's work survives: a hundred loans examined, two of
+    // them messaged and two more stamped with nobody to tell.
+    expect(stamped.length).toBe(reachable.size + noRoute.size);
     expect(said).toContain('100 examined, 2 reminded');
-    expect(said).toContain('98 with nobody to tell');
+    expect(said).toContain('2 with nobody to tell');
     // The failure is still stated, and described as THIS batch's.
     expect(said).toContain('status read failed');
     // #2213 r15 `4013952981`: and the SUMMARY names it as the reason the tick
@@ -1570,7 +1809,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run({ TG_BOT_TOKEN: undefined });
     expect(sends.length).toBe(0);
     // Four subscribers (two loans × two counterparties) wanted Telegram.
-    expect(said).toContain('4 subscriber(s) this tick have a Telegram chat set');
+    // TWO, not four (#2213 r27 `4016129208`) — both loans share one pair of
+    // counterparties, and the sentence counts subscribers.
+    // ANCHORED ON THE PREFIX, because `toContain` alone is not a count check:
+    // "12 subscriber(s)" contains "2 subscriber(s)", so a tally that went back
+    // to counting appearances would satisfy the loose form.
+    expect(said).toContain(': 2 subscriber(s) this tick have a Telegram chat set');
     expect(said).toContain('no TG_BOT_TOKEN');
     // The loans ARE still counted as unroutable — that part is true, the
     // reminder did not reach anyone. What the disclosure adds is WHY, which
@@ -1594,8 +1838,53 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run(); // PUSH_CHANNEL_PK is SET, and unusable
     expect(sends.length).toBe(0);
     // Reported where it belongs: against the deployment, once, with a count.
-    expect(said).toContain('4 subscriber(s) this tick have a Push channel set');
+    // TWO, not four (#2213 r27 `4016129208`): these two loans share one pair
+    // of counterparties, so four OCCURRENCES are two subscribers.
+    expect(said).toContain(': 2 subscriber(s) this tick have a Push channel set');
     expect(said).toContain('no Push was sent to them');
+  });
+
+  it('counts SUBSCRIBERS in the configuration warning, not appearances', async () => {
+    // #2213 r27 `4016129208`. The sentence says "N subscriber(s)" and the
+    // number was a tally of counterparty slots, so one wallet lending on five
+    // loans reported as five misconfigured subscribers. On a busy chain that
+    // turns a single stale subscription into what reads like a
+    // deployment-wide outage — and the operator response to those two is not
+    // the same.
+    //
+    // Two shapes in ONE case, because the bug is only visible in the
+    // difference between them: the same count either way would prove nothing.
+    subscriberFor = (w) => ({ ...bothRails(w), tg_chat_id: null });
+    pushAttemptFor = () => 'not-requested';
+    // Six loans, all on the shared pair of wallets: twelve appearances.
+    loanRows = tenLoans().slice(-6);
+    const shared = await run();
+    // Anchored on the `chain=…: ` prefix — "12 subscriber(s)" contains
+    // "2 subscriber(s)", so the loose form would pass on the very regression
+    // this case exists to catch.
+    expect(shared.said).toContain(': 2 subscriber(s) this tick have a Push channel set');
+
+    // The same six loans with a counterparty pair of their own each.
+    const known = new Map<string, number>();
+    loanRows = tenLoans()
+      .slice(-6)
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    subscriberFor = (w) =>
+      known.has(w.toLowerCase()) ? { ...bothRails(w), tg_chat_id: null } : null;
+    const distinct = await run();
+    // Twelve wallets, and the allowance reaches some of them — however many
+    // that is, it is MORE than the shared case's two, which is the whole
+    // point: the number tracks subscribers and not loans.
+    const reported = /: (\d+) subscriber\(s\) this tick have a Push channel/.exec(distinct.said);
+    expect(reported).not.toBeNull();
+    expect(Number(reported![1])).toBeGreaterThan(2);
   });
 
   it('reports the PAUSE, not the periodic switch, when both are off', async () => {
@@ -1654,7 +1943,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // Half two — ARITHMETIC: the requirement INCLUDES the probe for a cold
     // chain, so the number an operator reads is what the chain would really
     // have needed. Derived, so it survives the constants moving.
-    const coldNeed = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN + 1;
+    const coldNeed = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SUBREQUESTS_PER_LOAN + 1;
     expect(said).toContain(`below the ${coldNeed} needed`);
   });
 
@@ -1696,6 +1985,49 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // sent someone to repair a configuration that is fine.
     expect(said).toContain('0 refused by the service');
     expect(said).toContain(`${SENDS_PER_TICK / 2} rail(s) unconfirmed`);
+  });
+
+  it('leaves a loan the service only DEFERRED unstamped, so a later tick retries', async () => {
+    // #2213 r27 `4016129201`, and the finding is that r26 bought half of its
+    // own fix. Introducing `transient` told the operator the send would be
+    // retried — while the loan STAMPED, because `attempted` was true and the
+    // stamp is what `candidatesInWindow` excludes on. The diagnostic said
+    // "deferred" and the behaviour was "abandoned": a thirty-second rate limit
+    // could suppress a borrower's payment reminder for that checkpoint
+    // permanently, which is worse than the flattening r26 set out to fix.
+    tgAccepts = 'transient';
+    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    loanRows = tenLoans().slice(-2);
+    const { stamped, said } = await run();
+    expect(sends.length).toBeGreaterThan(0); // it really did try
+    expect(stamped).toEqual([]); // and kept the checkpoint retryable
+    expect(said).toContain('deferred by the service');
+  });
+
+  it('DOES stamp a loan the service refused — there is nothing to retry there', async () => {
+    // The mirror of the case above, stated because the asymmetry is
+    // deliberate rather than an oversight: `refused` means the same message
+    // fails again until a person repairs a credential, so re-sending it every
+    // tick for the rest of the window is waste that buys nobody a reminder.
+    // `transient` means the opposite. Pinning only the retryable half would
+    // leave the pair free to collapse back into one.
+    tgAccepts = 'refused';
+    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    loanRows = tenLoans().slice(-2);
+    const { stamped } = await run();
+    expect(stamped.length).toBe(2);
+  });
+
+  it('stamps a loan whose OTHER rail got through, however the first one failed', async () => {
+    // A per-loan stamp, so leaving it unstamped for the deferred rail would
+    // re-send to the counterparty that was already reached. Being told twice
+    // about one payment is its own defect, and the reached party is the one
+    // the reminder was for.
+    tgAccepts = 'transient';
+    pushAttemptFor = () => 'accepted';
+    loanRows = tenLoans().slice(-2);
+    const { stamped } = await run();
+    expect(stamped.length).toBe(2);
   });
 
   it('says nothing about a cap it did not reach', async () => {

@@ -52,17 +52,31 @@ const SECONDS_PER_DAY = 86_400;
  * The allowance, counted in OUTBOUND REQUESTS — every one of them, reads
  * included (#2213 r13 `4013571040`).
  *
- * A Worker invocation gets a documented 50 outbound subrequests, shared with
- * every other lane on the same tick — the same ceiling the indexer sizes its
- * own passes against (`apps/indexer/src/chainIndexer.ts`). D1 does not come
- * out of it: queries through the binding "are D1 rows, not subrequests, so
- * this costs nothing against the invocation budget"
- * (`apps/indexer/src/loanReconcile.ts`), which is why this lane's own
- * bookkeeping reads and per-loan stamps are uncounted here. Forty against
- * fifty is the headroom, and it is stated because the number invites tuning
- * and a reader cannot otherwise tell where the wall is.
+ * A Worker invocation gets a documented 50 subrequests, shared with every
+ * other lane on the same tick — the same ceiling the indexer sizes its own
+ * passes against (`apps/indexer/src/chainIndexer.ts`).
  *
- * This lane spends the allowance on chain reads and
+ * **D1 COMES OUT OF IT, and an earlier version of this comment said it did
+ * not** (#2213 r27 `4016129218`). That claim was taken from
+ * `loanReconcile.ts`, which asserts D1 rows "are not subrequests, so this
+ * costs nothing against the invocation budget". The repository contradicts
+ * itself on this and that file is the wrong half: `marketSummary.ts` states
+ * the opposite in its own invariants — "a whole sweep costs a constant number
+ * of D1 subrequests" — and it is the one that matches the platform. A binding
+ * call is a subrequest.
+ *
+ * The consequence of believing the wrong half was not cosmetic. Forty
+ * outbound plus the lane's own D1 traffic — a rotation read and write, four
+ * bookkeeping calls per chain, and up to five per loan messaged — reached the
+ * high sixties on a full tick, so a busy chain could hit the platform ceiling
+ * MID-LOAN: one counterparty told, the other not, and the cursor write that
+ * would have recorded the position lost with it.
+ *
+ * So the counter is subrequests, not outbound requests, and every D1 call
+ * decrements it too. That is the same argument r13 made for folding reads in
+ * with sends, applied to the third kind of spend nobody had counted.
+ *
+ * This lane spends the allowance on chain reads, on D1, and
  * on pushes and Telegram messages, and until r13 it bounded only the second
  * kind: the read cap was per CHAIN while the send cap was per invocation, so
  * three quiet chains could spend fifteen reads between them and leave the
@@ -92,7 +106,7 @@ const SECONDS_PER_DAY = 86_400;
 // ten at once and each had to be re-derived by hand. The suite now computes
 // from the constants instead, which is the difference between a test that
 // fails when BEHAVIOUR changes and one that fails when arithmetic moves.
-export const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
+export const MAX_SUBREQUESTS_PER_INVOCATION = 40;
 
 /**
  * The most sends ONE loan can need: two counterparties × two rails.
@@ -110,6 +124,21 @@ export const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
  * how a lane starts failing mid-loop and taking later chains down with it.
  */
 export const MAX_SENDS_PER_LOAN = 4;
+
+/**
+ * The D1 a single loan costs: up to two subscriber lookups per counterparty
+ * (the row, then the legacy fallback when it misses) and one checkpoint
+ * stamp.
+ *
+ * WORST CASE, not typical, because the reservation exists so a started loan
+ * always finishes (#2213 r27 `4016129218`). Reserving the typical four would
+ * put the overshoot back where the ceiling is, which is the failure this
+ * whole reservation prevents. The cost is a little allowance unused.
+ */
+export const MAX_D1_PER_LOAN = 5;
+
+/** Everything one loan can spend: its sends and its own bookkeeping. */
+export const MAX_SUBREQUESTS_PER_LOAN = MAX_SENDS_PER_LOAN + MAX_D1_PER_LOAN;
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -150,8 +179,8 @@ const PERIODIC_CONFIG_ABI = NumeraireConfigFacetABI;
  *
  * A SECOND read rather than folded into the config bundle, because the two
  * live on different facets and there is no getter carrying both. It costs one
- * more request per chain per tick, which is why
- * `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY` is 4 and not 3.
+ * more request per chain per tick — one of the four chain reads in
+ * `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY`.
  */
 const PAUSE_ABI = AdminFacetABI;
 
@@ -185,9 +214,13 @@ interface TickBudget {
 }
 
 /**
- * What one chain still needs AFTER its identity is settled: the head read,
- * the config read (lead time + periodic switch), the pause read, and one
- * batched status read.
+ * What one chain still needs AFTER its identity is settled.
+ *
+ * FOUR CHAIN READS — the head, the config (lead time + periodic switch), the
+ * pause, and one batched status read — AND FOUR D1 CALLS: the indexer cursor,
+ * this lane's stored scan position, the candidate query, and the write that
+ * saves the position again (#2213 r27 `4016129218`). The D1 half was missing
+ * from this number for as long as the budget believed D1 was free.
  *
  * A chain does not go further unless this plus a loan's worth is available, so
  * a pass never spends its opening reads and then finds it cannot afford to
@@ -201,7 +234,7 @@ interface TickBudget {
  * this test runs after the verdict, where the probe has already charged
  * itself or not.
  */
-export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 4;
+export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 8;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -209,7 +242,7 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
   );
   if (chains.length === 0) return;
 
-  const budget: TickBudget = { remaining: MAX_OUTBOUND_REQUESTS_PER_INVOCATION };
+  const budget: TickBudget = { remaining: MAX_SUBREQUESTS_PER_INVOCATION };
 
   // WHICH CHAIN GOES FIRST IS ALSO REMEMBERED, for the same reason the scan
   // position is (#2213 r13 `4013571003`).
@@ -222,8 +255,8 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
   // forever. The deleted schedule-pinning test had been protecting this too,
   // which I missed when I deleted it — the fix is to remove the dependence,
   // not to restore the pin.
-  const startChain = await rotationStart(env, chains.length);
-  await saveRotationStart(env, (startChain + 1) % chains.length);
+  const startChain = await rotationStart(env, chains.length, budget);
+  await saveRotationStart(env, (startChain + 1) % chains.length, budget);
 
   for (let i = 0; i < chains.length; i++) {
     const chain = chains[(i + startChain) % chains.length]!;
@@ -234,7 +267,7 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
       // (#2213 r17 `4014237569`).
       console.warn(
         `[periodicPreNotify] chain=${chain.name} skipped: this invocation's ` +
-          `allowance of ${MAX_OUTBOUND_REQUESTS_PER_INVOCATION} outbound ` +
+          `allowance of ${MAX_SUBREQUESTS_PER_INVOCATION} outbound ` +
           `request(s) is spent. It takes its turn first on a later tick, and ` +
           `the notification window is days wide.`,
       );
@@ -316,7 +349,7 @@ async function preNotifyChain(
   const identityCostsARequest = !isRpcIdentityVerified(chain.id, chain.rpc);
   const needed =
     CHAIN_OPENING_REQUESTS_AFTER_IDENTITY +
-    MAX_SENDS_PER_LOAN +
+    MAX_SUBREQUESTS_PER_LOAN +
     (identityCostsARequest ? 1 : 0);
   if (budget.remaining < needed) {
     console.warn(
@@ -397,7 +430,7 @@ async function preNotifyChain(
     );
     return;
   }
-  const indexed = await indexedThrough(env, chain.id);
+  const indexed = await indexedThrough(env, chain.id, budget);
   if (indexed === 'unknown') {
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: could not read the indexer ` +
@@ -551,6 +584,7 @@ async function preNotifyChain(
   // afford to send. D1 reads are not outbound subrequests — the allowance
   // this lane has to respect is spent on chain reads and pushes, and both are
   // bounded explicitly.
+  budget.remaining -= 1; // the candidate query — D1 is a subrequest
   const rows = await env.DB.prepare(
     `SELECT loan_id, chain_id, lender, borrower,
             periodic_interest_cadence, last_period_settled_at,
@@ -607,7 +641,7 @@ async function preNotifyChain(
   // forward progress independent of any clock — and an exact resumption would
   // need a key that survives reordering, which a deadline-ordered list does
   // not have.
-  const storedOffset = await scanOffset(env, chain.id);
+  const storedOffset = await scanOffset(env, chain.id, budget);
   const start = storedOffset < due.length ? storedOffset : 0;
 
   let cursor = start;
@@ -621,15 +655,15 @@ async function preNotifyChain(
   let checkpointLag = 0;
   let staleCheckpoint = 0;
   let unreadable = 0;
-  let pushUnconfigured = 0;
-  let tgUnconfigured = 0;
+  const pushUnconfigured = new Set<string>();
+  const tgUnconfigured = new Set<string>();
   let batches = 0;
   let batchFailed = false;
   while (
     cursor < due.length &&
     // Room for this batch's read AND a loan's worth of sends: reading a batch
     // this tick cannot afford to act on spends a request for nothing.
-    budget.remaining >= 1 + MAX_SENDS_PER_LOAN &&
+    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN &&
     batches < MAX_EXAMINE_BATCHES
   ) {
     const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
@@ -667,8 +701,8 @@ async function preNotifyChain(
     checkpointLag += outcome.checkpointLag;
     staleCheckpoint += outcome.staleCheckpoint;
     unreadable += outcome.unreadable;
-    pushUnconfigured += outcome.pushUnconfigured;
-    tgUnconfigured += outcome.tgUnconfigured;
+    for (const w of outcome.pushUnconfigured) pushUnconfigured.add(w);
+    for (const w of outcome.tgUnconfigured) tgUnconfigured.add(w);
     cursor += outcome.consumed;
   }
 
@@ -676,7 +710,7 @@ async function preNotifyChain(
   // a pass that stopped for want of allowance does not re-read the same
   // prefix next time.
   const resumeAt = cursor < due.length ? cursor : 0;
-  const resumeRecorded = await saveScanOffset(env, chain.id, resumeAt);
+  const resumeRecorded = await saveScanOffset(env, chain.id, resumeAt, budget);
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   const examined = cursor - start;
@@ -692,7 +726,7 @@ async function preNotifyChain(
     // "stopping". And it is the OUTBOUND-REQUEST allowance now, not a send
     // allowance — reads come out of the same counter since r13.
     const capped =
-      budget.remaining < 1 + MAX_SENDS_PER_LOAN
+      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN
         ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
@@ -765,7 +799,7 @@ async function preNotifyChain(
   // correct — it is what stopped the lane charging its allowance for requests
   // it never made — but `sendPush` was then never reached, and the diagnostic
   // went with it. A fix to the accounting silently removed a disclosure.
-  if (pushUnconfigured > 0) {
+  if (pushUnconfigured.size > 0) {
     // "MISSING OR UNUSABLE", because r24 made this count both (#2213 r25
     // `4015755007`). The disclosure now fires for a key that is absent AND for
     // one that is present and malformed — which was the point of that fix —
@@ -773,7 +807,7 @@ async function preNotifyChain(
     // operator to look for an unset binding when the value is sitting there
     // and invalid, which is the slower of the two things to discover.
     console.warn(
-      `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured} ` +
+      `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured.size} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
         `deployment's PUSH_CHANNEL_PK is missing or unusable, so no Push was ` +
         `sent to them and none can be. They were reached on Telegram or not ` +
@@ -787,9 +821,9 @@ async function preNotifyChain(
   // Without it, a subscriber with a chat id on a deployment with no bot token
   // was counted under "nobody to tell" — a statement about the USER, when the
   // truth is about the operator's configuration.
-  if (tgUnconfigured > 0) {
+  if (tgUnconfigured.size > 0) {
     console.warn(
-      `[periodicPreNotify] chain=${chain.name}: ${tgUnconfigured} ` +
+      `[periodicPreNotify] chain=${chain.name}: ${tgUnconfigured.size} ` +
         `subscriber(s) this tick have a Telegram chat set while this ` +
         `deployment has no TG_BOT_TOKEN, so no Telegram was sent to them and ` +
         `none can be. They were reached on Push or not at all. Set the token, ` +
@@ -830,8 +864,15 @@ async function messageBatch(
   checkpointLag: number;
   staleCheckpoint: number;
   unreadable: number;
-  pushUnconfigured: number;
-  tgUnconfigured: number;
+  /**
+   * WHICH WALLETS, not how many occurrences (#2213 r27 `4016129208`). The
+   * warning these feed says "N subscriber(s)", and a wallet that is a
+   * counterparty on five loans used to be five of them — so a single
+   * misconfigured subscription on a busy chain reported as a deployment-wide
+   * outage. A set is the counting unit the sentence already claimed.
+   */
+  pushUnconfigured: Set<string>;
+  tgUnconfigured: Set<string>;
 }> {
   let reminded = 0;
   let unreached = 0;
@@ -843,12 +884,12 @@ async function messageBatch(
   let checkpointLag = 0;
   let staleCheckpoint = 0;
   let unreadable = 0;
-  let pushUnconfigured = 0;
-  let tgUnconfigured = 0;
+  const pushUnconfigured = new Set<string>();
+  const tgUnconfigured = new Set<string>();
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
-    if (budget.remaining < MAX_SENDS_PER_LOAN) {
+    if (budget.remaining < MAX_SUBREQUESTS_PER_LOAN) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
         rejected, checkpointLag, staleCheckpoint, unreadable,
@@ -987,10 +1028,13 @@ async function messageBatch(
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
     refusedRails += borrowerOutcome.refusedRails + lenderOutcome.refusedRails;
     transientRails += borrowerOutcome.transientRails + lenderOutcome.transientRails;
-    pushUnconfigured +=
-      (borrowerOutcome.pushUnconfigured ? 1 : 0) + (lenderOutcome.pushUnconfigured ? 1 : 0);
-    tgUnconfigured +=
-      (borrowerOutcome.tgUnconfigured ? 1 : 0) + (lenderOutcome.tgUnconfigured ? 1 : 0);
+    // KEYED ON THE WALLET so the same subscription seen on a second loan is
+    // the same subscriber, lowercased because the stored rows are and an
+    // address that differs only in case is one wallet.
+    if (borrowerOutcome.pushUnconfigured) pushUnconfigured.add(row.borrower.toLowerCase());
+    if (lenderOutcome.pushUnconfigured) pushUnconfigured.add(row.lender.toLowerCase());
+    if (borrowerOutcome.tgUnconfigured) tgUnconfigured.add(row.borrower.toLowerCase());
+    if (lenderOutcome.tgUnconfigured) tgUnconfigured.add(row.lender.toLowerCase());
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -1007,12 +1051,28 @@ async function messageBatch(
     // `sent` would otherwise have changed behaviour nobody asked to change: a
     // counterparty with no usable rail has nothing to retry, so it stamps
     // exactly as it did before. Only the operator COUNT distinguishes them.
+    // `deferred` is deliberately NOT here (#2213 r27 `4016129201`): the
+    // service said "not now", so there IS something to retry and stamping
+    // would throw the retry away.
     const handled = (o: DeliveryOutcome) => o.status === 'sent' || o.status === 'no-route';
     const anyHandled = handled(borrowerOutcome) || handled(lenderOutcome);
-    const onlyBlockedByOptOut =
-      !anyHandled &&
-      (borrowerOutcome.status === 'opted-out' || lenderOutcome.status === 'opted-out');
-    if (onlyBlockedByOptOut) continue;
+    // A REASON TO COME BACK — the gate, and it now has two entries rather than
+    // one. An opt-out may be reversed before the deadline; a deferral is the
+    // service asking to be asked again. Both leave the checkpoint unstamped,
+    // and for the same reason, so they belong in one predicate.
+    //
+    // THE FIRST ATTEMPT AT r27 `4016129201` ONLY RENAMED SOMETHING. Dropping
+    // `deferred` out of `handled` above looked like the fix and changed
+    // nothing: `anyHandled` fed only the opt-out branch, so the stamp below
+    // ran for every outcome that was not an opt-out. The diagnostic said
+    // "deferred", the count said "deferred", and the row was still stamped —
+    // which is the exact defect the finding named, surviving its own fix.
+    const retryable = (o: DeliveryOutcome) =>
+      o.status === 'opted-out' || o.status === 'deferred';
+    const worthAnotherTick =
+      !anyHandled && (retryable(borrowerOutcome) || retryable(lenderOutcome));
+    if (worthAnotherTick) continue;
+    budget.remaining -= 1; // the checkpoint stamp — D1 is a subrequest
     try {
       await env.DB.prepare(
         `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
@@ -1099,8 +1159,9 @@ const PRENOTIFY_ROTATION_KIND = 'prenotify_rotation';
 const ROTATION_ROW_CHAIN_ID = 0;
 
 /** Which chain leads this invocation. Absent or unreadable → the first one. */
-async function rotationStart(env: Env, chainCount: number): Promise<number> {
+async function rotationStart(env: Env, chainCount: number, budget: TickBudget): Promise<number> {
   if (chainCount <= 1) return 0;
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     const row = await env.DB.prepare(
       `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
@@ -1124,8 +1185,8 @@ async function rotationStart(env: Env, chainCount: number): Promise<number> {
 }
 
 /** Remember which chain leads next. Reported when it fails — see `saveScanOffset`. */
-async function saveRotationStart(env: Env, next: number): Promise<void> {
-  await persistCursor(env, ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND, next);
+async function saveRotationStart(env: Env, next: number, budget: TickBudget): Promise<void> {
+  await persistCursor(env, ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND, next, budget);
 }
 
 /**
@@ -1208,7 +1269,9 @@ async function persistCursor(
   chainId: number,
   kind: PrenotifyCursorKind,
   at: number,
+  budget: TickBudget,
 ): Promise<boolean> {
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -1236,13 +1299,19 @@ async function persistCursor(
 }
 
 /** @returns whether the position actually landed — the summary depends on it. */
-async function saveScanOffset(env: Env, chainId: number, at: number): Promise<boolean> {
-  return persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at);
+async function saveScanOffset(
+  env: Env,
+  chainId: number,
+  at: number,
+  budget: TickBudget,
+): Promise<boolean> {
+  return persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at, budget);
 }
 
 
 /** Where this chain's scan stopped last tick. Absent or unreadable → start over. */
-async function scanOffset(env: Env, chainId: number): Promise<number> {
+async function scanOffset(env: Env, chainId: number, budget: TickBudget): Promise<number> {
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     const row = await env.DB.prepare(
       `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
@@ -1283,7 +1352,12 @@ async function scanOffset(env: Env, chainId: number): Promise<number> {
  * `'unknown'` IS a reason to stop, and keeping the two apart is the whole
  * shape of this function. They were one value until #2213 r12.
  */
-async function indexedThrough(env: Env, chainId: number): Promise<bigint | null | 'unknown'> {
+async function indexedThrough(
+  env: Env,
+  chainId: number,
+  budget: TickBudget,
+): Promise<bigint | null | 'unknown'> {
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     const row = await env.DB.prepare(
       `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
@@ -1517,7 +1591,15 @@ async function readLoanStates(
  *   switch them back on before the deadline.
  * - `none` — no subscription row at all. Stamped; nobody to tell.
  */
-type PreNotifyOutcome = 'sent' | 'no-route' | 'opted-out' | 'none';
+/**
+ * `deferred` — every rail that answered said "not now" and none delivered.
+ *
+ * Its whole purpose is to NOT be handled (#2213 r27 `4016129201`), so the
+ * checkpoint stays unstamped and a later tick tries again. Distinct from
+ * `sent`, which stamps, and from `none`/`opted-out`, which are about the
+ * subscriber rather than the service.
+ */
+type PreNotifyOutcome = 'sent' | 'deferred' | 'no-route' | 'opted-out' | 'none';
 
 /**
  * What happened for one counterparty, in the three senses that differ.
@@ -1607,6 +1689,7 @@ async function pushIfSubscribed(
 ): Promise<DeliveryOutcome> {
   let sub: UserPushRow | null;
   try {
+    budget.remaining -= 1; // the subscriber lookup — D1 is a subrequest
     sub = await env.DB.prepare(
       `SELECT wallet, push_channel, tg_chat_id, locale, notify_maturity_approaching
        FROM user_thresholds
@@ -1619,6 +1702,7 @@ async function pushIfSubscribed(
     // set with the opt-out defaulted to OPTED IN so reminders keep
     // flowing (the safe direction); same fallback the keeper's
     // listThresholdsForChain carries.
+    budget.remaining -= 1; // the legacy fallback lookup — also a subrequest
     const legacy = await env.DB.prepare(
       `SELECT wallet, push_channel, tg_chat_id, locale
        FROM user_thresholds
@@ -1778,8 +1862,20 @@ async function pushIfSubscribed(
   // so re-querying every tick is waste) and wrong for REPORTING (the operator
   // count then says hundreds were reminded on a tick that sent nothing).
   // 'no-route' keeps the stamp and leaves the count honest.
+  // DEFERRED IS NOT HANDLED (#2213 r27 `4016129201`). r26 introduced
+  // `transient` for a service saying "not now" and told the operator it
+  // retries — while `attempted` stayed true, so the loan stamped and
+  // `candidatesInWindow` excluded that checkpoint on every later tick. The
+  // diagnostic said "deferred" and the behaviour was "abandoned", and a
+  // thirty-second rate limit could therefore suppress a borrower's payment
+  // reminder permanently. That is worse than the flattening r26 fixed.
+  //
+  // Only when NOTHING better happened: a loan whose other rail delivered is
+  // still handled, because the stamp is per loan and re-sending would tell the
+  // reached party twice.
+  const onlyDeferred = attempted && !delivered && transientRails > 0 && refusedRails === 0;
   return {
-    status: attempted ? 'sent' : 'no-route',
+    status: onlyDeferred ? 'deferred' : attempted ? 'sent' : 'no-route',
     attempted,
     delivered,
     unconfirmedRails,

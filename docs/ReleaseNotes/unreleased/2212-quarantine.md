@@ -165,13 +165,29 @@ and fixing them case by case would only keep finding the next one.
 
 So the limit now counts the thing it exists to protect: **outbound requests**,
 decremented wherever one is actually issued — the platform's own queries to
-the chain as well as the messages it sends. What it does NOT count is records:
-a record that issues nothing cannot consume the limit, whatever the reason it
-sent nothing — rejected, switched off, or nobody subscribed. Stating the limit
-in requests rather than in messages is what lets an operator explain a run
-that exhausted its allowance while delivering little. A run also walks past
-records it cannot send for, in batches of a hundred, and reaches the ones
-behind them on the same run.
+the chain, the messages it sends, **and its own reads and writes of the
+platform's records**, which are outbound requests too and were not being
+counted as any. That last part is the correction, and it matters most where
+the run was quietest: a run that sent nothing at all still made two record
+lookups per position, so a busy network could pass the limit while every
+message it thought it was rationing went unsent.
+
+A record that issues nothing still cannot consume the limit — but "issues
+nothing" turns out to be a narrower set than it first appeared. A position the
+chain rejects costs nothing, because there is nothing worth asking about a
+loan that does not exist. A position whose recipients have switched these
+reminders off costs two lookups, because **establishing that someone opted out
+means asking**, and there is no way to know without it. What survives, and is
+what the fairness this cap exists for actually needs, is that such a position
+costs only its lookups and never its messages, that a subscribed position
+behind it is still reached on the same run, and that the run's remembered
+place moves past it so the next run starts beyond rather than paying for it
+again.
+
+Stating the limit in requests rather than in messages is what lets an operator
+explain a run that exhausted its allowance while delivering little. A run also
+walks past records it cannot send for, in batches of a hundred, and reaches
+the ones behind them on the same run.
 
 One consequence is worth stating because it looks like waste: a run refuses to
 begin a record it might not be able to finish, which can leave a little
@@ -222,6 +238,20 @@ and both mean the message did not go, but only the second needs a person: the
 first clears on its own, and filing it under the total whose stated meaning is
 "keeps failing until someone repairs it" would send that person to replace a
 credential during an incident that needed nobody.
+
+**And "not now" now means the platform comes back.** Telling an operator the
+message would be retried was only half of it: the reminder was still marked as
+handled, and a reminder marked handled is one the platform never revisits — so
+a thirty-second rate limit could suppress a borrower's payment reminder for
+that period permanently, while the report said it had merely been deferred. A
+reminder the service only deferred is left unmarked, and a later run sends it.
+The opposite case is deliberate and unchanged: a reminder the service
+*refused* stays marked, because the same message will fail the same way until
+somebody repairs a credential, and re-sending it every few minutes for the
+rest of the window buys nobody a reminder. And a reminder that reached one
+party over one channel stays marked whatever the other channel did, because
+the mark is per position — coming back would tell the party who was reached a
+second time about one payment.
 
 A message the service ANSWERED and refused is counted apart from one whose
 fate is unknown, because they need opposite responses: a refusal is a
@@ -480,6 +510,13 @@ the first version of this fix left out — a rule applied to the case that
 prompted it rather than to the class. Someone who asked for that channel on a
 deployment that cannot use it was counted as having nobody to tell, which
 reads as a fact about them when it is a fact about the configuration.
+
+**And the number in that line counts people, which is what it says.** It was
+counting appearances: one wallet that lends on five positions was five
+misconfigured subscribers, so a single stale subscription on a busy network
+reported as something close to a deployment-wide outage. Those two readings
+call for very different responses, and the sentence was only ever true of the
+first. It now counts distinct wallets.
 
 **And a completed run reports too, when it has something to report.** The
 summary only appeared when a run stopped early, on the reasoning that a run
