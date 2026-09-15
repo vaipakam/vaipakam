@@ -72,8 +72,11 @@ apparatus. On a deployment whose custody is activated, the three kinds of
 reward value the afternoon's switch had deliberately left in the
 platform's own balance — a delivery's unattributed remainder, a
 quarantined compensation, and a return for a receipt older than
-per-receipt attribution — now move into the address's unclassified
-attribution as they land; every reward-budget packet — a delivery, a
+per-receipt attribution (its share within the receipt's remaining
+entitlement; any excess goes to the overage position, as before) — now
+move into the address's unclassified attribution as they land, and so
+does the fresh share a recovery ceremony brings back for such a receipt;
+every reward-budget packet — a delivery, a
 compensation, a stranded return, the fresh share of a recovery-ceremony
 inflow for a receipt that predates attribution — is recorded, on every
 deployment, under the
@@ -1279,9 +1282,12 @@ already attributed; and every recycled ceremony inflow. #2204 tracks
 recording them.
 
 The migration mode the design calls for is the platform's own manual
-pause: reward packets still land and are protected while the pause
-refuses every reward consumer, because the receive ingresses are no
-longer pause-gated. The expiry clocks already respect the pause boundary,
+pause: packets arriving through the transport receive ingresses — a
+delivery, a compensation, a stranded return, a repatriation return — still
+land and are protected while the pause refuses every reward consumer,
+because those ingresses are no longer pause-gated; a recovery ceremony,
+being an administrator's own transaction rather than an arrival, still
+waits for the unpause. The expiry clocks already respect the pause boundary,
 so the paused interval never counts as claimable time; the receivers'
 own guardian pause remains the way to stop packets at the edge. The
 activation ceremony's pre-flight also now mirrors the activation's
