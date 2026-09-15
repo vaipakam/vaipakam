@@ -31,6 +31,12 @@ ending and forgotten in the other, which is precisely how this went wrong: the
 failure path already had everything it needed in hand and read one field of
 it.
 
+Nor is it a matter of remembering to call it from both. The failure path no
+longer reports at all — it records what went wrong and hands back the
+findings, and the telling happens once, afterwards, on the single path both
+endings rejoin. A thing that cannot be written cannot be forgotten, which is a
+better guarantee than a thing that is merely tested.
+
 ### What this does not change
 
 Nothing about which records are corrected, or when. A turn that finishes

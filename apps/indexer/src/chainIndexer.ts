@@ -968,8 +968,18 @@ async function runLoanReconcilePass(input: {
   const reconcileClient = createPublicClient({
     transport: http(chain.rpc, { retryCount: 0 }),
   });
+  // ONE reporting call, on ONE path, whatever happened (#2203 r1). The
+  // failure path used to do its own reporting, which is how it came to
+  // report only `repaired` — a second place deciding what an operator hears
+  // is a second place that can decide wrongly. Resolving the report first
+  // and reporting after the try/catch makes "the failure path forgot" not a
+  // thing that can be written: there is no reporting in the catch to
+  // forget. `ReconcilePartialError` carries the report precisely so this
+  // works.
+  let report: ReconcileReport | null = null;
+  let failure: unknown = null;
   try {
-    const report = await reconcileAfterScan(
+    report = await reconcileAfterScan(
       {
         db: env.DB,
         chainId,
@@ -1061,15 +1071,27 @@ async function runLoanReconcilePass(input: {
       },
       budget,
     );
-    _reportReconcilePass(chainId, report);
+  } catch (err) {
+    failure = err;
+    if (err instanceof ReconcilePartialError) report = err.report;
+  }
+
+  // Everything the pass noticed reaches the operator, whether it finished or
+  // died on its cursor write.
+  if (report) _reportReconcilePass(chainId, report);
+
+  if (failure === null) {
     // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
     // `loan.updated` key is not enough on its own: `scopeInvalidationRoots`
     // drops holder-scoped refetches when the frame's hint set is complete
     // and does not mention the loan — and a repaired loan is old, so it is
     // never in `allLogs`. The holders of the position just corrected would
     // have been precisely the ones whose refetch was scoped away.
-    return report.repaired.map((r) => r.loanId);
-  } catch (err) {
+    return report!.repaired.map((r) => r.loanId);
+  }
+
+  {
+    const err = failure;
     // A repair failure must not wedge the scan that found nothing wrong;
     // the rotation returns to these rows.
     //
@@ -1080,18 +1102,7 @@ async function runLoanReconcilePass(input: {
     // can rediscover them. Returning an empty set there would lose their
     // `loan.updated` frame permanently: the corrections would be in D1 and
     // announced to nobody.
-    // EVERYTHING the pass noticed is reported, not just the repairs
-    // (#2203). The report is already in hand on this error; reading only
-    // `repaired` off it meant a pass that identified an orphaned row and
-    // then failed its cursor write said nothing about that row — the exact
-    // silence `unresolvable` was added to end.
-    if (err instanceof ReconcilePartialError) {
-      _reportReconcilePass(chainId, err.report);
-    }
-    const partial =
-      err instanceof ReconcilePartialError
-        ? err.report.repaired.map((r) => r.loanId)
-        : [];
+    const partial = report ? report.repaired.map((r) => r.loanId) : [];
     if (partial.length > 0) {
       console.error(
         `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
