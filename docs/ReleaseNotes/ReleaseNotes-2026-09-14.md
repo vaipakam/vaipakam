@@ -1234,11 +1234,12 @@ Three kinds of reward value were, by design, still resting in the
 platform's own balance after the custody switch: the part of a delivery
 that could not be attributed to a composition, a compensation quarantined
 for a day the mirror refused, and a return for a receipt older than
-per-receipt attribution. On a deployment whose custody is activated, each
-of these now moves into the address's unclassified attribution as it
-lands — for the return, the share within the receipt's remaining
-entitlement; any excess over it goes to the overage position, as an
-excess always has. That attribution is visible and auditable — it equals its own two
+per-receipt attribution — with the fresh share a recovery ceremony brings
+back for such a receipt, which is the same custody and takes the same
+route. On a deployment whose custody is activated, each of these now
+moves into the address's unclassified attribution as it lands — for the
+return, the share within the receipt's remaining entitlement; any excess
+over it goes to the overage position, as an excess always has. That attribution is visible and auditable — it equals its own two
 figures, checked as an invariant — and it is never spendable as reward
 value; its only exit in this change is the return of a quarantined
 compensation, which now draws from the address what the address backs and
@@ -1549,7 +1550,12 @@ hands over everything owed as part of the sale. It is not the only route
 that leaves a position in place: a lender's one-sided claim that settles a
 defaulted loan whose borrower has nothing to claim leaves that borrower's
 position too, and the same message reaches them. In every route that
-reaches a reader there is, by construction, nothing left to claim. So it says to open the position and see where it stands, rather
+reaches a reader there is meant to be nothing left to claim, and one
+route breaks that today: an intent-originated loan whose repayment left a
+frozen borrower surplus can be settled by the intent roll with that
+surplus still recorded, after which the borrower's claim refuses the
+settled loan — a stranded-funds gap raised as #2209, and until it is
+closed the message can reach a holder who does have something left. So it says to open the position and see where it stands, rather
 than pointing at a claim that by construction does not exist. Every other
 ending keeps its own wording, because those genuinely do leave something to
 collect.
