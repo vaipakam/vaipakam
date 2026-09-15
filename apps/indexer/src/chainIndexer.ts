@@ -818,14 +818,22 @@ function mutableLoanColumnsFromDetail(detail: Record<string, unknown>): LoanMuta
 /**
  * Turn a reconciliation report into operator output.
  *
- * ONE place does this, called from BOTH the pass's success path and its
- * `ReconcilePartialError` catch (#2203). The catch used to read only
- * `report.repaired` off the error and drop everything else — so a pass that
- * examined an orphaned row, correctly identified it as unresolvable, and
- * then failed its cursor write reported nothing about it. Worse: if the
- * pointer write succeeded and only the lap-boundary write failed, the
- * rotation had already moved past that row, so it was examined, not named,
- * and not examined again until the lap wrapped.
+ * ONE place does this and it is reached ONCE, from neither ending (#2203).
+ * `_runLoanReconcilePass` resolves the report — returned normally, or lifted
+ * off a `ReconcilePartialError` — and the two paths JOIN before anything is
+ * said, so there is no reporting in the catch, and none in the success path
+ * either. That is the point rather than an implementation detail: the bug
+ * was a second place deciding what an operator hears, and "the catch calls
+ * it too" would have restored exactly that, one review round from being
+ * written differently again.
+ *
+ * What the catch used to do was read only `report.repaired` off the error
+ * and drop everything else — so a pass that examined an orphaned row,
+ * correctly identified it as unresolvable, and then failed its cursor write
+ * reported nothing about it. Worse: if the pointer write succeeded and only
+ * the lap-boundary write failed, the rotation had already moved past that
+ * row, so it was examined, not named, and not examined again until the lap
+ * wrapped.
  *
  * The diagnostics ARE the feature. `unread`, `unresolvable` and
  * `unknownStatus` each exist because a review round established that silence
@@ -836,9 +844,11 @@ function mutableLoanColumnsFromDetail(detail: Record<string, unknown>): LoanMuta
  * discard the record of that work. Repairs were the work in view then; the
  * diagnostics are work too, and half the payload went unread.
  *
- * Extracted rather than duplicated into the catch: copying the blocks would
- * leave the next set added to the report reported in one path and forgotten
- * in the other, which is the shape of the bug itself.
+ * Copying the blocks into the catch instead would leave the next set added
+ * to the report reported in one path and forgotten in the other, which is
+ * the shape of the bug itself. Sharing this function and calling it from
+ * both endings is better and still leaves "call it" as something an ending
+ * can be written without — which is why the call sits after the join.
  */
 export function _reportReconcilePass(chainId: number, report: ReconcileReport): void {
   if (report.repaired.length > 0) {
@@ -948,7 +958,17 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
   }
 }
 
-async function runLoanReconcilePass(input: {
+/**
+ * One reconciliation pass: repair what the chain disagrees with, then say
+ * what happened.
+ *
+ * Exported for tests (#2203 r3 `4010916222`). Pinning what
+ * `_reportReconcilePass` SAYS is not the same as pinning that it is REACHED:
+ * with the report-side cases alone, deleting the join's single call left
+ * forty tests green. The wiring needs a seam of its own, because "the
+ * diagnostics reached the operator" is the whole claim this pass makes.
+ */
+export async function _runLoanReconcilePass(input: {
   env: Env;
   chain: ChainConfig;
   chainId: number;
@@ -1286,7 +1306,7 @@ export async function runChainIndexerForChain(
           `retried next tick. Every tick = a stuck or regressed RPC head.`,
       );
     } else {
-      quietReconciledIds = await runLoanReconcilePass({
+      quietReconciledIds = await _runLoanReconcilePass({
         env,
         chain,
         chainId,
@@ -1610,7 +1630,7 @@ export async function runChainIndexerForChain(
   // separately (see the reply on that thread).
   const reconciledLoanIds =
     scanTo === head
-      ? await runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
+      ? await _runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
       : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);

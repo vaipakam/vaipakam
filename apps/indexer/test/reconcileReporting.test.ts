@@ -14,12 +14,30 @@
  * already moved past it — examined, not named, and not examined again until
  * the lap wrapped.
  *
- * Both paths now call one function, so they cannot report different things.
- * These cases pin what that function says.
+ * Neither path reports now. The pass resolves its report — returned, or
+ * lifted off the error — and the two rejoin BEFORE the single reporting
+ * call, so "the failure path forgot" is not a thing that can be written.
+ * The cases below pin what that call says; the last block pins that it is
+ * reached, which is a separate claim and was the one going unchecked.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { _reportReconcilePass } from '../src/chainIndexer';
-import type { ReconcileReport } from '../src/loanReconcile';
+import { _reportReconcilePass, _runLoanReconcilePass } from '../src/chainIndexer';
+import { ReconcilePartialError, type ReconcileReport } from '../src/loanReconcile';
+import type { ChainConfig, Env } from '../src/env';
+
+/**
+ * The pass's collaborator, swapped so a late failure can be produced without
+ * a chain or a database. `ReconcilePartialError` stays REAL — the join lifts
+ * the report off it with `instanceof`, so a stubbed stand-in would prove
+ * nothing about the path being tested.
+ */
+let scanBehaviour: () => Promise<ReconcileReport> = () => {
+  throw new Error('scanBehaviour not set by the test');
+};
+vi.mock('../src/loanReconcile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/loanReconcile')>();
+  return { ...actual, reconcileAfterScan: () => scanBehaviour() };
+});
 
 const CHAIN = 84532;
 
@@ -124,5 +142,106 @@ describe('what the pass says out loud', () => {
       expect(out).toContain('UNDETERMINED');
       expect(out).not.toContain('NOT a missed terminal');
     }
+  });
+});
+
+/**
+ * That the operator is told, not merely what they would be told (#2203 r3
+ * `4010916222`).
+ *
+ * Every case above calls `_reportReconcilePass` directly, so none of them
+ * touches the join that is the actual fix — deleting its single call left
+ * forty tests green. A regression suite for "the diagnostics survive a late
+ * failure" that passes with the reporting unreachable is testing the wrong
+ * half of its own claim.
+ *
+ * The pass's collaborator is stubbed rather than driven through D1, but the
+ * failure it raises is the real `ReconcilePartialError` that
+ * `loanReconcile.test.ts` proves a failing pointer write produces, carrying
+ * the real report. The two suites meet: that one pins what the cursor write
+ * throws, this one pins what the caller does with it.
+ */
+describe('the join, not just the wording', () => {
+  const passInput = () => ({
+    env: { DB: {} } as unknown as Env,
+    // Never dialled: the collaborator that would have read from it is
+    // stubbed, and the client is only constructed.
+    chain: { rpc: 'http://127.0.0.1:1/unused' } as unknown as ChainConfig,
+    chainId: CHAIN,
+    diamond: '0x0000000000000000000000000000000000000001' as `0x${string}`,
+    head: 100n,
+    budget: {},
+  });
+
+  /** Runs a whole pass and returns what the operator saw, plus what it returned. */
+  async function drive(behaviour: () => Promise<ReconcileReport>) {
+    scanBehaviour = behaviour;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warn.mockClear();
+    error.mockClear();
+    const ids = await _runLoanReconcilePass(passInput());
+    const out = [...warn.mock.calls, ...error.mock.calls].map((c) => c.join(' ')).join('\n');
+    return { out, ids };
+  }
+
+  // A pass that noticed three different things it could not settle, and one
+  // it could — the payload the old catch read one field of.
+  const noticed = () =>
+    report({
+      repaired: [{ loanId: 8, from: 'active', to: 'defaulted' }],
+      unresolvable: [99],
+      unread: [13],
+      unknownStatus: [{ loanId: 21, status: 7 }],
+    });
+
+  it('reports everything the pass noticed when it FINISHED', async () => {
+    const { out, ids } = await drive(async () => noticed());
+    expect(out).toContain('99');
+    expect(out).toContain('loan 21 = 7');
+    expect(ids).toEqual([8]);
+  });
+
+  it('reports everything the pass noticed when it DIED on its cursor write', async () => {
+    // THE REGRESSION. The old catch read `report.repaired` and nothing else,
+    // so the orphan, the unread row and the unprojectable status all went
+    // unsaid — and if only the lap-boundary write had failed, the rotation
+    // had already moved past them.
+    const { out, ids } = await drive(async () => {
+      throw new ReconcilePartialError(noticed(), new Error('pointer write failed'));
+    });
+    expect(out).toContain('99');
+    expect(out.toLowerCase()).toContain('orphan');
+    expect(out).toContain('13');
+    expect(out).toContain('loan 21 = 7');
+    // The repairs committed, so they are still announced (#2190 r6).
+    expect(ids).toEqual([8]);
+  });
+
+  it('says the SAME things either way, because one call says them', async () => {
+    // The guarantee stated as an assertion: not "both endings remember to
+    // report" but "no ending reports at all". Every line the reporter emits
+    // for this report must appear whichever way the pass ended — a future
+    // success-only guard fails here rather than quietly halving the output.
+    const baseline = captured(noticed()).split('\n').filter(Boolean);
+    expect(baseline.length).toBeGreaterThan(0);
+    const finished = await drive(async () => noticed());
+    const died = await drive(async () => {
+      throw new ReconcilePartialError(noticed(), new Error('lap-boundary write failed'));
+    });
+    for (const line of baseline) {
+      expect(finished.out).toContain(line);
+      expect(died.out).toContain(line);
+    }
+  });
+
+  it('still reports what it noticed when the failure is NOT a partial one', async () => {
+    // No report to lift off an ordinary throw, so there is nothing to say —
+    // but the pass must not wedge the tick, and must name the failure.
+    const { out, ids } = await drive(async () => {
+      throw new Error('rpc exploded');
+    });
+    expect(ids).toEqual([]);
+    expect(out).toContain('rpc exploded');
   });
 });
