@@ -45,7 +45,7 @@ could not settle — rather than from a list of releasable cases. A list would
 mean that a newly added kind of failure is released by default: marked by one
 half and cleared by the other on the same turn, with nothing appearing wrong.
 
-### Three things review caught, all of them quiet failures
+### Three quiet failures in the first attempt
 
 **A record ended the ordinary way would have stayed held back forever.** A
 record held after one unreadable moment, whose ending then arrives normally
@@ -74,7 +74,7 @@ the threshold to come round, a record can pass it without having been looked
 at again, and may settle the moment it is. The report gives its age and when
 it was last examined, and leaves the conclusion to the evidence.
 
-### And what the same review caught in the fix itself
+### What else had to be right
 
 **A second reminder lane was still speaking.** Due-date and grace reminders
 are not the only unretractable message the platform sends about a loan: a
@@ -117,12 +117,13 @@ load rather than a limit. That allowance now covers **every** request the run
 makes, the platform's own chain queries included: they were bounded per
 network while the messages were bounded per run, so adding a fourth network
 would have pushed a busy run past the ceiling — with the overshoot landing on
-messages that had already been attempted and recorded as sent. On a busy day the allowance ran out partway through,
-which does not merely stop that chain — it stops every chain after it in the
-same run, on every run, indefinitely. Two changes make the assumption
-unnecessary: a chain's checks now go out in batches of a hundred rather than
-one request per loan — up to three batches, so three requests where there were
-a hundred — and what a single run may send is capped outright.
+messages that had already been attempted and recorded as sent. And an
+allowance that ran out partway through did not merely stop that chain — it
+stopped every chain after it in the same run, on every run, indefinitely. Two
+changes make the assumption unnecessary: a chain's checks now go out in
+batches of a hundred rather than one request per loan — up to three batches,
+so three requests where there were a hundred — and what a single run may send
+is capped outright.
 
 A cap has to be fair or it is just a quieter way to lose reminders, so the
 order is now **nearest deadline first**, and the run starts at a different
@@ -131,42 +132,39 @@ next run, and gets there well before its own deadline; without that order the
 same records would be reached every time and the ones behind them never.
 
 A run also **remembers where it stopped**, and which network it began with,
-and the next one continues from there. An earlier attempt derived that position from the clock instead, and it
-worked until it met the platform's other rotation: a network that only gets a
-turn every third run sees the clock advance in threes, so the position it
-computes can be the same one every time it is actually asked, and two thirds
-of its window would never be examined. Any schedule-derived position can fall
-into step with some other schedule; a remembered one advances on the work
-actually done, which nothing can align with. That applied to the choice of
-which network goes first as well, and it was left on the clock for one round
-after the same mistake had been corrected elsewhere — the two are the same
-defect at two scales. When the platform cannot remember either position it now
-says so, because silently starting from the front every time restores the
-unfairness the memory was added to remove, and does it invisibly. It is approximate — the list it
-indexes into changes between runs — and that is stated rather than implied,
-because near enough is all that forward progress needs.
+and the next one continues from there. Deriving either position from the clock
+instead works until it meets the platform's other rotation: a network that
+only gets a turn every third run sees the clock advance in threes, so the
+position it computes can be the same one every time it is actually asked, and
+two thirds of its window would never be examined. Any schedule-derived
+position can fall into step with some other schedule; a remembered one
+advances on the work actually done, which nothing can align with. That holds
+at both scales — which record to resume at, and which network goes first — and
+they are the same defect. When the platform cannot remember either position it
+now says so, because silently starting from the front every time restores the
+unfairness the memory was added to remove, and does it invisibly. The position
+is approximate — the list it indexes into changes between runs — and that is
+stated rather than implied, because near enough is all that forward progress
+needs.
 
-**The first version of that cap had the fairness defect it was meant to
-prevent, and review found it twice before the right fix landed.** It counted
-*records*, when what the limit protects is *messages sent*. Anything that
-occupied a record slot without sending anything therefore held the whole run's
-allowance and was never marked as handled, so the same few records sat at the
-front on every run while the people behind them were never reached. Two
-separate kinds of record do that: one the chain rejects — it has never heard of
-it — and one whose recipients have both switched these reminders off. The first
-was fixed by separating "looked at" from "sent"; the second showed that fixing
-cases one at a time would keep finding the next one.
+**A cap that counts the wrong unit reintroduces the very unfairness it exists
+to prevent.** Counting *records* is not counting work done: anything that
+occupies a record slot without sending anything still holds the whole run's
+allowance and is never marked as handled, so the same few records sit at the
+front on every run while the people behind them are never reached. At least
+two separate kinds of record do that — one the chain rejects, having never
+heard of it, and one whose recipients have both switched these reminders off —
+and fixing them case by case would only keep finding the next one.
 
 So the limit now counts the thing it exists to protect: **outbound requests**,
 decremented wherever one is actually issued — the platform's own queries to
 the chain as well as the messages it sends. What it does NOT count is records:
 a record that issues nothing cannot consume the limit, whatever the reason it
-sent nothing — rejected, switched off, or nobody subscribed. That is the
-distinction the earlier version of this paragraph lost by saying the limit
-counts messages, which would leave an operator unable to explain a run that
-exhausted its allowance while delivering little. A run also walks past records
-it cannot send for, in batches of a hundred, and reaches the ones behind them
-on the same run.
+sent nothing — rejected, switched off, or nobody subscribed. Stating the limit
+in requests rather than in messages is what lets an operator explain a run
+that exhausted its allowance while delivering little. A run also walks past
+records it cannot send for, in batches of a hundred, and reaches the ones
+behind them on the same run.
 
 One consequence is worth stating because it looks like waste: a run refuses to
 begin a record it might not be able to finish, which can leave a little
@@ -174,21 +172,21 @@ allowance unused. Stopping halfway through a record would tell one party and
 mark the reminder as delivered, so the other party's reminder would not be
 delayed — it would be lost.
 
-**Not spending the allowance is not the same as making progress**, and that
-took one more round to see. A record that sends nothing is also never marked
-as handled, so it keeps its place at the front of the order and is examined
-again on the next run, and the next. Costing nothing does not move it. With
-enough of them ahead of a record that would send — a few hundred recipients
-who have these reminders switched off is not an exotic situation — starting at
-the front every time hides the record behind them permanently. So when the
-window is wider than one run can examine, successive runs begin at successive
-parts of it. Every record is examined within a few runs, which are minutes
-apart in a window measured in days, and when the window fits in one run the
-nearest deadline is still examined first.
+**Not spending the allowance is not the same as making progress.** A record
+that sends nothing is also never marked as handled, so it keeps its place at
+the front of the order and is examined again on the next run, and the next.
+Costing nothing does not move it. With enough of them ahead of a record that
+would send — a few hundred recipients who have these reminders switched off is
+not an exotic situation — starting at the front every time hides the record
+behind them permanently. So when the window is wider than one run can
+examine, successive runs begin at successive parts of it. Every record is
+examined within a few runs, which are minutes apart in a window measured in
+days, and when the window fits in one run the nearest deadline is still
+examined first.
 
-Smaller corrections of the same kind: the platform no longer counts a message
-it did not send. It was charging itself for messages that were never issued —
-when no signer was configured for one of the two channels, and again when the
+**A message that was never issued is no longer counted as one.** The platform
+was charging itself for messages it had not managed to attempt — when no
+signer was configured for one of the two channels, and again when the
 configured signer was unusable, which fails every message of that kind rather
 than one — and a recipient the platform has on file but has no way to reach
 was being reported as reminded. None of these change who gets a reminder. All
@@ -236,8 +234,8 @@ configuration since long before this change; the reminder lane became
 authoritative about whether a loan is still running and never asked. It asks
 now, once per source, and stays quiet if the answer is wrong or absent.
 
- The chain is
-consulted through whichever source the platform is configured to use, and a
+**And a source can be the right network and still be behind.** The chain is
+consulted through whichever source the platform is configured to use, and that
 source can lag behind what the platform has already recorded. Asked about a
 loan that ended after the point that source has reached, it answers that the
 loan is still running — confirming the exact reminder the check exists to
@@ -245,9 +243,10 @@ withhold, which is worse than not checking at all. A run now compares the
 source's position against the platform's own and sends nothing when the source
 is behind, saying so — and also sends nothing when that comparison cannot be
 made at all, because an unanswered question is not an answer and treating it
-as one would turn a momentary database failure into permission to send. Every loan in a run is also read at a single point in
-the chain's history, so a source that serves part of the answer from further
-back fails outright rather than quietly mixing two moments.
+as one would turn a momentary database failure into permission to send. Every
+loan in a run is also read at a single point in the chain's history, so a
+source that serves part of the answer from further back fails outright rather
+than quietly mixing two moments.
 
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain
