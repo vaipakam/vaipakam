@@ -263,3 +263,111 @@ export async function reportStaleQuarantine(
       `broken. An orphan needs a person either way.`,
   );
 }
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The table's NAME, its availability probe, and the exclusion fragment.
+ *
+ * Moved here from `@vaipakam/lib/reminderEligibility` in #2213 r22
+ * (`4015173433`). They were in the shared package while both reminder lanes
+ * consulted the quarantine; this PR moved the periodic lane to asking the
+ * chain directly, which left an indexer-owned D1 table name and SQL fragment
+ * sitting in a package module whose only other contents were chain-state
+ * arithmetic the agent reads. Every consumer of these three is in this Worker.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The table the memory lives in. Named once so a rename cannot half-land. */
+export const QUARANTINE_TABLE = 'loan_reconcile_quarantine';
+
+/**
+ * A `WHERE`-clause fragment excluding quarantined loans.
+ *
+ * Correlates on the OUTER query's own columns, so the caller passes the alias
+ * its `loans` table is selected under. No binds, so it composes with any
+ * parameter list.
+ *
+ * Belongs in SQL rather than a post-select filter: every caller applies a
+ * `LIMIT`, and a quarantined row filtered afterwards has already occupied a
+ * slot that an eligible row behind it needed.
+ */
+export function quarantineExclusionSql(loansAlias = 'loans'): string {
+  return `NOT EXISTS (
+            SELECT 1 FROM ${QUARANTINE_TABLE} q
+             WHERE q.chain_id = ${loansAlias}.chain_id
+               AND q.loan_id = ${loansAlias}.loan_id
+          )`;
+}
+
+/** The single D1 method the probe needs, so this stays runtime-agnostic. */
+export interface QuarantineProbeDb {
+  prepare(query: string): { first<T>(): Promise<T | null> };
+}
+
+/**
+ * Whether the quarantine memory is there — or whether the question failed.
+ *
+ * THREE ANSWERS, not two (#2213 r13 `4013570995`). `'absent'` and `'unknown'`
+ * were one value until this round, and collapsing them is the same defect the
+ * agent's cursor read had: a transient failure looked like a definite "the
+ * table is not there", so the sweep dropped the exclusion, announced that the
+ * migration was missing, and minted unretractable reminders for exactly the
+ * loans being held back.
+ *
+ * The two callers then take OPPOSITE safe directions from `'unknown'`, which
+ * is why this returns the fact rather than a boolean:
+ *
+ * - The reminder sweep DEFERS. It is about to send something it cannot
+ *   retract, so an unanswered question is not permission.
+ * - A close-out batch OMITS the release, exactly as it does for `'absent'`.
+ *   Naming a table that might not exist would fail the whole batch, and that
+ *   batch advances the chain cursor — so the cautious direction there is to
+ *   write less, not to stop.
+ */
+export type QuarantineAvailability = 'present' | 'absent' | 'unknown';
+
+/**
+ * Build a "has migration 0049 landed on this database?" probe.
+ *
+ * A FACTORY because the answer is cached per isolate and each Worker must
+ * hold its own — a module-level cache shared by import would be fine today
+ * and wrong the moment two databases are involved.
+ *
+ * **Why a probe and not a caught error.** The canonical deploy scripts
+ * publish a Worker BEFORE applying its D1 migrations (#2214), so there is a
+ * guaranteed window where this code runs against a database without the
+ * table. "Does this table exist" has a definite answer; "was that failure a
+ * missing table" is a guess about an error message, and a failure classifier
+ * narrowed round after round cannot be sharpened into correctness.
+ *
+ * **Only a PRESENT is cached.** A table does not un-exist, so the steady-state
+ * cost is one read per isolate — while caching an absence would mean the
+ * migration lands and this isolate goes on ignoring the quarantine until it
+ * happens to recycle, with nothing saying so.
+ */
+export function createQuarantineAvailability(): (
+  db: QuarantineProbeDb,
+) => Promise<QuarantineAvailability> {
+  let seen = false;
+  return async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
+    if (seen) return 'present';
+    try {
+      const row = await db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
+        )
+        .first<{ name: string }>();
+      if (row) {
+        seen = true;
+        return 'present';
+      }
+      return 'absent';
+    } catch {
+      // STILL DOES NOT THROW. Its callers are a reminder sweep and a close-out
+      // batch, and making either fail because the QUESTION failed would turn a
+      // database hiccup into a stalled chain cursor or a dropped sweep. What
+      // changed in r13 is that the answer is no longer a confident "absent":
+      // the caller is told the question failed and decides for itself.
+      return 'unknown';
+    }
+  };
+}

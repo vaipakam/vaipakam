@@ -60,7 +60,7 @@ import {
   reportStaleQuarantine,
   settledRows,
 } from './loanQuarantine';
-import { createQuarantineAvailability } from '@vaipakam/lib/reminderEligibility';
+import { createQuarantineAvailability } from './loanQuarantine';
 import {
   verifyRpcChainIdentity as verifyRpcIdentityShared,
   type RpcIdentityVerdict,

@@ -166,10 +166,7 @@ const SWEEP_LIMIT = 2000;
  *  rediscover is one that will be missed again (#2190 r5). */
 export { DERIVED_LOG_INDEX as CRON_LOG_INDEX } from './notifications';
 import { DERIVED_LOG_INDEX } from './notifications';
-import {
-  createQuarantineAvailability,
-  quarantineExclusionSql,
-} from '@vaipakam/lib/reminderEligibility';
+import { createQuarantineAvailability, quarantineExclusionSql } from './loanQuarantine';
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -299,7 +296,7 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * sweep is not the only lane that must respect the quarantine — the agent's
  * periodic-interest pre-notify sends payment-due messages off the same stored
  * status, in a different Worker (#2213 r2 `4011776403`). One rule, two
- * callers; see `reminderEligibility.ts` for why a probe rather than a caught
+ * callers; see `loanQuarantine.ts` for why a probe rather than a caught
  * error, and why only a TRUE is cached.
  */
 let quarantineTableExists = createQuarantineAvailability();

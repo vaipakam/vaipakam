@@ -251,6 +251,17 @@ back on. A run that cannot READ the setting also sends nothing, on the same
 reasoning as everywhere else here: not knowing whether a payment can be made
 is not permission to demand one.
 
+**And switching periodic interest off is not the only way settlement closes.**
+The platform has a second, independent emergency stop that halts everything at
+once — and the settlement route checks it BEFORE it looks at the
+periodic-interest setting, so a deployment can have periodic interest enabled
+and still refuse every payment. Reading only the first setting left exactly
+that case sending reminders. It is also the worse case of the two: a
+platform-wide stop closes ordinary repayment as well, so someone told to pay
+before their collateral is sold has no route at all, not even the one they
+would fall back on. Both settings are now read before the lane speaks, and
+neither being readable is treated as permission.
+
 That setting is read at the SAME moment in the chain's history as the
 positions themselves. Asked at "now" instead, it could report the payment
 available for a moment the positions were never read at — because the setting
@@ -282,6 +293,17 @@ many it could not read, and which of the two limits stopped it. Those are
 different problems with different remedies — a run that keeps reporting
 hundreds of rejections is reporting stuck records, not load — and flattening
 them into "deferred" would hide the one that needs a person.
+
+**Agreeing on a date is not agreeing on a schedule.** A reminder is about one
+payment period, and how long that period is comes from the position's payment
+schedule. The platform checked only that the chain's schedule was one it
+recognised, then compared the resulting dates — and two different schedules
+produce the same date whenever the last payments differ by exactly the gap
+between them. A quarterly position and a monthly one sixty days apart land on
+the same day. The dates matching then confirms nothing, and the reminder goes
+out permanently marked and describing a schedule the position does not have.
+The schedule the platform read the position with is now part of what has to
+match, rather than something inferred from the dates agreeing.
 
 **A record can disagree with the chain in two directions, and only one of
 them fixes itself.** The platform compares the period a reminder is about
@@ -387,6 +409,12 @@ accounting took the disclosure with it. So a run could mark forty records as
 handled, deliver nothing, and say nothing, which is the ordinary shape of a
 misconfigured deployment rather than an exotic one. The run now reports the
 count once, naming the setting.
+
+The same disclosure now covers the platform's OTHER message channel, which
+the first version of this fix left out — a rule applied to the case that
+prompted it rather than to the class. Someone who asked for that channel on a
+deployment that cannot use it was counted as having nobody to tell, which
+reads as a fact about them when it is a fact about the configuration.
 
 **And a completed run reports too, when it has something to report.** The
 summary only appeared when a run stopped early, on the reasoning that a run

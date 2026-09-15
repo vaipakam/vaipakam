@@ -383,6 +383,19 @@ The app uses chain reads and indexed reads for different jobs.
   the hardest failure for an operator to notice. The count is reported once per
   network per run, naming the setting — not once per record, which would train
   a real misconfiguration into background noise.
+- No reminder is sent on a network that is globally halted, which is a
+  separate setting from the periodic-interest one and is checked first by the
+  settlement route itself. A network can therefore have periodic interest
+  enabled and still refuse every payment. The halt also closes ordinary
+  repayment, so someone told to pay has no route at all — which makes this the
+  more serious of the two to get wrong. As with the other setting, a run that
+  cannot read it sends nothing.
+- Agreeing on a payment date is not agreeing on a payment schedule. Two
+  different schedules produce the same date whenever the last payments differ
+  by exactly the gap between them, so a run that checked only the date could
+  send a reminder describing a schedule the position does not have. The
+  schedule the platform read the position with must match the chain's, as part
+  of what makes the reminder allowed at all.
 - Every question a run asks the chain is asked about the SAME moment in that
   chain's history — whether settlement is currently possible as much as whether
   each position is still running. A setting read at "now" while the positions

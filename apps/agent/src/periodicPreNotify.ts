@@ -30,7 +30,7 @@
  */
 
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
-import { LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
@@ -40,7 +40,7 @@ import {
   periodicInterestEligibility,
   type PeriodicEligibility,
   type PeriodicLoanState,
-} from '@vaipakam/lib/reminderEligibility';
+} from '@vaipakam/lib/periodicEligibility';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
@@ -87,7 +87,12 @@ const SECONDS_PER_DAY = 86_400;
  * thousands of later chances. Two things make that true rather than hopeful:
  * the ORDER (`candidatesInWindow`) and the stored scan position.
  */
-const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
+// EXPORTED AS A TEST SEAM (#2213 r22). Ten budget tests hand-computed their
+// expectations from these three numbers, so adding the pause read broke all
+// ten at once and each had to be re-derived by hand. The suite now computes
+// from the constants instead, which is the difference between a test that
+// fails when BEHAVIOUR changes and one that fails when arithmetic moves.
+export const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
 
 /**
  * The most sends ONE loan can need: two counterparties × two rails.
@@ -104,7 +109,7 @@ const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
  * is overshooting the invocation's subrequest budget by up to three, which is
  * how a lane starts failing mid-loop and taking later chains down with it.
  */
-const MAX_SENDS_PER_LOAN = 4;
+export const MAX_SENDS_PER_LOAN = 4;
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -140,6 +145,16 @@ const MAX_EXAMINE_BATCHES = 3;
 // selector still routes through the Diamond — same address, different ABI.)
 const PERIODIC_CONFIG_ABI = NumeraireConfigFacetABI;
 
+/**
+ * `AdminFacet.paused()` — the Diamond-wide emergency stop.
+ *
+ * A SECOND read rather than folded into the config bundle, because the two
+ * live on different facets and there is no getter carrying both. It costs one
+ * more request per chain per tick, which is why
+ * `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY` is 4 and not 3.
+ */
+const PAUSE_ABI = AdminFacetABI;
+
 interface LoanRow {
   loan_id: number;
   chain_id: number;
@@ -170,8 +185,9 @@ interface TickBudget {
 }
 
 /**
- * What one chain still needs AFTER its identity is settled: the lead-time
- * read, the head read, and one batched status read.
+ * What one chain still needs AFTER its identity is settled: the head read,
+ * the config read (lead time + periodic switch), the pause read, and one
+ * batched status read.
  *
  * A chain does not go further unless this plus a loan's worth is available, so
  * a pass never spends its opening reads and then finds it cannot afford to
@@ -185,7 +201,7 @@ interface TickBudget {
  * this test runs after the verdict, where the probe has already charged
  * itself or not.
  */
-const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 3;
+export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 4;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -452,6 +468,52 @@ async function preNotifyChain(
     return;
   }
 
+  // THE GLOBAL PAUSE IS A SECOND, INDEPENDENT GATE (#2213 r22 `4015173439`).
+  //
+  // `settlePeriodicInterest` is declared `nonReentrant whenNotPaused`, and a
+  // MODIFIER RUNS BEFORE THE BODY — so the pause is checked before
+  // `periodicInterestEnabled` is even read. The r18 fix asked the switch and
+  // stopped there, which leaves the paused-but-enabled deployment sending
+  // exactly the instruction that fix exists to prevent.
+  //
+  // It is also the worse case of the two. A global pause is an emergency, and
+  // it closes ORDINARY REPAYMENT as well — so the borrower told to pay before
+  // their collateral is sold has no route at all, not even the fallback they
+  // would otherwise reach for. Telling someone to act during the one window
+  // where they cannot is the failure this lane must never produce.
+  //
+  // Pinned to the same head as everything else, and unreadable is treated as
+  // paused, for the reason the config read already is: not knowing whether
+  // the payment can be made is not permission to demand it.
+  budget.remaining -= 1; // the pause read below
+  let paused: boolean;
+  try {
+    paused = (await client.readContract({
+      address: chain.diamond as Address,
+      abi: PAUSE_ABI,
+      functionName: 'paused',
+      blockNumber: head,
+    })) as boolean;
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — could not ` +
+        `read whether the diamond is paused (${describeFailure(err)}). A pause ` +
+        `stops settlement before the periodic switch is even consulted, so ` +
+        `this is not a question the lane may skip. Nothing is stamped.`,
+    );
+    return;
+  }
+  if (paused) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the ` +
+        `diamond is PAUSED, so settlement reverts before the periodic switch ` +
+        `is read, and ordinary repayment is closed too. A borrower told to ` +
+        `pay now would have no route at all. Nothing is stamped; reminders ` +
+        `resume when it is unpaused.`,
+    );
+    return;
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const windowSec = preNotifyDays * SECONDS_PER_DAY;
 
@@ -536,6 +598,7 @@ async function preNotifyChain(
   let staleCheckpoint = 0;
   let unreadable = 0;
   let pushUnconfigured = 0;
+  let tgUnconfigured = 0;
   let batches = 0;
   let batchFailed = false;
   while (
@@ -579,6 +642,7 @@ async function preNotifyChain(
     staleCheckpoint += outcome.staleCheckpoint;
     unreadable += outcome.unreadable;
     pushUnconfigured += outcome.pushUnconfigured;
+    tgUnconfigured += outcome.tgUnconfigured;
     cursor += outcome.consumed;
   }
 
@@ -674,6 +738,21 @@ async function preNotifyChain(
         `signer, or the Push channel on those subscriptions is inert.`,
     );
   }
+  // THE SAME DISCLOSURE FOR THE OTHER RAIL (#2213 r22 `4015173418`). r19 fixed
+  // Push and left Telegram, which is the shape this PR keeps rediscovering: a
+  // rule applied to the instance that prompted it rather than to the class.
+  // Without it, a subscriber with a chat id on a deployment with no bot token
+  // was counted under "nobody to tell" — a statement about the USER, when the
+  // truth is about the operator's configuration.
+  if (tgUnconfigured > 0) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: ${tgUnconfigured} ` +
+        `subscriber(s) this tick have a Telegram chat set while this ` +
+        `deployment has no TG_BOT_TOKEN, so no Telegram was sent to them and ` +
+        `none can be. They were reached on Push or not at all. Set the token, ` +
+        `or the Telegram route on those subscriptions is inert.`,
+    );
+  }
 }
 
 /**
@@ -707,6 +786,7 @@ async function messageBatch(
   staleCheckpoint: number;
   unreadable: number;
   pushUnconfigured: number;
+  tgUnconfigured: number;
 }> {
   let reminded = 0;
   let unreached = 0;
@@ -717,13 +797,15 @@ async function messageBatch(
   let staleCheckpoint = 0;
   let unreadable = 0;
   let pushUnconfigured = 0;
+  let tgUnconfigured = 0;
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
-        rejected, checkpointLag, staleCheckpoint, unreadable, pushUnconfigured,
+        rejected, checkpointLag, staleCheckpoint, unreadable,
+        pushUnconfigured, tgUnconfigured,
       };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
@@ -776,7 +858,11 @@ async function messageBatch(
       unreadable += 1;
       continue;
     }
-    const verdict = periodicInterestEligibility(detail, nextCheckpoint);
+    const verdict = periodicInterestEligibility(
+      detail,
+      nextCheckpoint,
+      row.periodic_interest_cadence,
+    );
     if (verdict !== 'ok') {
       // WHAT THE CHAIN SAID, AND NOTHING ABOUT WHAT HAPPENS NEXT (#2213 r4
       // `4012114114`). An earlier version promised the reconciliation pass
@@ -794,7 +880,12 @@ async function messageBatch(
       // orphaned rows. The parts were right and the aggregate was wrong,
       // which is the harder failure to notice — nobody reads every per-loan
       // line, and the summary is what an operator acts on.
-      const explained = explainVerdict(verdict, detail, nextCheckpoint);
+      const explained = explainVerdict(
+        verdict,
+        detail,
+        nextCheckpoint,
+        row.periodic_interest_cadence,
+      );
       console.warn(
         `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: ` +
           `${explained.text} — no reminder sent. Nothing is stamped, so a ` +
@@ -849,6 +940,8 @@ async function messageBatch(
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
     pushUnconfigured +=
       (borrowerOutcome.pushUnconfigured ? 1 : 0) + (lenderOutcome.pushUnconfigured ? 1 : 0);
+    tgUnconfigured +=
+      (borrowerOutcome.tgUnconfigured ? 1 : 0) + (lenderOutcome.tgUnconfigured ? 1 : 0);
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -924,6 +1017,7 @@ async function messageBatch(
     staleCheckpoint,
     unreadable,
     pushUnconfigured,
+    tgUnconfigured,
   };
 }
 
@@ -1175,6 +1269,7 @@ function explainVerdict(
   verdict: Exclude<PeriodicEligibility, 'ok'>,
   detail: LoanState,
   expected: number,
+  storedCadence: number,
 ): { text: string; bucket: 'rejected' | 'checkpoint-lag' | 'stale-checkpoint' } {
   switch (verdict) {
     case 'no-such-loan':
@@ -1207,6 +1302,22 @@ function explainVerdict(
         // pass. Filing it with the ghost rows would send an operator to repair
         // something that is already correct.
         bucket: 'checkpoint-lag',
+      };
+    case 'cadence-mismatch':
+      return {
+        text:
+          `the stored row was read with cadence ${Number(storedCadence)} and ` +
+          `the chain reports cadence ` +
+          `${Number(detail.periodicInterestCadence)} — the two disagree about ` +
+          `how long this loan's period is, so the date this reminder would ` +
+          `name comes from the wrong interval and the message would be ` +
+          `labelled with a cadence the chain does not have. The dates can ` +
+          `still coincide, which is why matching them proves nothing here`,
+        // A STORED ROW THAT IS WRONG, like the ghosts — not a timing artefact
+        // and not something that heals. The chain is authoritative on cadence
+        // (it is snapshotted at init and immutable), so a disagreement means
+        // our copy needs correcting.
+        bucket: 'rejected',
       };
     case 'row-ahead':
       return {
@@ -1392,6 +1503,18 @@ interface DeliveryOutcome {
    * fix silently took the disclosure with it.
    */
   pushUnconfigured: boolean;
+  /**
+   * The subscriber asked for Telegram and the DEPLOYMENT has no bot token.
+   *
+   * The exact mirror of `pushUnconfigured`, and it is here because r19 fixed
+   * ONE rail (#2213 r22 `4015173418`). The Telegram route collapses to `null`
+   * on a missing `TG_BOT_TOKEN` in the same expression that checks the
+   * subscriber's chat id, so a deployment misconfiguration read as "this
+   * person has no route" — and if Push was also unavailable the loan was
+   * stamped as handled and reported under "nobody to tell", which is a
+   * statement about the USER when the truth is about the operator.
+   */
+  tgUnconfigured: boolean;
 }
 
 async function pushIfSubscribed(
@@ -1429,7 +1552,7 @@ async function pushIfSubscribed(
   if (!sub) {
     return {
       status: 'none', attempted: false, delivered: false,
-      unconfirmedRails: 0, pushUnconfigured: false,
+      unconfirmedRails: 0, pushUnconfigured: false, tgUnconfigured: false,
     };
   }
   // #1033 — the connected app Alerts card exposes this as a real opt-out;
@@ -1439,7 +1562,7 @@ async function pushIfSubscribed(
   if (sub.notify_maturity_approaching === 0) {
     return {
       status: 'opted-out', attempted: false, delivered: false,
-      unconfirmedRails: 0, pushUnconfigured: false,
+      unconfirmedRails: 0, pushUnconfigured: false, tgUnconfigured: false,
     };
   }
 
@@ -1558,6 +1681,7 @@ async function pushIfSubscribed(
     // cannot sign for it. Distinct from "no channel": that is the user's
     // choice, this is the operator's configuration.
     pushUnconfigured: Boolean(sub.push_channel) && !env.PUSH_CHANNEL_PK,
+    tgUnconfigured: Boolean(sub.tg_chat_id) && !env.TG_BOT_TOKEN,
   };
 }
 
