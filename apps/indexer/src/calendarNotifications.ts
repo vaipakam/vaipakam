@@ -325,6 +325,23 @@ export function calendarWindowSql(graceCase: string): string {
           WHERE loans.chain_id = ?
             AND status = 'active'
             AND is_stub = 0 AND is_sale_vehicle = 0
+            -- QUARANTINED ROWS ARE NOT REMINDED ABOUT (#2212). A row the
+            -- reconciliation pass could not settle is stored as active and
+            -- may not be: an orphan the chain has never heard of, a row it
+            -- could not read, one whose repair write failed, one in a state
+            -- this build cannot project. Reminders fire once and are never
+            -- retracted, so "prepare to repay" must not be derived from a
+            -- row nobody has confirmed.
+            --
+            -- In SQL rather than as a post-select filter, and BEFORE the
+            -- LIMIT: a quarantined row occupying a LIMIT slot would starve
+            -- an emitting row behind it in the maturity order, which is the
+            -- starvation the ORDER BY and the past-grace leg already exist
+            -- to prevent.
+            AND NOT EXISTS (
+              SELECT 1 FROM loan_reconcile_quarantine q
+              WHERE q.chain_id = loans.chain_id AND q.loan_id = loans.loan_id
+            )
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
             AND (${maturity} + ${graceCase}) > ?
