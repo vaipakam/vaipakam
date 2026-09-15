@@ -260,6 +260,16 @@ standing. The cause was structural rather than arithmetic: a single word per
 recipient cannot carry two recipients' worth of partial knowledge. The rule
 is stated once now, in terms of what the mark means.
 
+A refusal does not earn another attempt and does not block one either, which
+has a price worth naming: a position where one party is owed an attempt and
+the other's channel was refused comes back, and the refused channel is tried
+again beside the party who is owed, because there is no way to reach one
+without the other. On a deployment whose credential has been rotated that is
+every position with a party who has switched reminders off. What bounds it is
+the remembered place in the window, which moves past a position whether or
+not it was marked — so the futile attempt costs once per trip round the
+window rather than once per run.
+
 **One consequence changes a previously stated behaviour, and is called out
 because nobody asked for it.** A position where one party had no usable
 channel and the other had switched reminders off used to be marked as

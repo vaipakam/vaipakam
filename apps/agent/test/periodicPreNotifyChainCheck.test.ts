@@ -2096,6 +2096,39 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('rail(s) unconfirmed');
   });
 
+  it('comes back for an opted-out party even though the other party was REFUSED', async () => {
+    // FOUND IN MY OWN ADVERSARIAL PASS over the r28 root fix, not by a review
+    // round, and recorded here because it is a consequence with a cost rather
+    // than a free one.
+    //
+    // A refusal does not EARN a retry — it will fail identically until a
+    // person repairs a credential — but neither may it BLOCK one, because it
+    // is definitively not a delivery and so cannot tell anybody twice. The
+    // opted-out party is owed another tick, and there is no way to reach them
+    // without running the loop that re-attempts the refused rail beside them.
+    //
+    // So the price of that person's reminder is a futile send each time this
+    // loan comes round, and on a deployment with a rotated token that is
+    // every loan with an opted-out counterparty. What keeps it bounded is the
+    // stored scan position: it advances past an unstamped loan exactly as it
+    // does past a stamped one, so the futile send costs once per trip round
+    // the window rather than once per tick. Before r28 this case stamped and
+    // cost nothing — that is the trade, stated rather than discovered later.
+    const lender = `0x${'7'.repeat(40)}`;
+    const borrower = `0x${'8'.repeat(40)}`;
+    loanRows = [{ ...dueLoan, lender, borrower }];
+    tgAccepts = 'refused';
+    subscriberFor = (w) =>
+      w.toLowerCase() === borrower.toLowerCase()
+        ? { ...bothRails(w), push_channel: null }
+        : { ...bothRails(w), notify_maturity_approaching: 0 };
+    const { stamped } = await run();
+    expect(sends.length).toBe(1); // the refused rail was tried, and refused
+    expect(stamped).toEqual([]); // and the opted-out party keeps their tick
+    // The cursor moved anyway, which is what bounds the cost above.
+    expect(scanOffsets.get('prenotify_scan:84532')).toBe(0);
+  });
+
   it('DOES stamp a loan the service refused — there is nothing to retry there', async () => {
     // The mirror of the case above, stated because the asymmetry is
     // deliberate rather than an oversight: `refused` means the same message

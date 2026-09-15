@@ -426,6 +426,16 @@ The app uses chain reads and indexed reads for different jobs.
 
   The record is left unmarked when somebody is owed, nobody was reached and
   nothing is uncertain; otherwise it is marked.
+- A refusal does not earn another attempt, but it does not block one either.
+  So a record where one party is owed an attempt and the other's channel was
+  refused comes back, and the refused channel is tried again beside the party
+  who is owed — there is no way to reach one without the other. The cost is a
+  futile attempt each time that record comes round, which on a deployment
+  whose credential has been rotated is every record with a party who has
+  switched reminders off. What bounds it is the remembered scan position,
+  which advances past an unmarked record exactly as it does past a marked
+  one: the futile attempt costs once per trip round the window, not once per
+  run.
 - **Being owed another attempt is not cancelled by the other party having
   nothing to offer.** A borrower whose reminder the service deferred stays
   owed one even when their lender turns out to have no usable channel at all;
