@@ -141,6 +141,25 @@ export const MAX_D1_PER_LOAN = 5;
 export const MAX_SUBREQUESTS_PER_LOAN = MAX_SENDS_PER_LOAN + MAX_D1_PER_LOAN;
 
 /**
+ * The scan position written back at the end of every pass.
+ *
+ * HELD BACK FROM THE LOAN LOOP, not merely counted (#2213 r32 `4017648029`).
+ * It is inside `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY`, so a chain is only
+ * ADMITTED when there is room for it — and nothing kept the loop from
+ * spending it afterwards. A run of cheap loans could take the remainder to
+ * exactly a loan's worth, admit one more, spend all of it, and then issue
+ * this write anyway: one request past the stated cap.
+ *
+ * The same shape as the indexer lane's P1 one round earlier (#2221): a
+ * request made at the END of a pass, by a step no gate consults, in a lane
+ * whose gates all reason about what comes next. A pass that spends its last
+ * request on work and then cannot record where it got to is the failure
+ * every one of these budgets exists to prevent, so this one is reserved
+ * rather than hoped for.
+ */
+export const CURSOR_WRITE_RESERVE = 1;
+
+/**
  * How many candidates one batched chain read covers, and how many such reads
  * one chain gets per tick (#2213 r6 `4012464544`).
  *
@@ -678,7 +697,7 @@ async function preNotifyChain(
     cursor < due.length &&
     // Room for this batch's read AND a loan's worth of sends: reading a batch
     // this tick cannot afford to act on spends a request for nothing.
-    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN &&
+    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE &&
     batches < MAX_EXAMINE_BATCHES
   ) {
     const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
@@ -741,7 +760,7 @@ async function preNotifyChain(
     // "stopping". And it is the OUTBOUND-REQUEST allowance now, not a send
     // allowance — reads come out of the same counter since r13.
     const capped =
-      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN
+      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE
         ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
@@ -907,8 +926,10 @@ async function messageBatch(
   const tgUnconfigured = new Set<string>();
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
-    // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
-    if (budget.remaining < MAX_SUBREQUESTS_PER_LOAN) {
+    // started unless all four are available — see `MAX_SENDS_PER_LOAN` — AND
+    // the scan position must still be writable afterwards, which is what
+    // `CURSOR_WRITE_RESERVE` holds back (#2213 r32 `4017648029`).
+    if (budget.remaining < MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
         rejected, checkpointLag, staleCheckpoint, unreadable,

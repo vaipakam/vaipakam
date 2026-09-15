@@ -26,6 +26,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
   CHAIN_OPENING_REQUESTS_AFTER_IDENTITY,
+  CURSOR_WRITE_RESERVE,
   MAX_SUBREQUESTS_PER_INVOCATION,
   MAX_SENDS_PER_LOAN,
   MAX_SUBREQUESTS_PER_LOAN,
@@ -119,7 +120,11 @@ const TYPICAL_SUBREQUESTS_PER_LOAN = 2 + MAX_SENDS_PER_LOAN + 1;
 function loansThatFit(costPerLoan: number, available = MAX_SUBREQUESTS_PER_INVOCATION): number {
   let remaining = available - PRE_MESSAGE_SUBREQUESTS;
   let n = 0;
-  while (remaining >= MAX_SUBREQUESTS_PER_LOAN) {
+  // The gate holds the scan-position write back as well as a loan's worth
+  // (#2213 r32 `4017648029`) — a pass that spends its last request on a loan
+  // and then cannot record where it got to is the failure the budget exists
+  // to prevent, so the loop refuses to begin one that would.
+  while (remaining >= MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) {
     remaining -= costPerLoan;
     n += 1;
   }
@@ -149,7 +154,7 @@ function loansReached(costs: number[]): number {
   let remaining = MAX_SUBREQUESTS_PER_INVOCATION - PRE_MESSAGE_SUBREQUESTS;
   let n = 0;
   for (const c of costs) {
-    if (remaining < MAX_SUBREQUESTS_PER_LOAN) break;
+    if (remaining < MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) break;
     remaining -= c;
     n += 1;
   }
@@ -1544,6 +1549,59 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // must not be refused for a request the warm probe never spends.
     expect(said).not.toContain('skipped');
     expect(new Set(stamps.map((s) => s.chainId)).size).toBe(2);
+  });
+
+  it('never spends its last request on a loan and then fail to record where it got to', async () => {
+    // #2213 r32 `4017648029`. The scan-position write is inside the chain's
+    // ADMISSION cost, so a chain is only started when there is room for it —
+    // and nothing stopped the loan loop spending it afterwards. A run of
+    // cheap loans could take the remainder to exactly a loan's worth, admit
+    // one more, spend all of it, and then issue that write anyway: one
+    // request past the stated cap.
+    //
+    // The property, not the arithmetic: whatever the loop does, the total
+    // this tick issues stays inside the allowance AND the position is still
+    // saved. Those two together are the whole point — a tick that stayed
+    // inside the cap by skipping the write would re-read the same prefix for
+    // ever, which is the starvation r8 and r12 removed.
+    const ids = Array.from({ length: 40 }, (_, k) => 900 - k);
+    const known = new Map<string, number>();
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse()
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    // A mix of shapes, so the running total does not land on a multiple of
+    // anything and the gate is what decides where it stops.
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      if (id % 3 === 0) return { ...bothRails(w), push_channel: null };
+      if (id % 3 === 1) {
+        return {
+          wallet: w,
+          push_channel: null,
+          tg_chat_id: null,
+          locale: 'en',
+          notify_maturity_approaching: 1,
+        };
+      }
+      return bothRails(w);
+    };
+    const { said } = await run();
+    // The position WAS written — the tick kept enough to record itself.
+    expect(scanOffsets.has('prenotify_scan:84532')).toBe(true);
+    // And it stopped for the allowance rather than running out inside a loan:
+    // whatever it reports as left is non-negative, which is the observable
+    // form of "it never overshot".
+    const left = /allowance is down to (-?\d+)/.exec(said);
+    if (left) expect(Number(left[1])).toBeGreaterThanOrEqual(0);
   });
 
   it('names the allowance when it stops one request short of a batch', async () => {

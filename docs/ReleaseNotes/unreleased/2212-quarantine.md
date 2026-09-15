@@ -189,6 +189,14 @@ explain a run that exhausted its allowance while delivering little. A run also
 walks past records it cannot send for, in batches of a hundred, and reaches
 the ones behind them on the same run.
 
+The run also holds back the one request it needs to SAVE ITS PLACE, and will
+not begin a record it could only finish by spending it. Saving the place is
+the last thing a run does, so nothing else was checking that it would still
+be affordable — a run could stop exactly one request over its own limit. And
+a run that stayed inside the limit by skipping that write instead would
+re-read the same prefix on every later run, which is the unfairness the
+remembered position was added to remove. The two have to hold together.
+
 One consequence is worth stating because it looks like waste: a run refuses to
 begin a record it might not be able to finish, which can leave a little
 allowance unused. Stopping halfway through a record would tell one party and

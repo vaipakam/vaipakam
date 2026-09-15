@@ -374,6 +374,12 @@ The app uses chain reads and indexed reads for different jobs.
   chain and the messages it sends: those leave the run just as the others do,
   and a bound that ignored them would let a run that believed it was rationing
   its messages exceed the real limit while sending almost none.
+- The run holds back the request it needs to SAVE ITS PLACE, and refuses to
+  begin a record it could only finish by spending it. A run that used its
+  last request on a reminder and then could not record where it got to would
+  stay inside its allowance and re-read the same prefix on every later run,
+  which is the starvation the remembered position exists to prevent — so the
+  two requirements are held together rather than traded off.
 - Anything that occupies a record slot without issuing a request cannot
   consume the allowance — a record the chain declines to confirm is the case
   that arises, since nothing is worth asking about a loan the chain has never
