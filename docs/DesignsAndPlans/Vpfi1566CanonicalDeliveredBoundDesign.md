@@ -6273,7 +6273,11 @@ PR C.**
 > registered buyback receiver, and the adapter every live satellite names
 > as its messenger, with the artifact's address second), the three
 > value-bearing Diamond ingresses gain it too, and the Diamond records
-> every packet under `keccak256(sourceChainId, transportMessageId)` — or,
+> every reward-budget packet — a delivery, a compensation, a stranded
+> return, the fresh share of a pre-attribution ceremony inflow; NOT the
+> planned-surplus repatriation return, a ceremony inflow for an attributed
+> receipt, or any recycled ceremony inflow (#2204) — under
+> `keccak256(sourceChainId, transportMessageId)` — or,
 > for a transport without an id, a per-source sequence the authenticated
 > ingress allocates itself — a replayed stamp refuses whole
 > (`IngressPacketReplayed`), a second packet for a receipt already
@@ -6305,6 +6309,166 @@ PR C.**
 > reconciliation verdict), and the transport epochs PR C depends on — the
 > classification EXITS of the `Unclassified` row, in-holder under the
 > deficit split, are PR 2's; PR 1 gives it only the R4 return exit.
+
+> **LANDED — closure 2's cutover apparatus, PR 2 of 2 (the legacy
+> reconciliation epoch).** A new facet, `RewardReconciliationFacet`, hosts
+> the three entries (ADMIN, manual pause, activated): **(a) the
+> classification entry** — a packet's untyped remainder leaves the
+> `Unclassified` row for fresh (under the deficit split: the absorbed
+> portion to restitution, the excess to live), recycled (the bucket credited
+> as relocated custody) or both, IN-HOLDER, with the row's figure, the
+> global uncounted aggregate and the packet's own figures stepping down
+> exactly; cumulative per component; a rounding residual stays in the row;
+> a packet whose receipt still carries a live stranded record refuses.
+> **(b) the reclassification** — attribution moves between the two sides of
+> an already-classified entry, its total unchanged, bounded by what is
+> UNSPENT under the live-queue FIFO; unspent credit moves WITH its tokens
+> (fresh → recycled from the live row only — restitution custody is not a
+> correction's to move; recycled → fresh bounded by the uncommitted bucket),
+> spent credit moves as an inherited debit (`received` and `paid` together;
+> the destination's consumption rising — never replacement capital, an
+> authenticated ledger inherits it). **(c) the envelope import** — the
+> pre-stamp inventory as one netted aggregate every figure of which is read
+> on chain at the import, resolved whole and once (relocated measured,
+> replacement-funded delta-checked, or written down) and entered into the
+> same log, so the snapshot-keyed error path IS the packet reclassification.
+> Four things the landed shape settles differently from this section's
+> pre-PR-1 prose, each stated so it is not re-argued: **(1) the aggregate
+> wire bound is STRUCTURAL.** PR 1 protects exactly a packet's untyped part
+> into the row and keeps its per-packet remainder, so an entry can never
+> classify beyond what the packet put into the row — the third bound of
+> "three bounds, not two" is enforced by custody rather than by a check;
+> and the fresh side of a split is bounded by EVIDENCE, as this section's
+> privileged-direction rule states (L4436-4450) and as landed: a packet's
+> classified fresh never exceeds its AUTHENTICATED fresh figure, which no
+> administrator writes — the transport-carried attestation of the source
+> chain's own recorded split is its writer and lands with the transport
+> epochs, so until then the figure is zero and an untyped packet
+> classifies recycled or stays where it is; the correction toward fresh is
+> the same door and takes the same bound, cumulatively over the packet's
+> entries; the envelope, whose history has no evidence source, relocates
+> as recycled only, its fresh side exactly what was replacement-funded
+> (delta-checked) and bounded by it. The operator-stated component caps an
+> earlier landed shape carried — "fixed by the first entry, restated
+> after" — validated an entry against the operator's own reconstruction
+> and nothing else (Codex #2206 r3, P1: a self-declared cap is not
+> evidence), and are gone. **(2) Spent-ness is RECORDED at the row
+> primitive; the queue is the classified set.** This section derives
+> spent-ness from monotone outflow counters against per-entry prefixes.
+> Rounds 1 and 2 on the landed PR showed that a positional form needs every
+> writer of the pool to be position-aware — the deficit split sends part of
+> a credit to restitution (not live backing), a demotion removes a
+> delivery's credit again, the paid-correction and the restore move the
+> headroom aggregates — and each unaware writer is a phantom position; the
+> round-3 form read the pool as it stood instead, and round 4 showed what
+> that costs: a later credit un-spent an earlier entry, and a refill was
+> consumed twice (Codex #2206 r4, two P1s). The landed form keeps what each
+> was right about. Spent-ness is RECORDED, never read from a balance, and
+> recorded INTO the entry's own record (Codex #2206 r5: per-side totals
+> distributed by prefix put a consumption on the entry whose credit had
+> left by repatriation — kind cannot be attributed from aggregates). Each
+> side's queue is one record per entry AT THE ENTRY'S OWN LOG INDEX — the
+> classification order this section fixes; round 5 appended corrected
+> credit at the tail, which re-ordered it (Codex #2206 r6 P1) — with a
+> FRONTIER that a correction moves back to any entry it frees. Every
+> outflow of a pool passes through that pool's own debit primitive — the
+> live and restitution rows' `LibRewardCustody.debit` / `move`; the bucket
+> ledger's `consume` and `debitRepatriationSurplus`, the recycled row
+> following the ledger — and that primitive records what the outflow took
+> of the queue (one take: the pool's other backing consumed first, never
+> more than the records still hold) in the totals at once and INTO the
+> records at the frontier, earliest first, with its kind, by a walk BOUNDED
+> per hot outflow (`QUEUE_WALK_STEPS`), the rest left pending in order
+> (Codex #2206 r6 P1: an unbounded skip over exhausted entries could wedge
+> a payout): anyone may advance a queue, a correction requires it drained,
+> and an operator path (a remit's consumption, a surplus repatriation)
+> completes its own walk. The walks live in the reconciliation facet behind
+> Diamond-internal entries the primitives reach only when something is
+> queued. So no writer of a pool has to know about the queue (the round-2
+> point), nothing a later credit does can rewrite what an outflow already
+> took (this section's monotone-FIFO point), and which entry a consumption
+> or a repatriation took from is known, not inferred. Per pool: the live
+> row's outflows spend the fresh queue, and are PAID where the fresh ledger
+> charges them (a payout, a transport, an absorption; the demotion's unwind
+> into `Unclassified` is spent, never paid); the bucket ledger's two debits
+> spend the recycled queue (`consume` writes consumption, a surplus
+> repatriation spent only); the restitution row's outflows RELEASE the
+> absorbed records, each released part re-entering the entry's own fresh
+> record (free when the paid-correction moved the custody to live; spent
+> and paid when the deficit was paid with it), so a later restitution
+> credit re-absorbs nothing (Codex #2206 r4). A remit's reservation is told
+> EXACTLY which records its take wrote and by how much (an operator path
+> writes down whatever backlog stands before its own take, so the notes are
+> its own — a range could span a backlog drained ahead of it or an exhausted
+> record another take had charged, Codex #2206 r7), and its release
+> reverses exactly that on exactly those records: the recycled charge
+> first, then what a correction had meanwhile moved to the entry's fresh
+> record as an inherited debit — that inheritance is UNDONE: the units
+> return to the recycled record, spent and uncharged (stranded like the
+> rest of the take; a later correction can never inherit a payout that
+> never happened), the fresh ledger's `received` and `paid` fall together
+> (no headroom), and the bucket's payout figure takes the consumption back
+> as a reattribution, so the release then gives up the remit's WHOLE sent
+> share and the stranded figure carries the full physical loss the
+> coverage relation must see (Codex #2206 r6, r7, r9 — stranding the part
+> on the fresh side instead left the coverage allowance short by exactly
+> it, on a commitment restored in full to the recycled side). The
+> bucket-composition identity has ONE implementation,
+> `LibVpfiRecycle.compositionSides` — credited + relocated + reattributed-in
+> = bucket + paid-out + stranded + repatriated-out + reattributed-out —
+> which the one-time stranded seed's completion reads, so a correction
+> landing before that ceremony completes no longer blocks the backfill
+> (r9); the mesh watcher restates it with the same two terms. The fresh
+> view answers only an era that exists (r9). What each queue's pending
+> takes still hold is a counter the
+> outflow adds to and the walk subtracts from, never a scan of the backlog
+> (Codex #2206 r7). An inherited debit arrives
+> spent and charged; only spent credit the side's ledger charged — fresh
+> `paid`; recycled consumption — is inheritable by the other side; and
+> unspent credit moves with its tokens only up to what the pool holds
+> beyond its commitments (the live row net of the outstanding fresh
+> commitments; the uncommitted bucket — Codex #2206 r6).
+> Of a partly spent entry the UNSPENT part is corrected first, with its
+> tokens, and only what the corrected credit can no longer cover moves as
+> the debit — the order that reproduces the ledger a correct-at-ingress
+> split would have produced (L4028-4032): ten fresh with five paid, two
+> corrected to recycled, is eight fresh with the same five paid and two
+> unspent in the bucket, exactly as 8/2 at ingress would have settled; this
+> section's "spent attribution first" is the FIFO attribution of spent-ness
+> among the entries (L4249), not a move order (Codex #2206 r3). The
+> correction adjusts the queues and the recorded figures BEFORE it moves
+> tokens, so its own move records nothing; a packet-backed entry's
+> correction moves the packet's component counters with it, so the
+> cumulative its evidence bounds stays current. The bucket's derived
+> absorption floor nets the two reattribution cumulatives exactly as it
+> nets relocated custody, so a correction on an unseeded Diamond reports no
+> absorption it did not make.
+> **(3) One era.** No era registry
+> exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
+> **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
+> they are a PR of their own, before PR C: the non-splittable trio ("doing
+> (2) without (1) and (3)") does not include them, their consumable read
+> (`transportEpoch(target) → eraBalance → liveHeadroom`) needs PR C's era
+> balances as its middle term, and shipping the balance without its debit
+> path is exactly what §3 calls stranding with better bookkeeping. The
+> packet-keyed transport leg counters land with the epoch that produces
+> them; the fourth door is already counted (`disposed`, written by the R4
+> return). The bucket's composition identity gains two terms
+> (`recycleReattributedIn/OutCumulative`); the pre-activation
+> recycled-bucket verdict (L4413-4422 of the pre-PR-1 text) was discharged by
+> PR B's activation gate, and the envelope's recycled share takes the
+> slice-0 disposition family here. The epoch has no finalization; the two
+> owner-only dispositions (an imported-gap shortfall, an undrainable lane)
+> are escalated, not decided. **(5) PR 1 and PR 2 are one layout era.**
+> PR 2 appends a packet's reconciliation figures (`protectedCumulative`
+> and the exits) to the struct PR 1 introduced; a packet recorded under
+> PR 1's code alone would hold `unclassified` with no cumulative behind
+> it. No deployment carries PR 1's code — `ingressPackets` first shipped on
+> `main` with #2198 (2026-09-14) and the newest deployment artifact
+> predates it (base-sepolia, 2026-06-30) — and PR 2 lands before any
+> refresh, so every packet ever recorded on a refreshed chain is recorded
+> with both figures in the same statement. PR 1's commit is not a
+> deployable era on its own (Codex #2206 r3).
 
 - **Role-branched custody, so the frozen column stays frozen** (review r1):
   every custody read and debit below is branched on `LibVaipakam.rewardRole`.

@@ -1890,6 +1890,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyErc721NotAtHolder",
     "inputs": [
       {

@@ -6055,6 +6055,16 @@ library LibVaipakam {
         //   VPFI that physically left the bucket and did not come back: it
         //   sits in the transport's custody.
         //
+        //   The WHOLE sent share, a correction notwithstanding (Codex #2206
+        //   r9): consumption a correction had meanwhile inherited to the
+        //   fresh side is UN-INHERITED by the release first — the units
+        //   return to the entry's recycled record, spent and uncharged, and
+        //   the payout figure takes the consumption back through
+        //   `recycleReattributedInCumulative` — so the reversal recorded here
+        //   is the full physical loss and the coverage relation below sees
+        //   all of it. A fresh-side twin of this counter is therefore not
+        //   needed: nothing a release strands is the fresh side's.
+        //
         //   Deliberately the SENT share, never the pre-clamp `recycledFull`
         //   (Codex #1448 r1 P1). A liability-clamped remit sends only part of
         //   its recycled commitment; `consume` debits that part while
@@ -6079,11 +6089,21 @@ library LibVaipakam {
         //
         //   2. BUCKET COMPOSITION — checked in BOTH directions:
         //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
-        //          <= recycleBucket + paidOutRecycled + <this>          (exact)
+        //          + recycleReattributedInCumulative
+        //          <= recycleBucket + paidOutRecycled + <this>
+        //             + recycleRepatriatedOutCumulative
+        //             + recycleReattributedOutCumulative               (exact)
         //      and the reverse, with its own slack:
         //        recycleBucket + paidOutRecycled + <this>
-        //          <= recycleCreditedCumulative
-        //             + recycleCustodyRelocatedCumulative + slack
+        //          + recycleRepatriatedOutCumulative + recycleReattributedOutCumulative
+        //          <= recycleCreditedCumulative + recycleCustodyRelocatedCumulative
+        //             + recycleReattributedInCumulative + slack
+        //      The two sides have ONE implementation,
+        //      {LibVpfiRecycle.compositionSides}, which the seed ceremony's
+        //      postcondition reads; the external checkers restate it from
+        //      the published terms. #1568 C2 added the repatriated-out
+        //      destination; #1566 closure 2 cutover PR 2 the two
+        //      reattribution terms of a reclassification (Codex #2206 r9).
         //
         //      The REVERSE direction is the one that catches an arrival
         //      raising `recycleBucket` WITHOUT advancing
@@ -7440,6 +7460,67 @@ library LibVaipakam {
         ///      counter for a transport that carries no message id.
         mapping(bytes32 => IngressPacket) ingressPackets;
         mapping(uint256 => uint256) ingressSequence;
+        /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
+        ///      epoch. The classification log (append-only; the order is the
+        ///      immutable thing), the two queues that distribute spent-ness
+        ///      among the entries, the absorbed records, the recycled
+        ///      consumption record, the
+        ///      per-entry replay guard, the envelopes, and the two
+        ///      reattribution cumulatives that keep the bucket's composition
+        ///      identity stated: `bucket == credited + relocated +
+        ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
+        ///      (+ the released-remit correction), with the derived
+        ///      absorption floor netting the same two terms.
+        ReconciliationEntry[] reconciliationLog;
+        /// @dev The queues (Codex #2206 r2, r4–r6): per side, one RECORD per
+        ///      entry at the entry's own log index (the classification order
+        ///      the design fixes — credit a correction moves re-enters at the
+        ///      entry's own position, never at the tail), a FRONTIER (the
+        ///      first index with anything unspent; every earlier one is
+        ///      exhausted — a correction that frees credit before it moves it
+        ///      back), the unspent total (what the records still hold of the
+        ///      pool: the O(1) figure an outflow's take reads), the spent and
+        ///      charged totals for the record, and an ORDERED backlog of
+        ///      pending takes: a hot outflow's take is recorded in the totals
+        ///      at once and written into the records at the frontier by a
+        ///      walk bounded to `QUEUE_WALK_STEPS` entries, the rest left
+        ///      here in order — so no payout can be wedged by a backlog of
+        ///      exhausted entries (Codex #2206 r6 P1), anyone may advance the
+        ///      queue, and a correction requires it drained. Operator paths
+        ///      (a remit's consumption, a surplus repatriation) complete their
+        ///      walk. The fresh queue is per era (0 until slice 4 PR C) and
+        ///      its backlog also carries the restitution row's RELEASES of the
+        ///      absorbed records in time order (a released part re-enters the
+        ///      entry's own fresh record: free when the paid-correction moved
+        ///      the custody to live, spent when the deficit was paid with it);
+        ///      the recycled queue is global, as the bucket is.
+        mapping(uint256 => SideRecord) freshRecords;
+        mapping(uint256 => SideRecord) recycledRecords;
+        mapping(uint256 => AbsorbedRecord) absorbedRecords;
+        mapping(uint64 => uint256) freshFrontierByEra;
+        mapping(uint64 => uint256) freshUnspentByEra;
+        mapping(uint64 => uint256) freshSpentTotalByEra;
+        mapping(uint64 => uint256) freshPaidTotalByEra;
+        mapping(uint64 => PendingTake[]) freshPendingByEra;
+        mapping(uint64 => uint256) freshPendingHeadByEra;
+        uint256 recycledFrontier;
+        uint256 recycledUnspent;
+        uint256 recycledSpentTotal;
+        uint256 recycledConsumedTotal;
+        PendingTake[] recycledPending;
+        uint256 recycledPendingHead;
+        uint256 absorbedFrontier;
+        uint256 absorbedUnreleased;
+        uint256 absorbedReleasedTotal;
+        /// @dev Codex #2206 r7 — what each side's pending takes still hold
+        ///      unwritten, kept as counters (an outflow adds, the walk
+        ///      subtracts) so the queue views never scan a backlog.
+        mapping(uint64 => uint256) freshPendingAmountByEra;
+        uint256 recycledPendingAmount;
+        mapping(bytes32 => bool) reconciliationEntryUsed;
+        mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
+        uint256 recycleReattributedInCumulative;
+        uint256 recycleReattributedOutCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7541,6 +7622,122 @@ library LibVaipakam {
         uint256 freshShare;
         uint256 recycledShare;
         uint256 unclassified;
+        /// @dev #1566 closure 2 cutover PR 2 — the packet's reconciliation
+        ///      figures, appended. `protectedCumulative` is everything the
+        ///      packet ever put into the `Unclassified` row; `classifiedFresh`
+        ///      / `classifiedRecycled` are its classification exits, by
+        ///      component (the total is derived, never kept alone — design
+        ///      §5c); `disposed` its NON-classification exits (the R4 return).
+        ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
+        ///      + disposed == protectedCumulative`. `freshAuthenticated` is
+        ///      the EVIDENCE bounding the packet's fresh side (design §5c: a
+        ///      fresh share requires authenticated source evidence; absent
+        ///      it, value classifies recycled or stays): what the source
+        ///      chain's own recorded split says of the remainder, written
+        ///      by the transport-carried attestation only (landing with the
+        ///      transport epochs) — never by an administrator. Zero until
+        ///      then. `classifiedFresh` never exceeds it (Codex #2206 r3).
+        uint256 protectedCumulative;
+        uint256 classifiedFresh;
+        uint256 classifiedRecycled;
+        uint256 disposed;
+        uint256 freshAuthenticated;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
+    ///         reconciliation epoch's classification log: what a
+    ///         classification (or the bootstrap envelope's import) put on
+    ///         each side, as CURRENTLY attributed.
+    /// @dev    `key` is the packet's ingress stamp, or the envelope's
+    ///         snapshot id (`envelope` says which, so a correction knows
+    ///         whether a packet's component counters follow it and whose
+    ///         evidence bounds its fresh side).
+    ///         The ORDER of the log is the immutable thing (design §5c):
+    ///         spent-ness is distributed among the entries FIFO by that
+    ///         order. Per side, the entry's credit splits into what is
+    ///         QUEUED (backed by the side's pool and consumed by its
+    ///         outflows in order), what is INHERITED (spent by a debit a
+    ///         correction moved in from the other side — spent without any
+    ///         outflow of this side, unwound by the reverse move; Codex
+    ///         #2206 r1) and, on the fresh side, what the standing deficit
+    ///         ABSORBED into restitution at credit (Codex #2206 r2: not
+    ///         live backing, so neither queued nor a correction's to move
+    ///         for as long as the restitution row holds it; what the row
+    ///         has released of the absorbed records re-enters the queue,
+    ///         FIFO — Codex #2206 r3, r4).
+    ///         `era` keys the fresh queue; 0 until slice 4 PR C's registry.
+    ///         Its per-side figures — unspent, spent, what of the spent the
+    ///         other side may inherit, what the deficit absorbed and the
+    ///         restitution row still holds — are read from its own RECORDS
+    ///         (`freshRecords` / `recycledRecords` / `absorbedRecords`, by
+    ///         index), never inferred (Codex #2206 r5, r6).
+    struct ReconciliationEntry {
+        bytes32 key;
+        bool envelope;
+        uint64 era;
+        uint64 landedAt;
+        uint256 freshCredit;
+        uint256 recycledCredit;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5, r6) — an entry's
+    ///         RECORD on one side of a reconciliation queue, at the entry's own
+    ///         position (its log index — the immutable classification order):
+    ///         `amount` of its credit on that side, of which `spent` has been
+    ///         taken by the pool's outflows and `charged` of that by the side's
+    ///         own charge (fresh `paid`; recycled consumption) — the part the
+    ///         other side may inherit as a debit. An inherited debit arrives
+    ///         spent and charged; credit a correction moves unspent arrives
+    ///         free — both at the entry's own position, so the order the
+    ///         design fixes is kept and a frontier may move back to it.
+    struct SideRecord {
+        uint128 amount;
+        uint128 spent;
+        uint128 charged;
+    }
+
+    /// @notice An entry's absorbed record: fresh credit the standing deficit
+    ///         absorbed into restitution at credit, of which `released` has
+    ///         left the restitution row — each released part re-entering the
+    ///         entry's own fresh record.
+    struct AbsorbedRecord {
+        uint128 amount;
+        uint128 released;
+    }
+
+    /// @notice A pending take of a queue (Codex #2206 r6): what an outflow
+    ///         recorded but a bounded walk has not yet written into the
+    ///         records at the frontier — `kind` bits: 1 = charged (paid /
+    ///         consumption), 2 = a restitution release, 4 = released to live.
+    ///         Hot outflows walk a bounded number of entries and leave the
+    ///         rest here, in order; anyone may advance the queue, and a
+    ///         correction requires it drained.
+    struct PendingTake {
+        uint128 amount;
+        uint8 kind;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
+    ///         pre-stamp inventory as one bounded aggregate, its netting
+    ///         figures all read on chain at the import, and the disposition
+    ///         of every unit of it (relocated as recycled — the inventory
+    ///         has no evidence source, so its fresh share is exactly what
+    ///         is replacement-funded; replacement-funded as fresh or
+    ///         recycled; or written down). Its log entry (`entryIndex`) is
+    ///         what the snapshot-keyed error path reclassifies, its fresh
+    ///         side bounded by `replacedFresh`.
+    struct LegacyEnvelope {
+        uint64 importedAt;
+        uint256 rawUncounted;
+        uint256 holderUncounted;
+        uint256 diamondReserved;
+        uint256 returnedCumulative;
+        uint256 netTotal;
+        uint256 relocatedRecycled;
+        uint256 replacedFresh;
+        uint256 replacedRecycled;
+        uint256 writtenDown;
+        uint256 entryIndex;
     }
 
     /// @notice #1434 P2-w2 — one zeroed day's compensation state on a
@@ -7794,6 +7991,15 @@ library LibVaipakam {
         // move UNRELATED receipts' recovery credit into the overage
         // quarantine off the global position balance.
         bool conflictClawed;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r5–r7) — what this
+        // remit's consumption took of the CLASSIFIED recycled queue, and
+        // EXACTLY which records it wrote and by how much (`entryIndex << 128
+        // | amount`, in walk order), so a release reverses exactly its own
+        // consumption on exactly those records — never another take's units
+        // in a record the walk passed, never a backlog drained ahead of it
+        // (Codex #2206 r7). Cleared by the release.
+        uint256 classifiedTake;
+        uint256[] classifiedTakes;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

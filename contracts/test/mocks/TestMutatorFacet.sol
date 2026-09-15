@@ -1096,8 +1096,24 @@ contract TestMutatorFacet {
     ///         value moving between the two terms of the derived floor
     ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
     ///         move would not exercise the thing that matters.
-    function consumeRecycleRaw(uint256 amount) external {
-        LibVpfiRecycle.consume(amount);
+    function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, 0);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) test-only — the
+    ///         HOT form of {LibVpfiRecycle.consume}: the claim path's, whose
+    ///         walk of the classified queue is bounded and leaves the rest
+    ///         pending.
+    function consumeRecycleRawBounded(uint256 amount) external {
+        LibVpfiRecycle.consume(amount, false, 0);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r7) test-only — the
+    ///         REMIT form of {LibVpfiRecycle.consume}: the take's writes are
+    ///         noted on the reservation `remitId`, as a remittance's are, so
+    ///         {restoreReleasedRemitRaw} reverses exactly them.
+    function consumeRecycleRawAsRemit(uint256 amount, uint256 remitId) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, remitId);
     }
 
     /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
@@ -2384,5 +2400,34 @@ contract TestMutatorFacet {
                 revert(add(ret, 0x20), mload(ret))
             }
         }
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — a landed packet's
+    ///         AUTHENTICATED fresh figure, which in production only the
+    ///         transport-carried attestation of the source chain's recorded
+    ///         split writes (the transport epochs' change). Written raw here
+    ///         so the evidence-bound fresh path is exercised.
+    function setPacketFreshAuthenticatedRaw(bytes32 packetHash, uint256 amount) external {
+        LibVaipakam.storageSlot().ingressPackets[packetHash].freshAuthenticated = amount;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — drive the REAL
+    ///         released-remit restore: the reversed payout the
+    ///         reconciliation nets out of inheritable consumption, the
+    ///         inheritance a correction had made of it undone (r9).
+    function restoreReleasedRemitRaw(uint256 recycledFull, uint256 recycledSent, uint256 remitId) external {
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, remitId);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r9) test-only — a
+    ///         RELEASED reservation row as the one-time stranded seed scans
+    ///         it (status 3, its recycled share), the nonce raised to cover
+    ///         it, so the ceremony can run over a raw-driven release.
+    function setRemitReservationReleasedRaw(uint256 remitId, uint256 recycled) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.status = 3;
+        r.recycled = recycled;
+        if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
     }
 }

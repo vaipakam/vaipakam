@@ -115,7 +115,13 @@ library LibVpfiRecycle {
         // refId is the PERK ID, not a loanId: a perk purchase is not bound to
         // a loan, and the per-user record lives in storage rather than in the
         // event's reference slot.
-        SpendGatedPerk
+        SpendGatedPerk,
+        // #1566 closure 2 cutover PR 2 — CUSTODY-RELOCATION class (append-only
+        // enum): the RECYCLED share of a legacy packet, or of the bootstrap
+        // envelope, classified by the reconciliation epoch. Relocated custody
+        // like {RemittedCustodyRelocation} — Base-funded tokens whose typing
+        // arrived late — never absorption; the same exclusions apply.
+        LegacyReconciliation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -385,12 +391,57 @@ library LibVpfiRecycle {
         // Diamond (§3.6a constraint 2a — the seed-before-debit step in
         // {debitRepatriationSurplus} closes the same gap from the other
         // side).
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r1 P1) — a
+        // REATTRIBUTION is not absorption either: credit moved INTO the
+        // bucket by a reclassification raised the bucket (or `paidOut`)
+        // without absorbing anything, and credit moved OUT lowered them; net
+        // both out of the floor exactly as relocated custody is, or the
+        // first report after a correction on an unseeded Diamond would carry
+        // the moved amount as this chain's own absorption.
         uint256 gross = s.recycleBucket +
             s.paidOutRecycled +
-            s.recycleRepatriatedOutCumulative;
-        uint256 relocated = s.recycleCustodyRelocatedCumulative;
+            s.recycleRepatriatedOutCumulative +
+            s.recycleReattributedOutCumulative;
+        uint256 relocated = s.recycleCustodyRelocatedCumulative + s.recycleReattributedInCumulative;
         uint256 preUpgradeFloor = gross > relocated ? gross - relocated : 0;
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
+    }
+
+    /**
+     * @notice The bucket-composition identity's two sides, from the RAW
+     *         slots — its ONE implementation (#1566 closure 2 cutover PR 2,
+     *         Codex #2206 r9). Every recycled credit lands in the bucket
+     *         exactly once, so what the cumulatives CLAIM can never exceed
+     *         where the tokens WENT:
+     *
+     *           credited + custodyRelocated + reattributedIn
+     *             <= bucket + paidOut + releasedRemitStranded
+     *                + repatriatedOut + reattributedOut
+     *
+     *         `credit` and `creditCustodyRelocated` add to one term on each
+     *         side; `consume` moves bucket → paidOut; {restoreReleasedRemit}
+     *         moves paidOut → stranded; {debitRepatriationSurplus} moves
+     *         bucket → repatriatedOut (#1568 C2); a reclassification moves
+     *         credit between the bucket (or its payout figure) and the fresh
+     *         side, counted on the reattribution term of the side it left or
+     *         joined. The seed ceremony's postcondition reads this; the
+     *         external checkers (`ops/mesh-watcher`, the mesh invariants)
+     *         restate it from the published terms. The RAW credited counter
+     *         deliberately, never {creditedCumulative}: the derived floor
+     *         can manufacture out of `bucket + paidOut` the very value a
+     *         short counter is missing (#1448 r5).
+     * @return claimed      What the cumulatives claim landed in the bucket.
+     * @return destinations Where the tokens are, or went.
+     */
+    function compositionSides(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256 claimed, uint256 destinations)
+    {
+        claimed = s.recycleCreditedCumulative + s.recycleCustodyRelocatedCumulative
+            + s.recycleReattributedInCumulative;
+        destinations = s.recycleBucket + s.paidOutRecycled + s.recycleReleasedRemitStrandedCumulative
+            + s.recycleRepatriatedOutCumulative + s.recycleReattributedOutCumulative;
     }
 
     /// @notice #1218 M5 — {backingPosition} cannot read a balance because the
@@ -923,10 +974,7 @@ library LibVpfiRecycle {
         //
         // Read BEFORE the bucket write below, or this relocation would be
         // folded into the seed as if it were absorption.
-        if (s.recycleCreditedCumulative == 0) {
-            uint256 cumulative = creditedCumulative(s);
-            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
-        }
+        _seedCreditedCumulative(s);
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
         // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
@@ -937,6 +985,156 @@ library LibVpfiRecycle {
         // is non-zero".
         s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
+    }
+
+    /// @dev The bookkeeping tail of {creditCustodyRelocated} — the seed, the
+    ///      bucket credit, the relocated cumulative, the seeded flag, the
+    ///      event — for the two in-holder forms of #1566 closure 2 cutover
+    ///      PR 2 ({creditCustodyFromUnclassified}, {creditCustodyFundedInHolder}).
+    ///      It is NOT shared with {creditCustodyRelocated} itself, on
+    ///      purpose: that function inlines into `RewardRemittanceFacet` at
+    ///      its EIP-170 budget, and routing it through this helper cost that
+    ///      facet ~300 bytes of its last 700 (viaIR keeps the call). The six
+    ///      writes are the same, in the same order; keep them so.
+    ///      PRECONDITION: the caller has put `amount` of tokens behind the
+    ///      recycled row in this frame.
+    function _bookRelocatedCredit(
+        LibVaipakam.Storage storage s,
+        uint256 refId,
+        uint256 amount,
+        RecycleSource source
+    ) private {
+        (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        // Keeps the day-0 label pre-launch, unlike {credit} above (#1504).
+        // Deliberate, not an oversight: relocation is NOT absorption and
+        // writes no day-keyed accumulator, so the day here is an
+        // informational label on the event rather than an attribution that
+        // feeds `Ā` or the published per-day series. Nothing reads it as a
+        // bucket. Revisit if a consumer ever buckets relocations by day.
+        if (!active) dayId = 0;
+        // #1448 r3 — SEED the stored cumulative from the derived floor
+        // before relocating, on an in-place-upgraded Diamond whose slot is
+        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
+        // for a related reason: while the slot is 0, no counter accounts for
+        // the historical bucket, so an external checker cannot verify the
+        // bucket's composition at all. Seeding at the first relocation makes
+        // that verifiable from then on, instead of leaving a permanent
+        // unverifiable window on exactly the class this exclusion protects.
+        //
+        // Read BEFORE the bucket write below, or this relocation would be
+        // folded into the seed as if it were absorption.
+        _seedCreditedCumulative(s);
+        s.recycleBucket += amount;
+        s.recycleCustodyRelocatedCumulative += amount;
+        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
+        // first recycled event is an arrival is no longer indistinguishable
+        // from an un-seeded upgrade. Deliberately set even when the seed
+        // snapshot above wrote nothing (a genuinely empty chain): what this
+        // records is "recycled accounting has run here", not "the cumulative
+        // is non-zero".
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
+    }
+
+    /// @dev The #1448 r3 seed-before-write idiom, in one place.
+    function _seedCreditedCumulative(LibVaipakam.Storage storage s) private {
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
+    }
+
+
+    // ─── #1566 closure 2 cutover PR 2 — the bucket side of the epoch ─────────
+
+    /// @notice A recycled share classified out of the holder's `Unclassified`
+    ///         row: the tokens move IN-HOLDER into the recycled row (they
+    ///         were protected there at ingress; a Diamond-side relocation
+    ///         here would move tokens that are not there) and the bucket is
+    ///         credited as relocated custody, exactly as {creditCustodyRelocated}
+    ///         credits an arrival.
+    function creditCustodyFromUnclassified(uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.move(
+            s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Recycled, amount
+        );
+        _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
+    }
+
+    /// @notice The bootstrap envelope's replacement-funded recycled share:
+    ///         the caller pulled the tokens into the holder (delta-checked)
+    ///         in this frame; the recycled row and the bucket are credited
+    ///         as relocated custody, exactly as {creditCustodyRelocated}.
+    function creditCustodyFundedInHolder(uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.credit(s, LibVaipakam.RewardCustodyRow.Recycled, amount, 0);
+        _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
+    }
+
+    /// @notice A reattribution INTO the bucket by a reclassification
+    ///         (fresh → recycled). UNSPENT credit arrives with its tokens
+    ///         (PRECONDITION: the caller moved `amount` into the recycled row
+    ///         in this frame) and raises the bucket; SPENT credit arrives as
+    ///         inherited consumption — the bucket unchanged, `paidOutRecycled`
+    ///         (the headroom aggregate) rising by it, the sequencing counters
+    ///         untouched: the entry's own inherited figure is what reads it
+    ///         as spent (Codex #2206 r1). Both count in
+    ///         `recycleReattributedInCumulative`, the composition identity's
+    ///         term for them, netted out of the absorption floor.
+    function creditBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _seedCreditedCumulative(s);
+        if (spent) {
+            s.paidOutRecycled += amount;
+        } else {
+            s.recycleBucket += amount;
+        }
+        s.recycleReattributedInCumulative += amount;
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyReattributed(refId, amount, true, spent);
+    }
+
+    /// @notice A reattribution OUT of the bucket by a reclassification
+    ///         (recycled → fresh). UNSPENT credit leaves with its tokens —
+    ///         bounded by the UNCOMMITTED bucket (net of the outstanding
+    ///         commitments and the keeper earmark, the same reservation set
+    ///         {debitRepatriationSurplus} respects; design §5c: "absence of
+    ///         a completed outflow is not proof that the credit is free") —
+    ///         and the caller moves the tokens out of the recycled row in
+    ///         the same frame; SPENT credit leaves as a consumption the fresh
+    ///         side now carries: `paidOutRecycled` gives it back (the
+    ///         headroom aggregate takes the corrective debit), the
+    ///         consumption counter untouched. Which spent credit is
+    ///         consumption and which left by surplus repatriation is the
+    ///         reconciliation facet's to decide (consumption is attributed
+    ///         first in queue order, from the consumption counter); this
+    ///         primitive keeps the aggregate floor — `paidOutRecycled` must
+    ///         cover what it gives back. Both forms count in
+    ///         `recycleReattributedOutCumulative`, netted into the
+    ///         absorption floor.
+    function debitBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _seedCreditedCumulative(s);
+        if (spent) {
+            uint256 consumed = s.paidOutRecycled;
+            if (amount > consumed) revert IVaipakamErrors.ReconciliationRecycledConsumedShort(amount, consumed);
+            s.paidOutRecycled = consumed - amount;
+        } else {
+            uint256 bucket = s.recycleBucket;
+            uint256 reserved = s.outstandingCommitRecycled + s.recycleKeeperBudget;
+            uint256 uncommitted = bucket > reserved ? bucket - reserved : 0;
+            if (amount > uncommitted) {
+                revert IVaipakamErrors.ReconciliationExceedsUncommittedBucket(amount, uncommitted);
+            }
+            s.recycleBucket = bucket - amount;
+        }
+        s.recycleReattributedOutCumulative += amount;
+        s.recycleAccountingSeeded = true;
+        emit VpfiCustodyReattributed(refId, amount, false, spent);
     }
 
     /**
@@ -962,6 +1160,12 @@ library LibVpfiRecycle {
      *         shared {RecycleSource} vocabulary, just on its own channel.
      * @custom:event-category state-change/treasury-mutation
      */
+    /// @notice #1566 closure 2 cutover PR 2 — a reclassification moved
+    ///         attribution into (`intoBucket`) or out of the bucket; `spent`
+    ///         says whether it moved as inherited consumption (no tokens)
+    ///         or as unspent credit (with its tokens, in-holder).
+    /// @custom:event-category state-change/reward-custody
+    event VpfiCustodyReattributed(uint256 indexed refId, uint256 amount, bool intoBucket, bool spent);
     event VpfiCustodyRelocated(
         uint8 indexed source,
         uint256 indexed refId,
@@ -1055,6 +1259,15 @@ library LibVpfiRecycle {
         s.recycleAccountingSeeded = true;
         s.recycleBucket = bucket - amount;
         s.recycleRepatriatedOutCumulative += amount;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r4, r5) — the ledger's
+        // other debit primitive: what the repatriation took of the classified
+        // credit is SPENT, and only spent — it left for Base, it was not
+        // consumed, and the fresh side can inherit none of it — written into
+        // the segments at their frontier, so the entry it took from is the
+        // one that reads repatriated.
+        if (s.recycledUnspent != 0) {
+            LibRewardCustody.callTakeRecycled(bucket, amount, false, true, 0);
+        }
         // #1566 slice 4 PR B — the token move is part of the primitive, not
         // adjacent to it in the caller: the surplus leaves the holder's
         // recycled row (measured) on an activated deployment, or the
@@ -1070,11 +1283,12 @@ library LibVpfiRecycle {
         }
     }
 
-    function consume(uint256 amount) internal {
-        if (amount == 0) return;
+    function consume(uint256 amount, bool mustComplete, uint256 remitId) internal returns (uint256 classifiedTake) {
+        if (amount == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bucket = s.recycleBucket;
-        s.recycleBucket = bucket > amount ? bucket - amount : 0;
+        uint256 left = bucket > amount ? bucket - amount : 0;
+        s.recycleBucket = left;
         uint256 outstanding = s.outstandingCommitRecycled;
         // #1222 M3 B3 — record the ACTUAL decrement, not `amount`: the floor
         // below is load-bearing (cap-trim dust can make a day's consumption
@@ -1085,6 +1299,26 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled = outstanding - retired;
         s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3–r5) — the recycled
+        // queue's pool is this ledger, and this is one of its two debit
+        // primitives: what the outflow took of the CLASSIFIED credit is
+        // recorded at the debit, where the kind is known — spent, and
+        // consumption (a surplus repatriation is the other kind: spent only,
+        // never inheritable) — INTO the queue's segments at their frontier,
+        // through the custody facet (this primitive is inlined into facets
+        // at the EIP-170 budget). The take is the queue's: the bucket's
+        // other backing consumed first, never more than the segments still
+        // hold, so a refill is never consumed twice and a later credit
+        // un-spends nothing. The caller that reserves this consumption (a
+        // remit, `remitId`) has exactly the records its take wrote noted on
+        // its reservation, so its release reverses exactly its own
+        // consumption; an operator path completes its walk (`mustComplete`),
+        // a claim walks a bounded number of entries and leaves the rest
+        // pending (Codex #2206 r6, r7). Nothing queued: nothing recorded, no
+        // call.
+        if (s.recycledUnspent != 0) {
+            classifiedTake = LibRewardCustody.callTakeRecycled(bucket, amount, true, mustComplete, remitId);
+        }
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // As in {creditCustodyRelocated}: an informational label, not an
         // attribution — consumption writes no day-keyed accumulator (#1504).
@@ -1196,10 +1430,7 @@ library LibVpfiRecycle {
      *         healthy recovery. See the storage docs for the split that a
      *         recovery path needs instead.
      */
-    function restoreReleasedRemit(
-        uint256 recycledFull,
-        uint256 recycledSent
-    ) internal {
+    function restoreReleasedRemit(uint256 recycledFull, uint256 recycledSent, uint256 remitId) internal {
         if (recycledFull == 0 && recycledSent == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.outstandingCommitRecycled += recycledFull;
@@ -1214,6 +1445,21 @@ library LibVpfiRecycle {
             uint256 cumulative = creditedCumulative(s);
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5–r7, r9) — a
+        // reversed payout is consumption that paid nobody: exactly THIS
+        // remit's take of the classified queue, on exactly the records it
+        // wrote (noted at its send), stops being inheritable — no other
+        // take's units. What a record no longer holds, a correction had
+        // meanwhile inherited to the entry's fresh record (the bucket's
+        // payout figure gave it back then): the release UN-INHERITS it
+        // first — the units return to the recycled record, spent and
+        // uncharged, the fresh ledger's `received` and `paid` fall together,
+        // and the payout figure takes the consumption back as a
+        // reattribution — so the reversal below is the remit's WHOLE sent
+        // share, and the stranded figure carries the full physical loss the
+        // coverage relation must see (r9). The units stay SPENT: their
+        // tokens sit in the transport pool, not the bucket.
+        LibRewardCustody.callReverseRemitTake(remitId);
         uint256 paid = s.paidOutRecycled;
         // Record the ACTUAL decrement, not the request: the reversal floors
         // at zero, and counting `recycledSent` on an exhausted counter would

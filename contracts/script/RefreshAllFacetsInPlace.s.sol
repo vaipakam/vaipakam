@@ -87,6 +87,7 @@ import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -224,7 +225,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 78;
+    uint256 public constant EXPECTED_FACETS = 79;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -800,6 +801,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address remitReceiverP2 =
                 _readAddrOptional(".rewardRemittanceReceiver");
             if (liveRecvP2 != address(0)) {
+                // #1566 closure 2 cutover PR 2 (Codex #2200 r7) — the LIVE
+                // receiver is probed FIRST, then a distinct artifact address:
+                // a stale record naming a proxy this signer can no longer
+                // upgrade must not abort the run before the live receiver is
+                // reached. Same order as every other probe.
+                _probeUpgradeRemitReceiver(liveRecvP2);
                 if (
                     remitReceiverP2 != address(0)
                         && remitReceiverP2 != liveRecvP2
@@ -822,7 +829,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 remitReceiverP2 != address(0) || isCanonicalRewardP2,
                 "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
             );
-            _probeUpgradeRemitReceiver(remitReceiverP2);
+            // The artifact-only case (no live receiver registered): the live
+            // one, where it exists, was probed first above.
+            if (liveRecvP2 == address(0)) _probeUpgradeRemitReceiver(remitReceiverP2);
         }
 
         // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
@@ -1388,6 +1397,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardCustodyFacet",
             address(new RewardCustodyFacet()),
             _getRewardCustodySelectors()
+        );
+        // Slot 78: #1566 closure 2 cutover PR 2 — the reconciliation facet.
+        // A NEW facet changes the routing hash, so this refresh's complete
+        // cut re-stamps the cutover record below; an activated chain must
+        // take this full refresh, never a curated one.
+        items[78] = Item(
+            "rewardReconciliationFacet",
+            address(new RewardReconciliationFacet()),
+            _getRewardReconciliationSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

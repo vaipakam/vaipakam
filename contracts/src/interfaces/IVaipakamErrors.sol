@@ -431,6 +431,88 @@ interface IVaipakamErrors {
     /// @param requested  The amount asked from the row.
     /// @param held       What the record holds in the row.
     error RewardCustodyUnclassifiedHeldShort(bytes32 receiptKey, uint256 requested, uint256 held);
+    // ─── #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch ────
+    /// @notice An entry id was already applied; an operator retry is refused
+    ///         rather than consuming a later packet's balance.
+    error ReconciliationEntryReplayed(bytes32 entryId);
+    /// @notice No packet was recorded under this stamp.
+    error ReconciliationPacketUnknown(bytes32 packetHash);
+    /// @notice The packet's receipt still carries a live stranded-recovery
+    ///         record: its value is reserved for the R4 return and is not
+    ///         classifiable.
+    error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
+    ///         rule: an entry's fresh side would exceed its authenticated
+    ///         fresh figure (a packet's transport-attested remainder split;
+    ///         the envelope's replacement-funded fresh). Fresh is the
+    ///         privileged direction; without evidence, value classifies
+    ///         recycled or stays.
+    error ReconciliationFreshUnevidenced(bytes32 key, uint256 cumulativeFresh, uint256 authenticated);
+    /// @notice The entry asks for more than the packet still holds in the row.
+    error ReconciliationExceedsPacketRemainder(bytes32 packetHash, uint256 requested, uint256 remainder);
+    /// @notice A row figure cannot cover the exit.
+    /// @param figure 0 the row's uncounted figure, 1 its returned figure,
+    ///        2 the global uncounted aggregate.
+    error ReconciliationFigureShort(uint8 figure, uint256 requested, uint256 available);
+    /// @notice No log entry at this index.
+    error ReconciliationEntryUnknown(uint256 index);
+    /// @notice A reclassification asks for more than the entry's credit on
+    ///         the source side.
+    error ReconciliationExceedsCredit(uint256 index, uint256 requested, uint256 credit);
+    /// @notice The part of a fresh credit the standing deficit absorbed into
+    ///         restitution at credit is not a correction's to move:
+    ///         restitution custody moves only through its own dispositions.
+    error ReconciliationRestitutionNotMovable(uint256 index, uint256 requested, uint256 movable);
+    /// @notice The received side cannot give back what the correction moves.
+    error ReconciliationReceivedShort(uint256 requested, uint256 received);
+    /// @notice The paid side cannot inherit the debit the correction moves.
+    error ReconciliationPaidShort(uint256 requested, uint256 paid);
+    /// @notice The recycled consumption cannot give back the debit the
+    ///         correction moves.
+    error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
+    /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
+    error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice Spent recycled credit moves to fresh only as far as
+    ///         CONSUMPTION (attributed first in queue order) or an inherited
+    ///         debit covers it; credit that left by surplus repatriation has
+    ///         no fresh-side ledger to inherit it.
+    error ReconciliationSpentRecycledNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the mirror
+    ///         bound: only spent fresh credit the fresh ledger charged as
+    ///         `paid` may move to the recycled side as an inherited debit;
+    ///         what a demotion unwound was never paid and has no debit to
+    ///         inherit.
+    error ReconciliationSpentFreshNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5) — a queue's
+    ///         segments and its totals disagree (a walk ran past the last
+    ///         segment, or an entry's segments could not give what its
+    ///         figures said they held): a defect, refused rather than
+    ///         dropping units. `side`: 0 fresh, 1 recycled, 2 absorbed.
+    error ReconciliationQueueInconsistent(uint8 side);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — a correction
+    ///         asked while the side's pending takes are not yet written into
+    ///         the records; advance the queue first (anyone may).
+    error ReconciliationQueueBehind(uint8 side);
+    /// @notice A queue side that does not exist (0 fresh, 1 recycled).
+    error ReconciliationUnknownSide(uint8 side);
+    /// @notice The fresh queue is per era, and only the pre-backfill era
+    ///         exists until the transport epochs land: a view asked about any
+    ///         other era refuses rather than pairing an empty era-specific
+    ///         queue with the global custody figures (Codex #2206 r9).
+    error ReconciliationUnknownEra(uint64 era);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
+    ///         fresh credit a correction may move with its tokens is bounded
+    ///         by the live row net of the outstanding fresh commitments, the
+    ///         fresh twin of the uncommitted-bucket bound: what an armed day
+    ///         reserved stays in the row for its claims.
+    error ReconciliationExceedsUncommittedLive(uint256 requested, uint256 uncommitted);
+    /// @notice The envelope under this snapshot id was already imported.
+    error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
+    /// @notice The stated dispositions do not resolve the envelope exactly.
+    error LegacyEnvelopeMismatch(bytes32 snapshotId, uint256 stated, uint256 netTotal);
+    /// @notice The envelope nets to nothing: there is no pre-stamp inventory
+    ///         to import.
+    error LegacyEnvelopeEmpty(bytes32 snapshotId);
     /// @notice #1566 slice 4 PR B — a canonical chain must have armed
     ///         per-receipt recovery attribution before activation: arming
     ///         retires the legacy pooled recovery position, and a recovery

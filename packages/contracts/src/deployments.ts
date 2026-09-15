@@ -88,6 +88,8 @@ export interface DeploymentFacets {
   rewardAggregatorFacet?: HexAddress;
   /** #1566 slice 4 PR A — custody lifecycle + paid-side rebase. */
   rewardCustodyFacet?: HexAddress;
+  /** #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch. */
+  rewardReconciliationFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

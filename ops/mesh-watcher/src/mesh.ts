@@ -11,6 +11,7 @@
 import type { Abi, Address, PublicClient } from 'viem';
 import {
   REPATRIATION_ABI,
+  REWARD_RECONCILIATION_ABI,
   REWARD_AGGREGATOR_ABI,
   REWARD_CUSTODY_ABI,
 } from './abi';
@@ -277,6 +278,31 @@ export function repatPositionUnavailableGap(
 }
 
 /**
+ * Build the gap for an unreadable reconciliation-totals view (#1566 closure
+ * 2 cutover PR 2, Codex #2206 r9) — the two reattribution cumulatives.
+ *
+ * Exported for direct testing, like {@link compositionUnavailableGap}.
+ */
+export function reattributionUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getReconciliationTotals');
+  const missing = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-reattribution',
+    detail:
+      `getReconciliationTotals() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition and the reported-cumulative re-derivation for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
+      (missing
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a deployment predating the reconciliation epoch, or a partial facet refresh that dropped the RewardReconciliationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
+/**
  * Build the gap for an unreadable backing snapshot (#1434 P2-w2; since
  * #1566 slice 4 PR B the VERSIONED snapshot is the only one read).
  *
@@ -416,6 +442,30 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
   }
 
+  // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the two reattribution
+  // cumulatives, separately for the same newer-facet reason and at the same
+  // pinned block, with the same UNKNOWN-vs-zero rule as the repatriated-out
+  // term: a chain refreshed without the reconciliation facet reverts this
+  // read alone, and the checks that consume the pair skip rather than
+  // substitute a zero that would page after any real correction.
+  let reattribution:
+    | { reattributedIn: bigint; reattributedOut: bigint }
+    | undefined;
+  try {
+    const totals = await readView<readonly [bigint, bigint, bigint]>(
+      target.client,
+      target.diamond,
+      'getReconciliationTotals',
+      [],
+      blockNumber,
+      REWARD_RECONCILIATION_ABI,
+    );
+    reattribution = { reattributedIn: totals[1], reattributedOut: totals[2] };
+  } catch (err) {
+    reattribution = undefined;
+    viewGaps.push(reattributionUnavailableGap(target.chainId, err));
+  }
+
   // #1434 P2-w2 — the backing snapshot (balance + arrival reservation),
   // separately for the same newer-facet reason, at the same pinned block.
   //
@@ -487,6 +537,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     paidOutRecycled: governor[3],
     composition,
     repatriatedOut,
+    reattribution,
     backing,
     observedAt: block.timestamp,
     },

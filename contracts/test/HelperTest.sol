@@ -82,6 +82,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -96,7 +97,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](206); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5
+        selectors = new bytes4[](211); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -148,6 +149,12 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1566 closure 2 cutover PR 2 — the evidence writer + the restore driver.
+        selectors[n++] = TestMutatorFacet.setPacketFreshAuthenticatedRaw.selector;
+        selectors[n++] = TestMutatorFacet.restoreReleasedRemitRaw.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRawAsRemit.selector;
+        selectors[n++] = TestMutatorFacet.setRemitReservationReleasedRaw.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
         selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
@@ -2398,6 +2405,35 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
+    /// (mirrors `DeployDiamond._getRewardReconciliationSelectors`).
+    function getRewardReconciliationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](18);
+        selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
+        selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
+        selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
+        selectors[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
+        selectors[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
+        selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        selectors[8] = RewardReconciliationFacet.getFreshQueueState.selector;
+        selectors[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
+        selectors[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        selectors[12] = RewardReconciliationFacet.getEntryRecords.selector;
+        selectors[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
+        selectors[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        selectors[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        selectors[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        selectors[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

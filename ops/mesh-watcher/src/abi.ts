@@ -28,6 +28,7 @@ import type { Abi, AbiFunction } from 'viem';
 import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
 import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
 import rewardCustodyAbi from '../../../packages/contracts/src/abis/RewardCustodyFacet.json';
+import rewardReconciliationAbi from '../../../packages/contracts/src/abis/RewardReconciliationFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
@@ -52,6 +53,17 @@ export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
  *  import for the same attribution reason as the repatriation ABI. */
 export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
 
+/** #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+ *  facet, for the two REATTRIBUTION cumulatives a reclassification moves
+ *  (`getReconciliationTotals`): credit moved into the bucket or its payout
+ *  figure by a correction (claimed), and out of them (a destination). Both
+ *  are terms of the bucket-composition identity and of the reported
+ *  cumulative's floor, so the composition bound and the derivation
+ *  re-statement need them exactly as they need the repatriated-out term.
+ *  Its own import for the same attribution reason as the repatriation ABI:
+ *  a chain not yet refreshed with the facet reverts this read alone. */
+export const REWARD_RECONCILIATION_ABI = rewardReconciliationAbi as unknown as Abi;
+
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
  * `outputs` lists `name:type` pairs in declaration order — the assertion
@@ -65,7 +77,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
   /** Which compiled facet ABI carries the view (default: aggregator). */
-  readonly facet?: 'repatriation' | 'custody';
+  readonly facet?: 'repatriation' | 'custody' | 'reconciliation';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -174,6 +186,21 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     ],
     facet: 'repatriation',
   },
+  // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+  // log's length and the bucket's two reattribution cumulatives: a
+  // correction's credit moved INTO the bucket / its payout figure
+  // (claimed) and OUT of them (a destination). Terms of the composition
+  // identity and of the reported-cumulative floor.
+  {
+    name: 'getReconciliationTotals',
+    inputs: [],
+    outputs: [
+      'entries:uint256',
+      'reattributedIn:uint256',
+      'reattributedOut:uint256',
+    ],
+    facet: 'reconciliation',
+  },
   // #1434 P2-w2 / #1566 slice 4 PR B — the VERSIONED backing snapshot on
   // the custody facet: the balance / arrival-reservation tuple the
   // recovery-reservation check compares (the legacy lens's eight fields
@@ -238,6 +265,7 @@ export function assertAbiShape(
   abi: Abi = REWARD_AGGREGATOR_ABI,
   repatAbi: Abi = REPATRIATION_ABI,
   custodyAbi: Abi = REWARD_CUSTODY_ABI,
+  reconciliationAbi: Abi = REWARD_RECONCILIATION_ABI,
 ): void {
   const problems: string[] = [];
 
@@ -247,7 +275,9 @@ export function assertAbiShape(
         ? repatAbi
         : expected.facet === 'custody'
           ? custodyAbi
-          : abi;
+          : expected.facet === 'reconciliation'
+            ? reconciliationAbi
+            : abi;
     const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,

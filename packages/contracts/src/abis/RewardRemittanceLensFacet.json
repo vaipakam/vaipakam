@@ -332,6 +332,31 @@
             "name": "unclassified",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "protectedCumulative",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "disposed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAuthenticated",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -694,6 +719,16 @@
             "name": "conflictClawed",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "classifiedTake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedTakes",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
           }
         ]
       }

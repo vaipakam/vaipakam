@@ -48,6 +48,7 @@ import {
   keeperDrawUnavailableGap,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
+  reattributionUnavailableGap,
   backingSnapshotUnavailableGap,
 } from '../src/mesh';
 import {
@@ -162,6 +163,10 @@ function mirrorLocal(): LocalLedger {
     // #1568 C2 — current deployment, view present, nothing repatriated
     // (undefined would skip composition + derivation suite-wide).
     repatriatedOut: 0n,
+    // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+    // facet present, nothing reattributed (undefined would skip the same
+    // two checks suite-wide — the same anti-vacuity rule).
+    reattribution: { reattributedIn: 0n, reattributedOut: 0n },
     // #1434 P2-w2 — backing snapshot present with a healthy float and no
     // quarantine (undefined would skip the recovery-reservation check
     // suite-wide — the same anti-vacuity rule as repatriatedOut above).
@@ -201,6 +206,7 @@ function canonicalLocal(): LocalLedger {
       isCanonicalRewardChain: true,
     },
     repatriatedOut: 0n,
+    reattribution: { reattributedIn: 0n, reattributedOut: 0n },
     // #1434 P2-w2 — as on the mirror fixture: present, healthy, empty.
     backing: {
       ...NOT_ACTIVATED,
@@ -328,9 +334,17 @@ function coherent(
     // reverse bound (#1448 r3). The repatriated-out term (#1568 C2) is a
     // destination for the same reason paidOut is — a fixture that models a
     // repatriation without it would trip the over-credit bound.
-    const destinations = comp.creditedRaw + l.custodyRelocated;
+    // The reattribution pair (Codex #2206 r9) likewise: what a correction
+    // moved INTO the bucket is claimed, what it moved OUT is a destination.
+    const destinations =
+      comp.creditedRaw +
+      l.custodyRelocated +
+      (l.reattribution?.reattributedIn ?? 0n);
     const already =
-      l.bucket + comp.releasedRemitStranded + (l.repatriatedOut ?? 0n);
+      l.bucket +
+      comp.releasedRemitStranded +
+      (l.repatriatedOut ?? 0n) +
+      (l.reattribution?.reattributedOut ?? 0n);
     l.paidOutRecycled = destinations > already ? destinations - already : 0n;
   }
   return { ...l, composition: comp };
@@ -902,6 +916,98 @@ describe('checkHardInvariants — bucket coverage', () => {
 
 // ── #1446 ──────────────────────────────────────────────────────────────
 describe('checkHardInvariants — bucket composition', () => {
+  it('baseline fixtures carry a LIVE reattribution pair, so the check runs suite-wide', () => {
+    // Anti-vacuity pin (the repatriatedOut precedent, Codex #2206 r9): if a
+    // refactor made the baseline pair undefined, every composition and
+    // derivation test would silently become a skip-path test.
+    expect(mirrorLocal().reattribution).toBeDefined();
+    expect(canonicalLocal().reattribution).toBeDefined();
+  });
+
+  it('accepts a correction that moved credit OUT of the bucket, to the fresh side (#1566 closure 2 cutover PR 2)', () => {
+    // A reclassification lifted 40 of unspent recycled credit to fresh
+    // WITH its tokens: the bucket fell to 160 (still covering the 150
+    // outstanding, so coverage stays out of the picture) and the
+    // reattributed-out cumulative records where it went. No cumulative
+    // claims less, so the healthy identity needs the destination term —
+    // which is exactly what this Worker lacked before Codex #2206 r9: the
+    // same figures without it read as a counter that advanced without
+    // tokens landing.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 40n * E },
+        },
+      }),
+    ).toEqual([]);
+    // Control: the pre-r9 reading of the same chain.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('accepts a correction that moved credit INTO the bucket (#1566 closure 2 cutover PR 2)', () => {
+    // The other direction: 50 of unspent fresh credit corrected to
+    // recycled, with its tokens — the bucket rose to 250 and the
+    // reattributed-in cumulative claims it, absorption unchanged (the
+    // reported figure nets it out like relocated custody). Without the
+    // claimed term the bucket holds 50 no cumulative claims (the REVERSE
+    // composition bound) AND the floor re-derivation comes out 50 high.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 250n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 50n * E, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 250n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition', 'reported-derivation']);
+  });
+
+  it('skips composition and derivation while the reattribution pair is UNKNOWN, never substituting zero', () => {
+    // The chain corrected (bucket 160, 40 moved out) but the reconciliation
+    // facet could not be read this tick. Zero-substitution would page
+    // over-credited on healthy state; the two consuming checks skip, and
+    // the read failure is reported as its own coverage gap.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: undefined,
+        },
+      }),
+    ).toEqual([]);
+    // Control: the pair readable and genuinely zero on the same figures is
+    // a real over-credit and still pages.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
   it('fires when a relocated-custody credit also advanced absorption', () => {
     // The exact regression #1446 exists for. A 30-VPFI relocation arrives:
     // the bucket correctly grows to 230, but the absorption cumulative ALSO
@@ -1951,6 +2057,7 @@ describe('assertAbiShape', () => {
     expect(WATCHED_VIEWS).toContain('getChainRecycledLedger');
     expect(WATCHED_VIEWS).toContain('getRecycleCustodyPosition');
     expect(WATCHED_VIEWS).toContain('getGovernorCommitState');
+    expect(WATCHED_VIEWS).toContain('getReconciliationTotals');
   });
 
   it('catches a dropped output — the field-shift failure mode', () => {
@@ -3057,6 +3164,24 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
 });
 
 // ── #1448 r3 ────────────────────────────────────────────────────────────
+describe('reattributionUnavailableGap (#1566 closure 2 cutover PR 2, Codex #2206 r9)', () => {
+  it('is its own source, so it cannot collide with the other gaps', () => {
+    const gap = reattributionUnavailableGap(42161, new Error('boom'));
+    expect(gap.chainId).toBe(42161);
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.source).toBe('own-ledger-reattribution');
+  });
+
+  it('names exactly which checks did not run', () => {
+    const gap = reattributionUnavailableGap(10, new Error('boom'));
+    expect(gap.detail).toContain('UNKNOWN');
+    expect(gap.detail).toContain('bucket composition');
+    expect(gap.detail).toContain('re-derivation');
+    expect(gap.detail).toContain('did NOT run');
+    expect(gap.detail).toContain('transient');
+  });
+});
+
 describe('compositionUnavailableGap', () => {
   it('is its own reason and source, so it cannot collide with a dead chain', () => {
     // A whole-chain read failure is `no-rpc`/`own-ledger`. Reusing either

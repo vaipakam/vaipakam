@@ -1,487 +1,98 @@
 [
   {
     "type": "function",
-    "name": "acceptOffer",
+    "name": "advanceReconciliationQueue",
     "inputs": [
       {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
-        "name": "terms",
-        "type": "tuple",
-        "internalType": "struct LibAcceptTerms.AcceptTerms",
-        "components": [
-          {
-            "name": "acceptor",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerCreator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerKey",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "offerType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "durationDays",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "quantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralQuantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "assetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "collateralAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "useFullTermInterest",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPartialRepay",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPrepayListing",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsParallelSale",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "refinanceTargetLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "linkedLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "parallelSaleOrderHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "periodicInterestCadence",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "riskAndTermsConsent",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acknowledgedIlliquidLendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "acknowledgedIlliquidCollateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "riskTermsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "acceptorFull",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acceptorMaxCStar",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "acceptorAllowFullDowngrade",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
+        "name": "steps",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "acceptOfferInternal",
+    "name": "classifyLegacyPacket",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "freshShare",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
+        "name": "recycledShare",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "acceptOfferWithPermit",
+    "name": "getEntryRecords",
     "inputs": [
       {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "terms",
-        "type": "tuple",
-        "internalType": "struct LibAcceptTerms.AcceptTerms",
-        "components": [
-          {
-            "name": "acceptor",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerCreator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerKey",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "offerType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "durationDays",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "quantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralQuantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "assetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "collateralAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "useFullTermInterest",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPartialRepay",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPrepayListing",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsParallelSale",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "refinanceTargetLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "linkedLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "parallelSaleOrderHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "periodicInterestCadence",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "riskAndTermsConsent",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acknowledgedIlliquidLendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "acknowledgedIlliquidCollateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "riskTermsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "acceptorFull",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acceptorMaxCStar",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "acceptorAllowFullDowngrade",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      },
-      {
-        "name": "acceptSignature",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "permit",
-        "type": "tuple",
-        "internalType": "struct ISignatureTransfer.PermitTransferFrom",
-        "components": [
-          {
-            "name": "permitted",
-            "type": "tuple",
-            "internalType": "struct ISignatureTransfer.TokenPermissions",
-            "components": [
-              {
-                "name": "token",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "amount",
-                "type": "uint256",
-                "internalType": "uint256"
-              }
-            ]
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "permitSignature",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "calculateTransactionValueNumeraire",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lendingAmount",
+        "name": "index",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "valueNumeraire",
+        "name": "freshAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshSpent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshCharged",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledSpent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledCharged",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedReleased",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -490,245 +101,842 @@
   },
   {
     "type": "function",
-    "name": "verifyAndBindAccept",
+    "name": "getFreshQueueState",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "frontier",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "offerKey",
+        "name": "unspent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pendingAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveRow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedUnreleased",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedReleased",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "restitutionRow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLegacyEnvelope",
+    "inputs": [
+      {
+        "name": "snapshotId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.LegacyEnvelope",
+        "components": [
+          {
+            "name": "importedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "rawUncounted",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "holderUncounted",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "diamondReserved",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "returnedCumulative",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "netTotal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "relocatedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "replacedFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "replacedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "writtenDown",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryIndex",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPacketReconciliation",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "arrivedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "protectedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unclassified",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "classifiedFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "classifiedRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "disposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshAuthenticated",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationEntry",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.ReconciliationEntry",
+        "components": [
+          {
+            "name": "key",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "envelope",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "era",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "landedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "freshCredit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledCredit",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationEntrySpent",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct RewardReconciliationFacet.Spent",
+        "components": [
+          {
+            "name": "freshSpent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshUnspent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshInheritable",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAbsorbed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledSpent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledUnspent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledInheritable",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationTotals",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "entries",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reattributedIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reattributedOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRecycledQueueState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "frontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unspent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pendingAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "importLegacyEnvelope",
+    "inputs": [
+      {
+        "name": "snapshotId",
         "type": "bytes32",
         "internalType": "bytes32"
       },
       {
-        "name": "terms",
-        "type": "tuple",
-        "internalType": "struct LibAcceptTerms.AcceptTerms",
-        "components": [
-          {
-            "name": "acceptor",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerCreator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "offerKey",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "offerType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "durationDays",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "quantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralQuantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "assetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "collateralAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "useFullTermInterest",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPartialRepay",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPrepayListing",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsParallelSale",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "refinanceTargetLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "linkedLoanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "parallelSaleOrderHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "periodicInterestCadence",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "riskAndTermsConsent",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acknowledgedIlliquidLendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "acknowledgedIlliquidCollateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "riskTermsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "acceptorFull",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "acceptorMaxCStar",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "acceptorAllowFullDowngrade",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
+        "name": "relocateRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "replaceFresh",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "acceptor",
-        "type": "address",
-        "internalType": "address"
+        "name": "replaceRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "writeDown",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "OfferAccepted",
+    "type": "function",
+    "name": "isReconciliationEntryUsed",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewLegacyEnvelope",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "netTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rawUncounted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holderUncounted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "diamondReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "returnedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reclassifyReconciliationEntry",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshToRecycled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reconciliationReleaseAbsorbed",
+    "inputs": [
+      {
+        "name": "have",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "paid",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reconciliationReverseRemitTake",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reconciliationTakeFresh",
+    "inputs": [
+      {
+        "name": "have",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reconciliationTakeRecycled",
+    "inputs": [
+      {
+        "name": "bucketBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumption",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "mustComplete",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "took",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "LegacyEnvelopeImported",
+    "inputs": [
+      {
+        "name": "snapshotId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "netTotal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "relocatedRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "replacedFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "replacedRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "writtenDown",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LegacyPacketClassified",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReconciliationEntryReclassified",
+    "inputs": [
+      {
+        "name": "entryIndex",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "acceptor",
+        "name": "entryId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "freshToRecycled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "unspentMoved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spentMoved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReconciliationInheritanceUndone",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "entryIndex",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyFreshCredited",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "receivedAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowCredited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "origin",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowDebited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiCustodyReattributed",
+    "inputs": [
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
-        "name": "loanId",
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "matchAmount",
-        "type": "uint256",
+        "name": "intoBucket",
+        "type": "bool",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bool"
       },
       {
-        "name": "newAmountFilled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newAccepted",
+        "name": "spent",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -737,43 +945,49 @@
     "anonymous": false
   },
   {
-    "type": "error",
-    "name": "AcceptDeadlineExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AcceptNonceUsed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AcceptSignatureInvalid",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AcceptorMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AonRequiresFullFill",
+    "type": "event",
+    "name": "VpfiCustodyRelocated",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
         "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "required",
+        "name": "amount",
         "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "provided",
+        "name": "dayId",
         "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },
@@ -1627,18 +1841,7 @@
   },
   {
     "type": "error",
-    "name": "ERC721NonexistentToken",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "EnforcedPause",
+    "name": "ExpectedManualPause",
     "inputs": []
   },
   {
@@ -1671,17 +1874,6 @@
     "type": "error",
     "name": "FullTariffMaxCStarRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "GetUserVaultFailed",
-    "inputs": [
-      {
-        "name": "reason",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1802,6 +1994,22 @@
   },
   {
     "type": "error",
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
@@ -1865,22 +2073,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidAssetType",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidKeeperActions",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
     "inputs": []
   },
   {
@@ -2267,78 +2465,8 @@
   },
   {
     "type": "error",
-    "name": "OfferAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferCancelled",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint96",
-        "internalType": "uint96"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OfferConsumedBySale",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint96",
-        "internalType": "uint96"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "OfferCreationFailed",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferExpired",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expiresAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OfferPartiallyFilled",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "amountFilled",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OfferTermsMismatch",
-    "inputs": [
-      {
-        "name": "field",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2978,21 +3106,6 @@
   },
   {
     "type": "error",
-    "name": "RefinanceCapsRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefinanceExpiryExceedsCap",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefinanceRateExceedsCap",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {
@@ -3006,26 +3119,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RefinanceTargetIncompatible",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefinanceTargetNotActive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefinanceTargetNotBorrower",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefinanceTargetPastGrace",
-    "inputs": []
   },
   {
     "type": "error",
@@ -3726,6 +3819,17 @@
   },
   {
     "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -3737,22 +3841,6 @@
         "name": "actual",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SaleAdmissionCodeUnknown",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "code",
-        "type": "uint8",
-        "internalType": "uint8"
       }
     ]
   },
@@ -3774,134 +3862,13 @@
   },
   {
     "type": "error",
-    "name": "SaleInheritsWeakerRiskTerms",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "which",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "inherited",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SaleInheritsWorseFeeTerms",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "inheritedBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SaleLegUnpriceable",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "which",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleListingTermsStale",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "SaleLoanPastMaturity",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SaleLtvAboveAdmissionCap",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liveLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "capBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SalePositionBelowSolvencyFloor",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "healthFactor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3912,17 +3879,6 @@
     "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SelfTradeForbidden",
-    "inputs": [
-      {
-        "name": "party",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -4187,11 +4143,6 @@
   {
     "type": "error",
     "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultUpgradeRequired",
     "inputs": []
   },
   {

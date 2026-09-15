@@ -8,6 +8,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -1196,6 +1197,43 @@ contract RepatriationTransportTest is SetupTest {
             0,
             "the packet's record followed"
         );
+        // #1566 closure 2 cutover PR 2 — the fourth door: the return counts as
+        // a NON-classification exit, and the packet's identity holds.
+        (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
+            RewardReconciliationFacet(address(diamond)).getPacketReconciliation(
+                keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("comp-11")))
+            );
+        assertEq(protectedIn, 5 ether, "what the packet put into the row");
+        assertEq(disposed, 5 ether, "left through the return");
+        assertEq(unclassified + cf + cr, 0);
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the envelope nets the RETURNED overlap
+    /// (design L4209-4213): quarantine 100 then return 100 before the
+    /// activation, and the envelope reads 0 — the return left the aggregate
+    /// un-decremented, the cumulative nets it out.
+    function test_Envelope_NetsTheReturnedOverlap_QuarantineThenReturnReadsZero() public {
+        _armMirror();
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
+        vpfi.mint(address(diamond), 100 ether);
+        address base = address(0xBA5E);
+        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+            address(vpfi), 100 ether, 7, CHAIN_BASE, 12, base, 60 ether, 40 ether, 0, 1, uint64(7 days),
+            uint64(24 hours), keccak256("comp-12")
+        ); // finalizedAt == 0: quarantined, Diamond-side (not activated)
+        (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
+        assertEq(uncounted, 100 ether, "the quarantine counts as uncounted");
+        _repat().sendStrandedReturn(base, 12, 100 ether, payable(address(this)));
+        (, uncounted) = _rlens().getDeliveredFreshPosition();
+        assertEq(uncounted, 100 ether, "the return never decremented the aggregate");
+        assertEq(_rlens().getStrandedReturnedCumulative(), 100 ether);
+        activateRewardCustodyForTest(address(vpfi), 0);
+        (uint256 net, uint256 raw, , uint256 diamondReserved, uint256 returned) =
+            RewardReconciliationFacet(address(diamond)).previewLegacyEnvelope();
+        assertEq(raw, 100 ether);
+        assertEq(diamondReserved, 0);
+        assertEq(returned, 100 ether);
+        assertEq(net, 0, "quarantined then returned: nothing to import");
     }
 
     function test_StrandedReturn_UnknownRecordReverts() public {
