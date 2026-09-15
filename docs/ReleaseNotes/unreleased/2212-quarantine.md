@@ -251,6 +251,16 @@ back on. A run that cannot READ the setting also sends nothing, on the same
 reasoning as everywhere else here: not knowing whether a payment can be made
 is not permission to demand one.
 
+That setting is read at the SAME moment in the chain's history as the
+positions themselves. Asked at "now" instead, it could report the payment
+available for a moment the positions were never read at — because the setting
+changed in between, or because two machines behind one address answered from
+different heights. The result would be the reminder this whole rule exists to
+prevent, arriving through the check meant to prevent it. A run therefore
+settles on one moment first and reads everything against it. That costs one
+extra question on a network with nothing due, where the run used to stop
+earlier; it is the honest price of every answer describing one moment.
+
 **And a source can be the right network and still be behind.** The chain is
 consulted through whichever source the platform is configured to use, and that
 source can lag behind what the platform has already recorded. Asked about a
@@ -373,8 +383,17 @@ contradicting each other about one table is worse than either going quiet. The
 answer to "does this table exist" was already established earlier in the same
 pass; it is now consulted before anything is built. A pass that could not
 establish it still tries, because a question that failed is not evidence of
-absence — and where it then fails, it says the state could not be established
-rather than asserting one.
+absence.
+
+And where that write does fail, it no longer says the records it was releasing
+"stay withheld". Almost none of them were: the release runs over every record
+the pass settled, which on a healthy network is ordinary positions that were
+never held back at all, and the instruction for those does nothing. Claiming
+they are now suppressed would invent a problem on exactly the networks that
+have none — and the write failed, so which of them were actually held is the
+one thing the pass cannot know. It says their state could not be updated, that
+any which were held stay held until a later pass reaches them, and that the
+rest were never held.
 
 A third lane that messages users — the health alerts about a loan's safety
 margin — needed no change, and the reason is worth stating: it works from the

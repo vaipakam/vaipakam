@@ -321,6 +321,74 @@ async function preNotifyChain(
     return;
   }
 
+  // A HEAD THAT IS BEHIND WHAT THE PLATFORM HAS ALREADY INDEXED CANNOT
+  // CONFIRM ANYTHING (#2213 r11 `4013218986`).
+  //
+  // The chain check exists to catch a stored row whose terminal event was
+  // missed. If the endpoint serving this pass is behind the indexer's own
+  // cursor — a lagging replica, a mis-pointed URL, conditions the indexer
+  // detects explicitly for its own scan — then a loan that ended AFTER that
+  // stale head still reads `Active`, the check passes, and the lane sends the
+  // exact reminder it was built to withhold. Worse than no check: it is a
+  // check that endorses the wrong answer.
+  //
+  // So the head is resolved first, compared against `indexer_cursor`, and the
+  // batch is PINNED to it. Pinning is what turns a second node being behind
+  // into an error rather than a quietly older answer.
+  //
+  // AND IT IS THE PASS'S ONE ANCHOR, resolved before anything else is read
+  // (#2213 r20 `4014807939`). The config read below is pinned here too, so
+  // the operational setting and the loan states describe a single block. It
+  // used to sit above this and ask `latest`, which reopened the very gap the
+  // pin closes: governance disabling settlement in between, or two nodes at
+  // different heights, and the switch answers for a block the loans were
+  // never read at.
+  //
+  // The cost is one request on a chain with nothing due, where the old order
+  // returned before reaching here. That is the honest price of one anchor,
+  // and it is three requests a tick across the deployed chains against an
+  // allowance of forty.
+  //
+  // `latest` RATHER THAN A SETTLED TAG, deliberately. A reorg can only undo
+  // recent blocks, and a terminal event in a block that reorgs out did not
+  // happen — so reading the chain's current best view is the right basis for
+  // "may we speak", and the notification window is days wide, which is many
+  // ticks of correction. The indexer needs a settled head because it WRITES
+  // rows it never revisits; this lane decides one message and asks again next
+  // tick. (The stronger version would share the indexer's settled-head
+  // resolver, which lives in that Worker and is not reachable from here.)
+  let head: bigint;
+  budget.remaining -= 1; // the head read
+  try {
+    head = await client.getBlockNumber();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not read the head; ` +
+        `not pre-notifying this tick: ${describeFailure(err)}`,
+    );
+    return;
+  }
+  const indexed = await indexedThrough(env, chain.id);
+  if (indexed === 'unknown') {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not read the indexer ` +
+        `cursor, so whether this head is current cannot be established — no ` +
+        `reminder is sent this tick. Nothing is stamped; the next tick asks ` +
+        `again.`,
+    );
+    return;
+  }
+  if (indexed !== null && head < indexed) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: the RPC head ${head} is behind ` +
+        `the indexed cursor ${indexed}, so its answers describe a past the ` +
+        `stored rows have already moved beyond — nothing is confirmable this ` +
+        `tick, and no reminder is sent. A lagging replica or a mis-pointed ` +
+        `endpoint; the indexer flags the same condition for its own scan.`,
+    );
+    return;
+  }
+
   // THE LEAD TIME AND THE KILL SWITCH COME BACK TOGETHER (#2213 r18
   // `4014510645`), because this lane needs BOTH before it may say anything and
   // `getPeriodicInterestConfig` already returns both in one call. Reading only
@@ -342,6 +410,16 @@ async function preNotifyChain(
       address: chain.diamond as Address,
       abi: PERIODIC_CONFIG_ABI,
       functionName: 'getPeriodicInterestConfig',
+      // PINNED TO THE SAME BLOCK THE LOAN STATES ARE READ AT (#2213 r20
+      // `4014807939`). Unpinned, this asked `latest` while every loan read
+      // asked `head`, so governance disabling settlement in between — or one
+      // node behind a load balancer answering from a different height — let
+      // the switch report enabled for a block at which it was already off.
+      // The lane would then send and stamp the unretractable warning the r18
+      // fix exists to prevent, and the r14 pin exists to stop exactly this
+      // class of two-moments answer. Pinning one read and not the other was
+      // half a fix.
+      blockNumber: head,
     })) as readonly [string, bigint, number, boolean, boolean];
     // `preNotify` is already resolved against the library default on-chain, so
     // the guard here is only against a zero a malformed decode could produce.
@@ -404,61 +482,6 @@ async function preNotifyChain(
 
   const due = candidatesInWindow(rows.results ?? [], now, windowSec);
   if (due.length === 0) return;
-
-  // A HEAD THAT IS BEHIND WHAT THE PLATFORM HAS ALREADY INDEXED CANNOT
-  // CONFIRM ANYTHING (#2213 r11 `4013218986`).
-  //
-  // The chain check exists to catch a stored row whose terminal event was
-  // missed. If the endpoint serving this pass is behind the indexer's own
-  // cursor — a lagging replica, a mis-pointed URL, conditions the indexer
-  // detects explicitly for its own scan — then a loan that ended AFTER that
-  // stale head still reads `Active`, the check passes, and the lane sends the
-  // exact reminder it was built to withhold. Worse than no check: it is a
-  // check that endorses the wrong answer.
-  //
-  // So the head is resolved first, compared against `indexer_cursor`, and the
-  // batch is PINNED to it. Pinning is what turns a second node being behind
-  // into an error rather than a quietly older answer.
-  //
-  // `latest` RATHER THAN A SETTLED TAG, deliberately. A reorg can only undo
-  // recent blocks, and a terminal event in a block that reorgs out did not
-  // happen — so reading the chain's current best view is the right basis for
-  // "may we speak", and the notification window is days wide, which is many
-  // ticks of correction. The indexer needs a settled head because it WRITES
-  // rows it never revisits; this lane decides one message and asks again next
-  // tick. (The stronger version would share the indexer's settled-head
-  // resolver, which lives in that Worker and is not reachable from here.)
-  let head: bigint;
-  budget.remaining -= 1; // the head read
-  try {
-    head = await client.getBlockNumber();
-  } catch (err) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: could not read the head; ` +
-        `not pre-notifying this tick: ${describeFailure(err)}`,
-    );
-    return;
-  }
-  const indexed = await indexedThrough(env, chain.id);
-  if (indexed === 'unknown') {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: could not read the indexer ` +
-        `cursor, so whether this head is current cannot be established — no ` +
-        `reminder is sent this tick. Nothing is stamped; the next tick asks ` +
-        `again.`,
-    );
-    return;
-  }
-  if (indexed !== null && head < indexed) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: the RPC head ${head} is behind ` +
-        `the indexed cursor ${indexed}, so its answers describe a past the ` +
-        `stored rows have already moved beyond — nothing is confirmable this ` +
-        `tick, and no reminder is sent. A lagging replica or a mis-pointed ` +
-        `endpoint; the indexer flags the same condition for its own scan.`,
-    );
-    return;
-  }
 
   // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
   // of `budget.remaining` candidates and both read and messaged within it,

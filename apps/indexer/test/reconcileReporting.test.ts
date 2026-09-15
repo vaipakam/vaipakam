@@ -344,6 +344,45 @@ describe('the join, not just the wording', () => {
     expect(said).not.toContain('withheld');
   });
 
+  it('does not claim a healthy loan is withheld when the release write fails', async () => {
+    // #2213 r20 `4014807959`. `settledRows` is every row the pass settled, not
+    // every row that was MARKED — the overwhelming majority are ordinary
+    // healthy loans whose DELETE is a no-op against a marker that was never
+    // there. Saying they "stay withheld" asserts suppression for rows nothing
+    // was suppressing, and the batch failed, so which of them had markers is
+    // precisely what this pass cannot know.
+    //
+    // r19 hedged this on the PROBE and left the `present` branch confident,
+    // which was the wrong axis: knowing the TABLE exists says nothing about
+    // whether THESE rows had entries in it.
+    _resetQuarantineWriteProbe();
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+          // The table IS there — so this is not the absent case, and the
+          // message cannot hide behind that hedge.
+          first: async () => ({ name: 'loan_reconcile_quarantine' }),
+        }),
+        batch: async () => {
+          throw new Error('d1 batch failed');
+        },
+      },
+    } as unknown as Env;
+    // Five ordinary healthy loans and nothing unsettled: five settled rows,
+    // none of which was ever quarantined.
+    scanBehaviour = async () => report({ examined: [1, 2, 3, 4, 5] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await _runLoanReconcilePass({ ...passInput(), env });
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    // It says what it could not do...
+    expect(said).toContain('could not be updated');
+    // ...and that most of these were never withheld in the first place.
+    expect(said).toContain('never withheld at all');
+    // It must NOT assert suppression for all five.
+    expect(said).not.toContain('5 row(s) it settled stay withheld');
+  });
+
   it('refuses outright on a head the chain did not call settled', async () => {
     // #2201. `latest - 32` is a finality GUESS, and this pass terminalizes
     // rows it then never selects again — so a reorg deeper than the margin

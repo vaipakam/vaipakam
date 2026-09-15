@@ -1412,22 +1412,28 @@ export async function _runLoanReconcilePass(input: {
         // releases. Both counts come from the report the batch was built from.
         const marks = _unestablishedRows(report).length;
         const releases = settledRows(report).length;
-        // AND IT ONLY SPEAKS AS CONFIDENTLY AS THE PROBE DID (#2213 r19
-        // `4014677444`). Reaching here on `unknown` means the table's
-        // existence was never established, so "stay withheld" would assert a
-        // state this pass cannot see. On `present` the marks are known to be
-        // there and the confident wording is the accurate one.
-        const sure = writeAvailability === 'present';
+        // THE RELEASE HALF CANNOT NAME A STATE IT NEVER READ (#2213 r20
+        // `4014807959`). `settledRows` is every row this pass settled, not
+        // every row that was marked: the overwhelming majority are ordinary
+        // healthy loans whose `DELETE` was a no-op against a marker that was
+        // never there. Saying they "stay withheld" asserts suppression for
+        // rows nothing was ever suppressing — and the batch failed, so which
+        // of them had markers is exactly what this pass does not know.
+        //
+        // r19 hedged this on the PROBE (`present` vs `unknown`) and left the
+        // `present` branch confident, which was the wrong axis. Knowing the
+        // table exists says nothing about whether THESE rows had rows in it.
+        // What is true in every case is that their quarantine state could not
+        // be updated, and a later pass reaches them — `releaseTerminalQuarantine`
+        // keys on the row's own state rather than on remembering this failure.
         const effects = [
           marks > 0
             ? `${marks} row(s) this pass could not settle are NOT withheld until a later pass records them`
             : null,
           releases > 0
-            ? sure
-              ? `${releases} row(s) it settled stay withheld until a later pass releases them`
-              : `${releases} row(s) it settled may still be withheld — whether the ` +
-                `quarantine table exists could not be established, so a later ` +
-                `pass releases them if it does`
+            ? `the quarantine state of ${releases} row(s) it settled could not be ` +
+              `updated — any that were withheld stay withheld until a later ` +
+              `pass releases them, and the rest were never withheld at all`
             : null,
         ].filter(Boolean);
         console.error(

@@ -113,6 +113,8 @@ let periodicEnabled: boolean;
 let configThrows: boolean;
 /** How many config reads the lane issued — the switch must cost no extra call. */
 let configReads = 0;
+/** The block each config read was pinned to — it must be the pass's one anchor. */
+const configPinnedAt: (bigint | undefined)[] = [];
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
@@ -180,6 +182,7 @@ vi.mock('viem', async (importOriginal) => {
       }) => {
         if (functionName === 'getPeriodicInterestConfig') {
           configReads += 1;
+          configPinnedAt.push(blockNumber);
           if (configThrows) throw new Error('config read failed');
           // [symbol, threshold, preNotify, periodicEnabled, numeraireSwapEnabled]
           return ['0x00', 0n, 3, periodicEnabled, true];
@@ -412,6 +415,7 @@ beforeEach(() => {
   periodicEnabled = true;
   configThrows = false;
   configReads = 0;
+  configPinnedAt.length = 0;
   indexedBlock = 900;
   cursorReadFails = false;
   scanOffsets.clear();
@@ -1335,6 +1339,21 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped.length).toBe(4); // handled, so the scan does move on
     expect(said).toContain('scan complete');
     expect(said).toContain('4 with nobody to tell');
+  });
+
+  it('reads the kill switch at the SAME block the loan states are read at', async () => {
+    // #2213 r20 `4014807939`. The config read asked `latest` while every loan
+    // read was pinned to the resolved head. Governance disabling settlement
+    // between the two — or one node behind a load balancer answering from a
+    // different height — let the switch report enabled for a block at which it
+    // was already off, and the lane would then send and stamp the very warning
+    // the r18 fix exists to prevent. The r14 pin closed this class for the loan
+    // reads; pinning one and not the other was half a fix.
+    loanRows = tenLoans().slice(-3);
+    await run();
+    // One anchor: the config and the batched status read describe one block.
+    expect(configPinnedAt).toEqual([1_000n]);
+    expect(pinnedAt).toEqual([1_000n]);
   });
 
   it('says nothing about a cap it did not reach', async () => {

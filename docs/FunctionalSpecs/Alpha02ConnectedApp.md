@@ -374,6 +374,15 @@ The app uses chain reads and indexed reads for different jobs.
   the hardest failure for an operator to notice. The count is reported once per
   network per run, naming the setting — not once per record, which would train
   a real misconfiguration into background noise.
+- Every question a run asks the chain is asked about the SAME moment in that
+  chain's history — whether settlement is currently possible as much as whether
+  each position is still running. A setting read at "now" while the positions
+  are read at a fixed moment can describe a state the positions were never read
+  at, either because it changed in between or because two machines behind one
+  address answered from different heights, and the result is the very reminder
+  these rules exist to withhold. A run therefore settles on one moment before
+  it reads anything, and accepts an extra question on a network with nothing
+  due as the price of every answer describing one moment.
 - A run that COMPLETES also reports, whenever anything happened that someone
   would want to know about — records nobody could be told about, attempts
   confirmed to nobody, unconfirmed channels, records the chain declined,
