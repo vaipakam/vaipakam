@@ -1236,7 +1236,9 @@ that could not be attributed to a composition, a compensation quarantined
 for a day the mirror refused, and a return for a receipt older than
 per-receipt attribution. On a deployment whose custody is activated, each
 of these now moves into the address's unclassified attribution as it
-lands. That attribution is visible and auditable — it equals its own two
+lands — for the return, the share within the receipt's remaining
+entitlement; any excess over it goes to the overage position, as an
+excess always has. That attribution is visible and auditable — it equals its own two
 figures, checked as an invariant — and it is never spendable as reward
 value; its only exit in this change is the return of a quarantined
 compensation, which now draws from the address what the address backs and
@@ -1257,9 +1259,13 @@ sequence per source. That message id is what the cross-chain adapter now
 passes through to every recipient, which is a change to that shared
 interface, so the adapter and all its recipients are upgraded
 together by the same generation probe the refresh already uses — each
-resolved from the live configuration first and the deployment record
-second, so a missing or stale record can never leave a live contract on
-the old shape. A packet delivered twice under one identity is refused
+resolved from the live configuration as well as the deployment record,
+the adapter and the buyback receiver live-first, so a missing or stale
+record cannot leave a live contract unprobed. One order is the other way
+round in this change: the remittance receiver's probe takes a stale
+record's distinct proxy before the live one, so a record naming a proxy
+this signer can no longer upgrade aborts the run before the live receiver
+is reached; the second cutover change turns that probe live-first too. A packet delivered twice under one identity is refused
 whole, and so is a second delivery for a receipt that already exists: a
 receipt is delivered once, so every figure kept against a receipt
 describes exactly one delivery. The receipt a delivery creates is bound to
