@@ -21,6 +21,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /** What the stubbed chain answers for `getLoanDetails`. */
 let chainStatus: number | Error = 0;
+/** The `id` field of that answer — `0` is the zero struct of a loan that does not exist. */
+let chainLoanId = 7;
 
 vi.mock('viem', async (importOriginal) => {
   const actual = await importOriginal<typeof import('viem')>();
@@ -30,7 +32,7 @@ vi.mock('viem', async (importOriginal) => {
       readContract: async ({ functionName }: { functionName: string }) => {
         if (functionName === 'getPreNotifyDays') return 3;
         if (chainStatus instanceof Error) throw chainStatus;
-        return { status: chainStatus };
+        return { id: BigInt(chainLoanId), status: chainStatus };
       },
     }),
   };
@@ -85,6 +87,7 @@ async function run() {
 
 beforeEach(() => {
   chainStatus = 0;
+  chainLoanId = 7;
 });
 
 describe('periodic pre-notify checks the chain before an unretractable send', () => {
@@ -96,7 +99,7 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // Nothing stamped: no delivery happened, so the checkpoint stays open for
     // a later tick if the row turns out to be right after all.
     expect(writes.join('\n')).not.toContain('period_pre_notified_at');
-    expect(said).toContain('the chain reports status 1');
+    expect(said).toContain('reports status 1');
   });
 
   it('does not remind when the status read FAILS', async () => {
@@ -112,8 +115,34 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // The ordinary case must not be collateral damage of the guard.
     chainStatus = 0;
     const { said } = await run();
-    expect(said).not.toContain('the chain reports status');
+    expect(said).not.toContain('reports status');
     expect(said).not.toContain('status read');
+  });
+
+  it('does not remind on the ZERO STRUCT of a loan the chain has never had', async () => {
+    // #2213 r4 `4012114089`. `getLoanDetails` does not revert for an unknown
+    // id — it returns the mapping's zero struct, whose status is 0, which is
+    // Active. So the orphaned row this whole feature exists to catch reads
+    // back as a healthy running loan unless `id` is checked. The
+    // reconciliation reader has rejected the zero struct since #2190; asking
+    // the chain in a second place meant carrying the rule there too, and the
+    // first version did not.
+    chainLoanId = 0;
+    chainStatus = 0;
+    const { writes, said } = await run();
+    expect(writes.join('\n')).not.toContain('period_pre_notified_at');
+    expect(said).toContain('no such loan');
+  });
+
+  it('does not remind on FallbackPending, which cannot be settled', async () => {
+    // #2213 r4 `4012114096`. Non-terminal is not the same as eligible:
+    // `settlePeriodicInterest` accepts only `Active` and reverts on anything
+    // else, so "your payment is due" here invites an action the contract
+    // refuses. Eligibility is the ACTION's precondition, not generic liveness.
+    chainStatus = 4;
+    const { writes, said } = await run();
+    expect(writes.join('\n')).not.toContain('period_pre_notified_at');
+    expect(said).toContain('reports status 4');
   });
 
   it('treats a status this build does not recognise as ended', async () => {
@@ -122,6 +151,6 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // in a lane that messages users about running loans.
     chainStatus = 99;
     const { said } = await run();
-    expect(said).toContain('the chain reports status 99');
+    expect(said).toContain('reports status 99');
   });
 });

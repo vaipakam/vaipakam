@@ -35,7 +35,8 @@ record the chain denies all need different responses — and *when it was first
 noticed*, which is preserved rather than refreshed each time. That distinction
 is the whole operator signal: minutes means a source having a bad moment, days
 means a position nobody has resolved. A record held back that long is now
-named out loud, because no amount of retrying will settle it.
+named out loud, with its age and when it was last examined — the platform says
+what it observed and leaves the conclusion to whoever reads it.
 
 Releasing is the half that had to be right. A record held back forever on the
 strength of one bad read would be the mirror image of the defect, so release
@@ -80,8 +81,23 @@ are not the only unretractable message the platform sends about a loan: a
 separate lane sends "your interest payment is due" and marks that checkpoint
 as told. It reads the same stored records, in a different part of the system,
 and had no idea about any of this — so a user could still be told a payment
-was due on the very loan every other reminder was being withheld for. Both
-lanes now apply one shared rule rather than two copies of it.
+was due on the very loan every other reminder was being withheld for.
+
+That lane now does something different from the reminder sweep, and the
+difference matters for anyone diagnosing it. Rather than consulting the
+memory, it **asks the chain directly** about each loan it is about to message,
+after every cheaper filter has narrowed the candidates to a handful. So the
+two lanes fail differently on purpose: the sweep depends on the memory being
+present and current, while this one depends on the chain being reachable and
+simply stays quiet for that turn when it is not. Nothing is marked as told, so
+the next turn asks again, and the window is days wide.
+
+The reason for the split is width. The sweep considers up to a hundred records
+per chain each turn, where asking about each one would cost more requests than
+the platform's own budget allows; this lane considers a few. A first attempt
+had it share the memory instead, and three separate problems followed — all of
+them about coordinating two independently-scheduled parts of the system rather
+than about the rule itself.
 
 **Closing a loan could have stopped a chain being read at all.** The release
 added above goes into the same all-or-nothing group of writes as the rest of

@@ -124,20 +124,37 @@ export function createQuarantineAvailability(): (db: QuarantineProbeDb) => Promi
 }
 
 /**
- * The chain's `LoanStatus` members that are NOT terminal.
+ * Whether the chain's answer makes a loan eligible for a PERIODIC-INTEREST
+ * reminder.
  *
- * `Active(0)` and `FallbackPending(4)`. Everything else — Repaid, Defaulted,
- * Settled, InternalMatched — has ended, and an unknown future member is
- * treated as ended rather than guessed at, which is the safe direction for a
- * caller about to send something it cannot take back.
+ * Two conditions, and the first one is the one that is easy to miss.
  *
- * Deliberately an ALLOW-list of open states rather than a deny-list of
- * terminal ones: a member appended to the enum must not silently become
- * "still running" in a lane that messages users about running loans.
+ * **The loan has to exist.** `getLoanDetails` does not revert for an unknown
+ * id — it returns the mapping's zero struct, whose `status` is `0`, which is
+ * `Active`. So an orphaned row (one indexed from a reorged-out
+ * `LoanInitiated`, say) reads back as a healthy running loan, which is
+ * precisely the shape this check exists to catch. `id` is the
+ * existence-bearing field: a real loan's id is its own non-zero key. The
+ * reconciliation reader has rejected the zero struct for this reason since
+ * #2190; the rule belongs wherever the chain is asked, not in one reader
+ * (#2213 r4 `4012114089`).
+ *
+ * **And the status has to be exactly `Active(0)`.** Not "any non-terminal
+ * state": `FallbackPending(4)` is non-terminal, and a first version of this
+ * allowed it — but `RepayPeriodicFacet.settlePeriodicInterest` accepts only
+ * `Active` and reverts on everything else, so telling a holder their interest
+ * payment is due on a fallback-pending loan invites them to attempt something
+ * the contract will refuse (#2213 r4 `4012114096`).
+ *
+ * That is the general lesson for this predicate: eligibility is the ACTION's
+ * precondition, not a generic liveness idea. A different lane, whose message
+ * points at a different contract call, needs its own answer rather than this
+ * one.
+ *
+ * An unrecognised status is ineligible — an allow-list, so a member appended
+ * to the enum cannot silently become "still running" in a lane that messages
+ * users about running loans.
  */
-const OPEN_LOAN_STATUSES = new Set([0, 4]);
-
-/** Whether the chain considers this loan still open. */
-export function isOpenLoanStatus(status: number): boolean {
-  return OPEN_LOAN_STATUSES.has(status);
+export function isPeriodicInterestEligible(loan: { id: bigint | number; status: number }): boolean {
+  return Number(loan.id) !== 0 && Number(loan.status) === 0;
 }

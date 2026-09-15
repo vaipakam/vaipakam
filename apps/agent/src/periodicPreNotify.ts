@@ -29,7 +29,7 @@ import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
 import { sendMessage } from './telegram';
-import { isOpenLoanStatus } from '@vaipakam/lib/reminderEligibility';
+import { isPeriodicInterestEligible } from '@vaipakam/lib/reminderEligibility';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
@@ -105,8 +105,21 @@ async function preNotifyChain(
   // doesn't turn the lane silent for the entire tick.
   //
   // ONE CLIENT for the whole chain pass: the lead-time read below and the
-  // per-loan status check further down both use it (#2213 r3).
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // per-loan status checks further down both use it (#2213 r3).
+  //
+  // NON-RETRYING, SHORT TIMEOUT (#2213 r4 `4012114109`). viem's defaults are
+  // three retries and a ten-second timeout, and these reads are per LOAN
+  // inside a sequential loop over chains — so one unreachable RPC early in
+  // the list could spend the whole scheduled invocation and cost later,
+  // HEALTHY chains their reminders entirely. That is a bigger outage than the
+  // one the check prevents.
+  //
+  // Retrying buys nothing here anyway: a failed read skips this loan for this
+  // tick and the next tick asks again, with days of window left. The same
+  // argument the reconciliation pass makes for its own non-retrying client.
+  const client = createPublicClient({
+    transport: http(chain.rpc, { retryCount: 0, timeout: 5_000 }),
+  });
   let preNotifyDays = DEFAULT_PRE_NOTIFY_DAYS;
   try {
     const v = (await client.readContract({
@@ -174,15 +187,14 @@ async function preNotifyChain(
     // A FAILED READ SKIPS, and skipping is safe: nothing is stamped, so the
     // next tick asks again while the window is still open. Sending on a
     // failed read would be choosing the unretractable outcome on no evidence.
-    let chainStatus: number;
+    let detail: { id: bigint | number; status: number };
     try {
-      const detail = (await client.readContract({
+      detail = (await client.readContract({
         address: chain.diamond as Address,
         abi: LoanFacetABI,
         functionName: 'getLoanDetails',
         args: [BigInt(row.loan_id)],
-      })) as { status: number };
-      chainStatus = Number(detail.status);
+      })) as { id: bigint | number; status: number };
     } catch (err) {
       console.warn(
         `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} status read ` +
@@ -190,11 +202,23 @@ async function preNotifyChain(
       );
       continue;
     }
-    if (!isOpenLoanStatus(chainStatus)) {
+    if (!isPeriodicInterestEligible(detail)) {
+      // WHAT THE CHAIN SAID, AND NOTHING ABOUT WHAT HAPPENS NEXT (#2213 r4
+      // `4012114114`). An earlier version promised the reconciliation pass
+      // would correct the stored row. For a terminal status it will; for a
+      // status this build does not recognise it deliberately will NOT — it
+      // refuses to project an unknown member and only reports it. Promising a
+      // correction that cannot happen sends an operator away from a row that
+      // needs them.
+      const zeroStruct = Number(detail.id) === 0;
       console.warn(
         `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} is stored as ` +
-          `active but the chain reports status ${chainStatus} — no reminder sent. ` +
-          `The stored row is stale; the reconciliation pass will correct it.`,
+          `active but the chain ${
+            zeroStruct
+              ? 'has no such loan (zero struct)'
+              : `reports status ${Number(detail.status)}`
+          } — no reminder sent. The stored row disagrees with the chain; ` +
+          `whether anything corrects it depends on which case this is.`,
       );
       continue;
     }
