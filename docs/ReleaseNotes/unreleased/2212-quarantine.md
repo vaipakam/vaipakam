@@ -188,6 +188,23 @@ are each counted as their own thing. Before this, both were reported as
 reminders, which is precisely the number someone would read while trying to
 work out why nobody had heard from the platform.
 
+Failed messages are counted per channel, and separately from whether the
+person was reached at all. Someone told over one channel while the other
+failed is both a reminder and a broken channel; counting only the first would
+have hidden an outage of one channel for as long as the other kept working —
+which is the outage hardest to notice and the one worth reporting most.
+
+**And a check is only as good as what it checks against.** The chain is
+consulted through whichever source the platform is configured to use, and a
+source can lag behind what the platform has already recorded. Asked about a
+loan that ended after the point that source has reached, it answers that the
+loan is still running — confirming the exact reminder the check exists to
+withhold, which is worse than not checking at all. A run now compares the
+source's position against the platform's own and sends nothing when the source
+is behind, saying so. Every loan in a run is also read at a single point in
+the chain's history, so a source that serves part of the answer from further
+back fails outright rather than quietly mixing two moments.
+
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain
 rejected, how many it could not read, and which of the two limits stopped it.

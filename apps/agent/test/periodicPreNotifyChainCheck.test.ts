@@ -78,6 +78,12 @@ let answer: (loanId: number) => { id: bigint; status: number } | null;
 let batchError: Error | null = null;
 /** How many batched `aggregate3` calls the lane made this run. */
 let batchedReads = 0;
+/** What the stubbed RPC reports as its current head. */
+let headBlock: bigint;
+/** What the shared database says the indexer has scanned this chain through. */
+let indexedBlock: number | null;
+/** Blocks the batched read was pinned to, so the pin can be asserted. */
+const pinnedAt: (bigint | undefined)[] = [];
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
 let loanRows: Record<string, unknown>[] = [];
 /** Per-chain override of the above, for the multi-chain allowance tests. */
@@ -115,12 +121,15 @@ vi.mock('viem', async (importOriginal) => {
   return {
     ...actual,
     createPublicClient: () => ({
+      getBlockNumber: async () => headBlock,
       readContract: async ({
         functionName,
         args,
+        blockNumber,
       }: {
         functionName: string;
         args?: readonly unknown[];
+        blockNumber?: bigint;
       }) => {
         if (functionName === 'getPreNotifyDays') return 3;
         if (functionName !== 'aggregate3') {
@@ -128,6 +137,7 @@ vi.mock('viem', async (importOriginal) => {
         }
         if (batchError) throw batchError;
         batchedReads += 1;
+        pinnedAt.push(blockNumber);
         const calls = (args?.[0] ?? []) as { callData: `0x${string}` }[];
         return calls.map((c) => {
           const decoded = actual.decodeFunctionData({ abi, data: c.callData });
@@ -205,10 +215,15 @@ function env(extra: Record<string, unknown> = {}) {
         if (!sql.trim().startsWith('SELECT')) writes.push({ sql, params });
       };
       const isSubscriberLookup = sql.includes('FROM user_thresholds');
+      const isCursorLookup = sql.includes('FROM indexer_cursor');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
-        first: async () =>
-          isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null,
+        first: async () => {
+          if (isCursorLookup) {
+            return indexedBlock === null ? null : { last_block: indexedBlock };
+          }
+          return isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null;
+        },
         run: async () => {
           record(params);
           return { meta: { changes: 0 } };
@@ -274,6 +289,9 @@ beforeEach(() => {
   answer = (id) => ({ id: BigInt(id), status: 0 });
   batchError = null;
   batchedReads = 0;
+  pinnedAt.length = 0;
+  headBlock = 1_000n;
+  indexedBlock = 900;
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
   tgAccepts = true;
@@ -369,6 +387,43 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     answer = (id) => ({ id: BigInt(id), status: 99 });
     const { said } = await run();
     expect(said).toContain('reports status 99');
+  });
+});
+
+describe('a head that cannot confirm anything', () => {
+  it('sends nothing when the RPC is behind what the platform has indexed', async () => {
+    // #2213 r11 `4013218986`. The chain check exists to catch a stored row
+    // whose ending was missed. An endpoint behind the indexer's own cursor
+    // still reports such a loan as running, so the check passes and the lane
+    // sends the very reminder it was built to withhold — a check that
+    // endorses the wrong answer is worse than no check.
+    headBlock = 800n;
+    indexedBlock = 900;
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(batchedReads).toBe(0); // it does not even ask
+    expect(said).toContain('behind the indexed cursor');
+  });
+
+  it('proceeds, and pins the read, when the head covers the indexed state', async () => {
+    // The ordinary case, and the pin: every loan in a batch is read at ONE
+    // block, so a load-balanced endpoint answering one chunk from a node
+    // several blocks behind another errors instead of quietly mixing states.
+    headBlock = 1_000n;
+    indexedBlock = 900;
+    const { stamped } = await run();
+    expect(stamped).toEqual([7]);
+    expect(pinnedAt).toEqual([1_000n]);
+  });
+
+  it('proceeds when the platform has no cursor for this chain at all', async () => {
+    // A chain the indexer has never scanned has no cursor to be behind.
+    // Blocking on its absence would silence the lane on a fresh deployment
+    // for a comparison that could not have said anything.
+    indexedBlock = null;
+    const { stamped } = await run();
+    expect(stamped).toEqual([7]);
   });
 });
 
@@ -509,7 +564,11 @@ describe('what counts as a send, and what only looks like one', () => {
     expect(stamped.length).toBe(8);
     // ...and the report says plainly that nobody was confirmed reached.
     expect(said).toContain('0 reminded');
-    expect(said).toContain('8 attempted without confirmation');
+    expect(said).toContain('8 reached nobody');
+    // TWO rails failed per loan across twelve loans... but only the eight
+    // loans the allowance reached were attempted at all: 8 × 2 counterparties
+    // × 2 rails.
+    expect(said).toContain('32 rail(s) unconfirmed');
   });
 
   it('counts a loan as reminded when EITHER rail is accepted', async () => {
@@ -529,7 +588,11 @@ describe('what counts as a send, and what only looks like one', () => {
     expect(sends.length).toBe(32);
     expect(stamped.length).toBe(8);
     expect(said).toContain('8 reminded');
-    expect(said).toContain('0 attempted without confirmation');
+    expect(said).toContain('0 reached nobody');
+    // #2213 r11 `4013218976`: Telegram carried these, and Push failed on every
+    // one of them. A run that reported only "8 reminded" would hide a
+    // deployment-wide Push outage behind a working second channel.
+    expect(said).toContain('16 rail(s) unconfirmed');
   });
 
   it('still stamps when one side has no route and the other opted out', async () => {

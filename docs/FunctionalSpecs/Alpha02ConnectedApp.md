@@ -292,7 +292,15 @@ The app uses chain reads and indexed reads for different jobs.
   it is written carelessly.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
-  memory above. It is the other message a person cannot un-receive, it is sent
+  memory above — and only against a view of the chain that is at least as
+  current as the platform's own records. A source lagging behind what the
+  platform has already read still reports an ended loan as running, so it
+  would confirm precisely the reminder the check exists to withhold; a run
+  that finds itself in that position sends nothing and says so, rather than
+  accepting an endorsement worth less than no check at all. Every loan in one
+  run is also checked against a single point in the chain's history, so a
+  source that serves part of the answer from further back fails outright
+  instead of quietly mixing two moments. It is the other message a person cannot un-receive, it is sent
   from a different part of the platform on a different schedule, and a rule
   held in one part does not reach the other. Confirmation means the chain
   still has that loan and still has it in the one state the interest payment
@@ -344,7 +352,11 @@ The app uses chain reads and indexed reads for different jobs.
   A message refused by the service, or one whose fate is unknown because the
   attempt itself failed, is counted separately and never as a reminder; a
   recipient the platform has on file but cannot reach at all is counted as
-  handled. So the count can never claim people were told on a run that
+  handled. Failed messages are counted **per channel and independently of
+  whether the person was reached another way**: someone told over one channel
+  while the other failed is both a reminder and a broken channel, and
+  reporting only the first would hide an outage of one channel for as long as
+  the other kept working. So the count can never claim people were told on a run that
   reached nobody, which is the number someone reads while investigating
   silence.
 - The bound and the count deliberately disagree about a failed attempt, and

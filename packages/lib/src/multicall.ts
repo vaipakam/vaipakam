@@ -85,6 +85,16 @@ export async function batchCalls<T>(
   functionName: string,
   calls: BatchCall[],
   chunkSize = 100,
+  /**
+   * Optional block to pin every chunk to.
+   *
+   * Without it each chunk reads whatever `latest` the serving node has, so a
+   * batch can straddle blocks and a load-balanced endpoint can answer one
+   * chunk from a node several blocks behind another. Pinning makes the whole
+   * batch describe ONE state, and turns "this node is behind" from a silently
+   * stale answer into an error the caller can act on.
+   */
+  blockNumber?: bigint,
 ): Promise<(T | null)[]> {
   if (calls.length === 0) return [];
   const out: (T | null)[] = new Array(calls.length).fill(null);
@@ -100,6 +110,7 @@ export async function batchCalls<T>(
       abi: MULTICALL3_ABI,
       functionName: 'aggregate3',
       args: [args],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
     })) as readonly { success: boolean; returnData: `0x${string}` }[];
 
     for (let j = 0; j < results.length; j++) {

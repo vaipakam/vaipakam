@@ -272,6 +272,51 @@ async function preNotifyChain(
   const due = candidatesInWindow(rows.results ?? [], now, windowSec);
   if (due.length === 0) return;
 
+  // A HEAD THAT IS BEHIND WHAT THE PLATFORM HAS ALREADY INDEXED CANNOT
+  // CONFIRM ANYTHING (#2213 r11 `4013218986`).
+  //
+  // The chain check exists to catch a stored row whose terminal event was
+  // missed. If the endpoint serving this pass is behind the indexer's own
+  // cursor — a lagging replica, a mis-pointed URL, conditions the indexer
+  // detects explicitly for its own scan — then a loan that ended AFTER that
+  // stale head still reads `Active`, the check passes, and the lane sends the
+  // exact reminder it was built to withhold. Worse than no check: it is a
+  // check that endorses the wrong answer.
+  //
+  // So the head is resolved first, compared against `indexer_cursor`, and the
+  // batch is PINNED to it. Pinning is what turns a second node being behind
+  // into an error rather than a quietly older answer.
+  //
+  // `latest` RATHER THAN A SETTLED TAG, deliberately. A reorg can only undo
+  // recent blocks, and a terminal event in a block that reorgs out did not
+  // happen — so reading the chain's current best view is the right basis for
+  // "may we speak", and the notification window is days wide, which is many
+  // ticks of correction. The indexer needs a settled head because it WRITES
+  // rows it never revisits; this lane decides one message and asks again next
+  // tick. (The stronger version would share the indexer's settled-head
+  // resolver, which lives in that Worker and is not reachable from here.)
+  let head: bigint;
+  try {
+    head = await client.getBlockNumber();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not read the head; ` +
+        `not pre-notifying this tick: ${describeFailure(err)}`,
+    );
+    return;
+  }
+  const indexed = await indexedThrough(env, chain.id);
+  if (indexed !== null && head < indexed) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: the RPC head ${head} is behind ` +
+        `the indexed cursor ${indexed}, so its answers describe a past the ` +
+        `stored rows have already moved beyond — nothing is confirmable this ` +
+        `tick, and no reminder is sent. A lagging replica or a mis-pointed ` +
+        `endpoint; the indexer flags the same condition for its own scan.`,
+    );
+    return;
+  }
+
   // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
   // of `budget.remaining` candidates and both read and messaged within it,
   // which quietly made the MESSAGE budget govern the READ pass as well. Those
@@ -320,7 +365,8 @@ async function preNotifyChain(
 
   let cursor = start;
   let reminded = 0;
-  let unconfirmed = 0;
+  let unreached = 0;
+  let failedRails = 0;
   let rejected = 0;
   let unreadable = 0;
   let batches = 0;
@@ -339,12 +385,13 @@ async function preNotifyChain(
     // down with it, on every tick, forever. Multicall3 turns the batch into a
     // single call whose per-sub-call failures are reported individually rather
     // than poisoning the whole of it.
-    const states = await readLoanStates(client, chain, batch.map((c) => c.row.loan_id));
+    const states = await readLoanStates(client, chain, batch.map((c) => c.row.loan_id), head);
     if (states === null) return; // the batch itself failed; said so, nothing stamped
 
     const outcome = await messageBatch(env, chain, batch, states, budget, now);
     reminded += outcome.reminded;
-    unconfirmed += outcome.unconfirmed;
+    unreached += outcome.unreached;
+    failedRails += outcome.failedRails;
     rejected += outcome.rejected;
     unreadable += outcome.unreadable;
     cursor += outcome.consumed;
@@ -363,7 +410,7 @@ async function preNotifyChain(
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
-        `${unconfirmed} attempted without confirmation, ` +
+        `${unreached} reached nobody, ${failedRails} rail(s) unconfirmed, ` +
         `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
         `${capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and a later ` +
@@ -397,19 +444,21 @@ async function messageBatch(
 ): Promise<{
   consumed: number;
   reminded: number;
-  unconfirmed: number;
+  unreached: number;
+  failedRails: number;
   rejected: number;
   unreadable: number;
 }> {
   let reminded = 0;
-  let unconfirmed = 0;
+  let unreached = 0;
+  let failedRails = 0;
   let rejected = 0;
   let unreadable = 0;
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
-      return { consumed: i, reminded, unconfirmed, rejected, unreadable };
+      return { consumed: i, reminded, unreached, failedRails, rejected, unreadable };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
@@ -501,11 +550,22 @@ async function messageBatch(
     // both issued a request — they are charged — and neither is evidence that
     // anyone was reached, so they are their own count rather than folded into
     // either neighbour.
+    // THREE NUMBERS, THREE QUESTIONS (#2213 r10 `4013087415`, r11
+    // `4013218976`). They are not alternatives and must not be an `else if`
+    // chain: a loan reached on Telegram while every Push failed is a reminder
+    // AND two broken rails, and reporting only the first hides a
+    // deployment-wide outage behind a working second channel.
+    //
+    // `reminded` counts LOANS somebody was confirmed to have been told about.
+    // `unreached` counts LOANS that were attempted and confirmed to nobody.
+    // `failedRails` counts RAILS — the channel-health signal, which is why it
+    // is per-rail and not per-loan.
     if (borrowerOutcome.delivered || lenderOutcome.delivered) {
       reminded += 1;
     } else if (borrowerOutcome.attempted || lenderOutcome.attempted) {
-      unconfirmed += 1;
+      unreached += 1;
     }
+    failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -535,7 +595,34 @@ async function messageBatch(
       .bind(nextCheckpoint, now, chain.id, row.loan_id)
       .run();
   }
-  return { consumed: batch.length, reminded, unconfirmed, rejected, unreadable };
+  return { consumed: batch.length, reminded, unreached, failedRails, rejected, unreadable };
+}
+
+/**
+ * The block the indexer has scanned this chain through, or `null` if it has
+ * not recorded one.
+ *
+ * Read from the shared database rather than asked of the indexer: the two
+ * Workers already read the same D1, and a cross-Worker call would reintroduce
+ * exactly the coupling #2213 r3 removed from this lane.
+ *
+ * `null` is not an error. A chain the indexer has never scanned has no cursor
+ * to be behind, and blocking on its absence would silence the lane on a fresh
+ * deployment for a comparison that could not have said anything. A failed READ
+ * is treated the same way and for the same reason — the question failing is
+ * not evidence about the head.
+ */
+async function indexedThrough(env: Env, chainId: number): Promise<bigint | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`,
+    )
+      .bind(chainId)
+      .first<{ last_block: number }>();
+    return row ? BigInt(row.last_block) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A loan inside the notification window, with the arithmetic already done. */
@@ -602,6 +689,7 @@ async function readLoanStates(
   client: PublicClient,
   chain: { name: string; diamond: string },
   loanIds: number[],
+  blockNumber: bigint,
 ): Promise<(LoanState | null)[] | null> {
   if (loanIds.length === 0) return [];
   try {
@@ -622,6 +710,7 @@ async function readLoanStates(
       // check in another package to notice. Passing it makes the claim
       // structural: whatever `EXAMINE_BATCH` becomes, a batch is one request.
       EXAMINE_BATCH,
+      blockNumber,
     );
   } catch (err) {
     // BOUNDED DESCRIPTION, never the message: viem puts the full request URL
@@ -665,6 +754,16 @@ interface DeliveryOutcome {
   status: PreNotifyOutcome;
   attempted: boolean;
   delivered: boolean;
+  /**
+   * Rails that issued a request and could not be confirmed.
+   *
+   * A COUNT rather than a flag, and reported independently of `delivered`
+   * (#2213 r11 `4013218976`). A loan reached on one rail and failed on the
+   * other is a reminder AND a broken rail; folding the second into the first
+   * meant a deployment-wide Push outage reported nothing wrong for as long as
+   * Telegram kept working — which is the outage an operator most needs to see.
+   */
+  unconfirmedRails: number;
 }
 
 async function pushIfSubscribed(
@@ -699,13 +798,15 @@ async function pushIfSubscribed(
       .first<Omit<UserPushRow, 'notify_maturity_approaching'>>();
     sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
   }
-  if (!sub) return { status: 'none', attempted: false, delivered: false };
+  if (!sub) {
+    return { status: 'none', attempted: false, delivered: false, unconfirmedRails: 0 };
+  }
   // #1033 — the connected app Alerts card exposes this as a real opt-out;
   // honor it before any rail fires. Reported distinctly so the
   // caller can leave the checkpoint unstamped (a re-enable before
   // the deadline must still get its reminder).
   if (sub.notify_maturity_approaching === 0) {
-    return { status: 'opted-out', attempted: false, delivered: false };
+    return { status: 'opted-out', attempted: false, delivered: false, unconfirmedRails: 0 };
   }
 
   const cadenceLabel = cadenceI18nLabel(loan.periodic_interest_cadence);
@@ -747,6 +848,7 @@ async function pushIfSubscribed(
       : null;
   let attempted = false;
   let delivered = false;
+  let unconfirmedRails = 0;
   if (pushSigner) {
     // CHARGED FROM WHAT THE SENDER REPORTS, not from the fact that we called
     // it (#2213 r9 `4012940120`). `sendPush` swallows its own failures, so a
@@ -776,6 +878,7 @@ async function pushIfSubscribed(
         attempted = true;
         budget.remaining -= 1;
         if (attempt === 'accepted') delivered = true;
+        else unconfirmedRails += 1;
       }
     } catch (err) {
       console.error(
@@ -794,8 +897,11 @@ async function pushIfSubscribed(
       // arrived, so it is charged and not counted (#2213 r10 `4013087415`).
       if (await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`)) {
         delivered = true;
+      } else {
+        unconfirmedRails += 1;
       }
     } catch (err) {
+      unconfirmedRails += 1;
       console.error(
         `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} ` +
           `err=${describeFailure(err)}`,
@@ -809,7 +915,12 @@ async function pushIfSubscribed(
   // so re-querying every tick is waste) and wrong for REPORTING (the operator
   // count then says hundreds were reminded on a tick that sent nothing).
   // 'no-route' keeps the stamp and leaves the count honest.
-  return { status: attempted ? 'sent' : 'no-route', attempted, delivered };
+  return {
+    status: attempted ? 'sent' : 'no-route',
+    attempted,
+    delivered,
+    unconfirmedRails,
+  };
 }
 
 function cadenceI18nLabel(cadence: number): string {
