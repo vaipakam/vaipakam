@@ -401,8 +401,23 @@ export async function reconcileChainLoans(
   // and held until it ends. Loans appended after that belong to the next
   // lap, so the pointer cannot chase a moving target: the boundary is
   // fixed, the pointer advances by at least one per row examined, and the
-  // lap terminates. Both the pointer and the boundary are D1 rows, not
-  // subrequests, so this costs nothing against the invocation budget.
+  // lap terminates.
+  //
+  // THIS COMMENT USED TO END "Both the pointer and the boundary are D1 rows,
+  // not subrequests, so this costs nothing against the invocation budget."
+  // That is FALSE, and it is the belief the whole lane's budget arithmetic
+  // was built on (#2213 r27 `4016129218` established the opposite for the
+  // agent's lane, and r31 `4017540301` traced this one). A D1 binding call IS
+  // a Worker subrequest. `marketSummary.ts` has said so all along — "a whole
+  // sweep costs a constant number of D1 subrequests" — so the repository
+  // contradicted itself, and this is the half that was wrong.
+  //
+  // The pass's D1 calls are therefore NOT free: the pointer, the lap
+  // boundary, the maximum id, the row selection, the party lookups, the
+  // repair batch and the cursor writes all count. None of them is counted
+  // anywhere today. See #2221 — this lane needs a real counter, not a
+  // corrected comment, and the comment is corrected here only so nobody
+  // builds on the claim again.
   const pointer = await deps.readPointer(chainId);
   let lapEnd = await deps.readLapEnd(chainId);
   if (lapEnd <= 0) lapEnd = await deps.maxLiveLoanId(chainId);

@@ -32,6 +32,7 @@
 
 import * as PushAPI from '@pushprotocol/restapi';
 import { Wallet } from 'ethers';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 
 // Push channels live on Ethereum mainnet; the CAIP-2 prefix is
 // shared across both the channel id and recipient ids.
@@ -70,6 +71,40 @@ function getSignerAndChannel(channelPk: string): {
   cachedChannelCaip = channelCaip;
   return { signer, channelCaip };
 }
+
+/**
+ * Whether a call consumed an outbound request (#2213 r9 `4012940120`).
+ *
+ * The caller has a subrequest allowance to spend, and it cannot see inside
+ * here: an unset key and a malformed one both return quietly, so charging on
+ * "we called sendPush" charged for requests that never happened. On a
+ * deployment whose signer is misconfigured that is EVERY push, which exhausts
+ * the allowance and defers recipients the platform could have reached.
+ *
+ * THREE ANSWERS, because the caller asks two different questions of them and
+ * they do not have the same answer (#2213 r10 `4013087415`):
+ *
+ * - `not-requested` — the SDK call was never entered: no key, or a key it
+ *   cannot build a signer from. No request, so no charge, and nobody told.
+ * - `accepted` — the SDK resolved. A request happened, so charge it, and this
+ *   is the ONLY answer that justifies telling an operator someone was
+ *   reminded.
+ * - `failed` — the call was entered and threw. Charge it, because a request
+ *   may well have gone; do NOT count it as a reminder, because nobody can say
+ *   it arrived.
+ *
+ * The charge and the count deliberately disagree on `failed`, and that is the
+ * point: a ceiling must assume the request happened, and a report must not
+ * assume the message did. Folding them into one word is what let a run claim
+ * deliveries it had no evidence for.
+ *
+ * What this still does NOT separate is whether a throw came before or after
+ * the POST. That would be a guess about an error's shape, the kind this repo
+ * has refused before — so `failed` is honestly ambiguous rather than
+ * confidently wrong, and it is reported as its own thing rather than folded
+ * into either neighbour.
+ */
+export type PushAttempt = 'accepted' | 'failed' | 'not-requested';
 
 /**
  * Fire-and-forget Push notification. Returns without throwing so a
@@ -116,15 +151,69 @@ console.log = (...args: unknown[]) => {
 export async function sendPush(
   channelPk: string | undefined,
   payload: PushPayload,
-): Promise<void> {
+): Promise<PushAttempt> {
   if (!channelPk) {
     console.log(
       `[push] skipping (PUSH_CHANNEL_PK unset) subscriber=${payload.subscriber} title="${payload.title}"`,
     );
-    return;
+    return 'not-requested';
+  }
+  let signer: Wallet;
+  let channelCaip: string;
+  try {
+    ({ signer, channelCaip } = getSignerAndChannel(channelPk));
+  } catch (err) {
+    // SEPARATE FROM THE SEND BELOW because it is the branch that definitely
+    // made no request, so the caller must not be charged for it.
+    //
+    // AND IT RETURNS SILENTLY (#2213 r24 `4015538623`). This is a property of
+    // the DEPLOYMENT, not of this recipient: a malformed key fails for every
+    // subscriber, so logging here printed the identical line once per
+    // attempted recipient — on a wide window, the log flood that turns a real
+    // configuration failure into background noise. The caller reports it once
+    // per chain per run with a count, which is the only place that can.
+    //
+    // `err` is deliberately unused rather than described: a PRIVATE KEY is the
+    // argument in scope in this branch, and the one diagnostic that survives
+    // says which SETTING is wrong, which is what an operator acts on.
+    void err;
+    return 'not-requested';
+  }
+  // THE SDK AND THE SIGNER MUST AGREE, and on the checked dependency set they
+  // do not (#2213 r29 `4016866267`). `@pushprotocol/restapi@0.0.1` signs the
+  // verification proof with `signer._signTypedData(...)` — an ethers **v5**
+  // method — in `payloads/helpers.js`, and it does so BEFORE the Axios POST.
+  // The workspace resolves ethers 6.16, whose `Wallet` exposes
+  // `signTypedData` without the underscore. So on this deployment every Push
+  // send throws inside the SDK having issued no request at all.
+  //
+  // Reported as `not-requested`, which is the fact: no request left. Before
+  // this it fell into the `failed` branch below, which charged the
+  // invocation's allowance for a request nobody made, counted the attempt as
+  // one whose fate is unknown — and, since r28, therefore BLOCKED the retry
+  // of a Telegram message the service had merely deferred. A rail that cannot
+  // issue anything was suppressing the retry of the rail that can.
+  //
+  // ASKED AS A CAPABILITY QUESTION, not inferred from the error text. "Does
+  // this object have the method the SDK will call" has a definite answer;
+  // "was that exception an ethers-version mismatch" is a guess about a
+  // message, and this PR has already argued once (see the quarantine table
+  // probe) that a failure classifier narrowed round after round cannot be
+  // sharpened into correctness. It also keeps working if the SDK is upgraded:
+  // a signer that HAS the method takes the normal path with no change here.
+  //
+  // RESTORING the rail is a dependency decision — upgrade the SDK or adapt
+  // the signer — and is deliberately not attempted here; this change only
+  // stops the lane claiming something it did not do. See the follow-up issue.
+  const signsTheWaySdkExpects =
+    typeof (signer as unknown as Record<string, unknown>)._signTypedData === 'function';
+  if (!signsTheWaySdkExpects) {
+    // Silent for the same reason the malformed-key branch above is: this is a
+    // property of the DEPLOYMENT and fails identically for every subscriber,
+    // so the caller discloses it once per chain per run with a count.
+    return 'not-requested';
   }
   try {
-    const { signer, channelCaip } = getSignerAndChannel(channelPk);
     await PushAPI.payloads.sendNotification({
       signer,
       // type=3 → targeted notification to a single recipient.
@@ -170,5 +259,7 @@ export async function sendPush(
     console.error(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,
     );
+    return 'failed';
   }
+  return 'accepted';
 }

@@ -21,7 +21,12 @@
  * reached, which is a separate claim and was the one going unchecked.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { _reportReconcilePass, _runLoanReconcilePass } from '../src/chainIndexer';
+import {
+  _reportQuarantineForChain,
+  _reportReconcilePass,
+  _runLoanReconcilePass,
+  _resetQuarantineWriteProbe,
+} from '../src/chainIndexer';
 import { ReconcilePartialError, type ReconcileReport } from '../src/loanReconcile';
 import type { ChainConfig, Env } from '../src/env';
 
@@ -253,6 +258,165 @@ describe('the join, not just the wording', () => {
       expect(finished.out).toContain(line);
       expect(died.out).toContain(line);
     }
+  });
+
+  it('names long-held rows without a chain, and outside the pass (#2213 r3)', async () => {
+    // Rows in quarantine suppress reminders whatever a tick manages to do —
+    // including during an RPC outage, when nothing is being re-examined and
+    // the suppression is at its most invisible. So the naming lives at the
+    // per-chain entry point, above the identity check, and reads D1 only.
+    //
+    // Round 2 put it at the top of the PASS and I called it unconditional; it
+    // was unconditional within that function, and the identity check returns
+    // before the function is reached. This case tests the claim one level up,
+    // where it should have been tested first.
+    const seen: string[] = [];
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          seen.push(sql);
+          return {
+            bind: () => ({
+              first: async () => ({ n: 0 }),
+              all: async () => ({ results: [] }),
+              // The release sweep RUNS — without this it throws, the
+              // production catch returns, and the reporter below is never
+              // reached while this test still passes (#2213 r16
+              // `4014095568`).
+              run: async () => ({ meta: { changes: 0 } }),
+            }),
+            first: async () => ({ name: 'loan_reconcile_quarantine' }),
+          };
+        },
+      },
+    } as unknown as Env;
+    await _reportQuarantineForChain(env, CHAIN);
+    // THE REPORTER'S OWN QUERY, not any query naming the table. Three
+    // different statements mention it now — the availability probe via
+    // `sqlite_master`, the release sweep's DELETE, and the report's COUNT —
+    // so each loosening of this assertion has found a new way to pass while
+    // the thing it names never ran. This matches the COUNT, which only the
+    // reporter issues.
+    expect(
+      seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
+    ).toBe(true);
+  });
+
+  it('writes NOTHING to a quarantine table it has established is absent', async () => {
+    // #2213 r19 `4014677444`. The probe at the top of the pass already knew
+    // migration 0049 was missing, and this built a DELETE per settled row
+    // against a table that does not exist — failing every pass, then
+    // describing the fallout in terms of withholding, while the calendar lane
+    // was simultaneously and correctly telling the operator that nothing was
+    // being withheld because there is nowhere to withhold anything. Two lanes
+    // contradicting each other about one table is worse than either going
+    // quiet.
+    _resetQuarantineWriteProbe();
+    const seen: string[] = [];
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          seen.push(sql);
+          return {
+            bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+            // The probe's answer: no such table. A DEFINITE negative, which
+            // is the only case that skips — `unknown` still attempts, because
+            // a question that failed is not evidence the table is missing.
+            first: async () => null,
+          };
+        },
+        batch: async () => {
+          throw new Error('nothing may be written when the table is known absent');
+        },
+      },
+    } as unknown as Env;
+    scanBehaviour = async () => noticed();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await _runLoanReconcilePass({ ...passInput(), env });
+    // The pass still did its real work and still returned normally...
+    expect(outcome.established).toBe(true);
+    // ...no statement was ever built against the table...
+    expect(seen.some((q) => /DELETE[\s\S]*loan_reconcile_quarantine/.test(q))).toBe(false);
+    expect(seen.some((q) => /INSERT[\s\S]*loan_reconcile_quarantine/.test(q))).toBe(false);
+    // ...and nothing claimed anything about withholding, since there is no
+    // withholding to describe.
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).not.toContain('withheld');
+  });
+
+  it('does not claim a healthy loan is withheld when the release write fails', async () => {
+    // #2213 r20 `4014807959`. `settledRows` is every row the pass settled, not
+    // every row that was MARKED — the overwhelming majority are ordinary
+    // healthy loans whose DELETE is a no-op against a marker that was never
+    // there. Saying they "stay withheld" asserts suppression for rows nothing
+    // was suppressing, and the batch failed, so which of them had markers is
+    // precisely what this pass cannot know.
+    //
+    // r19 hedged this on the PROBE and left the `present` branch confident,
+    // which was the wrong axis: knowing the TABLE exists says nothing about
+    // whether THESE rows had entries in it.
+    _resetQuarantineWriteProbe();
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+          // The table IS there — so this is not the absent case, and the
+          // message cannot hide behind that hedge.
+          first: async () => ({ name: 'loan_reconcile_quarantine' }),
+        }),
+        batch: async () => {
+          throw new Error('d1 batch failed');
+        },
+      },
+    } as unknown as Env;
+    // Five ordinary healthy loans and nothing unsettled: five settled rows,
+    // none of which was ever quarantined.
+    scanBehaviour = async () => report({ examined: [1, 2, 3, 4, 5] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await _runLoanReconcilePass({ ...passInput(), env });
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    // It says what it could not do...
+    expect(said).toContain('could not be updated');
+    // ...and that most of these were never withheld in the first place.
+    expect(said).toContain('never withheld at all');
+    // It must NOT assert suppression for all five.
+    expect(said).not.toContain('5 row(s) it settled stay withheld');
+  });
+
+  it('says WHEN a failed mark loses its protection, not that it already has', async () => {
+    // #2213 r21 `4015014122`. The old line said the rows this pass could not
+    // settle "are NOT withheld" — true of later ticks, false of this one. The
+    // same ids still go to `_sweepCalendarIfEstablished` through
+    // `unestablishedLoanIds`, which holds them back from memory and needs no
+    // write to have succeeded; that in-memory set exists precisely for a
+    // failed quarantine write. Saying they are unprotected NOW sends an
+    // operator hunting for reminders that cannot have escaped yet, and
+    // understates the real risk, which starts quietly on the NEXT tick.
+    _resetQuarantineWriteProbe();
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+          first: async () => ({ name: 'loan_reconcile_quarantine' }),
+        }),
+        batch: async () => {
+          throw new Error('d1 batch failed');
+        },
+      },
+    } as unknown as Env;
+    scanBehaviour = async () => report({ unread: [13, 21] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await _runLoanReconcilePass({ ...passInput(), env });
+    // The in-memory protection this tick is real, and is what the message
+    // must not contradict.
+    expect(outcome.established).toBe(true);
+    if (outcome.established) expect(outcome.unestablishedLoanIds).toEqual([13, 21]);
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('still withheld');
+    expect(said).toContain('THIS tick');
+    expect(said).toContain('a later tick');
+    // The absolute claim is gone.
+    expect(said).not.toContain('are NOT withheld');
   });
 
   it('refuses outright on a head the chain did not call settled', async () => {
