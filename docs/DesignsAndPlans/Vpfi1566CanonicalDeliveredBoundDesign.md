@@ -6364,43 +6364,49 @@ PR C.**
 > that costs: a later credit un-spent an earlier entry, and a refill was
 > consumed twice (Codex #2206 r4, two P1s). The landed form keeps what each
 > was right about. Spent-ness is RECORDED, never read from a balance, and
-> recorded INTO the classified value's own record (Codex #2206 r5: the
-> round-4 form recorded per-side totals and distributed them among the
-> entries by prefix, which put a consumption on the entry whose credit had
+> recorded INTO the entry's own record (Codex #2206 r5: per-side totals
+> distributed by prefix put a consumption on the entry whose credit had
 > left by repatriation — kind cannot be attributed from aggregates). Each
-> side's queue is a sequence of SEGMENTS in classification order with a
-> FRONTIER; every outflow of a pool passes through that pool's own debit
-> primitive — the live and restitution rows' `LibRewardCustody.debit` /
-> `move`; the bucket ledger's `consume` and `debitRepatriationSurplus`, the
-> recycled row following the ledger — and that primitive writes what the
-> outflow took of the queue (one take: the pool's other backing consumed
-> first, never more than the segments still hold) INTO the segments at the
-> frontier, earliest first, with its kind; the walks live in the
-> reconciliation facet behind Diamond-internal entries the primitives reach
-> only when something is queued. So no writer of a pool has to know about
-> the queue (the round-2 point), nothing a later credit does can rewrite
-> what an outflow already took (this section's monotone-FIFO point), and
-> which entry a consumption or a repatriation took from is known, not
-> inferred. Per pool: the live row's outflows spend the fresh queue, and
-> are PAID where the fresh ledger charges them (a payout, a transport, an
-> absorption; the demotion's unwind into `Unclassified` is spent, never
-> paid); the bucket ledger's two debits spend the recycled queue (`consume`
-> writes consumption, a surplus repatriation spent only; a remit records
-> its own take and the segment it began at, so its release reverses
-> exactly that consumption and no other remit's — Codex #2206 r5); the
-> restitution row's outflows RELEASE the absorbed segments, each released
-> part re-entering the fresh queue as a segment of its own (unspent when
-> the paid-correction moved the custody to live; spent and paid when the
-> deficit was paid with it), so a later restitution credit re-absorbs
-> nothing (Codex #2206 r4 P2). An entry's figures — unspent, spent, what
-> of the spent the other side may inherit — are the sums over its own
-> segments (one per classification or correction of it). Credit a
-> correction moves to a side joins that side's queue as a new segment at
-> the tail, classified there at the correction, which keeps every frontier
-> monotone and the walk amortised to one visit per segment; an inherited
-> debit is a segment born spent and charged, unwound by the reverse move.
-> Only spent credit the side's ledger charged — fresh `paid`; recycled
-> consumption — is inheritable by the other side.
+> side's queue is one record per entry AT THE ENTRY'S OWN LOG INDEX — the
+> classification order this section fixes; round 5 appended corrected
+> credit at the tail, which re-ordered it (Codex #2206 r6 P1) — with a
+> FRONTIER that a correction moves back to any entry it frees. Every
+> outflow of a pool passes through that pool's own debit primitive — the
+> live and restitution rows' `LibRewardCustody.debit` / `move`; the bucket
+> ledger's `consume` and `debitRepatriationSurplus`, the recycled row
+> following the ledger — and that primitive records what the outflow took
+> of the queue (one take: the pool's other backing consumed first, never
+> more than the records still hold) in the totals at once and INTO the
+> records at the frontier, earliest first, with its kind, by a walk BOUNDED
+> per hot outflow (`QUEUE_WALK_STEPS`), the rest left pending in order
+> (Codex #2206 r6 P1: an unbounded skip over exhausted entries could wedge
+> a payout): anyone may advance a queue, a correction requires it drained,
+> and an operator path (a remit's consumption, a surplus repatriation)
+> completes its own walk. The walks live in the reconciliation facet behind
+> Diamond-internal entries the primitives reach only when something is
+> queued. So no writer of a pool has to know about the queue (the round-2
+> point), nothing a later credit does can rewrite what an outflow already
+> took (this section's monotone-FIFO point), and which entry a consumption
+> or a repatriation took from is known, not inferred. Per pool: the live
+> row's outflows spend the fresh queue, and are PAID where the fresh ledger
+> charges them (a payout, a transport, an absorption; the demotion's unwind
+> into `Unclassified` is spent, never paid); the bucket ledger's two debits
+> spend the recycled queue (`consume` writes consumption, a surplus
+> repatriation spent only); the restitution row's outflows RELEASE the
+> absorbed records, each released part re-entering the entry's own fresh
+> record (free when the paid-correction moved the custody to live; spent
+> and paid when the deficit was paid with it), so a later restitution
+> credit re-absorbs nothing (Codex #2206 r4). A remit records its take and
+> the entries it spanned, so its release reverses exactly that consumption
+> over exactly those entries; what a correction had meanwhile moved to the
+> fresh ledger as an inherited debit is stranded THERE — `received` and
+> `paid` fall together, no headroom — and is not given back on the bucket's
+> payout figure a second time (Codex #2206 r6). An inherited debit arrives
+> spent and charged; only spent credit the side's ledger charged — fresh
+> `paid`; recycled consumption — is inheritable by the other side; and
+> unspent credit moves with its tokens only up to what the pool holds
+> beyond its commitments (the live row net of the outstanding fresh
+> commitments; the uncommitted bucket — Codex #2206 r6).
 > Of a partly spent entry the UNSPENT part is corrected first, with its
 > tokens, and only what the corrected credit can no longer cover moves as
 > the debit — the order that reproduces the ledger a correct-at-ingress

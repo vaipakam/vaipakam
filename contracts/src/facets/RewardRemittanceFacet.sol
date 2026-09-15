@@ -550,10 +550,12 @@ contract RewardRemittanceFacet is
             // #1566 closure 2 cutover PR 2 (Codex #2206 r5) — the remit
             // records what its consumption took of the classified recycled
             // queue, so a release reverses exactly that.
-            (uint256 classifiedTake, uint256 classifiedFrom) = LibVpfiRecycle.consume(st.recycled);
+            (uint256 classifiedTake, uint256 classifiedFrom, uint256 classifiedTo) =
+                LibVpfiRecycle.consume(st.recycled, true);
             LibVaipakam.RemitReservation storage rr = s.remitReservations[remitId];
             rr.classifiedTake = classifiedTake;
             rr.classifiedFrom = classifiedFrom;
+            rr.classifiedTo = classifiedTo;
         }
         LibInteractionRewards.consumeArmedFresh(st.armedFresh);
 

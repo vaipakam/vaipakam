@@ -97,7 +97,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](208); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +2
+        selectors = new bytes4[](209); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +3
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -152,6 +152,7 @@ contract HelperTest {
         // #1566 closure 2 cutover PR 2 — the evidence writer + the restore driver.
         selectors[n++] = TestMutatorFacet.setPacketFreshAuthenticatedRaw.selector;
         selectors[n++] = TestMutatorFacet.restoreReleasedRemitRaw.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
         selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
@@ -2425,8 +2426,8 @@ contract HelperTest {
         selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
         // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
         selectors[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
-        selectors[12] = RewardReconciliationFacet.getQueueSegment.selector;
-        selectors[13] = RewardReconciliationFacet.getEntrySegments.selector;
+        selectors[12] = RewardReconciliationFacet.getEntryRecords.selector;
+        selectors[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
         selectors[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
         selectors[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
         selectors[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;

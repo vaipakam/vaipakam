@@ -2480,6 +2480,22 @@
   },
   {
     "type": "error",
+    "name": "ReconciliationExceedsUncommittedLive",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "uncommitted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReconciliationFigureShort",
     "inputs": [
       {
@@ -2560,6 +2576,17 @@
         "name": "paid",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationQueueBehind",
+    "inputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },
@@ -2666,6 +2693,17 @@
         "name": "inheritable",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationUnknownSide",
+    "inputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },

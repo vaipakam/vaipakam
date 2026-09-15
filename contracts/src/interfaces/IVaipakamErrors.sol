@@ -489,6 +489,18 @@ interface IVaipakamErrors {
     ///         figures said they held): a defect, refused rather than
     ///         dropping units. `side`: 0 fresh, 1 recycled, 2 absorbed.
     error ReconciliationQueueInconsistent(uint8 side);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — a correction
+    ///         asked while the side's pending takes are not yet written into
+    ///         the records; advance the queue first (anyone may).
+    error ReconciliationQueueBehind(uint8 side);
+    /// @notice A queue side that does not exist (0 fresh, 1 recycled).
+    error ReconciliationUnknownSide(uint8 side);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
+    ///         fresh credit a correction may move with its tokens is bounded
+    ///         by the live row net of the outstanding fresh commitments, the
+    ///         fresh twin of the uncommitted-bucket bound: what an armed day
+    ///         reserved stays in the row for its claims.
+    error ReconciliationExceedsUncommittedLive(uint256 requested, uint256 uncommitted);
     /// @notice The envelope under this snapshot id was already imported.
     error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
     /// @notice The stated dispositions do not resolve the envelope exactly.

@@ -419,7 +419,7 @@ contract RewardClaimFacet is
             userSplit.armedFresh + forfeitSplit.armedFresh
         );
         if (paidRecycled > 0) {
-            LibVpfiRecycle.consume(paidRecycled);
+            LibVpfiRecycle.consume(paidRecycled, false);
         }
 
         if (paid > 0) {

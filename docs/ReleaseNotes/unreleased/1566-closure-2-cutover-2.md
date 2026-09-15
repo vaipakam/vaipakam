@@ -55,10 +55,17 @@ known — and only the part the side's own ledger charged (paid on the
 fresh side, consumed on the recycled side) may be inherited by the other
 side: recycled value that left by a surplus repatriation, or whose payout
 was later reversed (a released remit reverses exactly its own
-consumption, no other's), and fresh value a demotion unwound, are never
-inherited, and consumption made while nothing classified was in the
-backing is nobody's. Value a correction moves to a side takes its place
-at the end of that side's record, as of the correction. The part of a classification that a standing deficit absorbed
+consumption over exactly the value it took, no other's; the part a
+correction had meanwhile moved to the fresh side is stranded there, the
+fresh side's received and paid figures falling together), and fresh
+value a demotion unwound, are never inherited, and consumption made
+while nothing classified was in the backing is nobody's. Value a
+correction moves keeps its original place in the order. Recording what
+an outflow took is bounded in work per outflow — the remainder is
+carried and written by later steps that anyone may take, and a
+correction waits for it — so no payout is ever held up by the record.
+Unspent value moves with its tokens only up to what the backing holds
+beyond its standing commitments, on either side. The part of a classification that a standing deficit absorbed
 into the restitution position is neither counted as spendable nor movable
 for as long as that position holds it; what the position releases
 of it — because a correction of the paid figure moved it back into live

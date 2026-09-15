@@ -1096,8 +1096,18 @@ contract TestMutatorFacet {
     ///         value moving between the two terms of the derived floor
     ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
     ///         move would not exercise the thing that matters.
-    function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake, uint256 classifiedFrom) {
-        return LibVpfiRecycle.consume(amount);
+    function consumeRecycleRaw(
+        uint256 amount
+    ) external returns (uint256 classifiedTake, uint256 classifiedFrom, uint256 classifiedTo) {
+        return LibVpfiRecycle.consume(amount, true);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) test-only — the
+    ///         HOT form of {LibVpfiRecycle.consume}: the claim path's, whose
+    ///         walk of the classified queue is bounded and leaves the rest
+    ///         pending.
+    function consumeRecycleRawBounded(uint256 amount) external {
+        LibVpfiRecycle.consume(amount, false);
     }
 
     /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
@@ -2402,8 +2412,9 @@ contract TestMutatorFacet {
         uint256 recycledFull,
         uint256 recycledSent,
         uint256 classifiedFrom,
+        uint256 classifiedTo,
         uint256 classifiedTake
     ) external {
-        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, classifiedFrom, classifiedTake);
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, classifiedFrom, classifiedTo, classifiedTake);
     }
 }

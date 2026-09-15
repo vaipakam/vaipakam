@@ -7452,42 +7452,54 @@ library LibVaipakam {
         ///      (+ the released-remit correction), with the derived
         ///      absorption floor netting the same two terms.
         ReconciliationEntry[] reconciliationLog;
-        /// @dev The queues (Codex #2206 r2, r4, r5): per side, the SEGMENTS in
-        ///      classification order, the FRONTIER (the first segment with
-        ///      anything unspent — every earlier one is exhausted), the
-        ///      unspent total (what the segments still hold of the pool: the
-        ///      O(1) figure an outflow's take reads), and the spent and
-        ///      charged totals for the record. Spent-ness is written INTO the
-        ///      segments at the pool's own debit primitive, earliest first,
-        ///      with its kind, so an entry's figures are read from its own
-        ///      segments (`entry*Segments`) and never inferred from aggregate
-        ///      prefixes (Codex #2206 r5: an aggregate FIFO put a consumption
-        ///      on the wrong entry). Credit a correction moves to a side
-        ///      joins that side's queue as a new segment at the tail —
-        ///      classified there at the correction — which is what keeps the
-        ///      frontier monotone and the walk amortised to one visit per
-        ///      segment. The fresh queue is per era (0 until slice 4 PR C);
-        ///      the recycled one is global, as the bucket is; the absorbed
-        ///      segments (fresh credit the deficit absorbed into restitution)
-        ///      release at the restitution row's outflows and re-enter the
-        ///      fresh queue.
-        mapping(uint64 => QueueSegment[]) freshQueueByEra;
-        mapping(uint64 => uint256) freshQueueFrontierByEra;
+        /// @dev The queues (Codex #2206 r2, r4–r6): per side, one RECORD per
+        ///      entry at the entry's own log index (the classification order
+        ///      the design fixes — credit a correction moves re-enters at the
+        ///      entry's own position, never at the tail), a FRONTIER (the
+        ///      first index with anything unspent; every earlier one is
+        ///      exhausted — a correction that frees credit before it moves it
+        ///      back), the unspent total (what the records still hold of the
+        ///      pool: the O(1) figure an outflow's take reads), the spent and
+        ///      charged totals for the record, and an ORDERED backlog of
+        ///      pending takes: a hot outflow's take is recorded in the totals
+        ///      at once and written into the records at the frontier by a
+        ///      walk bounded to `QUEUE_WALK_STEPS` entries, the rest left
+        ///      here in order — so no payout can be wedged by a backlog of
+        ///      exhausted entries (Codex #2206 r6 P1), anyone may advance the
+        ///      queue, and a correction requires it drained. Operator paths
+        ///      (a remit's consumption, a surplus repatriation) complete their
+        ///      walk. The fresh queue is per era (0 until slice 4 PR C) and
+        ///      its backlog also carries the restitution row's RELEASES of the
+        ///      absorbed records in time order (a released part re-enters the
+        ///      entry's own fresh record: free when the paid-correction moved
+        ///      the custody to live, spent when the deficit was paid with it);
+        ///      the recycled queue is global, as the bucket is.
+        mapping(uint256 => SideRecord) freshRecords;
+        mapping(uint256 => SideRecord) recycledRecords;
+        mapping(uint256 => AbsorbedRecord) absorbedRecords;
+        mapping(uint64 => uint256) freshFrontierByEra;
         mapping(uint64 => uint256) freshUnspentByEra;
         mapping(uint64 => uint256) freshSpentTotalByEra;
         mapping(uint64 => uint256) freshPaidTotalByEra;
-        QueueSegment[] recycledQueue;
-        uint256 recycledQueueFrontier;
+        mapping(uint64 => PendingTake[]) freshPendingByEra;
+        mapping(uint64 => uint256) freshPendingHeadByEra;
+        uint256 recycledFrontier;
         uint256 recycledUnspent;
         uint256 recycledSpentTotal;
         uint256 recycledConsumedTotal;
-        AbsorbedSegment[] absorbedQueue;
-        uint256 absorbedQueueFrontier;
+        PendingTake[] recycledPending;
+        uint256 recycledPendingHead;
+        uint256 absorbedFrontier;
         uint256 absorbedUnreleased;
         uint256 absorbedReleasedTotal;
-        mapping(uint256 => uint256[]) entryFreshSegments;
-        mapping(uint256 => uint256[]) entryRecycledSegments;
-        mapping(uint256 => uint256[]) entryAbsorbedSegments;
+        /// @dev Codex #2206 r6 — a released remit's consumption that a
+        ///      correction had already moved to the fresh ledger as an
+        ///      inherited debit: the payout never happened and its tokens are
+        ///      stranded in the transport pool, so `received` and `paid` fall
+        ///      together on the fresh side (no headroom is created) and the
+        ///      amount is recorded here, the fresh-side twin of
+        ///      `recycleReleasedRemitStrandedCumulative`.
+        uint256 freshStrandedInheritedCumulative;
         mapping(bytes32 => bool) reconciliationEntryUsed;
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
         uint256 recycleReattributedInCumulative;
@@ -7639,9 +7651,9 @@ library LibVaipakam {
     ///         `era` keys the fresh queue; 0 until slice 4 PR C's registry.
     ///         Its per-side figures — unspent, spent, what of the spent the
     ///         other side may inherit, what the deficit absorbed and the
-    ///         restitution row still holds — are read from its own SEGMENTS
-    ///         (`entryFreshSegments` / `entryRecycledSegments` /
-    ///         `entryAbsorbedSegments`), never inferred (Codex #2206 r5).
+    ///         restitution row still holds — are read from its own RECORDS
+    ///         (`freshRecords` / `recycledRecords` / `absorbedRecords`, by
+    ///         index), never inferred (Codex #2206 r5, r6).
     struct ReconciliationEntry {
         bytes32 key;
         bool envelope;
@@ -7651,30 +7663,41 @@ library LibVaipakam {
         uint256 recycledCredit;
     }
 
-    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5) — one SEGMENT of
-    ///         a reconciliation queue: `amount` of an entry's credit on that
-    ///         side, in classification order, of which `spent` has been taken
-    ///         by the pool's outflows and `charged` of that by the side's own
-    ///         charge (fresh `paid`; recycled consumption) — the part the
-    ///         other side may inherit as a debit. A segment that arrives as
-    ///         an inherited debit is born spent and charged; one a correction
-    ///         moved unspent is born free. Amounts fit uint96 (the pool cap
-    ///         is far below 2^96), so a segment is two slots.
-    struct QueueSegment {
-        uint64 entryIndex;
-        uint96 amount;
-        uint96 spent;
-        uint96 charged;
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5, r6) — an entry's
+    ///         RECORD on one side of a reconciliation queue, at the entry's own
+    ///         position (its log index — the immutable classification order):
+    ///         `amount` of its credit on that side, of which `spent` has been
+    ///         taken by the pool's outflows and `charged` of that by the side's
+    ///         own charge (fresh `paid`; recycled consumption) — the part the
+    ///         other side may inherit as a debit. An inherited debit arrives
+    ///         spent and charged; credit a correction moves unspent arrives
+    ///         free — both at the entry's own position, so the order the
+    ///         design fixes is kept and a frontier may move back to it.
+    struct SideRecord {
+        uint128 amount;
+        uint128 spent;
+        uint128 charged;
     }
 
-    /// @notice The absorbed records: `amount` of an entry's fresh credit the
-    ///         standing deficit absorbed into restitution at credit, of which
-    ///         `released` has left the restitution row — each released part
-    ///         re-entering the fresh queue as a segment of its own.
-    struct AbsorbedSegment {
-        uint64 entryIndex;
-        uint96 amount;
-        uint96 released;
+    /// @notice An entry's absorbed record: fresh credit the standing deficit
+    ///         absorbed into restitution at credit, of which `released` has
+    ///         left the restitution row — each released part re-entering the
+    ///         entry's own fresh record.
+    struct AbsorbedRecord {
+        uint128 amount;
+        uint128 released;
+    }
+
+    /// @notice A pending take of a queue (Codex #2206 r6): what an outflow
+    ///         recorded but a bounded walk has not yet written into the
+    ///         records at the frontier — `kind` bits: 1 = charged (paid /
+    ///         consumption), 2 = a restitution release, 4 = released to live.
+    ///         Hot outflows walk a bounded number of entries and leave the
+    ///         rest here, in order; anyone may advance the queue, and a
+    ///         correction requires it drained.
+    struct PendingTake {
+        uint128 amount;
+        uint8 kind;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
@@ -7957,6 +7980,9 @@ library LibVaipakam {
         // consumption and no other remit's.
         uint256 classifiedFrom;
         uint256 classifiedTake;
+        // Codex #2206 r6 — the entry the take ENDED at, so the reversal
+        // walks exactly [from, to] and never another remit's units.
+        uint256 classifiedTo;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

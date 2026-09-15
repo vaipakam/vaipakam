@@ -3127,8 +3127,8 @@ contract DeployDiamond is Script {
         s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
         // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
         s[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
-        s[12] = RewardReconciliationFacet.getQueueSegment.selector;
-        s[13] = RewardReconciliationFacet.getEntrySegments.selector;
+        s[12] = RewardReconciliationFacet.getEntryRecords.selector;
+        s[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
         s[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
         s[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
         s[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;

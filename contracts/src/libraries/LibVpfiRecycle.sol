@@ -1229,7 +1229,7 @@ library LibVpfiRecycle {
         // the segments at their frontier, so the entry it took from is the
         // one that reads repatriated.
         if (s.recycledUnspent != 0) {
-            LibRewardCustody.callTakeRecycled(bucket, amount, false);
+            LibRewardCustody.callTakeRecycled(bucket, amount, false, true);
         }
         // #1566 slice 4 PR B — the token move is part of the primitive, not
         // adjacent to it in the caller: the surplus leaves the holder's
@@ -1246,8 +1246,11 @@ library LibVpfiRecycle {
         }
     }
 
-    function consume(uint256 amount) internal returns (uint256 classifiedTake, uint256 classifiedFrom) {
-        if (amount == 0) return (0, 0);
+    function consume(
+        uint256 amount,
+        bool mustComplete
+    ) internal returns (uint256 classifiedTake, uint256 classifiedFrom, uint256 classifiedTo) {
+        if (amount == 0) return (0, 0, 0);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bucket = s.recycleBucket;
         uint256 left = bucket > amount ? bucket - amount : 0;
@@ -1273,11 +1276,14 @@ library LibVpfiRecycle {
         // other backing consumed first, never more than the segments still
         // hold, so a refill is never consumed twice and a later credit
         // un-spends nothing. The caller that reserves this consumption (a
-        // remit) records the take and the segment it began at, so its
-        // release reverses exactly its own consumption. Nothing queued:
-        // nothing recorded, no call.
+        // remit) records the take and the entries it spanned, so its release
+        // reverses exactly its own consumption; an operator path completes
+        // its walk (`mustComplete`), a claim walks a bounded number of
+        // entries and leaves the rest pending (Codex #2206 r6). Nothing
+        // queued: nothing recorded, no call.
         if (s.recycledUnspent != 0) {
-            (classifiedTake, classifiedFrom) = LibRewardCustody.callTakeRecycled(bucket, amount, true);
+            (classifiedTake, classifiedFrom, classifiedTo) =
+                LibRewardCustody.callTakeRecycled(bucket, amount, true, mustComplete);
         }
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // As in {creditCustodyRelocated}: an informational label, not an
@@ -1394,6 +1400,7 @@ library LibVpfiRecycle {
         uint256 recycledFull,
         uint256 recycledSent,
         uint256 classifiedFrom,
+        uint256 classifiedTo,
         uint256 classifiedTake
     ) internal {
         if (recycledFull == 0 && recycledSent == 0) return;
@@ -1410,21 +1417,28 @@ library LibVpfiRecycle {
             uint256 cumulative = creditedCumulative(s);
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5, r6) — a reversed
+        // payout is consumption that paid nobody: exactly THIS remit's take
+        // of the classified queue, over exactly the entries it spanned
+        // (recorded at its send), stops being inheritable — no other remit's.
+        // What is no longer there, a correction had already moved to the
+        // fresh ledger as an inherited debit (and the bucket's payout figure
+        // gave it back then): that part is stranded on the fresh side —
+        // `received` and `paid` fall together, no headroom — and is NOT
+        // reversed on the bucket's payout figure a second time. The units
+        // stay SPENT: their tokens sit in the transport pool, not the bucket.
+        uint256 found = LibRewardCustody.callReverseRecycledConsumption(classifiedFrom, classifiedTo, classifiedTake);
+        uint256 inherited = classifiedTake - found;
+        LibRewardCustody.strandInheritedFresh(s, inherited);
         uint256 paid = s.paidOutRecycled;
         // Record the ACTUAL decrement, not the request: the reversal floors
         // at zero, and counting `recycledSent` on an exhausted counter would
         // overstate the correction term (same rule `consume` applies to
         // `retired`).
-        uint256 reversed = paid > recycledSent ? recycledSent : paid;
+        uint256 toReverse = recycledSent - inherited;
+        uint256 reversed = paid > toReverse ? toReverse : paid;
         s.paidOutRecycled = paid - reversed;
         s.recycleReleasedRemitStrandedCumulative += reversed;
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5) — a reversed
-        // payout is consumption that paid nobody: exactly THIS remit's take
-        // of the classified queue (recorded at its send, with the segment it
-        // began at) stops being inheritable — no other remit's, and nothing
-        // if this remit consumed only the bucket's other backing. The units
-        // stay SPENT: their tokens sit in the transport pool, not the bucket.
-        LibRewardCustody.callReverseRecycledConsumption(classifiedFrom, classifiedTake);
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────
