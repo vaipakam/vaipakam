@@ -365,6 +365,45 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     _resetQuarantineTableProbe();
   });
 
+  it('DEFERS when it cannot tell whether the memory exists (#2213 r13)', async () => {
+    // The third answer. "Could not ask" used to be reported as "not there",
+    // which dropped the exclusion on a database where the table DOES exist —
+    // minting unretractable reminders for precisely the loans being held
+    // back, while telling an operator to apply a migration that was already
+    // applied. One tick of silence is the cheaper error.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 51, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    // The probe's own query fails; every other query still works, which is
+    // what a transient failure looks like.
+    const realPrepare = h.d1.prepare.bind(h.d1);
+    const d1 = {
+      ...h.d1,
+      prepare: (sql: string) =>
+        sql.includes('sqlite_master')
+          ? {
+              bind: () => ({ first: async () => { throw new Error('D1_ERROR: probe'); } }),
+              first: async () => {
+                throw new Error('D1_ERROR: probe');
+              },
+            }
+          : realPrepare(sql),
+    };
+    const out = await sweepCalendarNotifications(d1 as never, CHAIN, NOW, HEAD);
+    // Nothing minted, and the loan is untouched rather than reminded about.
+    expect(rowsInDb(h)).toEqual([]);
+    expect(out.inserted).toBe(0);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('DEFERRED');
+    // And NOT the misleading remedy.
+    expect(said).not.toContain('migration 0049');
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
+  });
+
   it('starts withholding the moment the migration lands, with no redeploy (#2213 r1)', async () => {
     // The probe caches only a TRUE. Caching a false would be the quieter
     // half of the same bug: the table appears, and this isolate goes on

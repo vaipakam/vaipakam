@@ -42,32 +42,36 @@ const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
 
 /**
- * The allowance, counted in OUTBOUND SENDS — not in loans (#2213 r7
- * `4012662252`).
+ * The allowance, counted in OUTBOUND REQUESTS — every one of them, reads
+ * included (#2213 r13 `4013571040`).
  *
  * A Worker invocation gets a documented 50 outbound subrequests, shared with
- * every other lane on the same tick. This lane spends them on pushes and
- * Telegram messages; 32 leaves comfortable headroom for its own batched chain
- * reads and for whatever else the tick is doing.
+ * every other lane on the same tick. This lane spends them on chain reads and
+ * on pushes and Telegram messages, and until r13 it bounded only the second
+ * kind: the read cap was per CHAIN while the send cap was per invocation, so
+ * three quiet chains could spend fifteen reads between them and leave the
+ * fourth to spend five more plus thirty-two sends — fifty-two, past the
+ * ceiling, with the overshoot landing on deliveries that had already been
+ * attempted and stamped. Three deployed chains is under it today and a fourth
+ * is a configuration change away, which is not a margin worth relying on.
  *
- * **The unit is the point, and two review rounds went into learning that.**
- * Rounds 5 and 6 counted LOANS, which meant anything that consumed a loan slot
- * without sending anything could hold the allowance forever: first candidates
- * the chain rejected (r6), then candidates whose counterparties had opted out
- * or had no subscription at all (r7). Both were charged, neither was stamped,
- * so the same handful sat at the front of the deadline order on every tick and
- * the subscribed borrowers behind them were never reached. Patching each case
- * as it was found would have left the next one waiting; counting the thing the
- * budget actually protects makes the whole class impossible, because a
- * candidate that sends nothing cannot decrement a counter that only sending
- * decrements.
+ * So there is ONE counter and everything decrements it. That also removes the
+ * arithmetic the old split needed — nobody has to work out whether the read
+ * cap times the chain count still fits beside the send cap, because there is
+ * no longer a second number to reconcile.
+ *
+ * **The unit is the point, and three review rounds went into learning it.**
+ * Rounds 5 and 6 counted LOANS, which let anything that consumed a loan slot
+ * without sending hold the allowance: candidates the chain rejected (r6), then
+ * opted-out counterparties (r7). Counting the thing the budget actually
+ * protects makes that whole class impossible.
  *
  * THIS IS A CAP ON A TICK, NOT ON A LOAN. The window is `preNotifyDays` wide
  * (three days by default) and ticks are minutes apart, so a deferred loan has
  * thousands of later chances. Two things make that true rather than hopeful:
- * the ORDER (`candidatesInWindow`) and the unit above.
+ * the ORDER (`candidatesInWindow`) and the stored scan position.
  */
-const MAX_OUTBOUND_SENDS_PER_INVOCATION = 32;
+const MAX_OUTBOUND_REQUESTS_PER_INVOCATION = 40;
 
 /**
  * The most sends ONE loan can need: two counterparties × two rails.
@@ -136,10 +140,25 @@ interface UserPushRow {
   notify_maturity_approaching: number;
 }
 
-/** What is left of this invocation's message allowance. Mutated as it spends. */
+/**
+ * What is left of this invocation's outbound-request allowance.
+ *
+ * Mutated wherever a request is issued — a chain read or a delivery — so no
+ * caller has to remember to report its spending upward.
+ */
 interface TickBudget {
   remaining: number;
 }
+
+/**
+ * The most requests ONE chain needs before it can do any useful work: the
+ * lead-time read, the head read, and one batched status read.
+ *
+ * A chain is not started unless this plus a loan's worth is available, so a
+ * pass never spends its opening reads and then discovers it cannot afford to
+ * send anything with them.
+ */
+const CHAIN_OPENING_REQUESTS = 3;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -147,27 +166,35 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
   );
   if (chains.length === 0) return;
 
-  const budget: TickBudget = { remaining: MAX_OUTBOUND_SENDS_PER_INVOCATION };
+  const budget: TickBudget = { remaining: MAX_OUTBOUND_REQUESTS_PER_INVOCATION };
 
-  // START AT A DIFFERENT CHAIN EACH TICK (#2213 r5 `4012300071`). A budget
-  // spent in list order is a budget the first chain spends first, so a busy
-  // chain at the head of the list could hold the allowance every tick and the
-  // chains behind it would never be reached at all. Rotating by the minute
-  // makes the starting point move on its own, with nothing to persist.
-  const offset = chains.length > 1 ? Math.floor(Date.now() / 60_000) % chains.length : 0;
+  // WHICH CHAIN GOES FIRST IS ALSO REMEMBERED, for the same reason the scan
+  // position is (#2213 r13 `4013571003`).
+  //
+  // This was `minute % chains.length`, and r12 retired exactly that shape one
+  // level down without my noticing it was still here. A clock-derived index
+  // aliases with any periodic opportunity, and the cron IS one: at a `*/3`
+  // schedule with three chains the minute is always a multiple of three, so
+  // the same chain leads every tick and a busy one could hold the allowance
+  // forever. The deleted schedule-pinning test had been protecting this too,
+  // which I missed when I deleted it — the fix is to remove the dependence,
+  // not to restore the pin.
+  const startChain = await rotationStart(env, chains.length);
+  await saveRotationStart(env, (startChain + 1) % chains.length);
 
   for (let i = 0; i < chains.length; i++) {
-    const chain = chains[(i + offset) % chains.length]!;
-    if (budget.remaining < MAX_SENDS_PER_LOAN) {
+    const chain = chains[(i + startChain) % chains.length]!;
+    if (budget.remaining < CHAIN_OPENING_REQUESTS + MAX_SENDS_PER_LOAN) {
       // SAID, not silently dropped. A chain skipped for want of allowance is
       // a chain whose borrowers got no reminder this tick, and an operator
       // seeing this every tick is being told the cap is too low for the load.
       console.warn(
         `[periodicPreNotify] chain=${chain.name} skipped: this invocation's ` +
-          `allowance of ${MAX_OUTBOUND_SENDS_PER_INVOCATION} outbound send(s) ` +
-          `is down to ${budget.remaining}, below the ${MAX_SENDS_PER_LOAN} one ` +
-          `loan can need. Its turn comes first on a later tick (the start ` +
-          `rotates), and the notification window is days wide.`,
+          `allowance of ${MAX_OUTBOUND_REQUESTS_PER_INVOCATION} outbound ` +
+          `request(s) is down to ${budget.remaining}, below the ` +
+          `${CHAIN_OPENING_REQUESTS + MAX_SENDS_PER_LOAN} a chain needs to ` +
+          `open and message about one loan. It takes its turn first on a ` +
+          `later tick, and the notification window is days wide.`,
       );
       continue;
     }
@@ -210,6 +237,7 @@ async function preNotifyChain(
     transport: http(chain.rpc, { retryCount: 0, timeout: 5_000 }),
   });
   let preNotifyDays = DEFAULT_PRE_NOTIFY_DAYS;
+  budget.remaining -= 1; // the lead-time read below
   try {
     const v = (await client.readContract({
       address: chain.diamond as Address,
@@ -278,6 +306,7 @@ async function preNotifyChain(
   // tick. (The stronger version would share the indexer's settled-head
   // resolver, which lives in that Worker and is not reachable from here.)
   let head: bigint;
+  budget.remaining -= 1; // the head read
   try {
     head = await client.getBlockNumber();
   } catch (err) {
@@ -362,7 +391,9 @@ async function preNotifyChain(
   let batchFailed = false;
   while (
     cursor < due.length &&
-    budget.remaining >= MAX_SENDS_PER_LOAN &&
+    // Room for this batch's read AND a loan's worth of sends: reading a batch
+    // this tick cannot afford to act on spends a request for nothing.
+    budget.remaining >= 1 + MAX_SENDS_PER_LOAN &&
     batches < MAX_EXAMINE_BATCHES
   ) {
     const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
@@ -375,6 +406,7 @@ async function preNotifyChain(
     // down with it, on every tick, forever. Multicall3 turns the batch into a
     // single call whose per-sub-call failures are reported individually rather
     // than poisoning the whole of it.
+    budget.remaining -= 1; // the batched status read
     const states = await readLoanStates(client, chain, batch.map((c) => c.row.loan_id), head);
     if (states === null) {
       // STOP, DO NOT RETURN (#2213 r12 `4013387389`). Earlier batches in this
@@ -405,7 +437,12 @@ async function preNotifyChain(
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   const examined = cursor - start;
-  if (examined < due.length) {
+  // TESTS THE CURSOR, not how many rows this tick looked at (#2213 r13
+  // `4013571024`). A pass that RESUMED at 300 in a 350-row window and finished
+  // it examined 50 — so the old `examined < due.length` was true and the tick
+  // announced a remainder it had just consumed, telling an operator the run
+  // was partial when it had completed the window.
+  if (cursor < due.length) {
     const capped =
       budget.remaining < MAX_SENDS_PER_LOAN
         ? `the invocation's send allowance is down to ${budget.remaining}`
@@ -633,6 +670,89 @@ const INDEXER_SCAN_KIND = 'diamond';
  */
 const PRENOTIFY_SCAN_KIND = 'prenotify_scan';
 
+/** The row carrying which chain leads the next invocation. */
+const PRENOTIFY_ROTATION_KIND = 'prenotify_rotation';
+
+/**
+ * The rotation row, stored against chain id 0 — not a chain, so it cannot
+ * collide with a real one, and the `(chain_id, kind)` key keeps it distinct
+ * from every per-chain row.
+ */
+const ROTATION_ROW_CHAIN_ID = 0;
+
+/** Which chain leads this invocation. Absent or unreadable → the first one. */
+async function rotationStart(env: Env, chainCount: number): Promise<number> {
+  if (chainCount <= 1) return 0;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+    )
+      .bind(ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND)
+      .first<{ last_block: number }>();
+    const at = row ? Number(row.last_block) : 0;
+    return Number.isFinite(at) && at >= 0 ? at % chainCount : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Remember which chain leads next. Reported when it fails — see `saveScanOffset`. */
+async function saveRotationStart(env: Env, next: number): Promise<void> {
+  await persistCursor(env, ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND, next);
+}
+
+/**
+ * Remember where to resume — and SAY SO when that cannot be done (#2213 r13
+ * `4013571011`).
+ *
+ * A write that never lands, or a read that keeps failing, silently returns the
+ * scan to zero on every tick. That is not merely "one wasteful repeat", which
+ * is what an earlier comment here claimed: with a few hundred unreachable or
+ * rejected loans at the front of the window — the exact case persistence was
+ * added for — it restores the starvation the persistence removed, invisibly.
+ *
+ * Two things follow. The failure is reported rather than swallowed, so an
+ * operator can see the fairness guarantee has degraded; and the isolate keeps
+ * its own copy, so a database that is refusing writes still makes progress for
+ * as long as this isolate lives instead of restarting from zero every minute.
+ * The in-memory copy is a fallback, never the source of truth: a fresh isolate
+ * reads from D1, and a successful read overwrites it.
+ */
+const inIsolateCursor = new Map<string, number>();
+
+async function persistCursor(
+  env: Env,
+  chainId: number,
+  kind: string,
+  at: number,
+): Promise<void> {
+  inIsolateCursor.set(`${kind}:${chainId}`, at);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(chainId, kind, at, Math.floor(Date.now() / 1000))
+      .run();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] could not persist ${kind} for chain ${chainId} at ` +
+        `${at}: ${describeFailure(err)}. This isolate remembers it, so this ` +
+        `tick is unaffected — but if this keeps appearing, the scan restarts ` +
+        `from the front whenever the isolate recycles, and loans behind a run ` +
+        `of unreachable ones stop being reached.`,
+    );
+  }
+}
+
+async function saveScanOffset(env: Env, chainId: number, at: number): Promise<void> {
+  await persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at);
+}
+
+
 /** Where this chain's scan stopped last tick. Absent or unreadable → start over. */
 async function scanOffset(env: Env, chainId: number): Promise<number> {
   try {
@@ -642,32 +762,25 @@ async function scanOffset(env: Env, chainId: number): Promise<number> {
       .bind(chainId, PRENOTIFY_SCAN_KIND)
       .first<{ last_block: number }>();
     const at = row ? Number(row.last_block) : 0;
-    return Number.isFinite(at) && at > 0 ? at : 0;
-  } catch {
-    // Unlike the INDEXER cursor, a failure here is safe to absorb: it costs a
-    // repeat of one prefix, never a wrong message. Nothing is decided on this
-    // value except where to start looking.
-    return 0;
+    const resolved = Number.isFinite(at) && at > 0 ? at : 0;
+    inIsolateCursor.set(`${PRENOTIFY_SCAN_KIND}:${chainId}`, resolved);
+    return resolved;
+  } catch (err) {
+    // A failure here is safe to absorb — nothing is decided on this value
+    // except where to start looking, so the worst case is a repeated prefix
+    // rather than a wrong message. It is NOT safe to absorb silently: see
+    // `persistCursor`. The isolate's own copy carries the position meanwhile.
+    const remembered = inIsolateCursor.get(`${PRENOTIFY_SCAN_KIND}:${chainId}`) ?? 0;
+    console.warn(
+      `[periodicPreNotify] chain ${chainId}: could not read the stored scan ` +
+        `position (${describeFailure(err)}); resuming from this isolate's own ` +
+        `copy at ${remembered}. Repeated appearances mean the scan will ` +
+        `restart from the front on the next isolate.`,
+    );
+    return remembered;
   }
 }
 
-/** Remember where to resume. Best effort for the same reason. */
-async function saveScanOffset(env: Env, chainId: number, at: number): Promise<void> {
-  try {
-    await env.DB.prepare(
-      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(chain_id, kind) DO UPDATE SET
-         last_block = excluded.last_block,
-         updated_at = excluded.updated_at`,
-    )
-      .bind(chainId, PRENOTIFY_SCAN_KIND, at, Math.floor(Date.now() / 1000))
-      .run();
-  } catch {
-    // A lost write means the next tick re-reads a prefix it has already seen.
-    // Wasteful, not wrong.
-  }
-}
 
 /**
  * The block the indexer has scanned this chain through: a number, `null` when

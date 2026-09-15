@@ -113,7 +113,11 @@ than about the rule itself.
 **Asking once per loan turned out to be the same budget problem in miniature.**
 Each run of this lane has a fixed allowance of outbound requests, shared with
 everything else happening on that run, and "a few" was an assumption about
-load rather than a limit. On a busy day the allowance ran out partway through,
+load rather than a limit. That allowance now covers **every** request the run
+makes, the platform's own chain queries included: they were bounded per
+network while the messages were bounded per run, so adding a fourth network
+would have pushed a busy run past the ceiling — with the overshoot landing on
+messages that had already been attempted and recorded as sent. On a busy day the allowance ran out partway through,
 which does not merely stop that chain — it stops every chain after it in the
 same run, on every run, indefinitely. Two changes make the assumption
 unnecessary: a chain's checks now go out in batches of a hundred rather than
@@ -126,14 +130,19 @@ chain each time. A loan the cap defers is one place nearer the front on the
 next run, and gets there well before its own deadline; without that order the
 same records would be reached every time and the ones behind them never.
 
-A run also **remembers where it stopped**, and the next one continues from
-there. An earlier attempt derived that position from the clock instead, and it
+A run also **remembers where it stopped**, and which network it began with,
+and the next one continues from there. An earlier attempt derived that position from the clock instead, and it
 worked until it met the platform's other rotation: a network that only gets a
 turn every third run sees the clock advance in threes, so the position it
 computes can be the same one every time it is actually asked, and two thirds
 of its window would never be examined. Any schedule-derived position can fall
 into step with some other schedule; a remembered one advances on the work
-actually done, which nothing can align with. It is approximate — the list it
+actually done, which nothing can align with. That applied to the choice of
+which network goes first as well, and it was left on the clock for one round
+after the same mistake had been corrected elsewhere — the two are the same
+defect at two scales. When the platform cannot remember either position it now
+says so, because silently starting from the front every time restores the
+unfairness the memory was added to remove, and does it invisibly. It is approximate — the list it
 indexes into changes between runs — and that is stated rather than implied,
 because near enough is all that forward progress needs.
 

@@ -471,13 +471,39 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
-    const withQuarantine = await quarantineTableExists(db);
+    const availability = await quarantineTableExists(db);
+    if (availability === 'unknown') {
+      // DEFER THE WHOLE SWEEP (#2213 r13 `4013570995`). This is the one place
+      // where "could not ask" must not be read as "not there": the sweep is
+      // about to mint reminders that are never retracted, and dropping the
+      // exclusion on a database whose table DOES exist would send them for
+      // precisely the loans being held back — while announcing that the
+      // migration was missing, sending an operator to a remedy that is not the
+      // problem. One tick of silence on one chain is the cheaper error, and
+      // the sweep already defers itself for the same kind of reason when
+      // reconciliation has not established the live set.
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: DEFERRED — could not
+         establish whether loan_reconcile_quarantine exists, so whether any
+         loan is being held back is unknown. No reminders are minted this
+         tick; nothing is stamped, and the next tick asks again.`.replace(
+          /\s+/g,
+          ' ',
+        ),
+      );
+      return EMPTY_SWEEP;
+    }
+    const withQuarantine = availability === 'present';
     if (!withQuarantine) {
       // LOUD, because the consequence is the opposite of the usual one: rows
       // the reconciliation pass could not settle are reminded about this tick
       // exactly as they were before #2212. That is the prior behaviour rather
       // than a new harm — and far better than suppressing every reminder on
       // every chain — but it is not what this build believes it is doing.
+      //
+      // This branch is now reached ONLY on a definite absence — the probe
+      // answered and the table was not there, which is the deploy window
+      // #2214 describes. An unanswerable probe returns above.
       console.warn(
         `[calendarNotifications] chain ${chainId}: loan_reconcile_quarantine ` +
           `is missing (migration 0049 not applied to this database). Reminders ` +

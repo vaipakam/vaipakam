@@ -1099,7 +1099,11 @@ export async function _sweepCalendarIfEstablished(
  * check at all.
  */
 export async function _reportQuarantineForChain(env: Env, chainId: number): Promise<void> {
-  if (!(await quarantineAvailableForWrites(env.DB as never))) return;
+  // 'absent' AND 'unknown' both mean "do not name the table": a statement
+  // naming a table that might not exist fails the whole batch, and that batch
+  // advances the chain cursor. The reminder SWEEP takes the opposite reading
+  // of 'unknown' for the opposite reason — see the probe's own doc.
+  if ((await quarantineAvailableForWrites(env.DB as never)) !== 'present') return;
   try {
     await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
   } catch (err) {
@@ -1246,7 +1250,8 @@ export async function _runLoanReconcilePass(input: {
   // Asked once per pass, before any repair builds its batch: every repair's
   // close-out statements are gated on the same answer, so a pass cannot half
   // include the release (#2213 r2 `4011776381`).
-  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
+  const quarantineAvailable =
+    (await quarantineAvailableForWrites(env.DB as never)) === 'present';
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -5482,7 +5487,7 @@ async function _clearClosedLoanSideTables(
       env,
       chainId,
       loanId,
-      await quarantineAvailableForWrites(env.DB as never),
+      (await quarantineAvailableForWrites(env.DB as never)) === 'present',
     ),
   );
 }

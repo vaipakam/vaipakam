@@ -326,9 +326,11 @@ The app uses chain reads and indexed reads for different jobs.
   days away.
 - A single run sends a bounded number of these reminders, takes the nearest
   deadlines first, and does not always begin with the same network. Every run
-  has a fixed allowance of outbound requests, so an unbounded one would stop
-  partway through and take every network after it down with it — on every run,
-  for as long as the load lasted. The order is what makes the bound safe: a
+  has a fixed allowance of outbound requests — covering every request it makes,
+  its own queries to the chain included — so an unbounded one would stop
+  partway through and take every network after it down with it, on every run,
+  for as long as the load lasted. A run does not begin work on a network it
+  cannot afford to both query and send for. The order is what makes the bound safe: a
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
   same records every run and the ones behind them never.
@@ -355,7 +357,11 @@ The app uses chain reads and indexed reads for different jobs.
   remembered position rather than anything derived from the time of day —
   deliberately, because any schedule-derived position can fall into step with
   another schedule and then never move: the platform's other rotations, or the
-  interval between runs itself. A remembered position advances on the work
+  interval between runs itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither position can be
+  remembered, the run says so — starting from the front every time restores
+  the unfairness the memory exists to remove, and would otherwise do it
+  silently. A remembered position advances on the work
   actually done, which nothing else can align with. When the window fits in
   one run, which is the ordinary case, the nearest deadline is examined first
   as before.

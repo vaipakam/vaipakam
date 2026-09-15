@@ -104,7 +104,7 @@ let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
 let cursorReadFails: boolean;
 /** The lane's own persisted scan position, surviving across ticks like D1 does. */
-const scanOffsets = new Map<number, number>();
+const scanOffsets = new Map<string, number>();
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
 const pinnedAt: (bigint | undefined)[] = [];
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
@@ -253,8 +253,10 @@ function env(extra: Record<string, unknown> = {}) {
         first: async () => {
           if (isIndexerCursor) {
             const kind = String(params[1] ?? '');
-            if (kind === 'prenotify_scan') {
-              const at = scanOffsets.get(Number(params[0]));
+            if (kind.startsWith('prenotify_')) {
+              // The lane's OWN rows — scan position and rotation leader —
+              // which persist across ticks exactly as D1 does.
+              const at = scanOffsets.get(`${kind}:${Number(params[0])}`);
               return at === undefined ? null : { last_block: at };
             }
             if (cursorReadFails) throw new Error('D1_ERROR: cursor unavailable');
@@ -263,8 +265,8 @@ function env(extra: Record<string, unknown> = {}) {
           return isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null;
         },
         run: async () => {
-          if (isCursorWrite && String(params[1] ?? '') === 'prenotify_scan') {
-            scanOffsets.set(Number(params[0]), Number(params[2]));
+          if (isCursorWrite && String(params[1] ?? '').startsWith('prenotify_')) {
+            scanOffsets.set(`${String(params[1])}:${Number(params[0])}`, Number(params[2]));
           }
           record(params);
           return { meta: { changes: 0 } };
@@ -564,8 +566,10 @@ describe('what counts as a send, and what only looks like one', () => {
       return bothRails(w);
     };
     const { said } = await run();
-    expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
-    expect(said).toContain('18 examined, 8 reminded');
+    // 40 requests less two opening reads and one batch read leaves 37;
+    // nine loans × 2 counterparties × 2 rails = 36.
+    expect(sends.length).toBe(36)
+    expect(said).toContain('19 examined, 9 reminded');
     // #2213 r12 `4013387370`: and the ten unreachable ones are accounted for
     // rather than vanishing between "examined" and "reminded".
     expect(said).toContain('10 with nobody to tell');
@@ -605,12 +609,12 @@ describe('what counts as a send, and what only looks like one', () => {
     const { said } = await run();
     // Nothing went out for the Push-only ten; the fully-routed loans spend
     // the allowance, eight of them fitting inside it.
-    expect(sends.filter((s) => s.startsWith('push:')).length).toBe(16);
-    expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
+    expect(sends.filter((s) => s.startsWith('push:')).length).toBe(18);
+    expect(sends.length).toBe(36); // nine loans × 2 counterparties × 2 rails
     // Eighteen examined, and the ten whose only rail never left are NOT among
     // the reminded. Charging on truthiness gave them the allowance and called
     // them reminded.
-    expect(said).toContain('18 examined, 8 reminded');
+    expect(said).toContain('19 examined, 9 reminded');
   });
 
   it('does not remind about a period the chain has already moved past', async () => {
@@ -646,15 +650,15 @@ describe('what counts as a send, and what only looks like one', () => {
     // Both rails were issued for eight loans, so the allowance is spent and
     // the stamp behaviour is unchanged — nothing here is about who gets told
     // NEXT tick.
-    expect(sends.length).toBe(32);
-    expect(stamped.length).toBe(8);
+    expect(sends.length).toBe(36);
+    expect(stamped.length).toBe(9);
     // ...and the report says plainly that nobody was confirmed reached.
     expect(said).toContain('0 reminded');
-    expect(said).toContain('8 reached nobody');
+    expect(said).toContain('9 reached nobody');
     // TWO rails failed per loan across twelve loans... but only the eight
     // loans the allowance reached were attempted at all: 8 × 2 counterparties
     // × 2 rails.
-    expect(said).toContain('32 rail(s) unconfirmed');
+    expect(said).toContain('36 rail(s) unconfirmed');
   });
 
   it('counts a loan as reminded when EITHER rail is accepted', async () => {
@@ -671,14 +675,14 @@ describe('what counts as a send, and what only looks like one', () => {
     const ids = Array.from({ length: 12 }, (_, k) => 400 - k);
     loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
     const { said, stamped } = await run();
-    expect(sends.length).toBe(32);
-    expect(stamped.length).toBe(8);
-    expect(said).toContain('8 reminded');
+    expect(sends.length).toBe(36);
+    expect(stamped.length).toBe(9);
+    expect(said).toContain('9 reminded');
     expect(said).toContain('0 reached nobody');
     // #2213 r11 `4013218976`: Telegram carried these, and Push failed on every
     // one of them. A run that reported only "8 reminded" would hide a
     // deployment-wide Push outage behind a working second channel.
-    expect(said).toContain('16 rail(s) unconfirmed');
+    expect(said).toContain('18 rail(s) unconfirmed');
   });
 
   it('still stamps when one side has no route and the other opted out', async () => {
@@ -715,16 +719,18 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
   it('reminds only as many as the allowance permits, and takes the nearest', async () => {
     loanRows = tenLoans();
     const { stamped, said } = await run();
-    expect(stamped.length).toBe(8);
-    // The eight nearest deadlines are ids 100…93; 92 and 91 wait.
-    expect([...stamped].sort((a, b) => b - a)).toEqual([100, 99, 98, 97, 96, 95, 94, 93]);
+    expect(stamped.length).toBe(9);
+    // The nine nearest deadlines are ids 100…92; 91 waits.
+    expect([...stamped].sort((a, b) => b - a)).toEqual([
+      100, 99, 98, 97, 96, 95, 94, 93, 92,
+    ]);
     // SAID, with what happens to the rest — a silently dropped reminder is
     // indistinguishable from one that was never due.
     expect(said).toContain('10 loan(s) in the notification window');
-    expect(said).toContain('8 examined, 8 reminded');
+    expect(said).toContain('9 examined, 9 reminded');
     expect(said).toContain('send allowance is down to');
     // 8 loans × 2 counterparties × 2 rails.
-    expect(sends.length).toBe(32);
+    expect(sends.length).toBe(36);
   });
 
   it('matches each answer to the loan it was asked about', async () => {
@@ -756,42 +762,33 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       421614: tenLoans().slice(-5),
     };
     const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
+    // TWO chains pay two openings (2 reads each plus a batch read), so the
+    // shared allowance covers eight loans here where one chain covers nine —
+    // which is the point: the reads come out of the same budget as the sends.
     expect(stamps.length).toBe(8);
     // Both chains were reached — whichever went first, the second got the
     // remainder rather than nothing.
     expect(new Set(stamps.map((s) => s.chainId)).size).toBe(2);
   });
 
-  it('starts at a different chain as the minute changes', async () => {
-    // Without rotation the first chain in the list spends the allowance every
-    // tick and the chains behind it are never reached AT ALL — a permanent
-    // silence rather than a delay. Each chain here has more due loans than
-    // the whole allowance, so whoever goes first takes all of it, and the
-    // starting chain is directly observable.
-    const withMinute = async (minute: number) => {
-      vi.useFakeTimers();
-      // A minute of the chosen parity, close to real now so the loans below
-      // land inside the notification window either way.
-      const m = Math.floor(Date.now() / 60_000);
-      const at = (m - (m % 2) + minute) * 60_000;
-      vi.setSystemTime(at);
-      const nowSec = Math.floor(at / 1000);
-      const rows = Array.from({ length: 10 }, (_, k) =>
-        periodicLoan(100 - k, nowSec - 29 * DAY + k * 3600),
-      );
-      loanRowsByChain = { 84532: rows, 421614: rows };
-      try {
-        const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
-        return new Set(stamps.map((s) => s.chainId));
-      } finally {
-        vi.useRealTimers();
-      }
-    };
-    const even = await withMinute(0);
-    const odd = await withMinute(1);
-    expect(even.size).toBe(1);
-    expect(odd.size).toBe(1);
-    expect([...even][0]).not.toBe([...odd][0]);
+  it('leads with a different chain on each invocation, remembering which', async () => {
+    // #2213 r13 `4013571003`. This rotation was `minute % chains.length` —
+    // the same clock aliasing r12 retired one level down, which I left in
+    // place here without noticing. At a `*/3` schedule with three chains the
+    // minute is always a multiple of three, so one chain leads every tick and
+    // could hold the shared allowance forever. It is remembered now, so this
+    // test manipulates no clock: two consecutive invocations, different
+    // leaders.
+    const rows = Array.from({ length: 10 }, (_, k) =>
+      periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
+    ).reverse();
+    loanRowsByChain = { 84532: rows, 421614: rows };
+    const first = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
+    const second = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
+    const leaderOf = (stamps: { chainId: number }[]) => stamps[0]?.chainId;
+    expect(leaderOf(first.stamps)).toBeDefined();
+    expect(leaderOf(second.stamps)).toBeDefined();
+    expect(leaderOf(first.stamps)).not.toBe(leaderOf(second.stamps));
   });
 
   it('scans PAST loans the chain rejects, in the same tick', async () => {
@@ -881,11 +878,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       return bothRails(w);
     };
     const { stamped } = await run();
-    // 2 + 4×7 = 30 spent, 2 left, and the eighth full-cost loan is refused
-    // rather than begun.
-    expect(sends.length).toBe(30);
-    expect(sends.length).toBeLessThanOrEqual(32);
-    expect(stamped.length).toBe(8);
+    // 37 sendable after the three reads: 2 + 4×8 = 34 spent, 3 left, and the
+    // ninth full-cost loan is refused rather than begun.
+    expect(sends.length).toBe(34);
+    expect(sends.length).toBeLessThanOrEqual(37);
+    expect(stamped.length).toBe(9);
   });
 
   it('RESUMES where it stopped, so a wide window cannot hide its tail', async () => {
@@ -930,13 +927,26 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(second.said).toContain('resumed at 300');
   });
 
+  it('does not claim a remainder when a RESUMED pass finishes the window', async () => {
+    // #2213 r13 `4013571024`. A pass that resumes at 7 in a 10-row window
+    // examines 3 and reaches the end — `examined` is 3, which is less than
+    // the window, but there is nothing left. Testing the count rather than the
+    // cursor announced a remainder the tick had just consumed, telling an
+    // operator the run was partial when it had completed.
+    loanRows = tenLoans();
+    scanOffsets.set('prenotify_scan:84532', 7);
+    const { stamped, said } = await run();
+    expect(stamped.length).toBe(3);
+    expect(said).toBe('');
+  });
+
   it('starts over once it has been round the window', async () => {
     // The position wraps rather than running off the end, so a window that
     // shrinks below the stored offset is not skipped entirely.
-    scanOffsets.set(84532, 5_000);
+    scanOffsets.set('prenotify_scan:84532', 5_000);
     loanRows = tenLoans();
     const { stamped } = await run();
-    expect(stamped.length).toBe(8);
+    expect(stamped.length).toBe(9);
   });
 
   it('keeps what earlier batches did when a later read fails', async () => {
