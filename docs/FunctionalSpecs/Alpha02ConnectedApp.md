@@ -440,6 +440,13 @@ The app uses chain reads and indexed reads for different jobs.
 
   The record is left unmarked when somebody is owed, nobody was reached and
   nothing is uncertain; otherwise it is marked.
+- A subscriber who asked for a channel this deployment cannot currently use
+  is OWED another attempt, not written off. An operator may repair the
+  setting, or the dependency, inside the notification window, and a record
+  marked as handled is never revisited — so marking it is the same "handled
+  while delivering nothing" failure the disclosure above exists to make
+  visible, arriving one step later. It stays unmarked until a usable channel
+  either succeeds or leaves the outcome uncertain.
 - A refusal does not earn another attempt, but it does not block one either.
   So a record where one party is owed an attempt and the other's channel was
   refused comes back, and the refused channel is tried again beside the party

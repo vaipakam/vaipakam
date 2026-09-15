@@ -658,15 +658,29 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * arriving here by the other door. Worst case per pass, with the r28
  * pass-scoped probe already counted:
  *
- * - 1 — the `sqlite_master` probe, once per pass however many close-outs
+ * - 1 — the write side's `sqlite_master` probe, once per pass however many
+ *       close-outs
+ * - 1 — the CALENDAR sweep's own probe. It runs in this same invocation, via
+ *       `_sweepCalendarIfEstablished`, and holds a SEPARATE cache: the two
+ *       lanes read the same fact and take opposite readings of `'unknown'`,
+ *       so they were built as independent probes. The write side's answer
+ *       cannot satisfy the calendar side's cache, so a cold pass pays twice
+ *       (#2213 r30 `4017166962`)
  * - 1 — `releaseTerminalQuarantine`
  * - 2 — the stale report: its count, and the listing when there is one
  * - 1 — the repair's own quarantine writes, when a repair happened
  *
  * The close-out statements themselves are folded into batches that already
  * existed, so they add nothing.
+ *
+ * The second entry is the one r29 missed, and missing it is instructive: r29
+ * counted the probe it had just changed rather than every probe the
+ * invocation makes. One probe per LANE, not one per pass — which is only
+ * visible if you go looking for callers rather than reading the code you
+ * edited. Sharing one answer between the lanes would remove the entry
+ * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 5;
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**
@@ -676,21 +690,31 @@ export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minR
  *
  * The DO invocation's arithmetic, worst case: the scan's own ~38, plus
  * `1 + maxRows * 3` here, plus `QUARANTINE_MAINTENANCE_SUBREQUESTS`. At three
- * rows that is 38 + 10 + 5 = 53, over the 50 this repository targets — and
+ * rows that was 38 + 10 + 5 = 53, over the 50 this repository targets — and
  * going over does not merely drop a repair, it aborts the pass before the
  * scan cursor is recorded, which is the frozen chain this whole PR keeps
- * working to avoid. At two rows it is 38 + 7 + 5 = 50.
+ * working to avoid.
  *
- * FIFTY IS THE CAP, NOT HEADROOM, and this note says so rather than reading
- * as a fit: the scan's 38 is itself approximate, so a pass that grows by one
- * request is over again. The durable answer is an explicit counter for this
- * lane — the agent's lane got one in r27 and this one still reasons in
- * comments — which is a diff of its own and is filed as a follow-up rather
- * than attempted at round 29 of a review loop.
+ * r29 took it to two rows and called that 50 exactly. r30 `4017166962` found
+ * a sixth maintenance request — the calendar lane's own probe, in this same
+ * invocation — so that arithmetic was 51, i.e. already over. ONE ROW:
+ * 38 + 4 + 6 = 48, with two to spare.
+ *
+ * THIS NOW EQUALS THE SHARED-TICK BUDGET, and that is worth saying out loud
+ * rather than leaving for someone to notice. The constant whose name means
+ * "the roomy one" has been squeezed until it is the tight one — the pass has
+ * outgrown the distinction, and the next request added anywhere here has
+ * nowhere left to come from. It is a signal about the lane, not a tuning
+ * choice.
+ *
+ * The durable answer is an explicit counter — the agent's lane got one in
+ * r27 and this one still reasons in comments, which is exactly why r29 could
+ * assert a sum that was wrong by one. Filed as #2221 rather than attempted at
+ * the end of a review loop.
  *
  * The rotation still reaches every row; it takes more turns.
  */
-export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 2, minRows: 1 };
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, minRows: 1 };
 
 /**
  * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.

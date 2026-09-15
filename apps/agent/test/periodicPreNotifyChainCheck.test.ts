@@ -935,10 +935,11 @@ describe('what counts as a send, and what only looks like one', () => {
       const id = known.get(subscriber.toLowerCase());
       return id !== undefined && pushOnly.has(id) ? 'not-requested' : 'accepted';
     };
-    const { said } = await run();
+    const { said, stamped } = await run();
     const costs = [
-      // Push-only and the push never leaves: two lookups, no sends, a stamp.
-      ...Array(4).fill(NO_ROUTE_SUBREQUESTS_PER_LOAN),
+      // Push-only, the push never leaves, and since r30 they are OWED another
+      // tick rather than stamped — so two lookups and nothing else.
+      ...Array(4).fill(OPTED_OUT_SUBREQUESTS_PER_LOAN),
       ...Array(10).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
     ];
     const examined = loansReached(costs);
@@ -950,6 +951,14 @@ describe('what counts as a send, and what only looks like one', () => {
     // The ones whose only rail never left are NOT among the reminded.
     // Charging on truthiness gave them the allowance and called them reminded.
     expect(said).toContain(`${examined} examined, ${reminded} reminded`);
+    // AND THEY ARE NOT STAMPED (#2213 r30 `4017166970`). They used to be,
+    // which wrote off their reminder for good: the subscriber ASKED for a
+    // rail this deployment cannot currently use, and an operator repairing
+    // the secret or the dependency inside the window could then deliver it.
+    // Marking them handled while delivering nothing is the failure the spec
+    // names, and r29's own fix is what exposed it here — reporting the rail
+    // as `not-requested` left them with nothing that said they were owed.
+    for (const id of pushOnly) expect(stamped).not.toContain(id);
   });
 
   it('does not remind about a period the chain has already moved past', async () => {

@@ -1627,11 +1627,24 @@ async function readLoanStates(
  *   position is that we do not know — so an unknown blocks the retry exactly
  *   as a delivery does. This is `4016565763`: a Push of unknown fate beside a
  *   rate-limited Telegram was being called a clean deferral and retried.
- * - **Is anyone OWED another attempt?** Two things earn one, and only two: a
- *   service that said "not now", and a subscriber who has switched the
- *   reminder off and may switch it back on before the deadline. A refusal
- *   does not — it will fail identically until a person acts. No route, and no
- *   subscription at all, do not either.
+ * - **Is anyone OWED another attempt?** Three things earn one: a service that
+ *   said "not now"; a subscriber who has switched the reminder off and may
+ *   switch it back on before the deadline; and a subscriber who ASKED for a
+ *   rail this deployment cannot currently use, which an operator may repair
+ *   inside the window. All three are states that can change and then make
+ *   delivery possible, which is the whole test. A refusal does not qualify —
+ *   it will fail identically until a person acts on that credential, and
+ *   repeating it buys nobody a reminder. Having no rail at all, and having no
+ *   subscription, do not either: nothing about those changes on its own.
+ *
+ *   The third arrived in r30 (`4017166970`) as a consequence of r29's own
+ *   fix. Reporting an unusable Push rail as `not-requested` — correct, it
+ *   issued nothing — left a Push-ONLY subscriber with no delivery, no
+ *   uncertainty, no opt-out and no deferral, so nothing marked them as owed
+ *   and the checkpoint stamped. Repairing the secret or the dependency
+ *   mid-window then could not deliver a reminder that was already written
+ *   off. That is the exact failure the spec names: marking a record as
+ *   handled while delivering nothing.
  *
  * Stamp unless somebody is owed, nobody was reached, and nothing is
  * uncertain.
@@ -1649,7 +1662,8 @@ function stampDecision(
 ): { stamp: boolean; reached: boolean; uncertain: boolean; owed: boolean } {
   const reached = borrower.delivered || lender.delivered;
   const uncertain = borrower.unconfirmedRails > 0 || lender.unconfirmedRails > 0;
-  const owedBy = (o: DeliveryOutcome) => o.optedOut || o.transientRails > 0;
+  const owedBy = (o: DeliveryOutcome) =>
+    o.optedOut || o.transientRails > 0 || o.pushUnconfigured || o.tgUnconfigured;
   const owed = owedBy(borrower) || owedBy(lender);
   return { stamp: !(owed && !reached && !uncertain), reached, uncertain, owed };
 }

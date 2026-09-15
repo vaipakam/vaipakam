@@ -260,6 +260,18 @@ standing. The cause was structural rather than arithmetic: a single word per
 recipient cannot carry two recipients' worth of partial knowledge. The rule
 is stated once now, in terms of what the mark means.
 
+**Someone who asked for a channel the deployment cannot use is owed another
+try, not written off.** This is the tail of the change above and it only
+became visible once that one landed: reporting an unusable channel as "never
+attempted" — which is the truth — left a recipient who has ONLY that channel
+with nothing at all recorded against them, so nothing said they were owed and
+the reminder was marked finished. An operator repairing the setting, or the
+dependency, during the window could then no longer deliver it. Marking a
+record as handled while delivering nothing is the failure the whole
+disclosure above exists to make visible, and it had reappeared one step
+further down. Such a record now stays unmarked until a usable channel either
+succeeds or leaves the outcome uncertain.
+
 A refusal does not earn another attempt and does not block one either, which
 has a price worth naming: a position where one party is owed an attempt and
 the other's channel was refused comes back, and the refused channel is tried

@@ -172,6 +172,23 @@ export async function releaseTerminalQuarantine(
   db: D1Database,
   chainId: number,
 ): Promise<void> {
+  // WHY THIS IS `EXISTS(ended)` AND NOT `NOT EXISTS(still running)` (#2213
+  // r30 `4017166980`, refuted with a caveat — see below and #2222).
+  //
+  // The two look equivalent and differ on exactly one case: a quarantine
+  // entry whose `loans` row is absent. Releasing those would be wrong, and
+  // the sibling test pins it: an ORPHAN — the chain denying a loan the
+  // platform fabricated — may legitimately have no row in D1 either, and it
+  // is the single most important thing this table keeps visible. Nothing
+  // proves it ended, so it stays held and stays in the stale report, which is
+  // where a person needs to see it. A blanket release would delete precisely
+  // the rows the quarantine exists to surface, and do it silently.
+  //
+  // The finding's residual concern is real and is NOT addressed here: once an
+  // operator resolves an orphan by deleting the fabricated row, this entry
+  // has nothing left to match and lingers in the report for good. "Row
+  // absent" cannot distinguish that from the unresolved orphan above, so the
+  // fix needs a way to tell them apart rather than a different predicate.
   await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
