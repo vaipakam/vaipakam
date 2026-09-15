@@ -54,7 +54,12 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
-import { quarantineStatements, reportStaleQuarantine, settledRows } from './loanQuarantine';
+import {
+  quarantineStatements,
+  releaseTerminalQuarantine,
+  reportStaleQuarantine,
+  settledRows,
+} from './loanQuarantine';
 import { createQuarantineAvailability } from '@vaipakam/lib/reminderEligibility';
 import {
   verifyRpcChainIdentity as verifyRpcIdentityShared,
@@ -1090,6 +1095,12 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
   }
   if (reportAvailability !== 'present') return;
   try {
+    // RELEASE BEFORE REPORTING, so the report never names a row that is
+    // already resolvable (#2213 r15 `4013952990`). This is also the durable
+    // cleanup path for a release the close-out could not make: it keys on the
+    // row's own state rather than on remembering what failed, so it runs every
+    // pass until there is nothing to release.
+    await releaseTerminalQuarantine(env.DB, chainId);
     await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
   } catch (err) {
     // The marks are unaffected: this is the read that NAMES long-held rows.
@@ -5471,34 +5482,15 @@ async function _clearClosedLoanSideTables(
   await env.DB.batch(
     _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
   );
-  if (availability !== 'unknown') return;
-  // THE RELEASE STILL HAS TO BE TRIED (#2213 r14 `4013761143`).
+  // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
   //
-  // Omitting it from the batch is right — a statement naming a table that
-  // might not exist fails the whole batch, and that batch is a close-out.
-  // But abandoning it is not: this loan is terminal now, so it leaves the set
-  // the reconciliation rotation selects from, and no later pass ever revisits
-  // it. Its quarantine row would then be held and reported stale forever,
-  // for a loan that ended in the ordinary way — the exact case the release
-  // exists for.
-  //
-  // So it goes out ALONE, where failing costs nothing but a log line. If the
-  // table is there, the row is released; if it genuinely is not, this fails
-  // harmlessly and says so.
-  try {
-    await env.DB.prepare(
-      `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
-    )
-      .bind(chainId, loanId)
-      .run();
-  } catch (err) {
-    console.warn(
-      `[chainIndexer] chain ${chainId} loan ${loanId}: closed out while the ` +
-        `quarantine table's existence was unknown, and the follow-up release ` +
-        `also failed (${String(err).slice(0, 120)}). If that table exists, ` +
-        `this loan's row is now held with no path to release it.`,
-    );
-  }
+  // r14 added one for the `'unknown'` case, and a single attempt in the same
+  // invocation is not a retry path: if it failed too, this loan was terminal
+  // by then and had left the set the reconciliation rotation selects from, so
+  // its row was held and reported stale forever. `releaseTerminalQuarantine`
+  // sweeps every held row whose loan is no longer live, on every pass, so a
+  // release missed for ANY reason is picked up — which covers this case
+  // without a second code path that has to be right.
 }
 
 /// The `*_current_owner` refresh a repair may fold into its own batch, for

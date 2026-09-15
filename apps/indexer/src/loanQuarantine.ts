@@ -144,6 +144,50 @@ export function quarantineStatements(
 }
 
 /**
+ * Release every held row whose loan is no longer live (#2213 r15
+ * `4013952990`).
+ *
+ * THE DURABLE CLEANUP PATH, and the reason the close-out no longer needs one.
+ * A row is released at close-out, in the same batch as the rest of it — except
+ * when the table's existence could not be established, where naming it would
+ * fail that batch. r14 answered that with a single follow-up delete, and a
+ * single retry is not a retry path: if it also failed, the loan was terminal
+ * by then, had left the set the reconciliation rotation selects from, and its
+ * row was held and reported stale forever.
+ *
+ * Sweeping instead of retrying closes the whole class rather than that one
+ * door. A release missed for ANY reason — an unknown probe, a failed
+ * statement, a tick that died between the two — is picked up here on the next
+ * pass, because the condition is a fact about the row rather than a memory of
+ * what went wrong.
+ *
+ * Releasing is right, not merely tidy: the reminder surfaces select live rows,
+ * so a held row for a terminal loan withholds nothing and only clutters the
+ * stale report — burying the rows that DO need a person.
+ *
+ * One statement, static, no interpolation (the #1149 guard reads prepare
+ * sites), and no per-row work regardless of how many rows accumulated.
+ */
+export async function releaseTerminalQuarantine(
+  db: D1Database,
+  chainId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM loan_reconcile_quarantine
+        WHERE chain_id = ?
+          AND EXISTS (
+            SELECT 1 FROM loans l
+             WHERE l.chain_id = loan_reconcile_quarantine.chain_id
+               AND l.loan_id  = loan_reconcile_quarantine.loan_id
+               AND l.status NOT IN ('active', 'fallback_pending')
+          )`,
+    )
+    .bind(chainId)
+    .run();
+}
+
+/**
  * Tell the operator about rows that have been quarantined too long.
  *
  * The quarantine is silent by design in the ordinary case: a read fails, the

@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   QUARANTINE_STALE_SECONDS,
   quarantineStatements,
+  releaseTerminalQuarantine,
   reportStaleQuarantine,
   settledRows,
   unsettledRows,
@@ -126,6 +127,22 @@ describe('what counts as settled — the half that must not over-release', () =>
   });
 });
 
+/** The minimum a `loans` row needs to exist, for the release sweep's join. */
+function seedLoanRow(h: SqliteD1, loanId: number, status: string) {
+  h.db
+    .prepare(
+      `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+         principal, collateral_amount, asset_type, collateral_asset_type,
+         lending_asset, collateral_asset, duration_days, token_id,
+         collateral_token_id, lender_token_id, borrower_token_id,
+         lender_current_owner, borrower_current_owner, interest_rate_bps,
+         start_time, start_block, start_at, updated_at)
+       VALUES (?, ?, 1, ?, '0xl', '0xb', '100', '200', 0, 0, '0xa', '0xc', 30,
+         '0', '0', '1', '2', '0xl', '0xb', 500, ?, 0, 0, ?)`,
+    )
+    .run(CHAIN, loanId, status, NOW, NOW);
+}
+
 describe('the table, over the real migrated schema', () => {
   it('marks a row with its reason and the time it was first seen', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
@@ -153,6 +170,34 @@ describe('the table, over the real migrated schema', () => {
     await apply(h, report({ examined: [13], unread: [13] }), NOW);
     await apply(h, report({ examined: [13], unresolvable: [13] }), NOW + 60);
     expect(quarantined(h)[0]).toMatchObject({ reason: 'orphan', first_seen_at: NOW });
+  });
+
+  it('releases a held row whose loan has since ended, however it ended', async () => {
+    // #2213 r15 `4013952990`. The durable cleanup path. A release missed at
+    // close-out — because the table's existence could not be established, or
+    // because that statement failed — has no second chance from the close-out
+    // side: the loan is terminal, so it has left the set the reconciliation
+    // rotation selects from and no pass revisits it. Sweeping on the row's own
+    // state covers every way the release can be missed, including ways nobody
+    // has thought of.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [13, 14], unread: [13], unresolvable: [14] }));
+    expect(quarantined(h)).toHaveLength(2);
+    seedLoanRow(h, 13, 'repaid');
+    seedLoanRow(h, 14, 'active');
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    // 13 ended, so its row goes; 14 is still live and stays held.
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([14]);
+  });
+
+  it('leaves a held row alone when its loan is not in the table at all', async () => {
+    // The orphan case — the chain denies the loan and D1 may have no row for
+    // it either. There is nothing to prove it ended, so it stays held and
+    // stays in the stale report, which is where a person needs to see it.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }));
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
   });
 
   it('releases the row once a later pass settles it', async () => {

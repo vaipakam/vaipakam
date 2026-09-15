@@ -266,6 +266,18 @@ already been written down once, next to the code that first needed it, and was
 not followed the next time the situation arose a Worker away — so it now lives
 in the shared library both sides use.
 
+**A record can also be released long after the fact, and now is.** The
+ordinary release happens when a loan closes, alongside everything else that
+close-out does. That leaves one gap: if the platform could not establish
+whether the memory exists at that moment, naming it would have failed the
+whole close-out, so the release is skipped — and by then the loan has ended
+and left the set the periodic check draws from, so nothing would ever come
+back for it. The record would sit held, and be reported as stuck, for a loan
+that ended in the ordinary way. A sweep now releases every held record whose
+loan is no longer running, on every pass. It keys on the record's own state
+rather than on remembering what went wrong, so a release missed for any
+reason — including reasons nobody has thought of — is picked up.
+
 **Closing a loan could have stopped a chain being read at all.** The release
 added above goes into the same all-or-nothing group of writes as the rest of
 a close-out, so during the deploy window it would have failed that group,

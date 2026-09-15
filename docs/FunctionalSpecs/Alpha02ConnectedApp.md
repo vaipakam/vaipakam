@@ -286,7 +286,12 @@ The app uses chain reads and indexed reads for different jobs.
   resolved — so neither is flattened away, and the first-noticed time is
   never refreshed by a later sighting of the same problem.
 - A record is released as soon as a turn settles it, by any route: corrected,
-  found genuinely running, or ended by someone else. Holding a record back
+  found genuinely running, or ended by someone else. It is ALSO released by a
+  standing sweep over every held record whose loan is no longer running, so a
+  release missed at close-out — for any reason, including one nobody
+  anticipated — is picked up later rather than leaving the record held for
+  good. A loan that has ended can generate no reminders, so holding its record
+  withholds nothing and only buries the records that do need a person. Holding a record back
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.

@@ -1075,6 +1075,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('98 with nobody to tell');
     // The failure is still stated, and described as THIS batch's.
     expect(said).toContain('status read failed');
+    // #2213 r15 `4013952981`: and the SUMMARY names it as the reason the tick
+    // stopped, rather than the bare "stopping" it used to end on — this is
+    // the line an operator reads during the incident.
+    expect(said).toContain('a status read failed for the batch after these');
+    expect(said).not.toContain('— stopping.');
   });
 
   it('stops scanning at the read cap, and says what it found', async () => {

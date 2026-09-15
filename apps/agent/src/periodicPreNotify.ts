@@ -487,6 +487,11 @@ async function preNotifyChain(
         ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
+    // THE THIRD WAY A TICK STOPS (#2213 r15 `4013952981`). `batchFailed` was
+    // set and never read, so a read failure before either cap produced the
+    // bare "stopping" — on the very summary that exists to report what the
+    // completed batches did, during the incident that makes it matter.
+    const failed = batchFailed ? 'a status read failed for the batch after these' : null;
     const span = start > 0 ? ` (resumed at ${start})` : '';
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
@@ -494,7 +499,7 @@ async function preNotifyChain(
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
         `${failedRails} rail(s) unconfirmed, ` +
         `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
-        `${capped ?? scanned ?? 'stopping'}. ` +
+        `${failed ?? capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and the ` +
         `next tick RESUMES from ${cursor < due.length ? cursor : 0} rather ` +
         `than re-reading this prefix. A tick that reports the read cap with ` +
