@@ -17,6 +17,10 @@
       "types": "./src/cronCadence.ts",
       "default": "./src/cronCadence.ts"
     },
+    "./reminderEligibility": {
+      "types": "./src/reminderEligibility.ts",
+      "default": "./src/reminderEligibility.ts"
+    },
     "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"

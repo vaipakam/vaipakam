@@ -55,6 +55,7 @@ import {
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { quarantineStatements, reportStaleQuarantine } from './loanQuarantine';
+import { createQuarantineAvailability } from '@vaipakam/lib/reminderEligibility';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -1201,6 +1202,10 @@ export async function _runLoanReconcilePass(input: {
           : `records are current through ${readThrough}, short of the head ${head}`,
     };
   }
+  // Asked ONCE per pass, before any repair builds its batch: every repair's
+  // close-out statements are gated on the same answer, so a pass cannot half
+  // include the release (#2213 r2 `4011776381`).
+  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1240,7 +1245,7 @@ export async function _runLoanReconcilePass(input: {
         // intent, and a table added to `_closedLoanSideTableStatements`
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
-          _closedLoanSideTableStatements(env, chainId, loanId),
+          _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the
@@ -5350,38 +5355,79 @@ export function _closedLoanSideTableStatements(
   env: Env,
   chainId: number,
   loanId: number,
+  /**
+   * Whether `loan_reconcile_quarantine` exists on this database.
+   *
+   * REQUIRED, not defaulted (#2213 r2 `4011776381`). These statements go into
+   * a D1 batch, and D1 rejects the WHOLE batch if one names a missing table —
+   * which during the deploy window (#2214) would throw out of
+   * `processLoanLogs` and stop the chain cursor advancing, so the chain would
+   * index nothing until the migration landed. That is far worse than the
+   * defect the quarantine fixes, and it is what my own round-1 fix introduced
+   * by adding an unguarded reference to a shared batch.
+   *
+   * A default of `true` would put the hazard one forgotten argument away; a
+   * default of `false` would silently skip the release. Making it explicit
+   * costs each caller one word and makes neither possible.
+   */
+  quarantineAvailable: boolean,
 ): D1PreparedStatement[] {
-  return [
+  const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
     ).bind(chainId, loanId),
     env.DB.prepare(
       `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
     ).bind(chainId, loanId),
-    // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
-    //
-    // Without this the release could only ever come from the reconciliation
-    // pass's own report — and a loan quarantined after a transient read, whose
-    // ordinary terminal event then arrives before the rotation revisits it,
-    // leaves the live set for good. The pass never selects it again, so no
-    // report can name it, and the mark sits there being reported stale
-    // forever. A mark that cannot be released is the mirror image of the
-    // defect the quarantine fixes.
-    //
-    // Here rather than in the pass because this is the list every close-out
-    // already shares — which is exactly why the list exists.
-    env.DB.prepare(
-      `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
-    ).bind(chainId, loanId),
   ];
+  // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
+  //
+  // Without this the release could only ever come from the reconciliation
+  // pass's own report — and a loan quarantined after a transient read, whose
+  // ordinary terminal event then arrives before the rotation revisits it,
+  // leaves the live set for good. The pass never selects it again, so no
+  // report can name it, and the mark sits there being reported stale forever.
+  // A mark that cannot be released is the mirror image of the defect the
+  // quarantine fixes.
+  //
+  // Here rather than in the pass because this is the list every close-out
+  // already shares — which is exactly why the list exists.
+  //
+  // Omitted entirely when the table is absent, rather than added and allowed
+  // to fail: there is no mark to release on a database that has no memory,
+  // and a batch naming a missing table takes the close-out down with it.
+  if (quarantineAvailable) {
+    statements.push(
+      env.DB.prepare(
+        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(chainId, loanId),
+    );
+  }
+  return statements;
 }
+
+/**
+ * One probe for the WRITE side, matching the one the reminder lanes hold.
+ *
+ * Separate instance rather than a shared module-level cache: each is a cache
+ * of "this database has the table", and they are asked at different moments.
+ * Caching only a TRUE means they converge as soon as the migration lands.
+ */
+const quarantineAvailableForWrites = createQuarantineAvailability();
 
 async function _clearClosedLoanSideTables(
   env: Env,
   chainId: number,
   loanId: number,
 ): Promise<void> {
-  await env.DB.batch(_closedLoanSideTableStatements(env, chainId, loanId));
+  await env.DB.batch(
+    _closedLoanSideTableStatements(
+      env,
+      chainId,
+      loanId,
+      await quarantineAvailableForWrites(env.DB as never),
+    ),
+  );
 }
 
 /// The `*_current_owner` refresh a repair may fold into its own batch, for

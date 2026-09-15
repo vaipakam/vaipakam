@@ -29,8 +29,18 @@ import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
 import { sendMessage } from './telegram';
+import {
+  createQuarantineAvailability,
+  quarantineExclusionSql,
+} from '@vaipakam/lib/reminderEligibility';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
+/**
+ * This Worker's own availability probe (#2213 r2). Its own instance: the
+ * cache is per isolate, and the agent's isolate is not the indexer's.
+ */
+const quarantineAvailable = createQuarantineAvailability();
+
 const SECONDS_PER_DAY = 86_400;
 
 /** Cadence enum value → interval in days. Mirrors
@@ -124,6 +134,17 @@ async function preNotifyChain(
   // (any periodic-cadence active loan with a known last-settle stamp)
   // and filter the cron-window check in TS — keeps the SQL simple
   // while the cadence-specific interval math stays out of D1.
+  // LOANS THE PLATFORM HAS NOT CONFIRMED ARE LEFT OUT (#2213 r2
+  // `4011776403`). `status = 'active'` is stored state, and a loan whose
+  // terminal event was missed for good sits at exactly that — so this lane,
+  // which sends a payment-due Push/Telegram and stamps the checkpoint
+  // permanently, could otherwise tell a holder their payment is due on a loan
+  // the chain says has ended.
+  //
+  // The indexer's calendar sweep already withheld those. This one did not,
+  // and reads the same D1 — so the first fix covered one lane of two. The
+  // rule is shared rather than copied: see `@vaipakam/lib/reminderEligibility`.
+  const quarantineReady = await quarantineAvailable(env.DB as never);
   const rows = await env.DB.prepare(
     `SELECT loan_id, chain_id, lender, borrower,
             periodic_interest_cadence, last_period_settled_at,
@@ -132,7 +153,8 @@ async function preNotifyChain(
      WHERE chain_id = ?
        AND status = 'active'
        AND periodic_interest_cadence > 0
-       AND last_period_settled_at > 0`,
+       AND last_period_settled_at > 0
+       ${quarantineReady ? `AND ${quarantineExclusionSql('loans')}` : ''}`,
   )
     .bind(chain.id)
     .all<LoanRow>();

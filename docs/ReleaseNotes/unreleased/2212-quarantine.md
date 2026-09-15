@@ -67,10 +67,28 @@ redeploy.
 records, so on a chain with more than that the same twenty appeared every time
 and everything behind them stayed silent — while the note said anything held
 that long is reported. It now counts the total and says how many it left out.
-It also no longer asserts that a source "has not recovered": on a chain whose
-check takes longer than the threshold to come round, a record can pass it
-without having been looked at again, so the report gives when it was last
-examined and leaves the conclusion to the evidence.
+It also no longer asserts that a source "has not recovered", nor that
+retrying cannot settle the record: on a chain whose check takes longer than
+the threshold to come round, a record can pass it without having been looked
+at again, and may settle the moment it is. The report gives its age and when
+it was last examined, and leaves the conclusion to the evidence.
+
+### And two the same review caught in the fix itself
+
+**A second reminder lane was still speaking.** Due-date and grace reminders
+are not the only unretractable message the platform sends about a loan: a
+separate lane sends "your interest payment is due" and marks that checkpoint
+as told. It reads the same stored records, in a different part of the system,
+and had no idea about any of this — so a user could still be told a payment
+was due on the very loan every other reminder was being withheld for. Both
+lanes now apply one shared rule rather than two copies of it.
+
+**Closing a loan could have stopped a chain being read at all.** The release
+added above goes into the same all-or-nothing group of writes as the rest of
+a close-out, so during the deploy window it would have failed that group,
+which in turn would have stopped the reader advancing — leaving that chain
+frozen on one block until the database change landed. Everything that touches
+the new memory, read or write, now asks first whether it is there.
 
 ### What this does not change
 

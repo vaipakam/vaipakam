@@ -166,6 +166,10 @@ const SWEEP_LIMIT = 2000;
  *  rediscover is one that will be missed again (#2190 r5). */
 export { DERIVED_LOG_INDEX as CRON_LOG_INDEX } from './notifications';
 import { DERIVED_LOG_INDEX } from './notifications';
+import {
+  createQuarantineAvailability,
+  quarantineExclusionSql,
+} from '@vaipakam/lib/reminderEligibility';
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -291,39 +295,18 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
 /**
  * Has migration 0049 been applied to THIS database yet?
  *
- * The canonical deploy flows (`deploy-chain.sh`, `deploy-testnet.sh`) push the
- * Worker BEFORE applying D1 migrations, so there is a guaranteed window in
- * which this code is live and the quarantine table does not exist — and a
- * migration that then fails leaves that window open indefinitely (#2213 r1
- * `4011674980`). Referencing the table unconditionally makes the whole window
- * query fail in there; the sweep's fail-open catch turns that into EVERY
- * calendar reminder on EVERY chain being suppressed, which is a far larger
- * outage than the one the quarantine prevents.
- *
- * A PROBE, NOT AN ERROR CLASSIFIER. "Does this table exist" has a definite
- * answer, where "was that failure a missing table" is a guess about a message
- * — and this repo has learned twice over that a failure classifier narrowed
- * round after round cannot be sharpened into correctness.
- *
- * Cached only ONCE TRUE: a table does not un-exist, so the probe costs one
- * read per isolate in the normal case. A `false` is never cached, so the
- * sweep starts withholding the moment the migration lands, with no redeploy.
+ * The rule and the probe both live in `@vaipakam/lib` because the calendar
+ * sweep is not the only lane that must respect the quarantine — the agent's
+ * periodic-interest pre-notify sends payment-due messages off the same stored
+ * status, in a different Worker (#2213 r2 `4011776403`). One rule, two
+ * callers; see `reminderEligibility.ts` for why a probe rather than a caught
+ * error, and why only a TRUE is cached.
  */
-let quarantineTableSeen = false;
-async function quarantineTableExists(db: D1Database): Promise<boolean> {
-  if (quarantineTableSeen) return true;
-  const row = await db
-    .prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'loan_reconcile_quarantine'`,
-    )
-    .first<{ name: string }>();
-  if (row) quarantineTableSeen = true;
-  return Boolean(row);
-}
+let quarantineTableExists = createQuarantineAvailability();
 
 /** Test seam: the probe caches across calls, which would leak between cases. */
 export function _resetQuarantineTableProbe(): void {
-  quarantineTableSeen = false;
+  quarantineTableExists = createQuarantineAvailability();
 }
 
 export function calendarWindowSql(graceCase: string, withQuarantine = true): string {
@@ -376,14 +359,7 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
             -- an emitting row behind it in the maturity order, which is the
             -- starvation the ORDER BY and the past-grace leg already exist
             -- to prevent.
-            ${
-              withQuarantine
-                ? `AND NOT EXISTS (
-              SELECT 1 FROM loan_reconcile_quarantine q
-              WHERE q.chain_id = loans.chain_id AND q.loan_id = loans.loan_id
-            )`
-                : ''
-            }
+            ${withQuarantine ? `AND ${quarantineExclusionSql('loans')}` : ''}
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
             AND (${maturity} + ${graceCase}) > ?
