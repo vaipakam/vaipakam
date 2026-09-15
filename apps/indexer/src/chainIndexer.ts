@@ -1342,14 +1342,37 @@ export async function _runLoanReconcilePass(input: {
     // `loan.updated` frame permanently: the corrections would be in D1 and
     // announced to nobody.
     const partial = report ? report.repaired.map((r) => r.loanId) : [];
-    if (partial.length > 0) {
-      console.error(
-        `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
-          `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
-          `broadcast; the rotation pointer may not have advanced`,
-        err,
-      );
-    }
+    // ONE VARIABLE WAS ANSWERING TWO QUESTIONS, and that is the seam this
+    // block kept failing at — rounds 1, 4 and 5 of #2211 are all the same
+    // mistake in different clothes. `partial.length` is about REPAIRS, and
+    // it was being used to decide both what the operator hears and what the
+    // caller is told. Those are independent:
+    //
+    //   - the operator hears about the FAILURE, always. It happened.
+    //   - the caller is told what was ESTABLISHED, which is whatever the
+    //     carried report says, repairs or no repairs.
+    //
+    // Keyed on repairs, a healthy chain whose pointer write keeps failing
+    // produced NOTHING: no repairs, no row anomalies, so the reporter is
+    // silent, and this branch swallowed the error (#2211 r5 `4011464228`).
+    // The rotation re-examines the same one or three rows every tick, later
+    // loans are never reached, and every surface reports health — the exact
+    // silent stall this pass exists to end.
+    console.error(
+      partial.length > 0
+        ? `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
+            `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
+            `broadcast; the rotation pointer may not have advanced`
+        : `[chainIndexer] reconcile chain ${chainId} failed. If this is the ` +
+            `cursor write, the rotation pointer did not advance: the same rows ` +
+            `are re-examined every tick and later loans are never reached. ` +
+            `Every tick = a stalled rotation, not a passing blip`,
+      // THE CAUSE, not the wrapper. `ReconcilePartialError`'s own message
+      // says how many rows it repaired — which the line above already says,
+      // better — while the thing an operator has to act on is what actually
+      // threw underneath it.
+      err instanceof ReconcilePartialError ? err.cause : err,
+    );
     // A CARRIED REPORT MEANS THE ROWS WERE CHECKED, REPAIRS OR NOT (#2211 r4
     // `4011404507`). `ReconcilePartialError` carries the whole report, so a
     // pass that examined only healthy rows and then failed its cursor write
@@ -1365,7 +1388,6 @@ export async function _runLoanReconcilePass(input: {
         unestablishedLoanIds: _unestablishedRows(report),
       };
     }
-    console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
     // No report at all: the pass threw before producing one, so nothing
     // about the live set was established.
     return { established: false, reason: 'the reconciliation pass failed' };

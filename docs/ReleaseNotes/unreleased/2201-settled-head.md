@@ -84,6 +84,14 @@ platform to remember an unsettled record until a later turn settles it, which
 is its own change and is now written down. Nothing here is worse than before —
 previously such a record was never held back at all.
 
+And the failure that turn hit is now always said out loud. Saving a place is
+bookkeeping, and when a turn checked healthy records and then failed only at
+that, there was nothing to report about the records — so nothing was reported
+at all, and the failure went with it. A save that keeps failing leaves the
+rotation examining the same few records every turn and never reaching the
+rest, with every surface reporting health. That is the same silence this whole
+thread is about, reached by the narrowest door yet.
+
 **The operator log would have carried the provider's API key.** The message
 explaining why no settled point could be read quoted what the provider said,
 and providers put the whole request address — key included — inside that text.

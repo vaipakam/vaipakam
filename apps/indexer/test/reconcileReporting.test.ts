@@ -348,7 +348,7 @@ describe('the join, not just the wording', () => {
     // healthy chain. The rows WERE checked against the chain at a settled
     // head; only the bookkeeping after them failed, and a report that
     // travels with the error says exactly which rows those were.
-    const { outcome } = await drive(async () => {
+    const { out, outcome } = await drive(async () => {
       throw new ReconcilePartialError(report({ unread: [13] }), new Error('pointer write failed'));
     });
     expect(outcome.established).toBe(true);
@@ -357,6 +357,24 @@ describe('the join, not just the wording', () => {
       // The one row it could not settle is still withheld from reminders.
       expect(outcome.unestablishedLoanIds).toEqual([13]);
     }
+    // AND IT IS NOT SWALLOWED (#2211 r5 `4011464228`). Establishing the rows
+    // is the caller's answer; the failure is the operator's, and they are
+    // independent. A pointer write that keeps failing stalls the rotation on
+    // the same one or three rows forever, so silence here would report
+    // health while later loans are never reached.
+    expect(out).toContain('failed');
+  });
+
+  it('names a bookkeeping failure that repaired nothing and noticed nothing', async () => {
+    // The quietest possible version, and the one that was swallowed: no
+    // repairs, no row anomalies, so the reporter itself says nothing. If
+    // this branch is silent too, a stalled rotation is invisible.
+    const { out, outcome } = await drive(async () => {
+      throw new ReconcilePartialError(report(), new Error('pointer write failed'));
+    });
+    expect(outcome.established).toBe(true);
+    expect(out).toContain('rotation pointer did not advance');
+    expect(out).toContain('pointer write failed');
   });
 
   it('still reports what it noticed when the failure is NOT a partial one', async () => {
