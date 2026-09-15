@@ -1,6 +1,6 @@
 # Release Notes — 2026-09-14
 
-Seven entries. The first two are the #1566 slice-4 pair, and they belong
+Eight entries. The first two are the #1566 slice-4 pair, and they belong
 together: the first lands the whole custody-holder lifecycle dark — the
 holder itself, its replacement ceremony, the recoveries for value that
 reaches a holder by no protocol path, and the paid-side rebase that chains
@@ -66,6 +66,28 @@ longer reported as a failed write; a screen whose opening timed out now
 says so instead of hiding among the other ways a screen fails to load; and
 the seven rules that each worked out what a name holds now share one
 resolver that answers in three states, including "could not tell".
+
+The seventh entry is the first half of the #1566 closure-2 cutover
+apparatus. On a deployment whose custody is activated, the three kinds of
+reward value the afternoon's switch had deliberately left in the
+platform's own balance — a delivery's unattributed remainder, a
+quarantined compensation, and a return for a receipt older than
+per-receipt attribution (its share within the receipt's remaining
+entitlement; any excess goes to the overage position, as before) — now
+move into the address's unclassified attribution as they land, and so
+does the fresh share a recovery ceremony brings back for such a receipt;
+every reward-budget packet — a delivery, a
+compensation, a stranded return, the fresh share of a recovery-ceremony
+inflow for a receipt that predates attribution — is recorded, on every
+deployment, under the
+identity the transport supplies
+— or, where the transport supplies none, under one the platform's own
+ingress allocates in sequence per source — and a receipt is delivered
+once; and the platform's manual pause becomes the migration mode the
+cutover needs, because the receive ingresses are no longer pause-gated
+while every reward consumer still is. The second half — the reconciliation
+of everything that arrived before packets were stamped, whether before the
+address existed or after it — is still to come.
 
 The last entry is a different kind of correction: not a verdict that read
 wrongly, but records the platform had stopped checking at all. The index
@@ -1203,6 +1225,85 @@ Everything else behaves as it did. The rules that were correct are
 correct in the same cases; they now say why in terms anyone can check.
 <!-- assembled-fragment: 2175-one-name-resolver.md sha256=0acc2afcdd3a5a218241f25918ab5637b2a33ff596a5642ae5dc13d5a1df1728 -->
 
+## #1566 closure 2 — the cutover apparatus, part one: protected at ingress (PR #2198)
+
+The custody design's second closure-2 change — the apparatus that lets a
+deployment already carrying reward value cut over to the dedicated custody
+address — lands in two parts. This is the first, and it is about what
+every packet needs the moment it arrives; the second is the reconciliation
+of what arrived before.
+
+Three kinds of reward value were, by design, still resting in the
+platform's own balance after the custody switch: the part of a delivery
+that could not be attributed to a composition, a compensation quarantined
+for a day the mirror refused, and a return for a receipt older than
+per-receipt attribution — with the fresh share a recovery ceremony brings
+back for such a receipt, which is the same custody and takes the same
+route. On a deployment whose custody is activated, each of these now
+moves into the address's unclassified attribution as it lands — for the
+return, the share within the receipt's remaining entitlement; any excess
+over it goes to the overage position, as an excess always has. That attribution is visible and auditable — it equals its own two
+figures, checked as an invariant — and it is never spendable as reward
+value; its only exit in this change is the return of a quarantined
+compensation, which now draws from the address what the address backs and
+from the platform's own balance only what predates the activation. A
+provisional compensation that is later demoted has its remaining credit
+re-attributed inside the address rather than released back to the
+platform's balance. The platform's backing position, and the reservation
+figure both backing snapshots publish, count only the Diamond-side part of
+the quarantine reservation from now on, so the watcher's exact balance
+relation keeps its meaning without a shape change.
+
+Every reward-budget packet — a budget delivery, a compensation, a stranded
+return, the fresh share of a recovery-ceremony inflow for a receipt that
+predates per-receipt attribution — is now recorded under an identity:
+the message id the transport itself supplies at delivery, or, where the
+transport supplies none, one the platform's own ingress allocates in
+sequence per source. That message id is what the cross-chain adapter now
+passes through to every recipient, which is a change to that shared
+interface, so the adapter and all its recipients are upgraded in the
+same refresh run by the same generation probe the refresh already uses —
+in separate transactions, the recipients first and the adapter after, so
+a delivery that lands between two of them meets a mismatched shape,
+reverts, and is retained by the transport for re-execution once the run
+completes; nothing is lost, and the run's simulate-everything-first
+discipline keeps that window to the broadcast itself — each
+resolved from the live configuration as well as the deployment record,
+the adapter and the buyback receiver live-first, so a missing or stale
+record cannot leave a live contract unprobed. One order is the other way
+round in this change: the remittance receiver's probe takes a stale
+record's distinct proxy before the live one, so a record naming a proxy
+this signer can no longer upgrade aborts the run before the live receiver
+is reached; the second cutover change turns that probe live-first too. A packet delivered twice under one identity is refused
+whole, and so is a second delivery for a receipt that already exists: a
+receipt is delivered once, so every figure kept against a receipt
+describes exactly one delivery. The receipt a delivery creates is bound to
+the identity. This
+record is what the second part will reconcile against, and it is taken on
+every deployment, activated or not. Some value-bearing arrivals are not yet
+recorded this way: a planned-surplus repatriation return, which credits
+recycled custody only; a recovery-ceremony inflow for a receipt that is
+already attributed; and every recycled ceremony inflow. #2204 tracks
+recording them.
+
+The migration mode the design calls for is the platform's own manual
+pause: packets arriving through the transport receive ingresses — a
+delivery, a compensation, a stranded return, a repatriation return — still
+land and are protected while the pause refuses every reward consumer,
+because those ingresses are no longer pause-gated; a recovery ceremony,
+being an administrator's own transaction rather than an arrival, still
+waits for the unpause. The claim-expiry clocks already respect the pause
+boundary, so the paused interval never counts as claimable time; a
+mirror's compensation deadlines do keep running through it — a zeroed or
+short-compensated day that reaches its deadline under the pause can still
+be lapsed, permissionlessly, as before — so a cutover pause is planned
+around those deadlines rather than assumed to stop them; the receivers'
+own guardian pause remains the way to stop packets at the edge. The
+activation ceremony's pre-flight also now mirrors the activation's
+holder-wide check, so an unreadable or under-held holder is refused
+before anything is sent. Refs #1566, #1349, #1956.
+<!-- assembled-fragment: 1566-closure-2-cutover-1.md sha256=a43ebb53086210521ad22b6f49936de11765421e435e12bbb865c8ef5f1a791c -->
+
 ## #2101 — the index checks its own loan statuses against the chain (PR #2190)
 
 The indexer learns that a loan has ended by seeing the event announcing
@@ -1287,10 +1388,12 @@ queue drain first means the correction is the last word rather than the
 first.
 
 How many chains that covers per tick depends on how the service takes in
-data. As currently configured every chain is serviced on every tick, so the
-check reaches all of them. On the fallback arrangement one chain is taken
-per tick in turn, and the wait before a given chain comes round grows with
-the number of chains. The distinction is stated because it decides how long
+data. As currently configured — the durable-object ingest path — every
+chain is serviced together, but only on every fifth one-minute tick, so
+the check reaches all of them once every five minutes. On the fallback
+arrangement one chain is taken per one-minute tick in turn, and the wait
+before a given chain comes round grows with the number of chains. The
+distinction is stated because it decides how long
 a wrong record can survive, which is the figure an operator would actually
 want.
 
@@ -1364,9 +1467,13 @@ read the records as they stand and neither withdraws what it has already
 said, so running afterwards meant a loan that had ended months ago could
 still be sent a "payment due" or "overdue" reminder that nothing would ever
 retract. And a correction now announces itself to anyone watching the
-position, the same way any other change does — without that, the record was
-put right while every open screen kept showing the old one until it happened
-to refresh. That announcement belongs to the current arrangement for reading
+position, the same way any other change does — best-effort, like every
+such announcement: the correction is committed before the announcement is
+sent, so a service interruption in that interval can leave a connected
+screen stale until it polls or is refreshed, with the record already right
+— where without any announcement the record was put right while every open
+screen kept showing the old one until it happened to refresh. That
+announcement belongs to the current arrangement for reading
 the chain, which is the one in use; on the fallback there is no live
 announcement to make and no channel to carry it, so a corrected screen there
 waits for its next refresh. Worth knowing before choosing to fall back. The announcement names the corrected loan, which sounds like a
@@ -1454,9 +1561,16 @@ There IS a route to that same state where the message lands, and it is what
 decides the wording. When a borrower's collateral sale completes, the loan
 finishes without either side claiming — the borrower's position is released
 rather than destroyed, so there is still somebody to tell. That route also
-hands over everything owed as part of the sale, which means the one case
-where this message reaches a reader is precisely the case with nothing left
-to claim. So it says to open the position and see where it stands, rather
+hands over everything owed as part of the sale. It is not the only route
+that leaves a position in place: a lender's one-sided claim that settles a
+defaulted loan whose borrower has nothing to claim leaves that borrower's
+position too, and the same message reaches them. In every route that
+reaches a reader there is meant to be nothing left to claim, and one
+route breaks that today: an intent-originated loan whose repayment left a
+frozen borrower surplus can be settled by the intent roll with that
+surplus still recorded, after which the borrower's claim refuses the
+settled loan — a stranded-funds gap raised as #2209, and until it is
+closed the message can reach a holder who does have something left. So it says to open the position and see where it stands, rather
 than pointing at a claim that by construction does not exist. Every other
 ending keeps its own wording, because those genuinely do leave something to
 collect.
