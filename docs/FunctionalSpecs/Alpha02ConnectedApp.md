@@ -292,12 +292,23 @@ The app uses chain reads and indexed reads for different jobs.
   it is written carelessly.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
-  memory above — and only against a view of the chain that is at least as
+  memory above — and the confirmation covers the PERIOD as well as the loan.
+  A borrower who has just paid leaves the loan open and the platform's own
+  record pointing at the period they settled, so every other condition passes
+  and the reminder would arrive moments after the payment. The chain's own
+  record of when the last period was settled decides it: if the period the
+  reminder is about is not the period the chain is on, nothing is sent and the
+  record is left for a later run, by which time the platform's own records
+  have caught up.
+- Confirmation is only accepted from a view of the chain that is at least as
   current as the platform's own records. A source lagging behind what the
   platform has already read still reports an ended loan as running, so it
   would confirm precisely the reminder the check exists to withhold; a run
   that finds itself in that position sends nothing and says so, rather than
-  accepting an endorsement worth less than no check at all. Every loan in one
+  accepting an endorsement worth less than no check at all. A run that cannot
+  establish how current its source is — because the comparison itself failed —
+  also sends nothing: an unanswered question is not an answer, and treating it
+  as one would turn a momentary database failure into permission to send. Every loan in one
   run is also checked against a single point in the chain's history, so a
   source that serves part of the answer from further back fails outright
   instead of quietly mixing two moments. It is the other message a person cannot un-receive, it is sent
@@ -338,14 +349,28 @@ The app uses chain reads and indexed reads for different jobs.
   bound is not the same as making progress: a record that sends nothing is
   also never marked as handled, so it keeps its place at the front and is
   examined again on every run. If enough such records sit ahead of a record
-  that WOULD send, starting at the front every time hides it for good. So when
-  the window is wider than one run can examine, successive runs begin at
-  successive parts of it, and every record is examined within a few runs —
-  minutes apart, in a window days wide. When the window fits in one run, which
-  is the ordinary case, the nearest deadline is still examined first.
-- A run that stops early says which limit stopped it, which part of the window
-  it examined, and separates what it found: examined, reminded, declined by
-  the chain, and unreadable. Those need different remedies — a run reporting
+  that WOULD send, starting at the front every time hides it for good. So a
+  run REMEMBERS where it stopped and the next one continues from there,
+  wrapping to the front when it reaches the end. Where it resumes is a
+  remembered position rather than anything derived from the time of day —
+  deliberately, because any schedule-derived position can fall into step with
+  another schedule and then never move: the platform's other rotations, or the
+  interval between runs itself. A remembered position advances on the work
+  actually done, which nothing else can align with. When the window fits in
+  one run, which is the ordinary case, the nearest deadline is examined first
+  as before.
+- The remembered position is approximate, and the platform does not pretend
+  otherwise: the list it indexes into changes between runs as records enter
+  the window, are handled, or pass their deadline. It resumes near where it
+  stopped, which is all that forward progress requires.
+- A run that stops early says which limit stopped it, where in the window it
+  resumed, and separates what it found — examined, reminded, reached nobody,
+  had nobody to tell, declined by the chain, and unreadable — so the categories
+  account for every record examined rather than leaving some of them
+  unexplained between two totals. A run interrupted part-way still reports what
+  its completed work did: the records it already messaged about are stamped
+  permanently, so discarding those counts would hide real deliveries behind an
+  error about a later step. Those need different remedies — a run reporting
   many declines is reporting records the platform holds wrongly, not load — so
   they are never flattened into one "deferred" count. "Reminded" means a message the
   delivery service CONFIRMED it accepted — not one the platform tried to send.

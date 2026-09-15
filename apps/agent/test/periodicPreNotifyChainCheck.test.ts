@@ -72,16 +72,39 @@ function bothRails(wallet: string) {
   };
 }
 
-/** What the stubbed chain answers for one loan. `null` = that sub-call failed. */
-let answer: (loanId: number) => { id: bigint; status: number } | null;
+/**
+ * What the stubbed chain answers for one loan. `null` = that sub-call failed.
+ *
+ * The struct carries the PERIOD fields as well as id and status, because the
+ * rule now checks that the checkpoint the lane is about to speak about is the
+ * one the chain is still on (#2213 r12 `4013387394`). `chainSettledAt` lets a
+ * case move the chain's last settlement without touching the stored row —
+ * which is exactly the "they just paid, the indexer has not caught up" shape.
+ */
+let answer: (
+  loanId: number,
+) =>
+  | {
+      id: bigint;
+      status: number;
+      periodicInterestCadence?: number;
+      lastPeriodicInterestSettledAt?: number;
+    }
+  | null;
 /** When set, the whole batched call throws — the RPC being unreachable. */
 let batchError: Error | null = null;
+/** When set, the Nth batched call (1-based) and every later one throws. */
+let failBatchFrom: number | null = null;
 /** How many batched `aggregate3` calls the lane made this run. */
 let batchedReads = 0;
 /** What the stubbed RPC reports as its current head. */
 let headBlock: bigint;
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
+/** Whether reading the indexer cursor FAILS (a different thing from absent). */
+let cursorReadFails: boolean;
+/** The lane's own persisted scan position, surviving across ticks like D1 does. */
+const scanOffsets = new Map<number, number>();
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
 const pinnedAt: (bigint | undefined)[] = [];
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
@@ -137,6 +160,9 @@ vi.mock('viem', async (importOriginal) => {
         }
         if (batchError) throw batchError;
         batchedReads += 1;
+        if (failBatchFrom !== null && batchedReads >= failBatchFrom) {
+          throw new Error('rpc gave out mid-pass');
+        }
         pinnedAt.push(blockNumber);
         const calls = (args?.[0] ?? []) as { callData: `0x${string}` }[];
         return calls.map((c) => {
@@ -162,8 +188,12 @@ vi.mock('viem', async (importOriginal) => {
 const NOW = Math.floor(Date.now() / 1000);
 const DAY = 86_400;
 
+/** The stored `last_period_settled_at` for a loan, so the stub can agree with it. */
+const settledAtOf = new Map<number, number>();
+
 /** One periodic loan, due inside the window, never pre-notified. */
 function periodicLoan(loanId: number, settledAt: number) {
+  settledAtOf.set(loanId, settledAt);
   return {
     loan_id: loanId,
     chain_id: 84532,
@@ -215,16 +245,27 @@ function env(extra: Record<string, unknown> = {}) {
         if (!sql.trim().startsWith('SELECT')) writes.push({ sql, params });
       };
       const isSubscriberLookup = sql.includes('FROM user_thresholds');
-      const isCursorLookup = sql.includes('FROM indexer_cursor');
+      const isIndexerCursor =
+        sql.includes('FROM indexer_cursor') && sql.includes('kind = ?');
+      const isCursorWrite = sql.includes('INSERT INTO indexer_cursor');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
         first: async () => {
-          if (isCursorLookup) {
+          if (isIndexerCursor) {
+            const kind = String(params[1] ?? '');
+            if (kind === 'prenotify_scan') {
+              const at = scanOffsets.get(Number(params[0]));
+              return at === undefined ? null : { last_block: at };
+            }
+            if (cursorReadFails) throw new Error('D1_ERROR: cursor unavailable');
             return indexedBlock === null ? null : { last_block: indexedBlock };
           }
           return isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null;
         },
         run: async () => {
+          if (isCursorWrite && String(params[1] ?? '') === 'prenotify_scan') {
+            scanOffsets.set(Number(params[0]), Number(params[2]));
+          }
           record(params);
           return { meta: { changes: 0 } };
         },
@@ -286,12 +327,22 @@ async function run(extra: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  answer = (id) => ({ id: BigInt(id), status: 0 });
+  // AGREES WITH THE STORED ROW by default: the ordinary case is a chain and an
+  // index that are in step, and every pre-r12 case was written assuming it.
+  answer = (id) => ({
+    id: BigInt(id),
+    status: 0,
+    periodicInterestCadence: 1,
+    lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
+  });
   batchError = null;
+  failBatchFrom = null;
   batchedReads = 0;
   pinnedAt.length = 0;
   headBlock = 1_000n;
   indexedBlock = 900;
+  cursorReadFails = false;
+  scanOffsets.clear();
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
   tgAccepts = true;
@@ -304,7 +355,7 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
   it('does not remind when the chain says the loan has ended', async () => {
     // Status 1 = Repaid. The stored row still says active — that IS the
     // defect this guards, and the reason a stored-status check is not enough.
-    answer = (id) => ({ id: BigInt(id), status: 1 });
+    answer = (id) => ({ id: BigInt(id), status: 1, periodicInterestCadence: 1 });
     const { stamped, said } = await run();
     // Nothing stamped: no delivery happened, so the checkpoint stays open for
     // a later tick if the row turns out to be right after all.
@@ -363,7 +414,7 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // reconciliation reader has rejected the zero struct since #2190; asking
     // the chain in a second place meant carrying the rule there too, and the
     // first version did not.
-    answer = () => ({ id: 0n, status: 0 });
+    answer = () => ({ id: 0n, status: 0, periodicInterestCadence: 1 });
     const { stamped, said } = await run();
     expect(stamped).toEqual([]);
     expect(said).toContain('no such loan');
@@ -374,7 +425,7 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // `settlePeriodicInterest` accepts only `Active` and reverts on anything
     // else, so "your payment is due" here invites an action the contract
     // refuses. Eligibility is the ACTION's precondition, not generic liveness.
-    answer = (id) => ({ id: BigInt(id), status: 4 });
+    answer = (id) => ({ id: BigInt(id), status: 4, periodicInterestCadence: 1 });
     const { stamped, said } = await run();
     expect(stamped).toEqual([]);
     expect(said).toContain('reports status 4');
@@ -384,7 +435,7 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     // An allow-list of open states, not a deny-list of terminal ones: a
     // member appended to the enum must not silently become "still running"
     // in a lane that messages users about running loans.
-    answer = (id) => ({ id: BigInt(id), status: 99 });
+    answer = (id) => ({ id: BigInt(id), status: 99, periodicInterestCadence: 1 });
     const { said } = await run();
     expect(said).toContain('reports status 99');
   });
@@ -415,6 +466,19 @@ describe('a head that cannot confirm anything', () => {
     const { stamped } = await run();
     expect(stamped).toEqual([7]);
     expect(pinnedAt).toEqual([1_000n]);
+  });
+
+  it('sends nothing when the cursor cannot be READ, which is not the same as absent', async () => {
+    // #2213 r12 `4013387361`. A transient D1 failure used to look exactly like
+    // "no cursor exists" and waved the pass through — so a database hiccup
+    // became permission to send on precisely the stale head the comparison
+    // exists to catch. An unanswered question is not an answer.
+    cursorReadFails = true;
+    headBlock = 800n; // and the head IS behind, so the guard matters here
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(batchedReads).toBe(0);
+    expect(said).toContain('could not read the indexer cursor');
   });
 
   it('proceeds when the platform has no cursor for this chain at all', async () => {
@@ -502,6 +566,9 @@ describe('what counts as a send, and what only looks like one', () => {
     const { said } = await run();
     expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
     expect(said).toContain('18 examined, 8 reminded');
+    // #2213 r12 `4013387370`: and the ten unreachable ones are accounted for
+    // rather than vanishing between "examined" and "reminded".
+    expect(said).toContain('10 with nobody to tell');
   });
 
   it('does not charge — or count — a Push that never left', async () => {
@@ -544,6 +611,25 @@ describe('what counts as a send, and what only looks like one', () => {
     // the reminded. Charging on truthiness gave them the allowance and called
     // them reminded.
     expect(said).toContain('18 examined, 8 reminded');
+  });
+
+  it('does not remind about a period the chain has already moved past', async () => {
+    // #2213 r12 `4013387394`. The loan is legitimately ACTIVE and the stored
+    // row is legitimately in the window — the borrower simply paid, and the
+    // indexer has not caught up. Every earlier condition passes, and the
+    // reminder would land moments after the payment. The chain's own
+    // `lastPeriodicInterestSettledAt` was already in the answer being read.
+    answer = (id) => ({
+      id: BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      // One period further on than the stored row believes.
+      lastPeriodicInterestSettledAt: (settledAtOf.get(id) ?? 0) + 30 * DAY,
+    });
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(said).toContain('not the one the chain is on');
   });
 
   it('does not call a rejected delivery a reminder', async () => {
@@ -648,7 +734,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // read the wrong slot would withhold the wrong borrower's reminder —
     // and, worse, send the one it was supposed to withhold.
     loanRows = tenLoans().slice(-5); // ids 96…100 — the five nearest deadlines
-    answer = (id) => ({ id: BigInt(id), status: id === 98 ? 1 : 0 });
+    answer = (id) => ({
+      id: BigInt(id),
+      status: id === 98 ? 1 : 0,
+      periodicInterestCadence: 1,
+      lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
+    });
     const { stamped, said } = await run();
     expect([...stamped].sort((a, b) => b - a)).toEqual([100, 99, 97, 96]);
     expect(said).toContain('loan=98');
@@ -714,7 +805,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // The nearest eight are orphans: the chain has no such loan. The two
     // behind them are healthy and inside their own window.
     const orphans = new Set([100, 99, 98, 97, 96, 95, 94, 93]);
-    answer = (id) => ({ id: orphans.has(id) ? 0n : BigInt(id), status: 0 });
+    answer = (id) => ({
+      id: orphans.has(id) ? 0n : BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
+    });
     const { stamped, said } = await run();
     expect([...stamped].sort((a, b) => b - a)).toEqual([92, 91]);
     expect(said).toContain('no such loan');
@@ -792,20 +888,21 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped.length).toBe(8);
   });
 
-  it('rotates the scan start so a wide window cannot hide its tail', async () => {
-    // #2213 r8 `4012811563`. Counting the allowance in sends stopped a
-    // non-sending candidate from SPENDING it; it did not stop one from being
-    // examined again every tick. A candidate that is deliberately never
-    // stamped stays exactly where it was in the deadline order, so 300
-    // opted-out loans at the head hid candidate 301 on every tick — for good,
-    // because the scan restarted at zero each time.
+  it('RESUMES where it stopped, so a wide window cannot hide its tail', async () => {
+    // #2213 r8 `4012464544` found the starvation; r12 `4013387382` found that
+    // the clock-derived rotation which fixed it aliased with the chain
+    // rotation — a chain scanned every third tick sees the minute advance in
+    // threes, so `minute % spans` can be constant on every opportunity it
+    // gets. The position is stored now and advances on its own progress, so
+    // this test manipulates no clock at all: that is the property being
+    // bought.
     const N = 350;
     const ids = Array.from({ length: N }, (_, k) => 1000 - k); // nearest first
     loanRows = ids
       .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
       .reverse();
-    // Everyone is subscribed; the first 300 have opted out, so they send
-    // nothing, are never stamped, and never leave the front of the order.
+    // The first 300 have opted out: they send nothing, are never stamped, and
+    // never leave the front of the deadline order.
     const optedOut = new Set(ids.slice(0, 300));
     const known = new Map<string, number>();
     loanRows = loanRows.map((r) => {
@@ -823,19 +920,69 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       return optedOut.has(id) ? { ...row, notify_maturity_approaching: 0 } : row;
     };
 
-    // Two spans (350 candidates, 300 per tick), so the start alternates with
-    // the minute. Drive both and require the tail to be reached on one of
-    // them — the point is that SOME tick reaches it, not which.
-    const a = await atMinute(0);
-    const b = await atMinute(1);
-    const reached = [...a.stamped, ...b.stamped];
-    // The 50 loans past the first 300 are subscribed and opted in, so reaching
-    // them means reminding them. Before this fix, neither tick saw any.
-    expect(reached.length).toBeGreaterThan(0);
-    expect(reached.every((id) => !optedOut.has(id))).toBe(true);
-    // And the operator is told which span was scanned, not just that
-    // something was left over.
-    expect(`${a.said}\n${b.said}`).toContain('scanning span');
+    const first = await run();
+    expect(first.stamped).toEqual([]); // the whole first pass is opted-out
+    expect(first.said).toContain('300 examined');
+    const second = await run();
+    // The tail is reached on the very next tick, with no clock involved.
+    expect(second.stamped.length).toBeGreaterThan(0);
+    expect(second.stamped.every((id) => !optedOut.has(id))).toBe(true);
+    expect(second.said).toContain('resumed at 300');
+  });
+
+  it('starts over once it has been round the window', async () => {
+    // The position wraps rather than running off the end, so a window that
+    // shrinks below the stored offset is not skipped entirely.
+    scanOffsets.set(84532, 5_000);
+    loanRows = tenLoans();
+    const { stamped } = await run();
+    expect(stamped.length).toBe(8);
+  });
+
+  it('keeps what earlier batches did when a later read fails', async () => {
+    // #2213 r12 `4013387389`. The first batch may already have sent messages
+    // and stamped checkpoints permanently. Returning on the second batch's
+    // failure discarded those counters and skipped the summary, so an RPC
+    // incident showed an operator only "not pre-notifying this tick" — while
+    // deliveries and failed rails from the completed batch went unreported.
+    failBatchFrom = 2;
+    const ids = Array.from({ length: 150 }, (_, k) => 2000 - k);
+    const known = new Map<string, number>();
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse()
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    // Only two of the first hundred are reachable, so the first batch does
+    // real work WITHOUT exhausting the allowance — which is what lets the scan
+    // reach a second batch at all.
+    const reachable = new Set([2000, 1999]);
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      if (reachable.has(id)) return bothRails(w);
+      return {
+        wallet: w,
+        push_channel: null,
+        tg_chat_id: null,
+        locale: 'en',
+        notify_maturity_approaching: 1,
+      };
+    };
+    const { stamped, said } = await run();
+    // The completed batch's work survives: a hundred loans handled, two of
+    // them actually messaged.
+    expect(stamped.length).toBe(100);
+    expect(said).toContain('100 examined, 2 reminded');
+    expect(said).toContain('98 with nobody to tell');
+    // The failure is still stated, and described as THIS batch's.
+    expect(said).toContain('status read failed');
   });
 
   it('stops scanning at the read cap, and says what it found', async () => {

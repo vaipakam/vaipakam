@@ -29,7 +29,12 @@ import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
 import { sendMessage } from './telegram';
-import { isPeriodicInterestEligible } from '@vaipakam/lib/reminderEligibility';
+import {
+  periodicIntervalDays,
+  periodicInterestEligibility,
+  type PeriodicEligibility,
+  type PeriodicLoanState,
+} from '@vaipakam/lib/reminderEligibility';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 
@@ -102,29 +107,6 @@ const MAX_SENDS_PER_LOAN = 4;
  */
 const EXAMINE_BATCH = 100;
 const MAX_EXAMINE_BATCHES = 3;
-
-/**
- * How much of the window one tick can examine, and therefore the step the scan
- * start rotates by when the window is wider than that (#2213 r8 `4012811563`).
- */
-const SCAN_SPAN = EXAMINE_BATCH * MAX_EXAMINE_BATCHES;
-
-/** Cadence enum value → interval in days. Mirrors
- *  `LibVaipakam.intervalDays`. */
-function intervalDays(cadence: number): number {
-  switch (cadence) {
-    case 1:
-      return 30;
-    case 2:
-      return 90;
-    case 3:
-      return 180;
-    case 4:
-      return 365;
-    default:
-      return 0;
-  }
-}
 
 // `getPreNotifyDays` moved to NumeraireConfigFacet in the #394 ConfigFacet
 // split (Codex #647 round-3) — it's no longer in ConfigFacet's ABI, so
@@ -306,6 +288,15 @@ async function preNotifyChain(
     return;
   }
   const indexed = await indexedThrough(env, chain.id);
+  if (indexed === 'unknown') {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not read the indexer ` +
+        `cursor, so whether this head is current cannot be established — no ` +
+        `reminder is sent this tick. Nothing is stamped; the next tick asks ` +
+        `again.`,
+    );
+    return;
+  }
   if (indexed !== null && head < indexed) {
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: the RPC head ${head} is behind ` +
@@ -330,46 +321,45 @@ async function preNotifyChain(
   //
   // So the read pass now SCANS PAST rejected candidates, in batches, and only
   // the sends draw on the allowance.
-  // AND THE SCAN DOES NOT ALWAYS START AT THE HEAD (#2213 r8 `4012811563`).
-  // Counting the allowance in sends stopped a non-sending candidate from
-  // spending it; it did not stop one from being examined again on every tick.
-  // A candidate that is deliberately never stamped — an opted-out pair, a row
-  // the chain rejects — stays exactly where it was in the deadline order, so a
-  // window whose first three hundred are all of that kind hides candidate 301
-  // for good. Round 6 wrote that residue down and called it an operator
-  // problem; opted-out counterparties made it an ordinary one, and the spec
-  // now promises it cannot happen.
+  // AND THE SCAN RESUMES WHERE IT STOPPED — from STORED state, not from the
+  // clock (#2213 r12 `4013387382`).
   //
-  // The fix is stateless on purpose. A persisted cursor would need a table,
-  // and therefore a migration, and therefore the deploy window #2214 is about
-  // — real cost for a case that a rotation answers exactly: when the window is
-  // wider than one tick can scan, successive ticks start at successive spans,
-  // so every candidate is examined within `spans` ticks. Minutes apart, in a
-  // window days wide.
+  // Round 8 started successive ticks at successive spans, keyed on the minute.
+  // That was a clock-derived index, and a clock-derived index aliases with any
+  // periodic opportunity: first with the cron period (r8 follow-up pinned the
+  // schedule to keep the step coprime), and then — the finding that retired the
+  // approach — with the CHAIN rotation. A chain that only gets a turn every
+  // `chains.length` ticks sees the minute advance in steps of that size, so
+  // with three chains and three spans `minute % spans` is CONSTANT on every
+  // opportunity it ever gets, and two thirds of its window is never examined.
+  // Patching the arithmetic again would only move the collision, because the
+  // defect is the input: a clock cannot know which ticks this chain was
+  // actually scanned on.
   //
-  // It engages ONLY when it has to. With 300 or fewer candidates there is one
-  // span, the offset is zero, and the nearest deadline is examined first on
-  // every tick exactly as before — so the common case keeps the ordering that
-  // makes the send cap fair, and only the overloaded case trades a tick of
-  // latency for not starving anyone.
+  // So the position advances on its own PROGRESS. Nothing can alias with it,
+  // there is no coprimality to preserve, and the cron schedule becomes
+  // irrelevant to coverage — which is why this change also deletes the test
+  // that pinned that schedule.
   //
-  // THE DRIVER'S STEP MUST BE COPRIME WITH `spans`, and it is because this
-  // Worker's cron fires every minute — a step of 1, coprime with everything.
-  // At a five-minute schedule the minute is always a multiple of five, so a
-  // window of 1,201–1,500 candidates (`spans` = 5) would scan span 0 forever
-  // and starve the rest: this fix, undone by an edit to a different file.
-  // `apps/agent/test/cronPeriodPinsScanRotation.test.ts` asserts the schedule
-  // rather than leaving that to this comment.
-  const spans = Math.ceil(due.length / SCAN_SPAN);
-  const start = spans > 1 ? (Math.floor(now / 60) % spans) * SCAN_SPAN : 0;
+  // WHAT IS APPROXIMATE, stated rather than implied: the stored value is an
+  // index into a list that changes between ticks as loans enter the window,
+  // are stamped, or pass their deadline. So this resumes NEAR where it
+  // stopped, not exactly. That is enough for the property being bought —
+  // forward progress independent of any clock — and an exact resumption would
+  // need a key that survives reordering, which a deadline-ordered list does
+  // not have.
+  const storedOffset = await scanOffset(env, chain.id);
+  const start = storedOffset < due.length ? storedOffset : 0;
 
   let cursor = start;
   let reminded = 0;
   let unreached = 0;
+  let noRoute = 0;
   let failedRails = 0;
   let rejected = 0;
   let unreadable = 0;
   let batches = 0;
+  let batchFailed = false;
   while (
     cursor < due.length &&
     budget.remaining >= MAX_SENDS_PER_LOAN &&
@@ -386,16 +376,32 @@ async function preNotifyChain(
     // single call whose per-sub-call failures are reported individually rather
     // than poisoning the whole of it.
     const states = await readLoanStates(client, chain, batch.map((c) => c.row.loan_id), head);
-    if (states === null) return; // the batch itself failed; said so, nothing stamped
+    if (states === null) {
+      // STOP, DO NOT RETURN (#2213 r12 `4013387389`). Earlier batches in this
+      // same pass may already have sent messages and stamped checkpoints;
+      // returning here threw away their counters and skipped the summary, so
+      // the only thing an operator saw during an RPC incident was "not
+      // pre-notifying this tick" — while deliveries and failed rails from the
+      // completed batches went unreported. Breaking keeps them, and the
+      // summary below describes only THIS batch as unreadable.
+      batchFailed = true;
+      break;
+    }
 
     const outcome = await messageBatch(env, chain, batch, states, budget, now);
     reminded += outcome.reminded;
     unreached += outcome.unreached;
+    noRoute += outcome.noRoute;
     failedRails += outcome.failedRails;
     rejected += outcome.rejected;
     unreadable += outcome.unreadable;
     cursor += outcome.consumed;
   }
+
+  // WHERE THE NEXT TICK PICKS UP. Written even when nothing was examined, so
+  // a pass that stopped for want of allowance does not re-read the same
+  // prefix next time.
+  await saveScanOffset(env, chain.id, cursor < due.length ? cursor : 0);
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   const examined = cursor - start;
@@ -405,18 +411,18 @@ async function preNotifyChain(
         ? `the invocation's send allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
-    const span =
-      spans > 1 ? ` (scanning span ${start / SCAN_SPAN + 1} of ${spans}, from ${start})` : '';
+    const span = start > 0 ? ` (resumed at ${start})` : '';
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
-        `${unreached} reached nobody, ${failedRails} rail(s) unconfirmed, ` +
+        `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
+        `${failedRails} rail(s) unconfirmed, ` +
         `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
         `${capped ?? scanned ?? 'stopping'}. ` +
-        `The remainder is not dropped: nothing is stamped for it, and a later ` +
-        `tick reaches it — the next spans in turn when there is more than one. ` +
-        `A tick that reports the read cap with hundreds rejected is reporting ` +
-        `orphaned rows, not load.`,
+        `The remainder is not dropped: nothing is stamped for it, and the ` +
+        `next tick RESUMES from ${cursor < due.length ? cursor : 0} rather ` +
+        `than re-reading this prefix. A tick that reports the read cap with ` +
+        `hundreds rejected is reporting orphaned rows, not load.`,
     );
   }
 }
@@ -445,12 +451,14 @@ async function messageBatch(
   consumed: number;
   reminded: number;
   unreached: number;
+  noRoute: number;
   failedRails: number;
   rejected: number;
   unreadable: number;
 }> {
   let reminded = 0;
   let unreached = 0;
+  let noRoute = 0;
   let failedRails = 0;
   let rejected = 0;
   let unreadable = 0;
@@ -458,7 +466,7 @@ async function messageBatch(
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
-      return { consumed: i, reminded, unreached, failedRails, rejected, unreadable };
+      return { consumed: i, reminded, unreached, noRoute, failedRails, rejected, unreadable };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
@@ -510,7 +518,8 @@ async function messageBatch(
       unreadable += 1;
       continue;
     }
-    if (!isPeriodicInterestEligible(detail)) {
+    const verdict = periodicInterestEligibility(detail, nextCheckpoint);
+    if (verdict !== 'ok') {
       // WHAT THE CHAIN SAID, AND NOTHING ABOUT WHAT HAPPENS NEXT (#2213 r4
       // `4012114114`). An earlier version promised the reconciliation pass
       // would correct the stored row. For a terminal status it will; for a
@@ -518,15 +527,10 @@ async function messageBatch(
       // refuses to project an unknown member and only reports it. Promising a
       // correction that cannot happen sends an operator away from a row that
       // needs them.
-      const zeroStruct = Number(detail.id) === 0;
       console.warn(
-        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} is stored as ` +
-          `active but the chain ${
-            zeroStruct
-              ? 'has no such loan (zero struct)'
-              : `reports status ${Number(detail.status)}`
-          } — no reminder sent. The stored row disagrees with the chain; ` +
-          `whether anything corrects it depends on which case this is.`,
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: ` +
+          `${describeVerdict(verdict, detail, nextCheckpoint)} — no reminder ` +
+          `sent. Nothing is stamped, so a later tick reconsiders.`,
       );
       rejected += 1;
       continue;
@@ -564,6 +568,13 @@ async function messageBatch(
       reminded += 1;
     } else if (borrowerOutcome.attempted || lenderOutcome.attempted) {
       unreached += 1;
+    } else {
+      // NOTHING WAS EVEN TRIED for this loan: both sides are unreachable, or
+      // have no subscription at all. It is still EXAMINED, so leaving it out
+      // of every category made the summary's numbers fail to add up — ten
+      // loans could vanish between "18 examined" and "8 reminded" with
+      // nothing saying where they went (#2213 r12 `4013387370`).
+      noRoute += 1;
     }
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
 
@@ -595,12 +606,73 @@ async function messageBatch(
       .bind(nextCheckpoint, now, chain.id, row.loan_id)
       .run();
   }
-  return { consumed: batch.length, reminded, unreached, failedRails, rejected, unreadable };
+  return {
+    consumed: batch.length,
+    reminded,
+    unreached,
+    noRoute,
+    failedRails,
+    rejected,
+    unreadable,
+  };
+}
+
+/** The `indexer_cursor` row the indexer advances for its own chain scan. */
+const INDEXER_SCAN_KIND = 'diamond';
+
+/**
+ * The `indexer_cursor` row THIS lane advances for its own window scan.
+ *
+ * A separate `kind` in the existing table rather than a new table, so this
+ * needs no migration and therefore does not walk into the deploy-window
+ * hazard #2214 describes — which was the reason round 8 reached for a
+ * clock-derived rotation in the first place. `last_block` carries a position
+ * in the candidate list rather than a block; the indexer already repurposes
+ * the column this way for its market sweep, so the shape is the established
+ * one here rather than an invention.
+ */
+const PRENOTIFY_SCAN_KIND = 'prenotify_scan';
+
+/** Where this chain's scan stopped last tick. Absent or unreadable → start over. */
+async function scanOffset(env: Env, chainId: number): Promise<number> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+    )
+      .bind(chainId, PRENOTIFY_SCAN_KIND)
+      .first<{ last_block: number }>();
+    const at = row ? Number(row.last_block) : 0;
+    return Number.isFinite(at) && at > 0 ? at : 0;
+  } catch {
+    // Unlike the INDEXER cursor, a failure here is safe to absorb: it costs a
+    // repeat of one prefix, never a wrong message. Nothing is decided on this
+    // value except where to start looking.
+    return 0;
+  }
+}
+
+/** Remember where to resume. Best effort for the same reason. */
+async function saveScanOffset(env: Env, chainId: number, at: number): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(chainId, PRENOTIFY_SCAN_KIND, at, Math.floor(Date.now() / 1000))
+      .run();
+  } catch {
+    // A lost write means the next tick re-reads a prefix it has already seen.
+    // Wasteful, not wrong.
+  }
 }
 
 /**
- * The block the indexer has scanned this chain through, or `null` if it has
- * not recorded one.
+ * The block the indexer has scanned this chain through: a number, `null` when
+ * it has never recorded one, or `'unknown'` when the question could not be
+ * asked.
  *
  * Read from the shared database rather than asked of the indexer: the two
  * Workers already read the same D1, and a cross-Worker call would reintroduce
@@ -608,20 +680,61 @@ async function messageBatch(
  *
  * `null` is not an error. A chain the indexer has never scanned has no cursor
  * to be behind, and blocking on its absence would silence the lane on a fresh
- * deployment for a comparison that could not have said anything. A failed READ
- * is treated the same way and for the same reason — the question failing is
- * not evidence about the head.
+ * deployment for a comparison that could not have said anything.
+ *
+ * `'unknown'` IS a reason to stop, and keeping the two apart is the whole
+ * shape of this function. They were one value until #2213 r12.
  */
-async function indexedThrough(env: Env, chainId: number): Promise<bigint | null> {
+async function indexedThrough(env: Env, chainId: number): Promise<bigint | null | 'unknown'> {
   try {
     const row = await env.DB.prepare(
-      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`,
+      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
     )
-      .bind(chainId)
+      .bind(chainId, INDEXER_SCAN_KIND)
       .first<{ last_block: number }>();
     return row ? BigInt(row.last_block) : null;
   } catch {
-    return null;
+    // NOT `null`, and the difference is the whole point (#2213 r12
+    // `4013387361`). `null` means "there is no cursor, so there is nothing to
+    // be behind" and lets the pass continue; collapsing a FAILED READ into it
+    // would turn a database hiccup into permission to send on exactly the
+    // stale head the comparison exists to catch. An unanswered question is
+    // not an answer.
+    return 'unknown';
+  }
+}
+
+/**
+ * The operator-facing sentence for a verdict.
+ *
+ * English lives here rather than in the shared rule so the rule stays a rule;
+ * what each case needs said differs by lane, and a lane messaging about a
+ * different contract call would word these differently for the same verdict.
+ */
+function describeVerdict(
+  verdict: Exclude<PeriodicEligibility, 'ok'>,
+  detail: LoanState,
+  expected: number,
+): string {
+  switch (verdict) {
+    case 'no-such-loan':
+      return 'stored as active but the chain has no such loan (zero struct)';
+    case 'ended':
+      return `stored as active but the chain reports status ${Number(detail.status)}`;
+    case 'no-cadence':
+      return (
+        `stored with a periodic cadence but the chain reports cadence ` +
+        `${Number(detail.periodicInterestCadence)}, which this build cannot ` +
+        `turn into a payment date`
+      );
+    case 'checkpoint-advanced':
+      return (
+        `the stored row still points at the checkpoint ${expected}, and the ` +
+        `chain settled its last period at ` +
+        `${Number(detail.lastPeriodicInterestSettledAt)} — the period this ` +
+        `reminder is about is not the one the chain is on, most likely a ` +
+        `payment the indexer has not caught up with`
+      );
   }
 }
 
@@ -653,7 +766,7 @@ interface DueLoan {
 function candidatesInWindow(rows: LoanRow[], now: number, windowSec: number): DueLoan[] {
   const due: DueLoan[] = [];
   for (const row of rows) {
-    const ivlDays = intervalDays(row.periodic_interest_cadence);
+    const ivlDays = periodicIntervalDays(row.periodic_interest_cadence);
     if (ivlDays === 0) continue;
     const nextCheckpoint = row.last_period_settled_at + ivlDays * SECONDS_PER_DAY;
     const secsUntil = nextCheckpoint - now;
@@ -669,8 +782,16 @@ function candidatesInWindow(rows: LoanRow[], now: number, windowSec: number): Du
   return due;
 }
 
-/** What the chain says about each loan, positionally. `null` where it did not say. */
-type LoanState = { id: bigint | number; status: number };
+/**
+ * What the chain says about each loan, positionally. `null` where it did not
+ * say.
+ *
+ * The whole struct is decoded, and the rule reads four fields of it — the
+ * period checkpoint among them, which is why r12's finding was answerable
+ * without a second call: the answer was already in hand and simply not looked
+ * at.
+ */
+type LoanState = PeriodicLoanState;
 
 /**
  * Read every candidate's state in ONE call.

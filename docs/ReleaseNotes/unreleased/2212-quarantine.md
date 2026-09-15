@@ -126,6 +126,17 @@ chain each time. A loan the cap defers is one place nearer the front on the
 next run, and gets there well before its own deadline; without that order the
 same records would be reached every time and the ones behind them never.
 
+A run also **remembers where it stopped**, and the next one continues from
+there. An earlier attempt derived that position from the clock instead, and it
+worked until it met the platform's other rotation: a network that only gets a
+turn every third run sees the clock advance in threes, so the position it
+computes can be the same one every time it is actually asked, and two thirds
+of its window would never be examined. Any schedule-derived position can fall
+into step with some other schedule; a remembered one advances on the work
+actually done, which nothing can align with. It is approximate — the list it
+indexes into changes between runs — and that is stated rather than implied,
+because near enough is all that forward progress needs.
+
 **The first version of that cap had the fairness defect it was meant to
 prevent, and review found it twice before the right fix landed.** It counted
 *records*, when what the limit protects is *messages sent*. Anything that
@@ -194,6 +205,16 @@ failed is both a reminder and a broken channel; counting only the first would
 have hidden an outage of one channel for as long as the other kept working —
 which is the outage hardest to notice and the one worth reporting most.
 
+**A loan can be open and still have nothing due.** The reminder is about a
+particular payment period, and a borrower who has just paid leaves the loan
+open with the platform's own record still pointing at the period they settled.
+Every other condition passes, and the reminder would have arrived moments
+after the payment. The chain's own record of when the last period was settled
+now decides it: if the period the reminder is about is not the period the
+chain is on, nothing is sent and the record waits for a later run, by which
+time the platform's records have caught up. That answer was already in the
+reply the platform was reading — it simply was not being looked at.
+
 **And a check is only as good as what it checks against.** The chain is
 consulted through whichever source the platform is configured to use, and a
 source can lag behind what the platform has already recorded. Asked about a
@@ -201,7 +222,9 @@ loan that ended after the point that source has reached, it answers that the
 loan is still running — confirming the exact reminder the check exists to
 withhold, which is worse than not checking at all. A run now compares the
 source's position against the platform's own and sends nothing when the source
-is behind, saying so. Every loan in a run is also read at a single point in
+is behind, saying so — and also sends nothing when that comparison cannot be
+made at all, because an unanswered question is not an answer and treating it
+as one would turn a momentary database failure into permission to send. Every loan in a run is also read at a single point in
 the chain's history, so a source that serves part of the answer from further
 back fails outright rather than quietly mixing two moments.
 

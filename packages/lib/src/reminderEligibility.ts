@@ -128,38 +128,90 @@ export function createQuarantineAvailability(): (db: QuarantineProbeDb) => Promi
   };
 }
 
+/** Cadence enum value → interval in days. Mirrors `LibVaipakam.intervalDays`. */
+export function periodicIntervalDays(cadence: number): number {
+  switch (cadence) {
+    case 1:
+      return 30;
+    case 2:
+      return 90;
+    case 3:
+      return 180;
+    case 4:
+      return 365;
+    default:
+      return 0;
+  }
+}
+
+/** The fields of the chain's loan record this rule reads. */
+export interface PeriodicLoanState {
+  id: bigint | number;
+  status: number;
+  periodicInterestCadence: number;
+  lastPeriodicInterestSettledAt: bigint | number;
+}
+
+/** Why a loan may not be spoken about. `ok` is the only one that may send. */
+export type PeriodicEligibility =
+  | 'ok'
+  | 'no-such-loan'
+  | 'ended'
+  | 'no-cadence'
+  | 'checkpoint-advanced';
+
 /**
- * Whether the chain's answer makes a loan eligible for a PERIODIC-INTEREST
- * reminder.
+ * Whether the chain's answer justifies a PERIODIC-INTEREST reminder for the
+ * checkpoint the caller is about to speak about.
  *
- * Two conditions, and the first one is the one that is easy to miss.
+ * Four conditions, and each one exists because the obvious three were not
+ * enough.
  *
  * **The loan has to exist.** `getLoanDetails` does not revert for an unknown
  * id — it returns the mapping's zero struct, whose `status` is `0`, which is
  * `Active`. So an orphaned row (one indexed from a reorged-out
  * `LoanInitiated`, say) reads back as a healthy running loan, which is
  * precisely the shape this check exists to catch. `id` is the
- * existence-bearing field: a real loan's id is its own non-zero key. The
- * reconciliation reader has rejected the zero struct for this reason since
- * #2190; the rule belongs wherever the chain is asked, not in one reader
- * (#2213 r4 `4012114089`).
+ * existence-bearing field: a real loan's id is its own non-zero key (#2213 r4
+ * `4012114089`).
  *
- * **And the status has to be exactly `Active(0)`.** Not "any non-terminal
- * state": `FallbackPending(4)` is non-terminal, and a first version of this
- * allowed it — but `RepayPeriodicFacet.settlePeriodicInterest` accepts only
- * `Active` and reverts on everything else, so telling a holder their interest
- * payment is due on a fallback-pending loan invites them to attempt something
- * the contract will refuse (#2213 r4 `4012114096`).
+ * **The status has to be exactly `Active(0)`.** Not "any non-terminal state":
+ * `FallbackPending(4)` is non-terminal, and a first version allowed it — but
+ * `RepayPeriodicFacet.settlePeriodicInterest` accepts only `Active` and
+ * reverts on everything else, so telling a holder their payment is due on a
+ * fallback-pending loan invites something the contract will refuse (#2213 r4
+ * `4012114096`).
  *
- * That is the general lesson for this predicate: eligibility is the ACTION's
- * precondition, not a generic liveness idea. A different lane, whose message
- * points at a different contract call, needs its own answer rather than this
- * one.
+ * **The cadence has to be one this build knows.** An unrecognised member
+ * yields no interval, and a reminder computed from no interval is a reminder
+ * about a date nobody can justify.
  *
- * An unrecognised status is ineligible — an allow-list, so a member appended
- * to the enum cannot silently become "still running" in a lane that messages
- * users about running loans.
+ * **And the CHECKPOINT the caller is about to speak about has to be the one
+ * the chain is still on** (#2213 r12 `4013387394`). This is the condition that
+ * is easy to miss because the other three pass: a loan whose period was just
+ * settled stays `Active`, and the stored row keeps the OLD checkpoint until
+ * the indexer catches up — so the lane would tell someone their payment is due
+ * moments after they paid it. The chain's own
+ * `lastPeriodicInterestSettledAt` is in the same answer already being read,
+ * and it settles the question outright.
+ *
+ * That last one is the general lesson restated: eligibility is the ACTION's
+ * precondition. The action here is "pay THIS period's interest", so the period
+ * is part of the precondition, not context around it.
  */
-export function isPeriodicInterestEligible(loan: { id: bigint | number; status: number }): boolean {
-  return Number(loan.id) !== 0 && Number(loan.status) === 0;
+export function periodicInterestEligibility(
+  loan: PeriodicLoanState,
+  expectedCheckpoint: number,
+): PeriodicEligibility {
+  if (Number(loan.id) === 0) return 'no-such-loan';
+  if (Number(loan.status) !== 0) return 'ended';
+  const days = periodicIntervalDays(Number(loan.periodicInterestCadence));
+  if (days === 0) return 'no-cadence';
+  const onChain = Number(loan.lastPeriodicInterestSettledAt) + days * 86_400;
+  // STRICT EQUALITY, not "the chain is not behind". A stored checkpoint AHEAD
+  // of the chain's is just as wrong — it would be a reminder about a period
+  // that has not begun — and both directions mean the same thing: the row and
+  // the chain disagree, so nothing here justifies an unretractable message.
+  if (onChain !== expectedCheckpoint) return 'checkpoint-advanced';
+  return 'ok';
 }
