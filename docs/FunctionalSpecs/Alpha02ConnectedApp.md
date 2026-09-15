@@ -270,6 +270,26 @@ The app uses chain reads and indexed reads for different jobs.
   reminders because one record could not be read, would punish every other
   holder for it — and would do so indefinitely if that record stays
   unreadable.
+- A record left out for that reason stays left out until a later turn settles
+  it, not merely for the turn that noticed. Each turn examines a handful of
+  records, so a rule applied only to the current turn's findings leaves the
+  same record reminded about on every other turn — the platform would be
+  treating *what this turn looked at* as if it were *what is currently
+  unconfirmed*, which are different questions. The stricter-looking variant
+  of that mistake fails identically: holding back every record on a turn
+  whose findings were dirty still reminds on the next turn, because that
+  turn's findings are clean for having looked elsewhere.
+- What the platform remembers about such a record is which way it could not
+  be confirmed and when it was first noticed, and it says so out loud once
+  that has lasted. The four ways need different responses, and the age is the
+  difference between a source having a bad moment and a position nobody has
+  resolved — so neither is flattened away, and the first-noticed time is
+  never refreshed by a later sighting of the same problem.
+- A record is released as soon as a turn settles it, by any route: corrected,
+  found genuinely running, or ended by someone else. Holding a record back
+  forever on the strength of one unreadable moment is the same defect facing
+  the other way, and it is the failure this rule is most likely to produce if
+  it is written carelessly.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

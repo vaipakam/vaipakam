@@ -73,10 +73,23 @@ export function settledRows(report: ReconcileReport): number[] {
 /**
  * The quarantine writes for one pass, as statements.
  *
- * Statements rather than awaited calls so the caller can commit them in the
- * same D1 batch as whatever else that pass writes — a quarantine entry that
- * lands while its pass's other writes do not would withhold reminders on
- * evidence that was rolled back.
+ * Statements rather than awaited calls so the whole set commits as ONE D1
+ * transaction: the marks and the releases describe a single pass's findings,
+ * and half of them landing would leave a row released by a pass that also
+ * found it unsettled, or vice versa.
+ *
+ * **What this does NOT get, stated rather than implied:** they cannot ride
+ * the repairs' own transactions. Each repair commits during the pass, while
+ * this set is derived from the report the pass produces at the END — so the
+ * two are necessarily separate commits. If the isolate dies in between, the
+ * quarantine for that pass is lost.
+ *
+ * That is bounded and self-healing rather than silent: the row is still
+ * unsettled, so the next time the rotation examines it the mark is written
+ * again. The exposure is one rotation's worth of reminders for a row the
+ * platform has not confirmed — which is strictly better than the per-pass
+ * exclusion this replaces, and not a guarantee, and the difference is worth
+ * a reader's time.
  */
 export function quarantineStatements(
   db: D1Database,

@@ -54,6 +54,7 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import { quarantineStatements, reportStaleQuarantine } from './loanQuarantine';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -1054,6 +1055,13 @@ export async function _sweepCalendarIfEstablished(
   // The tick established SOME rows; the ones it did not are named and held
   // back individually (#2211 r3 `4011279296`).
   //
+  // BOTH THIS AND THE QUARANTINE TABLE, and they are not redundant (#2212).
+  // The table is the durable answer and covers the ticks that did not examine
+  // the row — but it is written fail-open, so a tick whose quarantine write
+  // failed would have nothing there. This set is what still protects THIS
+  // tick in that case: it comes straight from the report in memory and needs
+  // no write to have succeeded.
+  //
   // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT (#2212). The exclusion is
   // derived from THIS tick's report, and the rotation examines one or three
   // rows a turn — so on the next turn an unsettled row is simply not in the
@@ -1314,6 +1322,30 @@ export async function _runLoanReconcilePass(input: {
   // Everything the pass noticed reaches the operator, whether it finished or
   // died on its cursor write.
   if (report) _reportReconcilePass(chainId, report);
+  // THE SAME REPORT, REMEMBERED (#2212). Reporting tells the operator; this
+  // tells the NEXT tick. The rotation examines one or three rows a turn, so
+  // a row this pass could not settle is absent from every later report until
+  // the rotation comes round again — and a surface reading only the current
+  // report would go on acting on it as though it were confirmed.
+  //
+  // Fail-open, deliberately. This is a withholding mechanism: if it cannot
+  // write, the correct outcome is the behaviour that existed before it — not
+  // a failed tick. It is loud about failing, because a quarantine that
+  // silently stops recording is a surface that silently resumes reminding.
+  if (report) {
+    try {
+      const writes = quarantineStatements(env.DB, chainId, report, Math.floor(Date.now() / 1000));
+      if (writes.length > 0) await env.DB.batch(writes);
+      await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
+    } catch (err) {
+      console.error(
+        `[chainIndexer] quarantine bookkeeping failed for chain ${chainId} — ` +
+          `rows this pass could not settle are NOT withheld from reminders ` +
+          `until a later pass records them`,
+        err,
+      );
+    }
+  }
 
   if (failure === null) {
     // The IDS, not just a count (#2190 r5 `4007500668`). The coarse

@@ -296,6 +296,49 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(rows.map((r) => r.loan_id)).toEqual([12]);
   });
 
+  it('withholds a QUARANTINED loan on a tick that never examined it (#2212)', async () => {
+    // THE CASE THE PER-PASS EXCLUSION COULD NOT COVER. The rotation looks at
+    // one or three rows a turn, so on almost every tick the ghost is not in
+    // the pass's report at all — the in-memory exclusion is empty for its id
+    // and the unretractable reminder is minted. The table is what remembers.
+    //
+    // Note the sweep is called with NO exclusion set: this is purely the
+    // stored mark doing the work.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 21, NOW + 6 * DAY - 30 * DAY, 30); // quarantined ghost
+    seedLoan(h, 22, NOW + 6 * DAY - 30 * DAY, 30); // healthy neighbour
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'orphan', ?, ?)`,
+      )
+      .run(CHAIN, 21, NOW - 100, NOW - 100);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    // Per row, still: the neighbour is not collateral damage.
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([22]);
+  });
+
+  it('reminds again once the quarantine is released', async () => {
+    // The release path seen from the surface that cares. A row held back on
+    // one bad read must not be held back forever — the reminder is late, not
+    // lost.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 23, NOW + 6 * DAY - 30 * DAY, 30);
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'unread', ?, ?)`,
+      )
+      .run(CHAIN, 23, NOW - 100, NOW - 100);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h)).toHaveLength(0);
+    h.db.prepare('DELETE FROM loan_reconcile_quarantine WHERE loan_id = ?').run(23);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([23]);
+  });
+
   it('sweeps normally when nothing is withheld, including an empty exclusion', async () => {
     // The default path must be untouched — this parameter is optional and
     // most callers pass nothing.
