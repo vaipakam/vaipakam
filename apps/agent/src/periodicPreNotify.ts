@@ -152,15 +152,22 @@ interface TickBudget {
 }
 
 /**
- * The most requests ONE chain needs before it can do any useful work: the
- * chain-identity probe (first pass of an isolate only), the lead-time read,
- * the head read, and one batched status read.
+ * What one chain still needs AFTER its identity is settled: the lead-time
+ * read, the head read, and one batched status read.
  *
- * A chain is not started unless this plus a loan's worth is available, so a
- * pass never spends its opening reads and then discovers it cannot afford to
+ * A chain does not go further unless this plus a loan's worth is available, so
+ * a pass never spends its opening reads and then finds it cannot afford to
  * send anything with them.
+ *
+ * The identity probe is deliberately NOT in this number. It costs a request
+ * only on an isolate's first pass for a (chain, url) pair and nothing
+ * afterwards, so folding it in would overstate the requirement on every warm
+ * tick — skipping a chain whose real cost fits, and printing a figure one
+ * higher than the truth while doing it (#2213 r17 `4014237569`). That is why
+ * this test runs after the verdict, where the probe has already charged
+ * itself or not.
  */
-const CHAIN_OPENING_REQUESTS = 4;
+const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 3;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -186,17 +193,16 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
 
   for (let i = 0; i < chains.length; i++) {
     const chain = chains[(i + startChain) % chains.length]!;
-    if (budget.remaining < CHAIN_OPENING_REQUESTS + MAX_SENDS_PER_LOAN) {
-      // SAID, not silently dropped. A chain skipped for want of allowance is
-      // a chain whose borrowers got no reminder this tick, and an operator
-      // seeing this every tick is being told the cap is too low for the load.
+    if (budget.remaining <= 0) {
+      // Not even enough to ASK anything. The fuller admission test lives
+      // inside the pass, after the identity verdict, because until then the
+      // opening cost is not known — see `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY`
+      // (#2213 r17 `4014237569`).
       console.warn(
         `[periodicPreNotify] chain=${chain.name} skipped: this invocation's ` +
           `allowance of ${MAX_OUTBOUND_REQUESTS_PER_INVOCATION} outbound ` +
-          `request(s) is down to ${budget.remaining}, below the ` +
-          `${CHAIN_OPENING_REQUESTS + MAX_SENDS_PER_LOAN} a chain needs to ` +
-          `open and message about one loan. It takes its turn first on a ` +
-          `later tick, and the notification window is days wide.`,
+          `request(s) is spent. It takes its turn first on a later tick, and ` +
+          `the notification window is days wide.`,
       );
       continue;
     }
@@ -276,6 +282,23 @@ async function preNotifyChain(
             ? `answered eth_chainId=${identity.reported}, which is not this chain`
             : 'could not confirm which chain it serves'
         }. Nothing read from it can justify a reminder.`,
+    );
+    return;
+  }
+
+  // CAN THIS CHAIN AFFORD TO FINISH? Asked HERE, not in the caller, because
+  // until the identity verdict is in, the opening cost is unknown (#2213 r17
+  // `4014237569`). A warm cache makes that probe free, so a caller assuming it
+  // always costs one would skip a chain whose real cost — lead time, head,
+  // one batch and a loan's sends — fits exactly in what is left, and would
+  // print a requirement one higher than the truth while doing it.
+  if (budget.remaining < CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name} skipped: ${budget.remaining} ` +
+        `outbound request(s) left, below the ` +
+        `${CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN} needed ` +
+        `to read this chain and message about one loan. It takes its turn ` +
+        `first on a later tick, and the notification window is days wide.`,
     );
     return;
   }
@@ -690,12 +713,32 @@ async function messageBatch(
       !anyHandled &&
       (borrowerOutcome.status === 'opted-out' || lenderOutcome.status === 'opted-out');
     if (onlyBlockedByOptOut) continue;
-    await env.DB.prepare(
-      `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
-       WHERE chain_id = ? AND loan_id = ?`,
-    )
-      .bind(nextCheckpoint, now, chain.id, row.loan_id)
-      .run();
+    try {
+      await env.DB.prepare(
+        `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(nextCheckpoint, now, chain.id, row.loan_id)
+        .run();
+    } catch (err) {
+      // CAUGHT HERE, so a failed stamp cannot discard what this pass already
+      // did (#2213 r17 `4014237577`). Escaping to the chain-level catch threw
+      // away the delivery counters, skipped the summary, and left the scan
+      // position unsaved — for a tick in which messages had ALREADY gone out.
+      //
+      // The duplicate risk is stated rather than left to be inferred: the
+      // checkpoint is unstamped, so a later tick sends this reminder again.
+      // That is the right trade in this direction — a repeated reminder is
+      // recoverable where a missed one is not — but it is a real consequence
+      // and an operator seeing a generic chain error would have no way to
+      // know a delivery had happened at all.
+      console.warn(
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: the ` +
+          `reminder went out but its checkpoint could not be stamped ` +
+          `(${describeFailure(err)}). A later tick will send it again — the ` +
+          `stamp is the only record that it already has.`,
+      );
+    }
   }
   return {
     consumed: batch.length,

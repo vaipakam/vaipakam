@@ -103,6 +103,10 @@ let headBlock: bigint;
 let reportedChainId: number | null;
 /** When set, the identity probe cannot answer at all. */
 let identityThrows: boolean;
+/** When set, stamping the checkpoint throws — the delivery still happened. */
+let stampThrows: boolean;
+/** When set, the loan scan sees nothing — used to warm caches without doing work. */
+let warmupOnly: boolean;
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
@@ -251,7 +255,7 @@ function env(extra: Record<string, unknown> = {}) {
       // The loan scan binds the chain id first, so a multi-chain test can hand
       // each chain its own rows.
       const rowsFor = (params: unknown[]) => {
-        if (!isLoanScan) return [];
+        if (!isLoanScan || warmupOnly) return [];
         const chainId = Number(params[0]);
         return loanRowsByChain?.[chainId] ?? (loanRowsByChain ? [] : loanRows);
       };
@@ -279,6 +283,9 @@ function env(extra: Record<string, unknown> = {}) {
           return isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null;
         },
         run: async () => {
+          if (stampThrows && sql.includes('period_pre_notified_at')) {
+            throw new Error('D1_ERROR: write failed');
+          }
           if (isCursorWrite && String(params[1] ?? '').startsWith('prenotify_')) {
             scanOffsets.set(`${String(params[1])}:${Number(params[0])}`, Number(params[2]));
           }
@@ -342,6 +349,37 @@ async function run(extra: Record<string, unknown> = {}) {
   return { writes, said, stamps, stamped: stamps.map((s) => s.loanId) };
 }
 
+/**
+ * Two invocations in ONE module instance, so the identity cache is WARM on
+ * the second — which `run()` cannot show, since it resets modules each time.
+ */
+async function runTwiceWarm(extra: Record<string, unknown> = {}) {
+  vi.resetModules();
+  const mod = await import('../src/periodicPreNotify');
+  // The first invocation exists only to WARM the identity cache: it sees no
+  // due loans, so it stamps nothing and saves no scan position, and the
+  // second invocation faces a full window with a warm probe — which is the
+  // configuration the admission test is about.
+  warmupOnly = true;
+  const first = env(extra);
+  await mod.runPeriodicPreNotify(first.env).catch(() => undefined);
+  warmupOnly = false;
+  const second = env(extra);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  warn.mockClear();
+  sends.length = 0;
+  try {
+    await mod.runPeriodicPreNotify(second.env).catch(() => undefined);
+  } finally {
+    warn.mockRestore();
+  }
+  const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+  const stamps = second.writes
+    .filter((w) => w.sql.includes('period_pre_notified_at'))
+    .map((w) => ({ chainId: Number(w.params[2]), loanId: Number(w.params[3]) }));
+  return { said, stamps };
+}
+
 beforeEach(() => {
   // AGREES WITH THE STORED ROW by default: the ordinary case is a chain and an
   // index that are in step, and every pre-r12 case was written assuming it.
@@ -358,6 +396,8 @@ beforeEach(() => {
   headBlock = 1_000n;
   reportedChainId = null;
   identityThrows = false;
+  stampThrows = false;
+  warmupOnly = false;
   indexedBlock = 900;
   cursorReadFails = false;
   scanOffsets.clear();
@@ -1003,6 +1043,53 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     loanRows = tenLoans();
     const { stamped } = await run();
     expect(stamped.length).toBe(9);
+  });
+
+  it('keeps the tick\u2019s outcomes when a checkpoint stamp fails', async () => {
+    // #2213 r17 `4014237577`. The messages have already gone out when the
+    // stamp is attempted, so letting the failure escape discarded the
+    // delivery counters, skipped the summary, and left the scan position
+    // unsaved — an operator would see a generic chain error and no sign that
+    // anyone had been messaged.
+    stampThrows = true;
+    const ids = Array.from({ length: 12 }, (_, k) => 500 - k);
+    loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
+    const { said } = await run();
+    // The sends happened and are still counted...
+    expect(sends.length).toBe(36);
+    expect(said).toContain('9 reminded');
+    // ...the stamp failure is named per loan, with its consequence...
+    expect(said).toContain('could not be stamped');
+    expect(said).toContain('will send it again');
+    // ...and the scan position was still saved, so the next tick moves on.
+    expect(scanOffsets.get('prenotify_scan:84532')).toBe(9);
+  });
+
+  it('admits a chain on what identity ACTUALLY costs when the cache is warm', async () => {
+    // #2213 r17 `4014237569`. The admission test assumed the identity probe
+    // always costs a request. On a warm isolate it costs nothing, so a chain
+    // whose real need — lead time, head, one batch, one loan's sends — fits
+    // in seven was skipped as though it needed eight, and the warning said so.
+    //
+    // The first chain is tuned to leave exactly seven: 40 less its three
+    // opening reads is 37, and fifteen loans at two sends each is thirty.
+    const arb = Array.from({ length: 2 }, (_, k) => periodicLoan(700 - k, NOW - 29 * DAY + k * 60));
+    const base = Array.from({ length: 15 }, (_, k) =>
+      periodicLoan(600 - k, NOW - 29 * DAY + k * 60),
+    );
+    // The SECOND invocation leads with Arb (the rotation advanced), so Arb is
+    // the chain that must spend down to exactly seven.
+    loanRowsByChain = { 421614: base, 84532: arb };
+    // Telegram only, so each loan costs two sends rather than four.
+    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    const { said, stamps } = await runTwiceWarm({
+      RPC_ARB_SEPOLIA: 'https://stub-421614.invalid',
+    });
+    // Base Sepolia leads the second invocation or Arb does; either way the
+    // chain that goes second must not be refused for a request the warm probe
+    // never spends.
+    expect(said).not.toContain('skipped');
+    expect(new Set(stamps.map((s) => s.chainId)).size).toBe(2);
   });
 
   it('names the allowance when it stops one request short of a batch', async () => {
