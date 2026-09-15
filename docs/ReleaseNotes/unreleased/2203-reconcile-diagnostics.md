@@ -21,21 +21,22 @@ came round.
 ### What changed
 
 There is now one piece of work that turns a turn's findings into what the
-operator reads, and both endings call it — the ordinary one and the failed
-one. They cannot report different things, because there is no longer a second
-place that decides what to report.
+operator reads, and it happens ONCE — not at either ending, but after them,
+on the single path the two rejoin. The turn works out what it found, whether
+it finished or died partway, and only then is any of it said.
 
-That is deliberately not a matter of repeating the reporting in the failure
-path. Copying it would leave the next thing worth reporting wired into one
-ending and forgotten in the other, which is precisely how this went wrong: the
-failure path already had everything it needed in hand and read one field of
-it.
+Two weaker versions were available and both were rejected. Repeating the
+reporting in the failure path would leave the next thing worth reporting
+wired into one ending and forgotten in the other — which is precisely how
+this went wrong, since the failure path already had everything it needed in
+hand and read one field of it. Sharing one piece of work and calling it from
+both endings is better, and still leaves "call it" as something an ending can
+be written without.
 
-Nor is it a matter of remembering to call it from both. The failure path no
-longer reports at all — it records what went wrong and hands back the
-findings, and the telling happens once, afterwards, on the single path both
-endings rejoin. A thing that cannot be written cannot be forgotten, which is a
-better guarantee than a thing that is merely tested.
+So neither ending reports at all. There is nothing in the failure path to
+forget, because there is nothing there to remember — which is a stronger
+guarantee than a rule that merely happens to be followed, or one that is
+merely tested.
 
 ### What this does not change
 

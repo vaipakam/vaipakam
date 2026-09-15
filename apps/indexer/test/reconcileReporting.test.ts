@@ -40,10 +40,24 @@ const report = (over: Partial<ReconcileReport> = {}): ReconcileReport => ({
   ...over,
 });
 
-/** Everything written to warn+error, joined — the operator sees one stream. */
+/**
+ * Everything written to warn+error for THIS report, joined — the operator
+ * sees one stream.
+ *
+ * The `mockClear` calls are load-bearing, not tidiness. `vi.spyOn` on an
+ * already-spied method returns the EXISTING spy with its `mock.calls` intact
+ * until `afterEach`, so a second call in the same test would read the first
+ * one's output as its own. The three-case loop below is exactly that shape:
+ * the `unread` case emits `UNDETERMINED`, and without this the `writeFailed`
+ * and `unknownStatus` cases would pass on its residue even if they emitted
+ * nothing at all — two of the three branches this file exists to protect,
+ * unprotected, in a test that looked green.
+ */
 function captured(r: ReconcileReport): string {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  warn.mockClear();
+  error.mockClear();
   _reportReconcilePass(CHAIN, r);
   const out = [...warn.mock.calls, ...error.mock.calls].map((c) => c.join(' ')).join('\n');
   return out;
