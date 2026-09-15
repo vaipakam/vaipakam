@@ -15,12 +15,18 @@
  * subscriber may have N active loans); this lane walks loans (a loan
  * has exactly two human counterparties).
  *
- * `preNotifyDays` is read from chain via
- * `ConfigFacet.getPreNotifyDays()` once per tick per chain; the value
- * is governance-tunable in [1, 14] days. Failure to read the config
- * (older deploy without the surface, RPC blip) defaults to the
- * library default of 3 days — mirrors the on-chain
- * `PERIODIC_PRE_NOTIFY_DAYS_DEFAULT` constant.
+ * `preNotifyDays` and the periodic-interest master switch are read together
+ * from `NumeraireConfigFacet.getPeriodicInterestConfig()`, once per tick per
+ * chain. The lead time is governance-tunable in [1, 14] days and arrives
+ * already resolved against `PERIODIC_PRE_NOTIFY_DAYS_DEFAULT`.
+ *
+ * A chain that cannot answer that call, or answers with the switch OFF, is not
+ * pre-notified at all (#2213 r18). With the switch off `settlePeriodicInterest`
+ * reverts while existing loans keep the cadence they snapshotted at init, so
+ * every reminder would be an instruction to make a payment the chain refuses.
+ * "We could not ask" is treated the same as "off" for the same reason: the
+ * lane may not send an unactionable financial warning on the strength of an
+ * answer it never got.
  */
 
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
@@ -47,7 +53,16 @@ const SECONDS_PER_DAY = 86_400;
  * included (#2213 r13 `4013571040`).
  *
  * A Worker invocation gets a documented 50 outbound subrequests, shared with
- * every other lane on the same tick. This lane spends them on chain reads and
+ * every other lane on the same tick — the same ceiling the indexer sizes its
+ * own passes against (`apps/indexer/src/chainIndexer.ts`). D1 does not come
+ * out of it: queries through the binding "are D1 rows, not subrequests, so
+ * this costs nothing against the invocation budget"
+ * (`apps/indexer/src/loanReconcile.ts`), which is why this lane's own
+ * bookkeeping reads and per-loan stamps are uncounted here. Forty against
+ * fifty is the headroom, and it is stated because the number invites tuning
+ * and a reader cannot otherwise tell where the wall is.
+ *
+ * This lane spends the allowance on chain reads and
  * on pushes and Telegram messages, and until r13 it bounded only the second
  * kind: the read cap was per CHAIN while the send cap was per invocation, so
  * three quiet chains could spend fifteen reads between them and leave the
@@ -113,14 +128,17 @@ const MAX_SENDS_PER_LOAN = 4;
 const EXAMINE_BATCH = 100;
 const MAX_EXAMINE_BATCHES = 3;
 
-// `getPreNotifyDays` moved to NumeraireConfigFacet in the #394 ConfigFacet
-// split (Codex #647 round-3) — it's no longer in ConfigFacet's ABI, so
-// encoding it from ConfigFacetABI would make viem throw before the RPC call
-// and the catch silently fall back to the default. Source it from the facet
-// that actually implements it so a future rename lands as a TypeScript error
-// here instead of a silent runtime FunctionDoesNotExist. (The selector still
-// routes through the Diamond at runtime — same address, just a different ABI.)
-const PRE_NOTIFY_DAYS_ABI = NumeraireConfigFacetABI;
+// ONE CALL FOR BOTH VALUES this lane gates on — the pre-notify lead time and
+// the periodic-interest master switch (#2213 r18 `4014510645`). The facet
+// already bundles them, so needing the second answer costs no extra request
+// and `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY` is unchanged.
+//
+// Sourced from NumeraireConfigFacet, which is where this config moved in the
+// #394 ConfigFacet split (Codex #647 round-3). Encoding it from ConfigFacetABI
+// would make viem throw before the RPC call, so a future rename lands as a
+// TypeScript error here instead of a silent runtime FunctionDoesNotExist. (The
+// selector still routes through the Diamond — same address, different ABI.)
+const PERIODIC_CONFIG_ABI = NumeraireConfigFacetABI;
 
 interface LoanRow {
   loan_id: number;
@@ -303,19 +321,57 @@ async function preNotifyChain(
     return;
   }
 
+  // THE LEAD TIME AND THE KILL SWITCH COME BACK TOGETHER (#2213 r18
+  // `4014510645`), because this lane needs BOTH before it may say anything and
+  // `getPeriodicInterestConfig` already returns both in one call. Reading only
+  // the lead time was the defect: `Loan.periodicInterestCadence` is
+  // snapshotted at init and immutable "regardless of any later governance
+  // change" (`LibVaipakam.sol`), and the kill switch gates `createOffer` and
+  // `settlePeriodicInterest` — NOT the loans already open. So with the switch
+  // off, every existing cadence loan stays Active and due-looking while
+  // `settlePeriodicInterest` reverts `PeriodicInterestDisabled`. This lane
+  // would have gone on telling those borrowers to pay before their collateral
+  // is sold, for a payment the chain refuses to accept. An instruction the
+  // recipient cannot act on is worse than silence, and it is worst precisely
+  // when the switch is off — which is an emergency.
   let preNotifyDays = DEFAULT_PRE_NOTIFY_DAYS;
-  budget.remaining -= 1; // the lead-time read below
+  budget.remaining -= 1; // the config read below
+  let periodicEnabled: boolean;
   try {
-    const v = (await client.readContract({
+    const cfg = (await client.readContract({
       address: chain.diamond as Address,
-      abi: PRE_NOTIFY_DAYS_ABI,
-      functionName: 'getPreNotifyDays',
-    })) as number;
-    if (v && v > 0) preNotifyDays = Number(v);
-  } catch {
-    // Older deploy without the getter, or RPC failure — fall through
-    // to the default. Logged at debug level only since this is an
-    // expected condition during the rollout window.
+      abi: PERIODIC_CONFIG_ABI,
+      functionName: 'getPeriodicInterestConfig',
+    })) as readonly [string, bigint, number, boolean, boolean];
+    // `preNotify` is already resolved against the library default on-chain, so
+    // the guard here is only against a zero a malformed decode could produce.
+    if (cfg[2] && Number(cfg[2]) > 0) preNotifyDays = Number(cfg[2]);
+    periodicEnabled = cfg[3];
+  } catch (err) {
+    // A FAILED READ IS NOT PERMISSION TO SEND. The old code swallowed this and
+    // fell back to the default lead time, which was defensible when the answer
+    // only set a window width. It is not defensible now that the same call
+    // carries whether the payment is possible at all: "we could not ask" and
+    // "it is enabled" are different states, and collapsing them would put the
+    // unactionable warning in front of the user on exactly the transport blip
+    // that makes it hardest to notice.
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — could not ` +
+        `read the periodic-interest config (${describeFailure(err)}), so ` +
+        `whether settlement is currently accepted is unknown. Nothing is ` +
+        `stamped; a later tick asks again.`,
+    );
+    return;
+  }
+  if (!periodicEnabled) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the ` +
+        `periodic-interest master switch is off, so settlement reverts for ` +
+        `every loan on this chain. Existing cadence loans keep their cadence ` +
+        `and still look due; telling them to pay would be an instruction the ` +
+        `chain refuses. Nothing is stamped; reminders resume when it is on.`,
+    );
+    return;
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -453,6 +509,7 @@ async function preNotifyChain(
   let noRoute = 0;
   let failedRails = 0;
   let rejected = 0;
+  let checkpointLag = 0;
   let unreadable = 0;
   let batches = 0;
   let batchFailed = false;
@@ -493,6 +550,7 @@ async function preNotifyChain(
     noRoute += outcome.noRoute;
     failedRails += outcome.failedRails;
     rejected += outcome.rejected;
+    checkpointLag += outcome.checkpointLag;
     unreadable += outcome.unreadable;
     cursor += outcome.consumed;
   }
@@ -531,12 +589,15 @@ async function preNotifyChain(
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
         `${failedRails} rail(s) unconfirmed, ` +
-        `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
+        `${rejected} rejected by the chain, ${checkpointLag} awaiting the ` +
+        `indexer, ${unreadable} unreadable — ` +
         `${failed ?? capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and the ` +
         `next tick RESUMES from ${cursor < due.length ? cursor : 0} rather ` +
         `than re-reading this prefix. A tick that reports the read cap with ` +
-        `hundreds rejected is reporting orphaned rows, not load.`,
+        `hundreds rejected is reporting orphaned rows, not load — whereas ` +
+        `hundreds awaiting the indexer is the indexer being behind, which ` +
+        `needs nothing done to the rows themselves.`,
     );
   }
 }
@@ -568,6 +629,7 @@ async function messageBatch(
   noRoute: number;
   failedRails: number;
   rejected: number;
+  checkpointLag: number;
   unreadable: number;
 }> {
   let reminded = 0;
@@ -575,12 +637,16 @@ async function messageBatch(
   let noRoute = 0;
   let failedRails = 0;
   let rejected = 0;
+  let checkpointLag = 0;
   let unreadable = 0;
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
-      return { consumed: i, reminded, unreached, noRoute, failedRails, rejected, unreadable };
+      return {
+        consumed: i, reminded, unreached, noRoute, failedRails,
+        rejected, checkpointLag, unreadable,
+      };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
@@ -641,12 +707,23 @@ async function messageBatch(
       // refuses to project an unknown member and only reports it. Promising a
       // correction that cannot happen sends an operator away from a row that
       // needs them.
+      //
+      // ONE DECISION PRODUCES BOTH THE WORDING AND THE TALLY (#2213 r18
+      // `4014510655`). They used to be decided in different places: the
+      // per-loan line already said `checkpoint-advanced` was most likely
+      // indexer lag, while the counter filed it under `rejected` and the
+      // summary called the total "rejected by the chain" and pointed at
+      // orphaned rows. The parts were right and the aggregate was wrong,
+      // which is the harder failure to notice — nobody reads every per-loan
+      // line, and the summary is what an operator acts on.
+      const explained = explainVerdict(verdict, detail, nextCheckpoint);
       console.warn(
         `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: ` +
-          `${describeVerdict(verdict, detail, nextCheckpoint)} — no reminder ` +
-          `sent. Nothing is stamped, so a later tick reconsiders.`,
+          `${explained.text} — no reminder sent. Nothing is stamped, so a ` +
+          `later tick reconsiders.`,
       );
-      rejected += 1;
+      if (explained.bucket === 'checkpoint-lag') checkpointLag += 1;
+      else rejected += 1;
       continue;
     }
 
@@ -726,17 +803,32 @@ async function messageBatch(
       // away the delivery counters, skipped the summary, and left the scan
       // position unsaved — for a tick in which messages had ALREADY gone out.
       //
-      // The duplicate risk is stated rather than left to be inferred: the
-      // checkpoint is unstamped, so a later tick sends this reminder again.
-      // That is the right trade in this direction — a repeated reminder is
-      // recoverable where a missed one is not — but it is a real consequence
-      // and an operator seeing a generic chain error would have no way to
-      // know a delivery had happened at all.
+      // WHAT THE LINE CLAIMS IS READ OFF THE OUTCOMES, not asserted beside
+      // them (#2213 r18 `4014510672`). The r17 wording said "the reminder went
+      // out" unconditionally, and the stamp does not only happen after a
+      // delivery: `handled` includes `no-route`, so a loan whose
+      // counterparties have no usable rail — and a loan whose every rail
+      // failed — reaches this catch with nothing delivered. A D1 error would
+      // then have been reported as a confirmed user notification, which is the
+      // same overclaim this PR removed from `reminded`, arriving by a
+      // different door. Deriving the sentence from `delivered` makes the two
+      // impossible to drift apart.
+      const delivered = borrowerOutcome.delivered || lenderOutcome.delivered;
+      const attempted = borrowerOutcome.attempted || lenderOutcome.attempted;
+      const what = delivered
+        ? 'a reminder was delivered for this loan'
+        : attempted
+          ? 'a reminder was attempted for this loan and confirmed to nobody'
+          : 'nothing was sent for this loan — nobody had a usable route';
+      const consequence = delivered
+        ? 'A later tick will send it again — the stamp is the only record ' +
+          'that it already has.'
+        : 'A later tick will reconsider it, which is the intended outcome ' +
+          'here rather than a duplicate.';
       console.warn(
-        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: the ` +
-          `reminder went out but its checkpoint could not be stamped ` +
-          `(${describeFailure(err)}). A later tick will send it again — the ` +
-          `stamp is the only record that it already has.`,
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: ` +
+          `${what}, and its checkpoint could not be stamped ` +
+          `(${describeFailure(err)}). ${consequence}`,
       );
     }
   }
@@ -747,6 +839,7 @@ async function messageBatch(
     noRoute,
     failedRails,
     rejected,
+    checkpointLag,
     unreadable,
   };
 }
@@ -933,30 +1026,59 @@ async function indexedThrough(env: Env, chainId: number): Promise<bigint | null 
  * what each case needs said differs by lane, and a lane messaging about a
  * different contract call would word these differently for the same verdict.
  */
-function describeVerdict(
+/**
+ * ONE place decides what a non-`ok` verdict is CALLED and which total it joins
+ * (#2213 r18 `4014510655`).
+ *
+ * The wording and the tally used to be chosen independently, and drifted: the
+ * per-loan line described `checkpoint-advanced` as indexer lag while the
+ * summary counted it under "rejected by the chain" and told the operator to go
+ * looking for orphaned rows. Those are different problems with opposite
+ * remedies — a chain rejection is a stored row that needs repairing, index lag
+ * is the system working and catching up, and nothing should be done about it.
+ *
+ * Returning both from one switch makes the drift unrepresentable, and the
+ * exhaustive `PeriodicEligibility` union means a verdict added later cannot
+ * inherit a bucket by default: it fails to compile until someone chooses.
+ */
+function explainVerdict(
   verdict: Exclude<PeriodicEligibility, 'ok'>,
   detail: LoanState,
   expected: number,
-): string {
+): { text: string; bucket: 'rejected' | 'checkpoint-lag' } {
   switch (verdict) {
     case 'no-such-loan':
-      return 'stored as active but the chain has no such loan (zero struct)';
+      return {
+        text: 'stored as active but the chain has no such loan (zero struct)',
+        bucket: 'rejected',
+      };
     case 'ended':
-      return `stored as active but the chain reports status ${Number(detail.status)}`;
+      return {
+        text: `stored as active but the chain reports status ${Number(detail.status)}`,
+        bucket: 'rejected',
+      };
     case 'no-cadence':
-      return (
-        `stored with a periodic cadence but the chain reports cadence ` +
-        `${Number(detail.periodicInterestCadence)}, which this build cannot ` +
-        `turn into a payment date`
-      );
+      return {
+        text:
+          `stored with a periodic cadence but the chain reports cadence ` +
+          `${Number(detail.periodicInterestCadence)}, which this build cannot ` +
+          `turn into a payment date`,
+        bucket: 'rejected',
+      };
     case 'checkpoint-advanced':
-      return (
-        `the stored row still points at the checkpoint ${expected}, and the ` +
-        `chain settled its last period at ` +
-        `${Number(detail.lastPeriodicInterestSettledAt)} — the period this ` +
-        `reminder is about is not the one the chain is on, most likely a ` +
-        `payment the indexer has not caught up with`
-      );
+      return {
+        text:
+          `the stored row still points at the checkpoint ${expected}, and the ` +
+          `chain settled its last period at ` +
+          `${Number(detail.lastPeriodicInterestSettledAt)} — the period this ` +
+          `reminder is about is not the one the chain is on, most likely a ` +
+          `payment the indexer has not caught up with`,
+        // NOT a rejection. The chain knows this loan and is happy with it; our
+        // copy is a few blocks behind and heals itself on the next indexer
+        // pass. Filing it with the ghost rows would send an operator to repair
+        // something that is already correct.
+        bucket: 'checkpoint-lag',
+      };
   }
 }
 

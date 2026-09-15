@@ -107,6 +107,12 @@ let identityThrows: boolean;
 let stampThrows: boolean;
 /** When set, the loan scan sees nothing — used to warm caches without doing work. */
 let warmupOnly: boolean;
+/** What the chain says its periodic-interest master switch is. */
+let periodicEnabled: boolean;
+/** When set, the config read throws — so the switch's state is UNKNOWN. */
+let configThrows: boolean;
+/** How many config reads the lane issued — the switch must cost no extra call. */
+let configReads = 0;
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
@@ -172,7 +178,12 @@ vi.mock('viem', async (importOriginal) => {
         args?: readonly unknown[];
         blockNumber?: bigint;
       }) => {
-        if (functionName === 'getPreNotifyDays') return 3;
+        if (functionName === 'getPeriodicInterestConfig') {
+          configReads += 1;
+          if (configThrows) throw new Error('config read failed');
+          // [symbol, threshold, preNotify, periodicEnabled, numeraireSwapEnabled]
+          return ['0x00', 0n, 3, periodicEnabled, true];
+        }
         if (functionName !== 'aggregate3') {
           throw new Error(`the lane must batch its reads; saw a bare ${functionName}`);
         }
@@ -398,6 +409,9 @@ beforeEach(() => {
   identityThrows = false;
   stampThrows = false;
   warmupOnly = false;
+  periodicEnabled = true;
+  configThrows = false;
+  configReads = 0;
   indexedBlock = 900;
   cursorReadFails = false;
   scanOffsets.clear();
@@ -1201,6 +1215,91 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('300 examined');
     expect(said).toContain('300 rejected by the chain');
     expect(said).toContain('read cap');
+  });
+
+  it('sends NOTHING when the periodic-interest master switch is off', async () => {
+    // #2213 r18 `4014510645`. The switch gates `createOffer` and
+    // `settlePeriodicInterest`, NOT the loans already open: `Loan
+    // .periodicInterestCadence` is snapshotted at init and immutable
+    // "regardless of any later governance change". So with the switch off,
+    // every existing cadence loan still looks due here while the payment the
+    // reminder demands reverts `PeriodicInterestDisabled`. Telling a borrower
+    // to pay before their collateral is sold, for a payment the chain refuses,
+    // is worse than silence — and worst during the emergency that flipped it.
+    periodicEnabled = false;
+    loanRows = tenLoans().slice(-3);
+    const { stamped, said } = await run();
+    expect(sends.length).toBe(0);
+    // Nothing stamped, so the reminders resume by themselves when it is on.
+    expect(stamped).toEqual([]);
+    expect(said).toContain('master switch is off');
+  });
+
+  it('sends nothing when it could not ASK whether the switch is on', async () => {
+    // Absent is not the same as unknown, and neither may be read as "on". The
+    // old code swallowed a failed config read and fell back to a default lead
+    // time — defensible when the answer only set a window width, not once the
+    // same call carries whether the payment is possible at all.
+    configThrows = true;
+    loanRows = tenLoans().slice(-3);
+    const { stamped, said } = await run();
+    expect(sends.length).toBe(0);
+    expect(stamped).toEqual([]);
+    expect(said).toContain('is unknown');
+  });
+
+  it('reads the switch WITHOUT spending an extra request', async () => {
+    // The facet bundles the lead time and the switch, so needing the second
+    // answer must not cost a second call — otherwise the opening cost, and
+    // every admission decision derived from it, is off by one per chain.
+    loanRows = tenLoans().slice(-3);
+    await run();
+    expect(configReads).toBe(1);
+  });
+
+  it('counts index lag apart from rows the chain rejects', async () => {
+    // #2213 r18 `4014510655`. A borrower who has just paid leaves the chain's
+    // checkpoint ahead of our copy for a few blocks. The per-loan line already
+    // called that indexer lag, while the tally filed it under `rejected` and
+    // the summary told the operator to go hunting for orphaned rows — a repair
+    // for something already correct, which heals itself on the next pass.
+    //
+    // Sized and pinned like the read-cap test above, because the summary this
+    // asserts on is only printed by a run that stopped early — 350 candidates
+    // is two spans, so the minute is pinned to the one with a full read cap.
+    loanRows = Array.from({ length: 350 }, (_, k) =>
+      periodicLoan(1000 - k, NOW - 29 * DAY + k * 60),
+    ).reverse();
+    // Alive, cadenced, and settled more recently than our stored row knows —
+    // the shape a borrower leaves behind by paying a few blocks ago.
+    answer = (id) => ({
+      id: BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      lastPeriodicInterestSettledAt: NOW,
+    });
+    const { said, stamped } = await atMinute(0);
+    expect(sends.length).toBe(0);
+    expect(stamped).toEqual([]);
+    expect(said).toContain('300 awaiting the indexer');
+    // The distinction is the point: these are NOT reported as chain rejections,
+    // so the summary does not send an operator hunting for orphaned rows.
+    expect(said).toContain('0 rejected by the chain');
+  });
+
+  it('does not call a stamp failure a delivery when nothing was delivered', async () => {
+    // #2213 r18 `4014510672`. Stamping keys on "handled", which includes a
+    // loan nobody could be reached for — so this catch is reachable with zero
+    // requests issued. The r17 wording said "the reminder went out"
+    // unconditionally, turning a D1 error into a claimed user notification.
+    stampThrows = true;
+    subscriberFor = () => null; // nobody to tell, so nothing is ever sent
+    loanRows = tenLoans().slice(-2);
+    const { said } = await run();
+    expect(sends.length).toBe(0);
+    expect(said).toContain('nobody had a usable route');
+    expect(said).not.toContain('a reminder was delivered');
+    expect(said).not.toContain('will send it again');
   });
 
   it('says nothing about a cap it did not reach', async () => {

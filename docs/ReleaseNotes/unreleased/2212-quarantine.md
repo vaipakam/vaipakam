@@ -234,6 +234,23 @@ configuration since long before this change; the reminder lane became
 authoritative about whether a loan is still running and never asked. It asks
 now, once per source, and stays quiet if the answer is wrong or absent.
 
+**A reminder is only worth sending if the payment it demands can be made.**
+Governance can switch periodic interest off across the platform. That stops
+new positions taking a cadence and makes settlement itself refuse — but a
+position already open keeps the cadence it was opened with, because that is
+fixed when the position starts and no later change touches it. So with the
+switch off, every existing position still looks due to this lane, which would
+go on telling borrowers to pay before their collateral is sold, for a payment
+the platform would reject. An instruction the recipient cannot act on is worse
+than silence, and it is worst during whatever emergency prompted the switch.
+
+The lane now reads that setting before it speaks — in the same request as the
+lead time, so it costs nothing extra — and sends nothing on a network where it
+is off, marking nothing, so reminders resume by themselves when it is turned
+back on. A run that cannot READ the setting also sends nothing, on the same
+reasoning as everywhere else here: not knowing whether a payment can be made
+is not permission to demand one.
+
 **And a source can be the right network and still be behind.** The chain is
 consulted through whichever source the platform is configured to use, and that
 source can lag behind what the platform has already recorded. Asked about a
@@ -250,10 +267,47 @@ than quietly mixing two moments.
 
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain
-rejected, how many it could not read, and which of the two limits stopped it.
-Those are different problems with different remedies — a run that keeps
-reporting hundreds of rejections is reporting stuck records, not load — and
-flattening them into "deferred" would hide the one that needs a person.
+rejected, how many are waiting on the platform's own records to catch up, how
+many it could not read, and which of the two limits stopped it. Those are
+different problems with different remedies — a run that keeps reporting
+hundreds of rejections is reporting stuck records, not load — and flattening
+them into "deferred" would hide the one that needs a person.
+
+**Two of those totals were the same total until review separated them.** A
+borrower who has just paid leaves the chain's record of the period ahead of
+the platform's for a few moments. The per-record line already called that
+what it is — the platform's own records catching up — while the summary
+counted it among the records the chain rejected and told the reader those
+indicate stuck records needing repair. The parts were right and the total was
+wrong, which is the harder way round: nobody reads every per-record line, and
+the summary is what someone acts on. Both the wording and the total are now
+decided in one place, so they cannot describe a record one way and count it
+another, and a new kind of verdict cannot quietly inherit an existing total —
+it has to be given one deliberately.
+
+**A failure at the very last step could erase everything the run had just
+done.** Marking a record as told is the final act for that record, and it
+happens after the messages have gone out. When that write failed, the error
+escaped far enough to discard the run's totals, skip the summary entirely and
+leave the scan position unsaved — for a run in which real people had already
+been messaged. An operator saw a generic failure for the whole network and no
+sign that anyone had been told anything. The failure is now handled where it
+happens, per record, so one unwritable mark cannot silence the rest.
+
+What that warning CLAIMS is read off what the run actually did, rather than
+asserted beside it. The mark is also written for a record nobody could be
+reached for, so this failure is reachable with no message ever having been
+attempted — and the first version of the warning announced a delivery anyway,
+turning a database error into a claimed notification. That is the same
+overclaim removed from the "reminded" total earlier, arriving by a different
+door, which is why the sentence is now built from the recorded outcome: two
+statements cannot drift apart when only one of them exists.
+
+Where a message did go out, the consequence is stated rather than left to be
+inferred: the mark is missing, so a later run sends that reminder again. That
+is the right trade in this direction — a repeated reminder is recoverable
+where a missed one is not — but it is a real consequence, and the mark is the
+only record that the message already went.
 
 **A failing chain would have printed its own access key into the operator
 log.** When a chain read fails, the failure is written to the log so an

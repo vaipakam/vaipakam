@@ -305,6 +305,17 @@ The app uses chain reads and indexed reads for different jobs.
   reminder is about is not the period the chain is on, nothing is sent and the
   record is left for a later run, by which time the platform's own records
   have caught up.
+- No reminder is sent on a network where settlement is currently switched off.
+  Governance can disable periodic interest platform-wide, which stops new
+  positions taking a cadence and makes the settlement itself refuse — but
+  positions already open keep the cadence they were opened with, so they go on
+  looking due. A reminder then instructs someone to make a payment the platform
+  would reject, which is worse than silence and worst during the emergency that
+  prompted the switch. A run reads that setting before it speaks, sends nothing
+  on a network where it is off, and marks nothing — so reminders resume by
+  themselves when it is turned back on. A run that cannot READ the setting also
+  sends nothing: not knowing whether a payment can be made is not permission to
+  demand one.
 - Confirmation is only accepted from a source that has first proved it is the
   network it is configured to be. A source pointed at a different network —
   by a swapped setting, say — answers every question confidently and about
@@ -345,14 +356,17 @@ The app uses chain reads and indexed reads for different jobs.
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
   same records every run and the ones behind them never.
-- The bound is on messages SENT, never on records examined or records handled.
-  Anything that occupies a slot without sending — a record the chain declines
-  to confirm, one whose recipients have switched these reminders off, one with
-  no subscriber at all — would otherwise hold the whole run's allowance while
-  never being marked as handled, so the same few would sit at the front of the
-  order on every run and the people behind them would never be reached. A run
-  therefore continues past records it cannot send for, up to a stated limit of
-  its own, and reaches the ones behind them in the same run.
+- The bound is on OUTBOUND REQUESTS — every request the run issues, its own
+  queries to the chain as well as the messages it sends — never on records
+  examined or records handled. Anything that occupies a slot without issuing a
+  request cannot consume the allowance: a record the chain declines to confirm,
+  one whose recipients have switched these reminders off, one with no
+  subscriber at all. Were the bound on records instead, those would hold the
+  whole run's allowance while never being marked as handled, so the same few
+  would sit at the front of the order on every run and the people behind them
+  would never be reached. A run therefore continues past records it cannot send
+  for, up to a stated limit of its own, and reaches the ones behind them in the
+  same run.
 - A run will not begin a record it might not be able to finish, even when some
   allowance remains. Stopping between one party's message and the other's
   would mark the reminder as delivered with one side never told, and that
