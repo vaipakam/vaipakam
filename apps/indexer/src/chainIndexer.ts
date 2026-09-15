@@ -48,6 +48,7 @@ import {
   ReconcilePartialError,
   type LoanMutableColumns,
   type ReconcileOptions,
+  type ReconcileReport,
 } from './loanReconcile';
 // #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
 // block-pinned read can land on. ONE definition, shared with the repair pass;
@@ -814,7 +815,160 @@ function mutableLoanColumnsFromDetail(detail: Record<string, unknown>): LoanMuta
   };
 }
 
-async function runLoanReconcilePass(input: {
+/**
+ * Turn a reconciliation report into operator output.
+ *
+ * ONE place does this and it is reached ONCE, from neither ending (#2203).
+ * `_runLoanReconcilePass` resolves the report — returned normally, or lifted
+ * off a `ReconcilePartialError` — and the two paths JOIN before anything is
+ * said, so there is no reporting in the catch, and none in the success path
+ * either. That is the point rather than an implementation detail: the bug
+ * was a second place deciding what an operator hears, and "the catch calls
+ * it too" would have restored exactly that, one review round from being
+ * written differently again.
+ *
+ * What the catch used to do was read only `report.repaired` off the error
+ * and drop everything else — so a pass that examined an orphaned row,
+ * correctly identified it as unresolvable, and then failed its cursor write
+ * reported nothing about it. Worse: if the pointer write succeeded and only
+ * the lap-boundary write failed, the rotation had already moved past that
+ * row, so it was examined, not named, and not examined again until the lap
+ * wrapped.
+ *
+ * The diagnostics ARE the feature. `unread`, `unresolvable` and
+ * `unknownStatus` each exist because a review round established that silence
+ * was the defect; losing them on a late failure reaches that same silence by
+ * another route. `ReconcilePartialError` already carries the whole report
+ * for exactly this reason — the error was introduced (#2190 `4007262520`,
+ * `4007752788`) on the rule that a failure after real work landed must not
+ * discard the record of that work. Repairs were the work in view then; the
+ * diagnostics are work too, and half the payload went unread.
+ *
+ * Copying the blocks into the catch instead would leave the next set added
+ * to the report reported in one path and forgotten in the other, which is
+ * the shape of the bug itself. Sharing this function and calling it from
+ * both endings is better and still leaves "call it" as something an ending
+ * can be written without — which is why the call sits after the join.
+ */
+export function _reportReconcilePass(chainId: number, report: ReconcileReport): void {
+  if (report.repaired.length > 0) {
+    console.warn(
+      `[chainIndexer] reconciled chain ${chainId}: ` +
+        report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
+    );
+  }
+  // A row whose chain read failed is NOT silently dropped. If a deployed
+  // facet stops matching the compiled ABI, every read fails every pass and
+  // the statuses stay stale forever while the scan looks healthy — so the
+  // unread set is said out loud (#2190 r1).
+  if (report.unread.length > 0) {
+    console.warn(
+      `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
+        `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+    );
+  }
+  // A loan the chain says does NOT EXIST is an orphaned row — indexed
+  // once and never substantiable again. It is reported at error level
+  // because nothing in this pass will ever resolve it: the read
+  // succeeded, so retrying changes nothing, and it is not counted as a
+  // running loan either (#2190 r6 `4006071749`).
+  if (report.unresolvable.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile chain ${chainId}: the chain has NO SUCH LOAN for ` +
+        `indexed row(s) ${report.unresolvable.join(', ')} — orphaned rows that ` +
+        `will not resolve themselves; they are not counted as running`,
+    );
+  }
+  // An on-chain status this build does not know. Refusing to guess is
+  // right; refusing silently is how a newly-appended TERMINAL member
+  // leaves rows published as active while every pass looks healthy.
+  if (report.unknownStatus.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile chain ${chainId}: unrecognised LoanStatus for ` +
+        report.unknownStatus.map((u) => `loan ${u.loanId} = ${u.status}`).join(', ') +
+        ` — this build cannot project it; no status written`,
+    );
+  }
+  // A failing WRITE with a succeeding read points at D1, not the RPC, so
+  // it is reported separately rather than folded into `unread`. The row
+  // is untouched — the repair is one transaction — so the rotation
+  // returns to it.
+  if (report.writeFailed.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile could not WRITE ${report.writeFailed.length} repair(s) ` +
+        `on chain ${chainId}: ${report.writeFailed.join(', ')} — rows untouched, ` +
+        `retried next rotation`,
+    );
+  }
+  // A DISAGREEMENT NOBODY CAN REPAIR is the quietest failure this pass
+  // has, and it was invisible (#2190 r2 `4006071758`). When the counts
+  // differ because a `LoanInitiated` was MISSED rather than a terminal,
+  // every indexed row legitimately reads Active: nothing is repaired,
+  // nothing is unread, and the pass looks perfectly healthy while the
+  // index stays permanently short of the chain AND spends the larger
+  // mismatch budget on every tick forever. Reported once the lap has been
+  // round — a mid-lap mismatch is expected, since the repairs that would
+  // settle it have not been made yet.
+  // `wrappedLap` OR an EMPTY EXAMINED SET (#2190 r6 `4007752774`). The
+  // lap gate alone is unsatisfiable in the case that matters most: when
+  // the missed event was a `LoanInitiated`, D1 can hold ZERO live rows,
+  // so the pointer and the lap boundary stay at zero, no lap ever
+  // completes, and the chain/index disagreement stays silent on every
+  // tick forever — the exact shape this warning was added for.
+  if (
+    !report.agreed &&
+    report.repaired.length === 0 &&
+    (report.wrappedLap || report.examined.length === 0)
+  ) {
+    // A lap that left rows UNREAD or UNWRITTEN established nothing about
+    // them, so it cannot rule anything out (#2190 r6 `4008330681`). An
+    // earlier version said "NOT a missed terminal" over a lap whose only
+    // stale row failed its read twice — a confident conclusion drawn
+    // from an absence of evidence.
+    //
+    // `unknownStatus` belongs in the same condition and was left out of
+    // that fix (#2190 r11 `4009116593`). It is the same defect one field
+    // further along, and the sharpest instance of it: the logger would
+    // report "this build cannot project status N" and then, in the very
+    // next line, rule out a missed terminal — when an appended terminal
+    // status from a newer deployment is PRECISELY what that unknown
+    // would be, and precisely what would cause the mismatch being
+    // diagnosed. Three ways to learn nothing about a row, one rule.
+    const settled =
+      report.unread.length === 0 &&
+      report.writeFailed.length === 0 &&
+      report.unknownStatus.length === 0;
+    console.warn(
+      `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
+        `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
+        `full lap repaired none — ` +
+        (settled
+          ? `the difference is NOT a missed terminal (most likely a missed ` +
+            `LoanInitiated, which this pass cannot repair)`
+          : // Every reason is named, or the line reads as a contradiction:
+            // an unknown status leaves both failure counts at zero, so
+            // "0 read(s) and 0 write(s) failed, cause UNDETERMINED" would
+            // send an operator looking for a fault that is not there.
+            `but ${report.unread.length} read(s) failed, ` +
+            `${report.writeFailed.length} write(s) failed, and ` +
+            `${report.unknownStatus.length} row(s) carry a status this build ` +
+            `cannot project, so the cause is UNDETERMINED — this lap ruled ` +
+            `nothing out`),
+    );
+  }
+}
+
+/**
+ * One reconciliation pass: repair what the chain disagrees with, then say
+ * what happened.
+ *
+ * Exported for tests (#2203 r3 `4010916222`). Pinning what
+ * `_reportReconcilePass` SAYS is not the same as pinning that it is REACHED:
+ * with the report-side cases alone, deleting the join's single call left
+ * forty tests green. The wiring needs a seam of its own, because "the
+ * diagnostics reached the operator" is the whole claim this pass makes.
+ */
+export async function _runLoanReconcilePass(input: {
   env: Env;
   chain: ChainConfig;
   chainId: number;
@@ -834,8 +988,18 @@ async function runLoanReconcilePass(input: {
   const reconcileClient = createPublicClient({
     transport: http(chain.rpc, { retryCount: 0 }),
   });
+  // ONE reporting call, on ONE path, whatever happened (#2203 r1). The
+  // failure path used to do its own reporting, which is how it came to
+  // report only `repaired` — a second place deciding what an operator hears
+  // is a second place that can decide wrongly. Resolving the report first
+  // and reporting after the try/catch makes "the failure path forgot" not a
+  // thing that can be written: there is no reporting in the catch to
+  // forget. `ReconcilePartialError` carries the report precisely so this
+  // works.
+  let report: ReconcileReport | null = null;
+  let failure: unknown = null;
   try {
-    const report = await reconcileAfterScan(
+    report = await reconcileAfterScan(
       {
         db: env.DB,
         chainId,
@@ -927,119 +1091,27 @@ async function runLoanReconcilePass(input: {
       },
       budget,
     );
-    if (report.repaired.length > 0) {
-      console.warn(
-        `[chainIndexer] reconciled chain ${chainId}: ` +
-          report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
-      );
-    }
-    // A row whose chain read failed is NOT silently dropped. If a deployed
-    // facet stops matching the compiled ABI, every read fails every pass and
-    // the statuses stay stale forever while the scan looks healthy — so the
-    // unread set is said out loud (#2190 r1).
-    if (report.unread.length > 0) {
-      console.warn(
-        `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
-          `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
-      );
-    }
-    // A loan the chain says does NOT EXIST is an orphaned row — indexed
-    // once and never substantiable again. It is reported at error level
-    // because nothing in this pass will ever resolve it: the read
-    // succeeded, so retrying changes nothing, and it is not counted as a
-    // running loan either (#2190 r6 `4006071749`).
-    if (report.unresolvable.length > 0) {
-      console.error(
-        `[chainIndexer] reconcile chain ${chainId}: the chain has NO SUCH LOAN for ` +
-          `indexed row(s) ${report.unresolvable.join(', ')} — orphaned rows that ` +
-          `will not resolve themselves; they are not counted as running`,
-      );
-    }
-    // An on-chain status this build does not know. Refusing to guess is
-    // right; refusing silently is how a newly-appended TERMINAL member
-    // leaves rows published as active while every pass looks healthy.
-    if (report.unknownStatus.length > 0) {
-      console.error(
-        `[chainIndexer] reconcile chain ${chainId}: unrecognised LoanStatus for ` +
-          report.unknownStatus.map((u) => `loan ${u.loanId} = ${u.status}`).join(', ') +
-          ` — this build cannot project it; no status written`,
-      );
-    }
-    // A failing WRITE with a succeeding read points at D1, not the RPC, so
-    // it is reported separately rather than folded into `unread`. The row
-    // is untouched — the repair is one transaction — so the rotation
-    // returns to it.
-    if (report.writeFailed.length > 0) {
-      console.error(
-        `[chainIndexer] reconcile could not WRITE ${report.writeFailed.length} repair(s) ` +
-          `on chain ${chainId}: ${report.writeFailed.join(', ')} — rows untouched, ` +
-          `retried next rotation`,
-      );
-    }
-    // A DISAGREEMENT NOBODY CAN REPAIR is the quietest failure this pass
-    // has, and it was invisible (#2190 r2 `4006071758`). When the counts
-    // differ because a `LoanInitiated` was MISSED rather than a terminal,
-    // every indexed row legitimately reads Active: nothing is repaired,
-    // nothing is unread, and the pass looks perfectly healthy while the
-    // index stays permanently short of the chain AND spends the larger
-    // mismatch budget on every tick forever. Reported once the lap has been
-    // round — a mid-lap mismatch is expected, since the repairs that would
-    // settle it have not been made yet.
-    // `wrappedLap` OR an EMPTY EXAMINED SET (#2190 r6 `4007752774`). The
-    // lap gate alone is unsatisfiable in the case that matters most: when
-    // the missed event was a `LoanInitiated`, D1 can hold ZERO live rows,
-    // so the pointer and the lap boundary stay at zero, no lap ever
-    // completes, and the chain/index disagreement stays silent on every
-    // tick forever — the exact shape this warning was added for.
-    if (
-      !report.agreed &&
-      report.repaired.length === 0 &&
-      (report.wrappedLap || report.examined.length === 0)
-    ) {
-      // A lap that left rows UNREAD or UNWRITTEN established nothing about
-      // them, so it cannot rule anything out (#2190 r6 `4008330681`). An
-      // earlier version said "NOT a missed terminal" over a lap whose only
-      // stale row failed its read twice — a confident conclusion drawn
-      // from an absence of evidence.
-      //
-      // `unknownStatus` belongs in the same condition and was left out of
-      // that fix (#2190 r11 `4009116593`). It is the same defect one field
-      // further along, and the sharpest instance of it: the logger would
-      // report "this build cannot project status N" and then, in the very
-      // next line, rule out a missed terminal — when an appended terminal
-      // status from a newer deployment is PRECISELY what that unknown
-      // would be, and precisely what would cause the mismatch being
-      // diagnosed. Three ways to learn nothing about a row, one rule.
-      const settled =
-        report.unread.length === 0 &&
-        report.writeFailed.length === 0 &&
-        report.unknownStatus.length === 0;
-      console.warn(
-        `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
-          `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
-          `full lap repaired none — ` +
-          (settled
-            ? `the difference is NOT a missed terminal (most likely a missed ` +
-              `LoanInitiated, which this pass cannot repair)`
-            : // Every reason is named, or the line reads as a contradiction:
-              // an unknown status leaves both failure counts at zero, so
-              // "0 read(s) and 0 write(s) failed, cause UNDETERMINED" would
-              // send an operator looking for a fault that is not there.
-              `but ${report.unread.length} read(s) failed, ` +
-              `${report.writeFailed.length} write(s) failed, and ` +
-              `${report.unknownStatus.length} row(s) carry a status this build ` +
-              `cannot project, so the cause is UNDETERMINED — this lap ruled ` +
-              `nothing out`),
-      );
-    }
+  } catch (err) {
+    failure = err;
+    if (err instanceof ReconcilePartialError) report = err.report;
+  }
+
+  // Everything the pass noticed reaches the operator, whether it finished or
+  // died on its cursor write.
+  if (report) _reportReconcilePass(chainId, report);
+
+  if (failure === null) {
     // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
     // `loan.updated` key is not enough on its own: `scopeInvalidationRoots`
     // drops holder-scoped refetches when the frame's hint set is complete
     // and does not mention the loan — and a repaired loan is old, so it is
     // never in `allLogs`. The holders of the position just corrected would
     // have been precisely the ones whose refetch was scoped away.
-    return report.repaired.map((r) => r.loanId);
-  } catch (err) {
+    return report!.repaired.map((r) => r.loanId);
+  }
+
+  {
+    const err = failure;
     // A repair failure must not wedge the scan that found nothing wrong;
     // the rotation returns to these rows.
     //
@@ -1050,10 +1122,7 @@ async function runLoanReconcilePass(input: {
     // can rediscover them. Returning an empty set there would lose their
     // `loan.updated` frame permanently: the corrections would be in D1 and
     // announced to nobody.
-    const partial =
-      err instanceof ReconcilePartialError
-        ? err.report.repaired.map((r) => r.loanId)
-        : [];
+    const partial = report ? report.repaired.map((r) => r.loanId) : [];
     if (partial.length > 0) {
       console.error(
         `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
@@ -1237,7 +1306,7 @@ export async function runChainIndexerForChain(
           `retried next tick. Every tick = a stuck or regressed RPC head.`,
       );
     } else {
-      quietReconciledIds = await runLoanReconcilePass({
+      quietReconciledIds = await _runLoanReconcilePass({
         env,
         chain,
         chainId,
@@ -1561,7 +1630,7 @@ export async function runChainIndexerForChain(
   // separately (see the reply on that thread).
   const reconciledLoanIds =
     scanTo === head
-      ? await runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
+      ? await _runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
       : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
