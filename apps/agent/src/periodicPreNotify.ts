@@ -995,10 +995,60 @@ async function saveRotationStart(env: Env, next: number): Promise<void> {
  * half of an either/or, and it earned its complexity in findings rather than
  * in behaviour.
  */
+type PrenotifyCursorKind = typeof PRENOTIFY_SCAN_KIND | typeof PRENOTIFY_ROTATION_KIND;
+
+/**
+ * What a failed write of THIS cursor costs, in the terms its own reader uses.
+ *
+ * Found by auditing this file's operator-facing lines against the evidence
+ * each one actually has (#2213, self-review after r20). One shared message
+ * served both callers and was wrong for the rotation one twice over.
+ *
+ * It named `chain ${chainId}`, and the rotation row's id is
+ * `ROTATION_ROW_CHAIN_ID` — a SENTINEL, chosen a few lines above precisely
+ * because it "cannot collide with a real one". So the line told an operator
+ * to go and look at chain 0, which does not exist.
+ *
+ * And it asserted the SCAN's consequence — loans behind a run of unreachable
+ * ones stop being reached — for a failure whose actual fallout is the one
+ * `rotationStart`'s own catch describes: the same chain leads every tick and
+ * the later ones can be starved of the shared allowance. Different failure,
+ * different remedy, one sentence claiming the first for both.
+ *
+ * A union rather than a `string`, so the switch is exhaustive and a third
+ * cursor kind cannot inherit either description by default — the same reason
+ * `explainVerdict` returns its bucket alongside its wording.
+ */
+function describeCursorLoss(kind: PrenotifyCursorKind, chainId: number): {
+  subject: string;
+  consequence: string;
+} {
+  switch (kind) {
+    case PRENOTIFY_ROTATION_KIND:
+      return {
+        subject: 'the chain rotation position',
+        consequence:
+          'The next tick therefore leads with the same chain this one did ' +
+          'rather than the next — so if this keeps appearing, one busy chain ' +
+          'holds the shared allowance and the chains behind it may not be ' +
+          'reached at all.',
+      };
+    case PRENOTIFY_SCAN_KIND:
+      return {
+        subject: `the scan position for chain ${chainId}`,
+        consequence:
+          'The next tick therefore starts from where this one did rather ' +
+          'than from where it stopped — so if this keeps appearing, loans ' +
+          'behind a run of unreachable ones stop being reached, and that is ' +
+          'the fairness guarantee degrading, not a wasted read.',
+      };
+  }
+}
+
 async function persistCursor(
   env: Env,
   chainId: number,
-  kind: string,
+  kind: PrenotifyCursorKind,
   at: number,
 ): Promise<void> {
   try {
@@ -1012,13 +1062,10 @@ async function persistCursor(
       .bind(chainId, kind, at, Math.floor(Date.now() / 1000))
       .run();
   } catch (err) {
+    const { subject, consequence } = describeCursorLoss(kind, chainId);
     console.warn(
-      `[periodicPreNotify] could not persist ${kind} for chain ${chainId} at ` +
-        `${at}: ${describeFailure(err)}. The next tick therefore starts from ` +
-        `where this one did rather than from where it stopped — so if this ` +
-        `keeps appearing, loans behind a run of unreachable ones stop being ` +
-        `reached, and that is the fairness guarantee degrading, not a ` +
-        `wasted read.`,
+      `[periodicPreNotify] could not persist ${subject} at ${at}: ` +
+        `${describeFailure(err)}. ${consequence}`,
     );
   }
 }

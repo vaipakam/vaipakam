@@ -119,6 +119,8 @@ const configPinnedAt: (bigint | undefined)[] = [];
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
 let cursorReadFails: boolean;
+/** Which of the lane's OWN cursor kinds fails to WRITE, if any. */
+let cursorWriteFails: string | null;
 /** The lane's own persisted scan position, surviving across ticks like D1 does. */
 const scanOffsets = new Map<string, number>();
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
@@ -301,6 +303,9 @@ function env(extra: Record<string, unknown> = {}) {
             throw new Error('D1_ERROR: write failed');
           }
           if (isCursorWrite && String(params[1] ?? '').startsWith('prenotify_')) {
+            if (cursorWriteFails === String(params[1])) {
+              throw new Error('D1_ERROR: cursor write failed');
+            }
             scanOffsets.set(`${String(params[1])}:${Number(params[0])}`, Number(params[2]));
           }
           record(params);
@@ -418,6 +423,7 @@ beforeEach(() => {
   configPinnedAt.length = 0;
   indexedBlock = 900;
   cursorReadFails = false;
+  cursorWriteFails = null;
   scanOffsets.clear();
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
@@ -1354,6 +1360,27 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // One anchor: the config and the batched status read describe one block.
     expect(configPinnedAt).toEqual([1_000n]);
     expect(pinnedAt).toEqual([1_000n]);
+  });
+
+  it('names the ROTATION position, and its own consequence, when that write fails', async () => {
+    // Found by auditing this file's operator-facing lines against the evidence
+    // each one has, rather than from a review finding. One shared message
+    // served both cursor writes and was wrong for the rotation one twice.
+    //
+    // It said "chain 0" — the rotation row's id is a SENTINEL chosen because
+    // it cannot collide with a real chain — so it sent an operator looking for
+    // a chain that does not exist. And it asserted the SCAN's consequence,
+    // where a failed rotation write instead means the same chain leads every
+    // tick and the ones behind it can be starved of the shared allowance.
+    cursorWriteFails = 'prenotify_rotation';
+    loanRows = tenLoans().slice(-2);
+    const { said } = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
+    expect(said).toContain('the chain rotation position');
+    expect(said).toContain('may not be reached at all');
+    // The sentinel is never presented as a chain...
+    expect(said).not.toContain('for chain 0');
+    // ...and the scan's consequence is not borrowed for this failure.
+    expect(said).not.toContain('where it stopped');
   });
 
   it('says nothing about a cap it did not reach', async () => {
