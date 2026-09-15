@@ -1,278 +1,117 @@
 [
   {
     "type": "function",
-    "name": "getLoanConsents",
+    "name": "classifyLegacyPacket",
     "inputs": [
       {
-        "name": "loanId",
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "freshShare",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [
+      },
       {
-        "name": "bothPartyConsent",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "getLoanDetails",
+    "name": "getLegacyEnvelope",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "snapshotId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "loan",
+        "name": "",
         "type": "tuple",
-        "internalType": "struct LibVaipakam.Loan",
+        "internalType": "struct LibVaipakam.LegacyEnvelope",
         "components": [
           {
-            "name": "id",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "offerId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lender",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "principalLiquidity",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.LiquidityStatus"
-          },
-          {
-            "name": "collateralLiquidity",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.LiquidityStatus"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.LoanStatus"
-          },
-          {
-            "name": "assetType",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.AssetType"
-          },
-          {
-            "name": "useFullTermInterest",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "riskAndTermsConsentFromBoth",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "collateralAssetType",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.AssetType"
-          },
-          {
-            "name": "fallbackLenderBonusBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "fallbackTreasuryBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "liquidationLtvBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "borrower",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "allowsPartialRepay",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "periodicInterestCadence",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
-          },
-          {
-            "name": "lastPeriodicInterestSettledAt",
+            "name": "importedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
           {
-            "name": "lenderTokenId",
+            "name": "rawUncounted",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "borrowerTokenId",
+            "name": "holderUncounted",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "principal",
+            "name": "diamondReserved",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "principalAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "interestRateBps",
+            "name": "returnedCumulative",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "startTime",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "interestPaidSinceLastPeriod",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "durationDays",
+            "name": "netTotal",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAmount",
+            "name": "relocatedFresh",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "tokenId",
+            "name": "relocatedRecycled",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "quantity",
+            "name": "replacedFresh",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "prepayAmount",
+            "name": "replacedRecycled",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "bufferAmount",
+            "name": "writtenDown",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "lastDeductTime",
+            "name": "entryIndex",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralQuantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lenderDiscountAccAtInit",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "borrowerDiscountAccAtInit",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "matcher",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lenderNotifBilled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "borrowerNotifBilled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPrepayListing",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "interestSettled",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "minHealthFactorAtInit",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "initLtvCapBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "interestAccrualStart",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "interestRemainingDays",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "treasuryFeeBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "loanInitiationFeeBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
           }
         ]
       }
@@ -281,46 +120,380 @@
   },
   {
     "type": "function",
-    "name": "initiateLoan",
+    "name": "getPacketReconciliation",
     "inputs": [
       {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "acceptor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "markNotifBilled",
-    "inputs": [
-      {
-        "name": "loanId",
+        "name": "protectedCumulative",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "isLenderSide",
+        "name": "unclassified",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "classifiedFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "classifiedRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "disposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capsFixed",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getQueueState",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "freshQueuedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveRow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledQueuedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledOpen",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "recycledConsumedSeq",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledConsumedBase",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledConsumedInheritedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationEntry",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.ReconciliationEntry",
+        "components": [
+          {
+            "name": "key",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "envelope",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "era",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "landedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "freshCredit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledCredit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshInherited",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledInherited",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAbsorbed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledConsumedInherited",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationEntrySpent",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct RewardReconciliationFacet.Spent",
+        "components": [
+          {
+            "name": "freshSpent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshUnspent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAbsorbed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshPrefix",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledSpent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledUnspent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledInheritable",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledPrefix",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReconciliationTotals",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "entries",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reattributedIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reattributedOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "importLegacyEnvelope",
+    "inputs": [
+      {
+        "name": "snapshotId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "relocateFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "relocateRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "replaceFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "replaceRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "writeDown",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "isReconciliationEntryUsed",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewLegacyEnvelope",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "netTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rawUncounted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holderUncounted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "diamondReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "returnedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reclassifyReconciliationEntry",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshToRecycled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -328,40 +501,52 @@
   },
   {
     "type": "event",
-    "name": "LoanInitiated",
+    "name": "LegacyEnvelopeImported",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
+        "name": "snapshotId",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       },
       {
-        "name": "offerId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "principal",
+        "name": "entryIndex",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "collateralAmount",
+        "name": "netTotal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "relocatedFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "relocatedRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "replacedFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "replacedRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "writtenDown",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -371,192 +556,114 @@
   },
   {
     "type": "event",
-    "name": "LoanInitiatedDetails",
+    "name": "LegacyPacketCapsFixed",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
+        "name": "packetHash",
+        "type": "bytes32",
         "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "freshCap",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "details",
-        "type": "tuple",
+        "name": "recycledCap",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "struct LoanFacet.LoanInitDetails",
-        "components": [
-          {
-            "name": "principalAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "durationDays",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "dueTimestamp",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "assetType",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.AssetType"
-          },
-          {
-            "name": "collateralAssetType",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.AssetType"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "quantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralQuantity",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "prepayAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "bufferAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "riskAndTermsConsentFromBoth",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPartialRepay",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "allowsPrepayListing",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "periodicInterestCadence",
-            "type": "uint8",
-            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
-          },
-          {
-            "name": "matcher",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "healthFactorAtInit",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lenderTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "borrowerTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "treasuryFeeBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "loanInitiationFeeBpsAtInit",
-            "type": "uint16",
-            "internalType": "uint16"
-          }
-        ]
+        "internalType": "uint256"
+      },
+      {
+        "name": "budget",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "NotificationFeeBilled",
+    "name": "LegacyPacketClassified",
     "inputs": [
       {
-        "name": "loanId",
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReconciliationEntryReclassified",
+    "inputs": [
+      {
+        "name": "entryIndex",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "isLenderSide",
+        "name": "entryId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "freshToRecycled",
         "type": "bool",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bool"
       },
       {
-        "name": "payer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vpfiAmount",
+        "name": "unspentMoved",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "configuredFeeVpfi1e18",
+        "name": "spentMoved",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -566,7 +673,119 @@
   },
   {
     "type": "event",
-    "name": "VpfiRecycled",
+    "name": "RewardCustodyFreshCredited",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "receivedAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowCredited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "origin",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardCustodyRowDebited",
+    "inputs": [
+      {
+        "name": "row",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiCustodyReattributed",
+    "inputs": [
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "intoBucket",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "spent",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiCustodyRelocated",
     "inputs": [
       {
         "name": "source",
@@ -588,31 +807,6 @@
       },
       {
         "name": "dayId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VpfiRecycledPreLaunch",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1486,29 +1680,7 @@
   },
   {
     "type": "error",
-    "name": "ERC721NonexistentToken",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "EncumbranceAlreadyExists",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "EnforcedPause",
+    "name": "ExpectedManualPause",
     "inputs": []
   },
   {
@@ -1572,22 +1744,6 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IlliquidPairNotConsented",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1741,11 +1897,6 @@
   },
   {
     "type": "error",
-    "name": "InternalVehicleNeedsRealLoan",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -1767,11 +1918,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
     "inputs": []
   },
   {
@@ -2078,27 +2224,6 @@
   },
   {
     "type": "error",
-    "name": "MidTierPairNotAcknowledged",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "MixedCollateralNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NFTBurnFailed",
     "inputs": []
   },
@@ -2165,11 +2290,6 @@
   {
     "type": "error",
     "name": "NotOfferCreator",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotifFeeVpfiTokenNotSet",
     "inputs": []
   },
   {
@@ -2783,6 +2903,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
   },
   {
     "type": "error",
@@ -3499,49 +3624,12 @@
   },
   {
     "type": "error",
-    "name": "RiskTierTooLow",
+    "name": "SafeERC20FailedOperation",
     "inputs": [
       {
-        "name": "actor",
+        "name": "token",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "requiredTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "actorTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

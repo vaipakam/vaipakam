@@ -3113,8 +3113,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](12);
-        s[11] = RewardReconciliationFacet.getQueueState.selector;
+        s = new bytes4[](11);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
@@ -3123,7 +3122,7 @@ contract DeployDiamond is Script {
         s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
         s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        s[8] = RewardReconciliationFacet.getSideOutflow.selector;
+        s[8] = RewardReconciliationFacet.getQueueState.selector;
         s[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
         s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
     }

@@ -4455,11 +4455,6 @@ library LibInteractionRewards {
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
         if (role == LibVaipakam.RewardRole.Mirror || role == LibVaipakam.RewardRole.Canonical) {
             s.rewardBudgetArmedFreshPaid += fresh;
-            // #1566 closure 2 cutover PR 2 — the MONOTONE sequencing counter
-            // the reconciliation FIFO reads, beside the headroom aggregate
-            // (which the restitution paid-correction may lower); era 0 until
-            // slice 4 PR C's era registry keys it.
-            s.freshOutflowSeqByEra[0] += fresh;
         }
     }
 

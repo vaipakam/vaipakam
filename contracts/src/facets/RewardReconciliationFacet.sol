@@ -29,16 +29,20 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *     classifiable; a rounding residual STAYS in the row.
  *  2. **`reclassifyReconciliationEntry`** — attribution moves between the two
  *     sides of an already-classified entry without changing its total,
- *     bounded by what is still UNSPENT under a FIFO over the live queue:
- *     outflows since the queue began consume entries in classification
- *     order, an entry's effective position is its original one net of every
- *     reclassification touching earlier entries (moved out subtracts, moved
- *     in adds), and the sequencing counters the FIFO reads only ever grow.
- *     Unspent credit moves WITH its tokens (in-holder; the recycled side
- *     bounded by the uncommitted bucket, the fresh side by the live row);
- *     spent credit moves as an inherited debit — `received` and `paid`
- *     together, the destination's consumption rising — never replacement
- *     capital, because an authenticated ledger inherits it.
+ *     bounded by what is still UNSPENT. Spent-ness reads the pool itself:
+ *     what the side's pool — the live row; the bucket — no longer physically
+ *     backs of the classified credits is spent, distributed among the
+ *     entries FIFO by classification order (the earliest spent first) through
+ *     a Fenwick tree's prefix sums, so a correction's work is logarithmic in
+ *     the log and no writer of the pool has to know about the queue. Unspent
+ *     credit moves WITH its tokens (in-holder; the recycled side bounded by
+ *     the uncommitted bucket); spent credit moves as an inherited debit —
+ *     `received` and `paid` together, the destination's consumption rising —
+ *     never replacement capital, because an authenticated ledger inherits
+ *     it; on the recycled side only consumption is inheritable. The part of
+ *     a fresh credit the standing deficit absorbed into restitution is
+ *     neither queued nor movable. A packet's component counters and caps
+ *     follow its entry, so the caps stay the corrected split.
  *  3. **`importLegacyEnvelope`** — the inventory that arrived BEFORE packets
  *     were stamped, as ONE netted aggregate every figure of which is read on
  *     chain at the import (`uncounted − holder-held − Diamond-side reserved −
@@ -143,15 +147,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         }
         // The three effects, atomically: the step-down (packet remainder,
         // row figure, global aggregate — each exact), the fresh credit under
-        // the split, the bucket credit as relocated custody. The entry's
-        // queue positions are taken BEFORE its credits land, so it sits
-        // behind every credit that preceded it.
-        (uint256 freshPos, uint256 recycledPos) = _openQueues(s, freshShare, recycledShare);
+        // the split, the bucket credit as relocated custody.
         LibRewardCustody.takeFromUnclassified(s, packetHash, freshShare, recycledShare);
         (uint256 toLive, uint256 toRestitution) =
-            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare, true);
+            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare);
         LibVpfiRecycle.creditCustodyFromUnclassified(p.remitId, recycledShare);
-        uint256 index = _pushEntry(s, packetHash, freshShare, recycledShare, freshPos, recycledPos);
+        uint256 index = _pushEntry(s, packetHash, false, freshShare, recycledShare, toRestitution);
         emit LegacyPacketClassified(packetHash, entryId, index, freshShare, recycledShare, toLive, toRestitution);
     }
 
@@ -186,52 +187,57 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        (uint256 freshSpent, uint256 recycledSpent, uint256 recycledInheritable, , ) = _spent(s, index);
-        uint256 credit = freshToRecycled ? e.freshCredit : e.recycledCredit;
-        if (amount > credit) revert ReconciliationExceedsCredit(index, amount, credit);
-        // Unspent credit moves first, with its tokens; only then spent
-        // credit, as an inherited debit — so what an entry keeps after any
-        // move that took spent units is all spent, and the FIFO rereads it
-        // so with no counter touched.
-        uint256 unspent = credit - (freshToRecycled ? freshSpent : recycledSpent);
-        uint256 movingUnspent = amount < unspent ? amount : unspent;
-        uint256 movingSpent = amount - movingUnspent;
+        Spent memory sp = _spent(s, index);
         uint256 refId = uint256(e.key);
+        uint256 movingUnspent;
+        uint256 movingSpent;
         if (freshToRecycled) {
-            uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
-            if (movingUnspent > live) revert ReconciliationExceedsLiveRow(movingUnspent, live);
+            // The absorbed part is restitution custody: not a correction's
+            // to move. Unspent credit moves first, with its tokens; only then
+            // spent credit, as an inherited debit — so what an entry keeps
+            // after any move that took spent units is all spent.
+            uint256 movable = sp.freshUnspent + sp.freshSpent;
+            if (amount > movable) revert ReconciliationRestitutionNotMovable(index, amount, movable);
+            movingUnspent = amount < sp.freshUnspent ? amount : sp.freshUnspent;
+            movingSpent = amount - movingUnspent;
             LibRewardCustody.debitFreshFromLive(s, LibVaipakam.RewardCustodyRow.Recycled, movingUnspent);
             LibVpfiRecycle.creditBucketReattributed(refId, movingUnspent, false);
             LibRewardCustody.inheritFreshDebitAsRecycled(s, movingSpent);
             LibVpfiRecycle.creditBucketReattributed(refId, movingSpent, true);
             // Spent units leave the source's INHERITED figure first (a
-            // reversal of an earlier move: those units return to the
-            // destination's own FIFO part, whose outflow still counts them);
-            // the rest were consumed here and become inherited there.
+            // reversal of an earlier move: those consumption units return to
+            // the recycled queue); the rest were spent here and become
+            // inherited there.
             uint256 reversing = movingSpent < e.freshInherited ? movingSpent : e.freshInherited;
             e.freshInherited -= reversing;
-            e.recycledConsumedInherited -= reversing; // those consumption units re-enter the recycled FIFO
+            e.recycledConsumedInherited -= reversing;
+            s.recycledConsumedInheritedTotal -= reversing;
             e.recycledInherited += movingSpent - reversing;
             e.freshCredit -= amount;
             e.recycledCredit += amount;
-            e.freshShift -= int256(movingUnspent);
-            e.recycledShift += int256(movingUnspent);
+            _queueAdjust(s, e.era, index, -int256(movingUnspent + movingSpent - reversing), int256(movingUnspent + reversing));
+            _packetFollows(s, e, amount, true);
         } else {
-            if (movingSpent > recycledInheritable) {
-                revert ReconciliationSpentRecycledNotInheritable(index, movingSpent, recycledInheritable);
+            movingUnspent = amount < sp.recycledUnspent ? amount : sp.recycledUnspent;
+            movingSpent = amount - movingUnspent;
+            if (movingSpent > sp.recycledInheritable) {
+                revert ReconciliationSpentRecycledNotInheritable(index, movingSpent, sp.recycledInheritable);
             }
             LibVpfiRecycle.debitBucketReattributed(refId, movingUnspent, false);
-            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, movingUnspent, false);
+            (, uint256 absorbed) =
+                LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, movingUnspent);
             LibVpfiRecycle.debitBucketReattributed(refId, movingSpent, true);
             LibRewardCustody.inheritRecycledDebitAsFresh(s, movingSpent);
             uint256 reversing = movingSpent < e.recycledInherited ? movingSpent : e.recycledInherited;
             e.recycledInherited -= reversing;
-            e.recycledConsumedInherited += movingSpent - reversing; // consumption units now carried by fresh
+            e.recycledConsumedInherited += movingSpent - reversing;
+            s.recycledConsumedInheritedTotal += movingSpent - reversing;
             e.freshInherited += movingSpent - reversing;
+            e.freshAbsorbed += absorbed;
             e.recycledCredit -= amount;
             e.freshCredit += amount;
-            e.recycledShift -= int256(movingUnspent);
-            e.freshShift += int256(movingUnspent);
+            _queueAdjust(s, e.era, index, int256(movingUnspent + reversing - absorbed), -int256(movingUnspent + movingSpent - reversing));
+            _packetFollows(s, e, amount, false);
         }
         emit ReconciliationEntryReclassified(index, entryId, freshToRecycled, movingUnspent, movingSpent);
     }
@@ -279,13 +285,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         uint256 refId = uint256(snapshotId);
         uint256 freshTotal = relocateFresh + replaceFresh;
         uint256 recycledTotal = relocateRecycled + replaceRecycled;
-        (uint256 freshPos, uint256 recycledPos) = _openQueues(s, freshTotal, recycledTotal);
-        LibRewardCustody.relocateFreshIngress(s, relocateFresh);
+        (, uint256 absorbed) = LibRewardCustody.relocateFreshIngress(s, relocateFresh);
         LibVpfiRecycle.creditCustodyRelocated(refId, relocateRecycled, LibVpfiRecycle.RecycleSource.LegacyReconciliation);
         LibRewardCustody.pullFromCaller(s, msg.sender, replaceFresh + replaceRecycled);
-        LibRewardCustody.creditFreshIngress(s, replaceFresh);
+        (, uint256 absorbedReplaced) = LibRewardCustody.creditFreshIngress(s, replaceFresh);
         LibVpfiRecycle.creditCustodyFundedInHolder(refId, replaceRecycled);
-        uint256 index = _pushEntry(s, snapshotId, freshTotal, recycledTotal, freshPos, recycledPos);
+        uint256 index = _pushEntry(s, snapshotId, true, freshTotal, recycledTotal, absorbed + absorbedReplaced);
         env.importedAt = uint64(block.timestamp);
         env.rawUncounted = raw;
         env.holderUncounted = holderUncounted;
@@ -370,75 +375,52 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return s.reconciliationLog[index];
     }
 
-    /// @notice An entry's spent-ness under the live-queue FIFO, per side —
-    ///         each side's inherited figure plus what the side's outflow
-    ///         since the queue opened attributes to it in order — the part
-    ///         of the recycled spent-ness a fresh-side correction may
+    /// @notice An entry's spent-ness, per side — its inherited figure plus
+    ///         what the side's pool no longer backs of it, in FIFO order —
+    ///         what of it is still unspent (movable with its tokens), the
+    ///         part of the recycled spent-ness a fresh-side correction may
     ///         inherit (consumption attributed first in queue order, plus
-    ///         what was inherited from fresh), and the effective positions
-    ///         it was read at. Scans the entries before it — operator reads
-    ///         and paused corrections only; the outflows themselves stay O(1).
+    ///         what was inherited from fresh), the restitution-absorbed part
+    ///         of its fresh credit (neither queued nor movable), and the
+    ///         queued credit classified before it on each side (the tree's
+    ///         prefix). Logarithmic in the log's length.
     function getReconciliationEntrySpent(
         uint256 index
-    )
-        external
-        view
-        returns (
-            uint256 freshSpent,
-            uint256 recycledSpent,
-            uint256 recycledInheritable,
-            uint256 freshEffectivePos,
-            uint256 recycledEffectivePos
-        )
-    {
+    ) external view returns (Spent memory) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
         return _spent(s, index);
     }
 
-    /// @notice The monotone sequencing counters: fresh outflow per era,
-    ///         recycled consumption, recycled surplus repatriation.
-    function getSideOutflow(
-        uint64 era
-    ) external view returns (uint256 freshSeq, uint256 recycledConsumedSeq, uint256 recycledRepatriatedSeq) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.freshOutflowSeqByEra[era], s.recycledConsumedSeq, s.recycledRepatriatedSeq);
-    }
-
-    /// @notice Each queue's opening record: whether it is open, the
-    ///         sequencing counter(s) and the credit cumulative it measures
-    ///         from, and the unspent backing that stood at its front when it
-    ///         opened.
+    /// @notice The two queues as they stand: each side's queued classified
+    ///         credit against the pool that backs it (the live row of `era`;
+    ///         the bucket), and the recycled consumption record.
     function getQueueState(
         uint64 era
     )
         external
         view
         returns (
-            bool freshOpen,
-            uint256 freshSeqBase,
-            uint256 freshPosBase,
-            uint256 freshLiveAtOpen,
-            uint256 freshCreditCumulative,
+            uint256 freshQueuedTotal,
+            uint256 liveRow,
+            uint256 recycledQueuedTotal,
+            uint256 bucket,
             bool recycledOpen,
+            uint256 recycledConsumedSeq,
             uint256 recycledConsumedBase,
-            uint256 recycledRepatriatedBase,
-            uint256 recycledPosBase,
-            uint256 recycledBucketAtOpen
+            uint256 recycledConsumedInheritedTotal
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.freshQueueOpenByEra[era],
-            s.freshQueueSeqBaseByEra[era],
-            s.freshQueuePosBaseByEra[era],
-            s.freshQueueLiveAtOpenByEra[era],
-            s.freshCreditCumulativeByEra[era],
+            s.freshQueuedTotalByEra[era],
+            s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh],
+            s.recycledQueuedTotal,
+            s.recycleBucket,
             s.recycledQueueOpen,
+            s.recycledConsumedSeq,
             s.recycledQueueConsumedBase,
-            s.recycledQueueRepatriatedBase,
-            s.recycledQueuePosBase,
-            s.recycledQueueBucketAtOpen
+            s.recycledConsumedInheritedTotal
         );
     }
 
@@ -502,134 +484,182 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         emit LegacyPacketCapsFixed(packetHash, freshCap, recycledCap, budget);
     }
 
-    /// @dev Open each queue on its first POSITIVE credit (Codex #2206 r1: a
-    ///      zero-credit side opens nothing, so an outflow before the side's
-    ///      first real credit can never read that credit as spent) and
-    ///      return the positions the new entry takes — behind every credit
-    ///      that preceded it, including the unspent backing standing at the
-    ///      front when the queue opened (the live row; the bucket).
-    function _openQueues(
-        LibVaipakam.Storage storage s,
-        uint256 fresh,
-        uint256 recycled
-    ) private returns (uint256 freshPos, uint256 recycledPos) {
-        uint64 era = PRE_BACKFILL_ERA;
-        if (fresh != 0 && !s.freshQueueOpenByEra[era]) {
-            s.freshQueueOpenByEra[era] = true;
-            s.freshQueueSeqBaseByEra[era] = s.freshOutflowSeqByEra[era];
-            s.freshQueuePosBaseByEra[era] = s.freshCreditCumulativeByEra[era];
-            s.freshQueueLiveAtOpenByEra[era] = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
-        }
-        if (recycled != 0 && !s.recycledQueueOpen) {
-            LibVpfiRecycle.seedCreditedCumulative();
-            s.recycledQueueOpen = true;
-            s.recycledQueueConsumedBase = s.recycledConsumedSeq;
-            s.recycledQueueRepatriatedBase = s.recycledRepatriatedSeq;
-            s.recycledQueuePosBase = LibVpfiRecycle.creditPosition(s);
-            s.recycledQueueBucketAtOpen = s.recycleBucket;
-        }
-        freshPos = _freshPosition(s, era);
-        recycledPos = _recycledPosition(s);
+    /// @notice An entry's derived figures, per side.
+    struct Spent {
+        uint256 freshSpent;
+        uint256 freshUnspent;
+        uint256 freshAbsorbed;
+        uint256 freshPrefix;
+        uint256 recycledSpent;
+        uint256 recycledUnspent;
+        uint256 recycledInheritable;
+        uint256 recycledPrefix;
     }
 
-    /// @dev The next fresh position: the unspent backing at the opening plus
-    ///      every credit since. Zero while the queue is not open.
-    function _freshPosition(LibVaipakam.Storage storage s, uint64 era) private view returns (uint256) {
-        if (!s.freshQueueOpenByEra[era]) return 0;
-        return s.freshQueueLiveAtOpenByEra[era] + (s.freshCreditCumulativeByEra[era] - s.freshQueuePosBaseByEra[era]);
-    }
-
-    /// @dev The next recycled position, from the bucket's own stored credit
-    ///      cumulatives. Zero while the queue is not open.
-    function _recycledPosition(LibVaipakam.Storage storage s) private view returns (uint256) {
-        if (!s.recycledQueueOpen) return 0;
-        return s.recycledQueueBucketAtOpen + (LibVpfiRecycle.creditPosition(s) - s.recycledQueuePosBase);
-    }
-
-    /// @dev Append a log entry at the positions taken before its credits.
+    /// @dev Append a log entry and its queued credit to both trees; the
+    ///      recycled queue's consumption base is taken at its first
+    ///      positive credit (Codex #2206 r1: a zero-credit side opens
+    ///      nothing, so consumption before the first recycled classification
+    ///      is never inheritable through it).
     function _pushEntry(
         LibVaipakam.Storage storage s,
         bytes32 key,
+        bool envelope,
         uint256 fresh,
         uint256 recycled,
-        uint256 freshPos,
-        uint256 recycledPos
+        uint256 absorbed
     ) private returns (uint256 index) {
+        uint64 era = PRE_BACKFILL_ERA;
+        if (recycled != 0 && !s.recycledQueueOpen) {
+            s.recycledQueueOpen = true;
+            s.recycledQueueConsumedBase = s.recycledConsumedSeq;
+        }
         index = s.reconciliationLog.length;
         s.reconciliationLog.push(
             LibVaipakam.ReconciliationEntry({
                 key: key,
-                era: PRE_BACKFILL_ERA,
+                envelope: envelope,
+                era: era,
                 landedAt: uint64(block.timestamp),
                 freshCredit: fresh,
                 recycledCredit: recycled,
-                freshPos: freshPos,
-                recycledPos: recycledPos,
-                freshShift: 0,
-                recycledShift: 0,
                 freshInherited: 0,
                 recycledInherited: 0,
+                freshAbsorbed: absorbed,
                 recycledConsumedInherited: 0
             })
         );
+        uint256 queuedFresh = fresh - absorbed;
+        _treeAppend(s.freshQueueTreeByEra[era], queuedFresh);
+        s.freshQueuedTotalByEra[era] += queuedFresh;
+        _treeAppend(s.recycledQueueTree, recycled);
+        s.recycledQueuedTotal += recycled;
     }
 
-    /// @dev Spent-ness over the LIVE queue (design §5c): each side's
-    ///      inherited figure, plus what the side's outflow since the queue
-    ///      opened attributes to the entry in order — the outflow less the
-    ///      entry's effective position, clamped to the credit that is not
-    ///      already inherited. The effective position is the recorded one
-    ///      plus the shifts of every earlier entry of the same queue. On the
-    ///      recycled side the outflow is consumption plus repatriation; the
-    ///      INHERITABLE part attributes consumption first in queue order,
-    ///      from its own counter, less the consumption the fresh side
-    ///      already inherited from this entry, plus what was inherited
-    ///      from fresh.
-    function _spent(
+    /// @dev A correction's change to an entry's QUEUED credit on each side,
+    ///      applied to the trees and the totals.
+    function _queueAdjust(
         LibVaipakam.Storage storage s,
-        uint256 index
-    )
-        private
-        view
-        returns (
-            uint256 freshSpent,
-            uint256 recycledSpent,
-            uint256 recycledInheritable,
-            uint256 freshEffectivePos,
-            uint256 recycledEffectivePos
-        )
-    {
-        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        int256 freshShift;
-        int256 recycledShift;
-        for (uint256 i = 0; i < index; ++i) {
-            LibVaipakam.ReconciliationEntry storage earlier = s.reconciliationLog[i];
-            if (earlier.era == e.era) freshShift += earlier.freshShift;
-            recycledShift += earlier.recycledShift;
+        uint64 era,
+        uint256 index,
+        int256 freshDelta,
+        int256 recycledDelta
+    ) private {
+        if (freshDelta != 0) {
+            _treeAdd(s.freshQueueTreeByEra[era], index + 1, freshDelta);
+            s.freshQueuedTotalByEra[era] = _applyDelta(s.freshQueuedTotalByEra[era], freshDelta);
         }
-        freshEffectivePos = _shifted(e.freshPos, freshShift);
-        recycledEffectivePos = _shifted(e.recycledPos, recycledShift);
-        uint256 freshOut = s.freshOutflowSeqByEra[e.era] - s.freshQueueSeqBaseByEra[e.era];
-        uint256 consumedOut = s.recycledConsumedSeq - s.recycledQueueConsumedBase;
-        uint256 recycledOut = consumedOut + (s.recycledRepatriatedSeq - s.recycledQueueRepatriatedBase);
-        freshSpent = e.freshInherited + _clampSpent(freshOut, freshEffectivePos, e.freshCredit - e.freshInherited);
-        uint256 recycledFifo = e.recycledCredit - e.recycledInherited;
-        recycledSpent = e.recycledInherited + _clampSpent(recycledOut, recycledEffectivePos, recycledFifo);
-        // Consumption already inherited by the fresh side is not offered
-        // again: it counts as consumption this entry has already passed on.
-        recycledInheritable = e.recycledInherited
-            + _clampSpent(consumedOut, recycledEffectivePos + e.recycledConsumedInherited, recycledFifo);
+        if (recycledDelta != 0) {
+            _treeAdd(s.recycledQueueTree, index + 1, recycledDelta);
+            s.recycledQueuedTotal = _applyDelta(s.recycledQueuedTotal, recycledDelta);
+        }
     }
 
-    function _shifted(uint256 pos, int256 shift) private pure returns (uint256) {
-        int256 effective = int256(pos) + shift;
-        return effective > 0 ? uint256(effective) : 0;
+    /// @dev A packet-backed entry's correction moves the packet's component
+    ///      counters AND its caps with it (Codex #2206 r2): the caps are the
+    ///      operator's authenticated split, and a correction is that split
+    ///      restated — their sum unchanged, each component still covering
+    ///      what was classified into it. An envelope entry has no packet.
+    function _packetFollows(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.ReconciliationEntry storage e,
+        uint256 amount,
+        bool freshToRecycled
+    ) private {
+        if (e.envelope) return;
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[e.key];
+        if (freshToRecycled) {
+            p.classifiedFresh -= amount;
+            p.classifiedRecycled += amount;
+            p.freshCap -= amount;
+            p.recycledCap += amount;
+        } else {
+            p.classifiedRecycled -= amount;
+            p.classifiedFresh += amount;
+            p.recycledCap -= amount;
+            p.freshCap += amount;
+        }
+        emit LegacyPacketCapsFixed(e.key, p.freshCap, p.recycledCap, p.unclassified + p.classifiedFresh + p.classifiedRecycled);
     }
 
-    function _clampSpent(uint256 outflow, uint256 pos, uint256 credit) private pure returns (uint256) {
-        if (outflow <= pos) return 0;
-        uint256 beyond = outflow - pos;
+    /// @dev Spent-ness reads the pool (design §5c's FIFO, on the landed
+    ///      shape): what a side's pool no longer physically backs of the
+    ///      classified queued credit — the live row of the era for fresh
+    ///      (restitution is not live backing), the bucket for recycled — is
+    ///      spent, and is attributed to the entries FIFO by log order: an
+    ///      entry's spent part is that shortfall less the queued credit
+    ///      classified before it (the tree's prefix), clamped to its own.
+    ///      Inherited credit is spent by definition; on the recycled side
+    ///      the INHERITABLE part attributes the bucket's consumption since
+    ///      the queue opened — less what the fresh side already inherited —
+    ///      first in queue order, plus what was inherited from fresh; what
+    ///      left by surplus repatriation stays where it left from.
+    function _spent(LibVaipakam.Storage storage s, uint256 index) private view returns (Spent memory r) {
+        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
+        uint256 queuedFresh = e.freshCredit - e.freshInherited - e.freshAbsorbed;
+        uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        uint256 totalFresh = s.freshQueuedTotalByEra[e.era];
+        uint256 shortFresh = totalFresh > live ? totalFresh - live : 0;
+        r.freshPrefix = _treePrefix(s.freshQueueTreeByEra[e.era], index);
+        uint256 fifoFresh = _clampSpent(shortFresh, r.freshPrefix, queuedFresh);
+        r.freshSpent = e.freshInherited + fifoFresh;
+        r.freshUnspent = queuedFresh - fifoFresh;
+        r.freshAbsorbed = e.freshAbsorbed;
+
+        uint256 queuedRecycled = e.recycledCredit - e.recycledInherited;
+        uint256 bucket = s.recycleBucket;
+        uint256 totalRecycled = s.recycledQueuedTotal;
+        uint256 shortRecycled = totalRecycled > bucket ? totalRecycled - bucket : 0;
+        r.recycledPrefix = _treePrefix(s.recycledQueueTree, index);
+        uint256 fifoRecycled = _clampSpent(shortRecycled, r.recycledPrefix, queuedRecycled);
+        r.recycledSpent = e.recycledInherited + fifoRecycled;
+        r.recycledUnspent = queuedRecycled - fifoRecycled;
+        uint256 consumed = s.recycledQueueOpen ? s.recycledConsumedSeq - s.recycledQueueConsumedBase : 0;
+        uint256 passedOn = s.recycledConsumedInheritedTotal;
+        uint256 consumedLeft = consumed > passedOn ? consumed - passedOn : 0;
+        uint256 inheritableTotal = consumedLeft < shortRecycled ? consumedLeft : shortRecycled;
+        r.recycledInheritable = e.recycledInherited + _clampSpent(inheritableTotal, r.recycledPrefix, queuedRecycled);
+    }
+
+    function _clampSpent(uint256 shortfall, uint256 prefix, uint256 credit) private pure returns (uint256) {
+        if (shortfall <= prefix) return 0;
+        uint256 beyond = shortfall - prefix;
         return beyond < credit ? beyond : credit;
+    }
+
+    function _applyDelta(uint256 value, int256 delta) private pure returns (uint256) {
+        return delta < 0 ? value - uint256(-delta) : value + uint256(delta);
+    }
+
+    // ─── Fenwick tree (1-indexed; index i = log index i − 1) ─────────────────
+
+    function _lowbit(uint256 i) private pure returns (uint256) {
+        unchecked {
+            return i & (~i + 1);
+        }
+    }
+
+    /// @dev Append the next index with `value`: the new node covers
+    ///      (n − lowbit(n), n], so its sum is the prefix difference plus the
+    ///      value.
+    function _treeAppend(uint256[] storage t, uint256 value) private {
+        uint256 n = t.length + 1;
+        uint256 covered = value + _treePrefix(t, n - 1) - _treePrefix(t, n - _lowbit(n));
+        t.push(covered);
+    }
+
+    function _treeAdd(uint256[] storage t, uint256 i, int256 delta) private {
+        uint256 n = t.length;
+        for (; i <= n; i += _lowbit(i)) {
+            t[i - 1] = _applyDelta(t[i - 1], delta);
+        }
+    }
+
+    /// @dev The sum of the first `i` indices (log indices 0 .. i − 1).
+    function _treePrefix(uint256[] storage t, uint256 i) private view returns (uint256 sum) {
+        for (; i > 0; i -= _lowbit(i)) {
+            sum += t[i - 1];
+        }
     }
 
     /// @dev The envelope's netting (design §5c, "uncounted − reservedLive −

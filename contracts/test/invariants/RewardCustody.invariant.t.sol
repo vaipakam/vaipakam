@@ -152,14 +152,38 @@ contract RewardCustodyInvariant is SetupTest {
         }
     }
 
-    /// #1566 closure 2 cutover PR 2 — the two sequencing counters the FIFO
-    /// reads never fall: whatever the last action was (a reclassification
-    /// included), each is at least what it read at that action's start.
-    function invariant_OutflowSequencingCountersAreMonotone() public view {
-        (uint256 freshSeq, uint256 consumed, uint256 repatriated) =
-            RewardReconciliationFacet(address(diamond)).getSideOutflow(0);
-        assertGe(freshSeq, handler.freshSeqAtActionStart(), "fresh sequencing counter never falls");
-        assertGe(consumed + repatriated, handler.recycledSeqAtActionStart(), "recycled sequencing counters never fall");
+    /// #1566 closure 2 cutover PR 2 — the recycled consumption counter the
+    /// epoch reads never falls: whatever the last action was (a
+    /// reclassification included), it is at least what it read at that
+    /// action's start.
+    function invariant_ConsumptionCounterIsMonotone() public view {
+        (, , , , , uint256 consumed, , ) = RewardReconciliationFacet(address(diamond)).getQueueState(0);
+        assertGe(consumed, handler.recycledSeqAtActionStart(), "the consumption counter never falls");
+    }
+
+    /// #1566 closure 2 cutover PR 2 (Codex #2206 r2) — the two queues equal
+    /// the log: each side's queued total is the sum of the entries' queued
+    /// credits, and the tree's prefix before the last entry plus that
+    /// entry's queued credit is the total.
+    function invariant_QueuesMatchTheLog() public view {
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        (uint256 entries, , ) = recon.getReconciliationTotals();
+        (uint256 queuedFresh, , uint256 queuedRecycled, , , , , ) = recon.getQueueState(0);
+        uint256 sumFresh;
+        uint256 sumRecycled;
+        for (uint256 i = 0; i < entries; ++i) {
+            LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(i);
+            sumFresh += e.freshCredit - e.freshInherited - e.freshAbsorbed;
+            sumRecycled += e.recycledCredit - e.recycledInherited;
+        }
+        assertEq(sumFresh, queuedFresh, "fresh queued total == sum of entries");
+        assertEq(sumRecycled, queuedRecycled, "recycled queued total == sum of entries");
+        if (entries > 0) {
+            RewardReconciliationFacet.Spent memory last = recon.getReconciliationEntrySpent(entries - 1);
+            LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(entries - 1);
+            assertEq(last.freshPrefix + (e.freshCredit - e.freshInherited - e.freshAbsorbed), queuedFresh, "fresh tree == total");
+            assertEq(last.recycledPrefix + (e.recycledCredit - e.recycledInherited), queuedRecycled, "recycled tree == total");
+        }
     }
 
     /// Reward flows never touch the Diamond's own balance: it holds exactly
@@ -199,7 +223,6 @@ contract RewardCustodyHandler is Test {
     ///      the current action (the monotonicity invariant's baseline).
     bytes32[] internal packetHashes;
     uint256 internal seqStamped;
-    uint256 public freshSeqAtActionStart;
     uint256 public recycledSeqAtActionStart;
 
     constructor(address diamond_, VPFIToken vpfi_, address minter_) {
@@ -223,10 +246,8 @@ contract RewardCustodyHandler is Test {
 
     function _start() internal {
         calls++;
-        (uint256 freshSeq, uint256 consumed, uint256 repatriated) =
-            RewardReconciliationFacet(diamond).getSideOutflow(0);
-        freshSeqAtActionStart = freshSeq;
-        recycledSeqAtActionStart = consumed + repatriated;
+        (, , , , , uint256 consumed, , ) = RewardReconciliationFacet(diamond).getQueueState(0);
+        recycledSeqAtActionStart = consumed;
     }
 
     function fund(uint256 seed) external {

@@ -461,10 +461,10 @@ interface IVaipakamErrors {
     /// @notice A reclassification asks for more than the entry's credit on
     ///         the source side.
     error ReconciliationExceedsCredit(uint256 index, uint256 requested, uint256 credit);
-    /// @notice The unspent fresh credit a correction moves is bounded by the
-    ///         live row: restitution-held custody moves only through its own
-    ///         dispositions, never through a correction.
-    error ReconciliationExceedsLiveRow(uint256 requested, uint256 live);
+    /// @notice The part of a fresh credit the standing deficit absorbed into
+    ///         restitution at credit is not a correction's to move:
+    ///         restitution custody moves only through its own dispositions.
+    error ReconciliationRestitutionNotMovable(uint256 index, uint256 requested, uint256 movable);
     /// @notice The received side cannot give back what the correction moves.
     error ReconciliationReceivedShort(uint256 requested, uint256 received);
     /// @notice The paid side cannot inherit the debit the correction moves.

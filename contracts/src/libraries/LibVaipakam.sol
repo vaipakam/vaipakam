@@ -7442,47 +7442,42 @@ library LibVaipakam {
         mapping(uint256 => uint256) ingressSequence;
         /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
         ///      epoch. The classification log (append-only; the order is the
-        ///      immutable thing), the MONOTONE outflow sequencing counters
-        ///      the FIFO spent-ness reads (NEVER decremented, unlike the
-        ///      headroom aggregates `rewardBudgetArmedFreshPaid` and
-        ///      `paidOutRecycled`, which take registered corrective debits —
-        ///      design §5c), each queue's opening record, the per-entry
-        ///      replay guard, the envelopes, and the two reattribution
-        ///      cumulatives that keep the bucket's composition identity
-        ///      stated: `bucket == credited + relocated + reattributedIn −
-        ///      paidOut − repatriatedOut − reattributedOut` (+ the
-        ///      released-remit correction), with the derived absorption
-        ///      floor netting the same two terms.
+        ///      immutable thing), the two queues that distribute spent-ness
+        ///      among the entries, the recycled consumption counter, the
+        ///      per-entry replay guard, the envelopes, and the two
+        ///      reattribution cumulatives that keep the bucket's composition
+        ///      identity stated: `bucket == credited + relocated +
+        ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
+        ///      (+ the released-remit correction), with the derived
+        ///      absorption floor netting the same two terms.
         ReconciliationEntry[] reconciliationLog;
-        /// @dev The OUTFLOW sequencing counters (Codex #2206 r1: outflows
-        ///      only — a reattribution never moves them). Fresh: every
-        ///      delivered-fresh charge, per era. Recycled: consumption and
-        ///      surplus repatriation kept APART, so the FIFO can attribute
-        ///      consumption before repatriation in queue order and inherit
-        ///      only consumption into the fresh side.
-        mapping(uint64 => uint256) freshOutflowSeqByEra;
+        /// @dev The queues (Codex #2206 r2): per side, a Fenwick tree over
+        ///      the log's indices holding each entry's QUEUED credit (its
+        ///      credit less what is inherited and, on the fresh side, what
+        ///      the deficit absorbed) and the queued total. Spent-ness is
+        ///      what the side's pool — the live row; the bucket — no longer
+        ///      physically backs of that total, attributed to the entries
+        ///      FIFO by log order through the tree's prefix sums, so a
+        ///      correction's work is logarithmic in the log's length and
+        ///      no writer of the pool has to know about the queue: the pool
+        ///      is read as it stands. The fresh tree is per era (0 until
+        ///      slice 4 PR C); the recycled one global, as the bucket is.
+        mapping(uint64 => uint256[]) freshQueueTreeByEra;
+        mapping(uint64 => uint256) freshQueuedTotalByEra;
+        uint256[] recycledQueueTree;
+        uint256 recycledQueuedTotal;
+        /// @dev The recycled side's outflow has two kinds, and only
+        ///      CONSUMPTION may be inherited by the fresh side as a debit:
+        ///      the bucket's consumption since the recycled queue opened (a
+        ///      MONOTONE counter, advanced by `consume` only, never moved by
+        ///      a correction), less what the fresh side already inherited,
+        ///      is attributed to the spent classified credit first in queue
+        ///      order; what left by surplus repatriation stays where it
+        ///      left from.
         uint256 recycledConsumedSeq;
-        uint256 recycledRepatriatedSeq;
-        /// @dev The fresh side's CREDIT cumulative, per era — every credit
-        ///      to the received side in order (ingress, funding, envelope,
-        ///      classification), so an entry's queue position counts every
-        ///      credit before it, not only the classified ones. (The
-        ///      recycled side derives its positions from the bucket's own
-        ///      stored cumulatives: absorption plus relocated custody.)
-        mapping(uint64 => uint256) freshCreditCumulativeByEra;
-        /// @dev Each queue opens on its first POSITIVE credit and records
-        ///      the sequencing counter, the credit cumulative and the
-        ///      unspent backing standing at that moment (the live row; the
-        ///      bucket), which occupies the front of the queue.
-        mapping(uint64 => bool) freshQueueOpenByEra;
-        mapping(uint64 => uint256) freshQueueSeqBaseByEra;
-        mapping(uint64 => uint256) freshQueuePosBaseByEra;
-        mapping(uint64 => uint256) freshQueueLiveAtOpenByEra;
         bool recycledQueueOpen;
         uint256 recycledQueueConsumedBase;
-        uint256 recycledQueueRepatriatedBase;
-        uint256 recycledQueuePosBase;
-        uint256 recycledQueueBucketAtOpen;
+        uint256 recycledConsumedInheritedTotal;
         mapping(bytes32 => bool) reconciliationEntryUsed;
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
         uint256 recycleReattributedInCumulative;
@@ -7611,40 +7606,35 @@ library LibVaipakam {
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
     ///         reconciliation epoch's classification log: what a
     ///         classification (or the bootstrap envelope's import) put on
-    ///         each side, and where it stands in each side's FIFO queue.
+    ///         each side, as CURRENTLY attributed.
     /// @dev    `key` is the packet's ingress stamp, or the envelope's
-    ///         snapshot id. `freshPos` / `recycledPos` are the entry's
-    ///         ORIGINAL positions in the two queues — the sum of the credits
-    ///         classified before it — and never change (the ORDER is the
-    ///         immutable thing, design §5c); a reclassification records the
-    ///         shift it imposes on every LATER entry of that queue in
-    ///         `freshShift` / `recycledShift` (unspent credit moved OUT
-    ///         subtracts, credit moved IN adds), so an entry's effective
-    ///         position is its recorded one plus the shifts of every entry
-    ///         before it. The credits are the CURRENT attribution on each
-    ///         side. `era` keys the fresh queue; it is 0 until slice 4 PR C's
-    ///         era registry assigns real ids.
+    ///         snapshot id (`envelope` says which, so a correction knows
+    ///         whether a packet's component counters and caps follow it).
+    ///         The ORDER of the log is the immutable thing (design §5c):
+    ///         spent-ness is distributed among the entries FIFO by that
+    ///         order. Per side, the entry's credit splits into what is
+    ///         QUEUED (backed by the side's pool and consumed by its
+    ///         outflows in order), what is INHERITED (spent by a debit a
+    ///         correction moved in from the other side — spent without any
+    ///         outflow of this side, unwound by the reverse move; Codex
+    ///         #2206 r1) and, on the fresh side, what the standing deficit
+    ///         ABSORBED into restitution at credit (Codex #2206 r2: not
+    ///         live backing, so neither queued nor a correction's to move —
+    ///         restitution custody moves only through its own dispositions).
+    ///         `recycledConsumedInherited` is the consumption of this
+    ///         entry's recycled credit the fresh side carries, so the
+    ///         consumption-first attribution does not offer it again. `era`
+    ///         keys the fresh queue; 0 until slice 4 PR C's registry.
     struct ReconciliationEntry {
         bytes32 key;
+        bool envelope;
         uint64 era;
         uint64 landedAt;
         uint256 freshCredit;
         uint256 recycledCredit;
-        uint256 freshPos;
-        uint256 recycledPos;
-        int256 freshShift;
-        int256 recycledShift;
-        /// @dev Codex #2206 r1 — the part of each side's credit that is
-        ///      SPENT BY INHERITANCE: a debit a correction moved in from the
-        ///      other side. It is spent without any outflow of this side
-        ///      having consumed it, so it is kept apart from the FIFO's
-        ///      derivation; moving it back is a reversal, always allowed.
         uint256 freshInherited;
         uint256 recycledInherited;
-        /// @dev The CONSUMPTION units of this entry's recycled credit that
-        ///      the fresh side has inherited and still carries, so the
-        ///      consumption-first attribution does not offer them again;
-        ///      unwound when they return.
+        uint256 freshAbsorbed;
         uint256 recycledConsumedInherited;
     }
 

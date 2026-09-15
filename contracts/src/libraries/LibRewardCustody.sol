@@ -569,11 +569,6 @@ library LibRewardCustody {
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r1) — every fresh credit
-        // takes the next position in the era's queue, so a classification
-        // entry's position counts the deliveries before it, not only the
-        // classified ones. Era 0 until slice 4 PR C keys it.
-        s.freshCreditCumulativeByEra[0] += amount;
         credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
         credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
@@ -905,20 +900,15 @@ library LibRewardCustody {
     ///         tokens move in-holder under the deficit split — the absorbed
     ///         portion to restitution, only the excess to live backing.
     ///         The in-holder form of {creditFreshIngress}, same split.
-    /// @param  queued True for a NEW credit (a classification), which takes
-    ///         the next queue position; false for credit moved in by a
-    ///         correction, which keeps its entry's original position.
     function creditFreshFromRow(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow from,
-        uint256 amount,
-        bool queued
+        uint256 amount
     ) internal returns (uint256 toLive, uint256 toRestitution) {
         if (amount == 0) return (0, 0);
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
-        if (queued) s.freshCreditCumulativeByEra[0] += amount;
         move(s, from, LibVaipakam.RewardCustodyRow.LiveFresh, toLive);
         move(s, from, LibVaipakam.RewardCustodyRow.Restitution, toRestitution);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
@@ -929,8 +919,9 @@ library LibRewardCustody {
     ///         `amount` and the tokens move from the LIVE row — never from
     ///         restitution, whose custody moves only through its own
     ///         dispositions (design §5c, "a correction is not a back door
-    ///         out of the restitution position"). The caller bounds `amount`
-    ///         by the live row; the move names the row if it cannot cover.
+    ///         out of the restitution position"). What is unspent is, by
+    ///         derivation, what the live row still backs; the move names
+    ///         the row if it cannot cover.
     function debitFreshFromLive(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow to,

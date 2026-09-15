@@ -2865,22 +2865,6 @@
   },
   {
     "type": "error",
-    "name": "ReconciliationExceedsLiveRow",
-    "inputs": [
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "live",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ReconciliationExceedsPacketRemainder",
     "inputs": [
       {
@@ -3007,6 +2991,27 @@
       },
       {
         "name": "consumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationRestitutionNotMovable",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "movable",
         "type": "uint256",
         "internalType": "uint256"
       }

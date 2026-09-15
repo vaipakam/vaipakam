@@ -26,18 +26,22 @@ return is not classifiable.
 
 A classification is correctable, within a bound. Attribution moves between
 the fresh and recycled sides of an entry without changing its total, and
-only what has not been spent moves freely: outflows are taken to consume
-every credit of that side in the order it was credited — deliveries and
-fundings, absorptions and relocations, the classified entries among
-them, and whatever backing stood there when the first entry was made —
-measured against ordering counters that count outflows only and only
-ever grow (the headroom figures the platform already keeps can be
-corrected downward, which is why the ordering could not read them), and
-a correction of an earlier entry shifts every later entry's place in
-that order. A debit one side inherited is unwound by the reverse move,
-so a correction and its reversal leave an entry exactly as spent as it
-was; and recycled value that left by a surplus repatriation, rather than
-by consumption, is never inherited by the fresh side. Unspent value moves with
+only what has not been spent moves freely. What is spent is read from
+the backing itself: whatever the side's backing — live fresh backing;
+the recycled backing — no longer holds of the classified value is spent,
+the side's other backing being counted as consumed first, and that
+shortfall is attributed among the classified entries in the order they
+were classified, the earliest first, by a structure whose cost grows
+only logarithmically with the record, so a correction stays possible
+however long the record becomes. A debit one side inherited is unwound
+by the reverse move, so a correction and its reversal leave an entry
+exactly as spent as it was; the part of a classification that a standing
+deficit absorbed into the restitution position is neither counted as
+spendable nor movable by a correction; recycled value that left by a
+surplus repatriation, rather than by consumption, is never inherited by
+the fresh side; and a correction of a recorded packet's entry restates
+that packet's authenticated split with it, so later entries are bounded
+by the corrected split. Unspent value moves with
 its tokens — out of live backing only, never out of the restitution
 position; out of recycled backing only up to what is not committed. Spent
 value moves as a debit the other side inherits: fresh spent then corrected

@@ -6340,35 +6340,37 @@ PR C.**
 > "three bounds, not two" is enforced by custody rather than by a check;
 > the two component caps (operator-stated for the classifiable part, fixed
 > by the first entry, their sum bounded by that part) stay, because a wrong
-> SPLIT still passes the total. **(2) The FIFO's sequencing counters are
-> NEW, MONOTONE and count OUTFLOWS only.** Both headroom aggregates this
-> tree keeps — `rewardBudgetArmedFreshPaid` (the restitution paid-correction
-> lowers it) and `paidOutRecycled` (the released-remit restore lowers it) —
-> are decremented today, which the FIFO's soundness rule forbids; the epoch
-> therefore reads `freshOutflowSeqByEra`, `recycledConsumedSeq` and
-> `recycledRepatriatedSeq`, advanced at the outflow sites and never
-> decremented, and NEVER moved by a reattribution (Codex #2206 r1: bumping
-> the destination's counter for an inherited debit double-counted one
-> historical outflow on a round trip) — an inherited debit is instead the
-> entry's own per-side INHERITED figure, spent without any outflow of that
-> side, unwound by the reverse move. A queue is EVERY credit of its side in
-> order, as this section says of the recycled side ("packet-classified,
-> aggregate-bootstrap, and non-packet alike"): an entry's position counts
-> the unspent backing standing at the front when the queue opened (the
-> live row; the bucket) plus every credit since — deliveries, fundings,
-> absorptions, relocations, classifications — not only the classified ones
-> (fresh from a new credit cumulative; recycled from the bucket's own
-> stored cumulatives, seeded at the opening), and a queue opens on its
-> first POSITIVE credit so an earlier outflow can never read a later first
-> credit as spent. On the recycled side, whose outflow is of two kinds,
-> consumption is attributed FIRST in queue order from its own counter, net
-> of the consumption the fresh side already inherited from that entry, and
-> only that much (plus what was inherited from fresh) may move to the fresh
-> side as a debit; credit that left by surplus repatriation has no fresh
-> ledger to inherit it and stays where it left from. The bucket's derived
-> absorption floor nets the two reattribution cumulatives exactly as it
-> nets relocated custody, so a correction on an unseeded Diamond reports no
-> absorption it did not make. **(3) One era.** No era registry
+> SPLIT still passes the total. **(2) Spent-ness reads the POOL; the queue
+> is the classified set.** This section derives spent-ness from monotone
+> outflow counters against per-entry prefixes. Two review rounds on the
+> landed PR showed that form needs every writer of the fresh pool to be
+> position-aware — the deficit split sends part of a credit to restitution
+> (not live backing), a demotion removes a delivery's credit again, the
+> paid-correction and the restore move the headroom aggregates — and each
+> unaware writer is a phantom position (Codex #2206 r1/r2). The landed form
+> reads the pool as it stands instead: per side, the classified entries'
+> QUEUED credit (credit less what is inherited and, on the fresh side, what
+> the deficit absorbed) is compared with what the pool physically backs —
+> the era's live row; the bucket — and the shortfall is what is spent,
+> attributed to the entries FIFO by classification order through a Fenwick
+> tree's prefix sums, so a correction's work is logarithmic in the log
+> (no finalization ever bounds it) and no writer of the pool has to know
+> about the queue. The pool's other backing is thus consumed before the
+> classified credits; an entry never reads spent while its side still backs
+> the classified set. An inherited debit is the entry's own per-side
+> INHERITED figure (spent without any outflow of its side, unwound by the
+> reverse move); the restitution-absorbed part of a fresh credit is neither
+> queued nor a correction's to move; a packet-backed entry's correction
+> moves the packet's component counters AND its caps (the split restated,
+> their sum unchanged). On the recycled side the bucket's outflow is of two
+> kinds and only consumption is inheritable: the consumption since the
+> recycled queue opened (a monotone counter advanced by `consume` only),
+> less what the fresh side already inherited, is attributed to the spent
+> classified credit first in queue order; what left by surplus repatriation
+> stays where it left from. The bucket's derived absorption floor nets the
+> two reattribution cumulatives exactly as it nets relocated custody, so a
+> correction on an unseeded Diamond reports no absorption it did not make.
+> **(3) One era.** No era registry
 > exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
 > **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
 > they are a PR of their own, before PR C: the non-splittable trio ("doing
