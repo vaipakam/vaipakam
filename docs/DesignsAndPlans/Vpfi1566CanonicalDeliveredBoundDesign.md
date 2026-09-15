@@ -6601,6 +6601,236 @@ PR C.**
   invariants and #2141's Diamond-balance attribution invariant under the
   existing handlers; the role setters revert while frozen.
 
+**Closure 2's transport epochs — a PR family of their own, between the
+cutover PRs and PR C (planned 2026-09-15, after cutover PR 2 landed as
+#2206).**
+
+> **Status:** implementation plan for the transport-epoch sub-system §5c
+> specifies (the non-finalized, packet-backed funding for the legacy lane:
+> the batch balances and their membership-filtered draws, the preparation
+> and contested-allocation machinery, the batch-keyed pending remainder
+> and its exits, the packet's transport leg counters, and the attested
+> split that is the evidence writer the cutover's fresh rule waits for).
+> Cutover PR 2's landed note (4) placed them here: not in the cutover
+> (their consumable read needs an era term PR C defines, and a balance
+> without its debit path is stranding with better bookkeeping) and not in
+> PR C (whose receive-ingress validation consumes them). Every rule below
+> is stated normatively in §5c; this note adds only the cut, the order, and
+> the one question the cut puts to the owner. Nothing here changes a
+> ratified decision.
+
+*Why not one PR.* The sub-system is the largest single piece left in the
+programme: a per-packet ledger with per-day indexes and cursors; a
+deterministic per-day allocation pass that three settlement paths and the
+executability predicate must run identically; staging with references,
+deadlines, priority mode and cooldowns; a bonded exclusive challenger slot
+with snapshot-verified, paginated plans and an active-root switch; a new
+wire version with a compact admission for oversize packets; and the
+attested split. Each of those has a different blast radius and a different
+deployment consequence, and the two contract PRs this programme has
+already carried through review (#2070 at 33 rounds, #2206 at 10) show that
+review converges per mechanism, not per PR — a single PR carrying all of
+them would spend its round budget before its last mechanism had been read.
+
+*The alternatives considered.* **(A) One PR** — rejected for the reason
+above, and because nothing in it is deployable before all of it is
+reviewed. **(B) Two PRs: the attested split first, then everything else**
+— the first half is right (below) but the second half is (A) again, minus
+one small piece. **(C) Four PRs, in the order their dependencies fall** —
+chosen, with the one question it raises put to the owner at the end.
+
+**Transport epochs PR 3a — the attested split (the evidence writer), and
+the day-list commitment at ingress.** Deployable on its own and DARK: no
+ledger arithmetic changes, no classification outcome changes.
+
+- The cutover's fresh rule (§5c; landed in #2206 round 3) bounds a
+  packet's classified fresh by `IngressPacket.freshAuthenticated`, which
+  today nothing but a test writer sets: on a live mirror an old-wire
+  packet's protected remainder can be classified recycled only. The d5
+  wire already carries the split (`recycledShare`, fresh being the
+  declared remainder) and is credited typed at ingress, so the evidence is
+  missing for the two older wire shapes — and for ONE of them the
+  canonical chain holds it: a d2 packet names its `remitId` and
+  `remitter`, creates a receipt, and has a reservation whose `fresh` and
+  `recycled` figures are the source's own record. The pre-d2 legacy shape
+  carries neither identity, creates no receipt and has no reservation, so
+  no attestation can ever reach it (review r1): its fresh component stays
+  permanently unauthenticated, and its remainder classifies recycled only
+  or leaves untyped through the dispositions §5c gives an untyped batch
+  remainder. The attestation is a d2 mechanism.
+- A new canonical→mirror message kind, the SPLIT ATTESTATION:
+  `(kind, remitter, remitId, fresh, recycled)`, read from the reservation's
+  recorded split by a send entry on the canonical chain (permissionless —
+  the figures are the chain's own record, the entry only carries them),
+  received under the transport's authentication on the mirror, resolving
+  the packet through the receipt the delivery created
+  (`receivedRemits[keccak(remitter, remitId)].packetHash`), and persisting
+  BOTH attested component caps on the packet, scaled to what actually
+  landed by the same proportional flooring the d5 receiver applies —
+  `freshAttested = ⌊fresh · actualReceived / (fresh + recycled)⌋` and
+  `recycledAttested = ⌊recycled · actualReceived / (fresh + recycled)⌋`
+  (§5c: the component caps are denominated in the destination-observed
+  basis; a short delivery shrinks both and never underflows one; 3b's leg
+  reconciliation needs both, and the attestation is one-shot, so both are
+  written here; review r1) — ONCE: refused for an unknown packet, for a
+  packet whose wire already carried the split, and for a second
+  attestation of the same packet (the first is the source's record; a
+  differing second one is a faulty source, not a correction).
+- **The attestation is DARK until 3b** (review r1). The two attested caps
+  are new packet fields the classification entry's evidence rule does not
+  read; `freshAuthenticated` — the bound classification reads — is written
+  by 3b's parking step, when a batch's remainder is parked with its
+  acknowledgment (§5c: a batch with outstanding listed obligations is not
+  classifiable at all; the only route to classification is the
+  acknowledged parked-remainder path), from the attested caps net of the
+  packet's transport legs. Deploying 3a alone therefore changes no
+  classification outcome: an attested packet still classifies recycled
+  only, exactly as today, until the batch lifecycle exists to say its
+  listed obligations are done.
+- **The ingress records the day list's commitment for every old-wire
+  arrival** (review r1): the flat hash of the payload's `dayIds` and their
+  count, appended to the packet record — the same commitment 3b's compact
+  admission materializes against — so a packet landing between 3a and 3b
+  carries authenticated membership 3b can index, and nothing about a
+  packet's membership is ever taken from an event.
+- Tests: a short-delivered reservation's two caps are scaled and both
+  persisted; a d5 packet's attestation is refused; a pre-d2 packet has no
+  receipt and cannot be attested; a replay is refused; the mirror-side
+  receipt binds the attestation to exactly one packet; an attested packet
+  still classifies recycled only (the bound unchanged — the lift is 3b's
+  test); an old-wire arrival's day-list commitment matches its payload.
+
+**Transport epochs PR 3b — the epoch ledger and the uncontested draws.**
+The bulk of §5c's mechanism, deployable dark on every deployment (no
+old-wire packet exists on a refreshed chain until the legacy lane delivers
+one) and exercised, until PR C unfreezes role changes, by old-wire packets
+on the live era alone.
+
+- One UNTYPED balance per old-wire packet, bounded by `actualReceived`,
+  the listed `dayIds` as its membership filter; the per-day arrival-ordered
+  batch index and consumption cursor; the `dayIds` fan-out cap enforced at
+  dispatch — **and the compact admission for an old-wire packet whose list
+  exceeds it** (review r1: a packet dispatched before the cap existed
+  stays transport-executable, so 3b can neither index it by writing every
+  listed day nor refuse an authentic delivery): admission stores the
+  aggregate, the token delta and the day list's flat-hash commitment (3a's
+  field); each materialization call re-supplies the payload, verifies the
+  hash and writes one bounded page; retirement is the resumable RETIRING
+  path. This is §5c's compact admission for EVERY pre-d6 wire — the legacy
+  and d2 shapes, and d5 too (review r2; §5c: existing d5 packets are
+  admitted through the flat-hash path exactly as the older wires are): an
+  over-cap d5 packet dispatched before the cap existed is as
+  transport-executable as any other, and its typed components change
+  nothing about the size of its day list — so 3a's day-list commitment is
+  recorded for d5 arrivals as well. It ships with the indexing it
+  protects; the d6 wire's Merkle root and extent are 3d's.
+- **The era term before PR C** (review r1, r2). There is one era and no
+  retired era row, so the middle term of `transportEpoch → eraBalance →
+  liveHeadroom` is ZERO: 3b puts the read behind one interface —
+  `eraBalance(era)`, which returns nothing for every era until PR C's
+  registry gives a retired era a row — and the live delivered-fresh ledger
+  stays the third term, read once. The order and the settlement split are
+  in their final shape from the start (`transportPaid / eraPaid /
+  livePaid`, `eraPaid` identically zero because the term it records is),
+  and PR C makes the middle term non-zero for retired eras without
+  changing the order or the split. An alias of the live read in the
+  middle position would count the same headroom twice — 10 live and a
+  15 need reading as 20 available (review r2) — so the pre-C term is
+  zero, not the live figure. No balance ships without its debit path:
+  the debit path is 3b's, and its middle term is a real read that
+  happens to read zero until there is a retired era.
+- **Classification of an old-wire packet is gated on its batch** (§5c:
+  the only route is the acknowledged parked-remainder path). The cutover's
+  classification entry refuses a packet whose batch still lists an
+  outstanding obligation and admits it once the remainder is parked with
+  its acknowledgment — at which point `freshAuthenticated` is written from
+  3a's attested caps net of the packet's transport legs. A d5 packet's
+  components are typed and credited at ingress, so it holds no untyped
+  batch balance and the gate does not concern it; its day list still
+  passes the compact admission above.
+- The deterministic per-day allocation pass — matching transport drawn
+  first per component, scarce transport split by system-wide typed
+  shortfall (fresh first on ties), the unarrived-day necessity constraint
+  as on-chain validity checked again at settlement — run identically by
+  the forfeit sweep (row 1), the expiry sweep (row 5), the executability
+  predicate (row 13) and settlement, with the split `transportPaid /
+  eraPaid / livePaid` recorded so each downstream chokepoint sees only its
+  residual; the recycled leg's commitment released without a bucket debit;
+  a transport-funded absorption as an in-holder transport→recycled
+  attribution transfer.
+- The packet's transport leg counters (`transportConsumedFresh`,
+  `transportConsumedRecycled`) inside the combined per-packet bound, and
+  the reconcile-first rule when a later attestation fixes the caps.
+- Staging: per-obligation staged draws with batch references, the
+  exhaustion transitions deferred to settlement, permissionless expiry,
+  the batch-keyed cooldown, priority-mode reservations (non-renewable per
+  obligation and batch, FIFO by preparation age), and retirement deferred
+  while references stand.
+- The batch-keyed pending remainder `(batchId, dayIds, amount)`, its
+  membership-bound restore into the epoch, the operator dispositions
+  (repatriation or evidence-backed classification, keyed by the batch,
+  with the refusal they leave standing), and batch-bound replacement
+  funding that clears a disposition by amount.
+- **What 3b defers, and this is the question for the owner:** a CONTESTED
+  allocation is REFUSED with a named reason until 3c lands, rather than
+  settled immediately — where a draw is contested exactly when the batch
+  it draws from is listed by the day of at least one OTHER known unmet
+  obligation, distinct from the one being allocated and itself eligible
+  for that batch (review r1: the allocating obligation's own membership
+  never contests its own draw, and a batch with unarrived listed days is
+  already excluded by the necessity rule). The predicate is evaluated
+  when a draw is staged AND AGAIN at final settlement, exactly as the
+  necessity constraint is (review r2): a staged allocation that has
+  become contested by the time its last call settles — a competitor's
+  obligation arrived meanwhile — is not settled; its staged draws unwind
+  as a cancellation does (balance back to batches no cursor has passed,
+  references released) and the obligation is refused with the same named
+  reason until 3c's machinery can take it. Uncontested allocations — no
+  such competitor at staging or at settlement — settle at once, as §5c
+  says they must. The alternative is to ship 3b and 3c as one PR so no obligation is
+  ever refused for a machinery gap; the cost is the review surface above.
+  Either way no allocation settles that a later plan could have outdone —
+  the deferral is the conservative side of the rule 3c completes.
+- Tests: conservation per packet under every draw, restore and
+  disposition; the allocation pass against §5c's own counter-examples
+  (the fresh-first rejection, the day-order starvation, the
+  membership-constrained case handed to a plan); a capped call that
+  stages, retries and settles once; expiry and cancellation unwinding
+  exactly; the leg bound with a reattribution on a later cap; the
+  refusals; and the holder invariants under a handler that delivers
+  old-wire packets.
+
+**Transport epochs PR 3c — the contested-allocation machinery.** The
+bonded exclusive challenger slot as one O(1) transport-domain flag; plans
+as committed roots over paginated assignment pages, shadow-validated
+against the pinned pre-incumbent snapshot, the page count capped by the
+snapshot's recorded domain size, the deadline and the bond sized to it;
+the superset-coverage displacement rule; the settlement-only grace after
+every lapse or loss; the atomic active-root switch with lazy, resumable
+unwind of the loser. Lifts 3b's deferral. Must land before PR C unfreezes
+role changes — a late legacy packet after a transition is exactly the
+contended case.
+
+**Transport epochs PR 3d — the d6 wire.** The new wire version embedding
+a Merkle root over fixed-size chunks together with the authenticated
+extent, and the indexed materialization pages verified against it. The
+compact admission for the OLD wires is 3b's (above), so 3d changes no
+admission a live packet depends on; it is what lets the dispatch cap
+move. After 3b; before any change to the cap.
+
+*Order and dependencies.* 3a first (small, dark, no dependency; it records
+what 3b will need of every packet that lands meanwhile). 3b before PR C
+(PR C's intended-era validation on the receive ingresses consumes the
+epochs, and 3b's era interface is what PR C widens). 3c before PR C's
+unfreeze. 3d after 3b and before the cap moves. Role changes stay frozen
+throughout the family; nothing in it touches the era registry, which is
+PR C's.
+
+*What stays out.* The era registry and the carry-forward (PR C); the
+parked-message lane for legacy broadcasts (§5c: state-bearing, not
+transport material — it belongs with PR C's role transitions); the M7
+ceremonies.
+
 **Slice 4 PR C — the era-bound carry-forward (role transitions), after
 closure 2's cutover PR.**
 
@@ -6674,17 +6904,21 @@ closure 2's cutover PR.**
 reconciliation epoch second; see the LANDED note under slice 4 PR B.)
 
 **#2151 (closure 2, first PR) → slice 4 PR A → slice 4 PR B → closure 2's
-second PR (the cutover apparatus) → slice 4 PR C.**
+cutover apparatus (#2198, #2206) → transport epochs 3a → 3b → 3c → slice 4
+PR C; 3d (the d6 wire) after 3b and before the dispatch cap moves.** (The
+transport-epoch family was cut out of the cutover by #2206's landed note
+(4) and is planned as its own note above, 2026-09-15.)
 
 PR A is inert by construction (no funding writer, no custody switch), so it
 carries no interval risk. PR B is the single cutover: it moves every reward
 read and debit onto the holder for the active roles in one deploy, ships the
 funding writer with the same activation, migrates the recovery and recycled
 custody first, and freezes role changes until the carry-forward exists. PR C
-depends on two things the cutover PR defines — the restitution position that
-receives a carried deficit, and the transport epochs that both the receive
-ingresses' intended-era validation and rows 1, 5 and 13 order ahead of era
-balances — so it cannot be specified honestly ahead of it. The owner's
+depends on two things defined ahead of it — the restitution position that
+receives a carried deficit (the cutover PR's), and the transport epochs that
+both the receive ingresses' intended-era validation and rows 1, 5 and 13
+order ahead of era balances (the 3a–3c family's) — so it cannot be specified
+honestly ahead of them. The owner's
 ratified sequence ("closures 3 and 2 → slice 4") is preserved: closure 2's
 ENFORCING half is #2151, its MIGRATION half is the cutover PR, and slice 4's
 parts land around the second exactly where their dependencies fall.
