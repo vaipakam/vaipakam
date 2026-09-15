@@ -432,20 +432,26 @@ The app uses chain reads and indexed reads for different jobs.
     for may have arrived. Returning risks the same duplicate, so an unknown
     blocks the retry exactly as a delivery does — the platform does not know,
     and a duplicate reminder is the worse of the two ways to be wrong.
-  - **Is anybody owed another attempt?** Two things earn one and only two: a
-    service that said "not now", and a subscriber who switched the reminder
-    off and may switch it back on before the deadline. A refusal does not — it
-    will fail identically until a person acts. Having no usable channel, and
-    having no subscription at all, do not either.
+  - **Is anybody owed another attempt?** Three things earn one, and the test
+    they share is that each is a state which can CHANGE and then make
+    delivery possible: a service that said "not now"; a subscriber who
+    switched the reminder off and may switch it back on before the deadline;
+    and a subscriber who asked for a channel this deployment cannot currently
+    use, which an operator may repair. A refusal does not qualify — it will
+    fail identically until a person acts on that credential. Having no
+    channel at all, and having no subscription, do not either: nothing about
+    those changes on its own.
 
   The record is left unmarked when somebody is owed, nobody was reached and
   nothing is uncertain; otherwise it is marked.
-- A subscriber who asked for a channel this deployment cannot currently use
-  is OWED another attempt, not written off. An operator may repair the
-  setting, or the dependency, inside the notification window, and a record
-  marked as handled is never revisited — so marking it is the same "handled
-  while delivering nothing" failure the disclosure above exists to make
-  visible, arriving one step later. It stays unmarked until a usable channel
+- The third of those is worth its own statement, because it is the one that
+  looks like a settled outcome and is not. A subscriber who asked for a
+  channel this deployment cannot currently use is OWED another attempt, not
+  written off: an operator may repair the setting, or the dependency, inside
+  the notification window, and a record marked as handled is never revisited
+  — so marking it is the same "handled while delivering nothing" failure the
+  disclosure above exists to make visible, arriving one step later. It stays
+  unmarked until a usable channel
   either succeeds or leaves the outcome uncertain.
 - A refusal does not earn another attempt, but it does not block one either.
   So a record where one party is owed an attempt and the other's channel was
