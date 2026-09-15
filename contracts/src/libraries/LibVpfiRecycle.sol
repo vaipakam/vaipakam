@@ -1222,6 +1222,11 @@ library LibVpfiRecycle {
         s.recycleAccountingSeeded = true;
         s.recycleBucket = bucket - amount;
         s.recycleRepatriatedOutCumulative += amount;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the ledger's other
+        // debit primitive: what the repatriation took of the classified
+        // credit is SPENT, and only spent — it left for Base, it was not
+        // consumed, and the fresh side can inherit none of it.
+        s.recycledSpentTotal += LibRewardCustody.takeOfQueue(s.recycledQueuedTotal, s.recycledSpentTotal, bucket, amount);
         // #1566 slice 4 PR B — the token move is part of the primitive, not
         // adjacent to it in the caller: the surplus leaves the holder's
         // recycled row (measured) on an activated deployment, or the
@@ -1253,21 +1258,20 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled = outstanding - retired;
         s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r3) — what this
-        // consumption took of the CLASSIFIED credit is recorded HERE, where
-        // the outflow's kind is known. The reconciliation FIFO reads the
-        // pool with the bucket's other backing consumed first, so the
-        // classified part of an outflow is the growth of the queue's
-        // shortfall: nothing while the bucket still covers the queued total,
-        // nothing when no credit is queued, and never more than what LEFT.
-        // A surplus repatriation grows the shortfall without touching this
-        // counter, so it is never inheritable; a reversed payout is netted
-        // out at {restoreReleasedRemit}. Monotone: nothing decrements it —
-        // unlike `paidOutRecycled`, which the restore corrects downward.
-        uint256 queued = s.recycledQueuedTotal;
-        uint256 shortBefore = queued > bucket ? queued - bucket : 0;
-        uint256 shortAfter = queued > left ? queued - left : 0;
-        s.recycledClassifiedConsumed += shortAfter - shortBefore;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r4) — the recycled
+        // queue's pool is this ledger, and this is one of its two debit
+        // primitives: what the outflow took of the CLASSIFIED credit is
+        // recorded HERE, where the kind is known — spent, and consumption
+        // (a surplus repatriation is the other kind, spent only, never
+        // inheritable). The take is the queue's: the bucket's other backing
+        // consumed first, never more than the records still hold, so a
+        // refill is never consumed twice and a later credit un-spends
+        // nothing. A reversed payout is netted out at
+        // {restoreReleasedRemit}; a correction moves the figures only with
+        // the units it moves.
+        uint256 took = LibRewardCustody.takeOfQueue(s.recycledQueuedTotal, s.recycledSpentTotal, bucket, amount);
+        s.recycledSpentTotal += took;
+        s.recycledConsumedTotal += took;
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // As in {creditCustodyRelocated}: an informational label, not an
         // attribution — consumption writes no day-keyed accumulator (#1504).
@@ -1407,15 +1411,14 @@ library LibVpfiRecycle {
         s.recycleReleasedRemitStrandedCumulative += reversed;
         // #1566 closure 2 cutover PR 2 (Codex #2206 r3) — a reversed payout
         // is consumption that paid nobody. To the extent classified
-        // consumption is still unattributed here, the reversal is attributed
-        // to it, so the reconciliation's inheritable consumption excludes it
-        // — the conservative reading (an inheritable figure understated is
-        // fresh headroom not published; overstated is a `paid` claim for a
-        // payout that did not happen). Monotone, like the counter it nets.
-        uint256 classified = s.recycledClassifiedConsumed;
-        uint256 stranded = s.recycledClassifiedStranded;
-        uint256 open = classified > stranded ? classified - stranded : 0;
-        s.recycledClassifiedStranded = stranded + (reversed < open ? reversed : open);
+        // consumption still stands in the recycled queue's record, the
+        // reversal is taken out of it, so the reconciliation's inheritable
+        // consumption excludes it — the conservative reading (an inheritable
+        // figure understated is fresh headroom not published; overstated is
+        // a `paid` claim for a payout that did not happen). The units stay
+        // SPENT: their tokens sit in the transport pool, not the bucket.
+        uint256 consumed = s.recycledConsumedTotal;
+        s.recycledConsumedTotal = consumed - (reversed < consumed ? reversed : consumed);
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

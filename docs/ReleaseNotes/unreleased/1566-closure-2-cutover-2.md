@@ -46,18 +46,22 @@ gives exactly the ledger a correct split at ingress would have produced —
 ten fresh with five paid out, two corrected to recycled, is eight fresh
 with the same five paid and two unspent on the recycled side. A debit one
 side inherited is unwound by the reverse move, so a correction and its
-reversal leave an entry exactly as spent as it was. What consumption took
-of the classified recycled value is recorded at the outflow itself, where
-its kind is known, so recycled value that left by a surplus repatriation,
-or whose payout was later reversed, is never inherited by the fresh side,
-and consumption made while nothing classified was in the backing is
-nobody's. The part of a classification that a standing deficit absorbed
+reversal leave an entry exactly as spent as it was. What each side's outflows took of the classified value is recorded at
+the outflow itself, where the kind of outflow is known — never read back
+from the backing's balance, so a later credit un-spends nothing and a
+refill is consumed once — and only the part the side's own ledger charged
+(paid on the fresh side, consumed on the recycled side) may be inherited
+by the other side: recycled value that left by a surplus repatriation, or
+whose payout was later reversed, and fresh value a demotion unwound, are
+never inherited, and consumption made while nothing classified was in the
+backing is nobody's. The part of a classification that a standing deficit absorbed
 into the restitution position is neither counted as spendable nor movable
-for as long as that position holds it; what the position no longer holds
+for as long as that position holds it; what the position releases
 of it — because a correction of the paid figure moved it back into live
-backing, or because the deficit was paid with it — re-enters the record,
-earliest first, and reads as unspent or spent by what the live backing
-says. A correction of a recorded packet's entry moves that packet's
+backing, or because the deficit was paid with it — is recorded at the
+release (a later credit to the position re-absorbs nothing) and re-enters
+the record, earliest first, as unspent in the first case and spent in the
+second. A correction of a recorded packet's entry moves that packet's
 component figures with it. Unspent value moves with its tokens — out of
 live backing only, never out of the restitution position; out of recycled
 backing only up to what is not committed. Spent value moves as a debit

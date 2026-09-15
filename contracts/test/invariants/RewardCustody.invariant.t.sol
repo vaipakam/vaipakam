@@ -151,22 +151,57 @@ contract RewardCustodyInvariant is SetupTest {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
-            (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
+            (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
                 recon.getPacketReconciliation(handler.packetAt(i));
             assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
         }
     }
 
-    /// #1566 closure 2 cutover PR 2 — the two recycled consumption records
-    /// the epoch reads never fall: whatever the last action was (a
-    /// reclassification included), each is at least what it read at that
-    /// action's start — a correction moves the inherited total, never the
-    /// records of what the outflows took.
-    function invariant_ClassifiedConsumptionRecordsAreMonotone() public view {
-        (, , , , , , , uint256 consumed, uint256 stranded, ) =
+    /// #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the recorded spent
+    /// and released figures fall only by a correction (which moves them
+    /// with the units it moves): after any other action each is at least
+    /// what it read at that action's start — a credit, a refill, a payout
+    /// never lowers what the outflows already took.
+    function invariant_SpentFiguresFallOnlyByACorrection() public view {
+        if (handler.lastActionWasCorrection()) return;
+        (, uint256 released, uint256 freshSpent, , , , , , uint256 recycledSpent, , ) =
             RewardReconciliationFacet(address(diamond)).getQueueState(0);
-        assertGe(consumed, handler.classifiedConsumedAtActionStart(), "the classified consumption never falls");
-        assertGe(stranded, handler.classifiedStrandedAtActionStart(), "the stranded part never falls");
+        assertGe(freshSpent, handler.freshSpentAtActionStart(), "the fresh spent figure never falls");
+        assertGe(recycledSpent, handler.recycledSpentAtActionStart(), "the recycled spent figure never falls");
+        assertGe(released, handler.freshReleasedAtActionStart(), "the released figure never falls");
+    }
+
+    /// #1566 closure 2 cutover PR 2 (Codex #2206 r4) — each queue's unspent
+    /// part is what its row holds of it: `paid ≤ spent ≤ queued + released`
+    /// and the live row backs the rest; `consumed ≤ spent ≤ queued` and the
+    /// recycled row backs the rest; `released ≤ absorbed` and the
+    /// restitution row holds the rest. The record and the pool never
+    /// disagree, under every interleaving.
+    function invariant_UnspentQueuesAreBacked() public view {
+        (
+            uint256 freshQueued,
+            uint256 released,
+            uint256 freshSpent,
+            uint256 freshPaid,
+            uint256 liveRow,
+            uint256 absorbedTotal,
+            uint256 restitutionRow,
+            uint256 recycledQueued,
+            uint256 recycledSpent,
+            uint256 recycledConsumed,
+        ) = RewardReconciliationFacet(address(diamond)).getQueueState(0);
+        assertLe(freshPaid, freshSpent, "paid <= spent");
+        assertLe(freshSpent, freshQueued + released, "spent <= queued + released");
+        assertLe(freshQueued + released - freshSpent, liveRow, "the live row backs the unspent fresh queue");
+        assertLe(recycledConsumed, recycledSpent, "consumed <= spent");
+        assertLe(recycledSpent, recycledQueued, "recycled spent <= queued");
+        assertLe(
+            recycledQueued - recycledSpent,
+            _custody().rewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled),
+            "the recycled row backs the unspent recycled queue"
+        );
+        assertLe(released, absorbedTotal, "released <= absorbed");
+        assertLe(absorbedTotal - released, restitutionRow, "restitution holds the unreleased records");
     }
 
     /// #1566 closure 2 cutover PR 2 (Codex #2206 r2, r3) — the three trees
@@ -178,7 +213,7 @@ contract RewardCustodyInvariant is SetupTest {
     function invariant_QueuesMatchTheLog() public view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         (uint256 entries, , ) = recon.getReconciliationTotals();
-        (uint256 queuedFresh, uint256 released, , uint256 absorbedTotal, , uint256 queuedRecycled, , , , ) =
+        (uint256 queuedFresh, uint256 released, , , , uint256 absorbedTotal, , uint256 queuedRecycled, , , ) =
             recon.getQueueState(0);
         uint256 sumFresh;
         uint256 sumRecycled;
@@ -213,7 +248,7 @@ contract RewardCustodyInvariant is SetupTest {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         handler.untypedIngress(7);
         bytes32 h = handler.packetAt(0);
-        (, uint256 remainder, , , , ) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, , , , ) = recon.getPacketReconciliation(h);
         // The whole remainder evidenced, so whichever way the handler splits
         // its entry, one direction of a later correction is always open.
         TestMutatorFacet(address(diamond)).setPacketFreshAuthenticatedRaw(h, remainder);
@@ -261,15 +296,18 @@ contract RewardCustodyHandler is Test {
     uint64 internal nextLoan = 1;
     /// @dev #1566 closure 2 cutover PR 2 — the untyped packets this handler
     ///      landed (zero transport id → the per-source sequence stamps them,
-    ///      and this handler is the only source-8453 ingress), the two
-    ///      consumption records at the start of the current action (the
-    ///      monotonicity invariant's baseline), and how many classification
+    ///      and this handler is the only source-8453 ingress), the recorded
+    ///      spent/released figures at the start of the current action and
+    ///      whether that action was a correction (the fall-only-by-a-
+    ///      correction invariant's baseline), and how many classification
     ///      actions were APPLIED (Codex #2206 r3: the liveness the campaign
     ///      is checked against).
     bytes32[] internal packetHashes;
     uint256 internal seqStamped;
-    uint256 public classifiedConsumedAtActionStart;
-    uint256 public classifiedStrandedAtActionStart;
+    uint256 public freshSpentAtActionStart;
+    uint256 public recycledSpentAtActionStart;
+    uint256 public freshReleasedAtActionStart;
+    bool public lastActionWasCorrection;
     uint256 public classified;
     uint256 public reclassified;
 
@@ -294,9 +332,12 @@ contract RewardCustodyHandler is Test {
 
     function _start() internal {
         calls++;
-        (, , , , , , , uint256 consumed, uint256 stranded, ) = RewardReconciliationFacet(diamond).getQueueState(0);
-        classifiedConsumedAtActionStart = consumed;
-        classifiedStrandedAtActionStart = stranded;
+        (, uint256 released, uint256 freshSpent, , , , , , uint256 recycledSpent, , ) =
+            RewardReconciliationFacet(diamond).getQueueState(0);
+        freshSpentAtActionStart = freshSpent;
+        recycledSpentAtActionStart = recycledSpent;
+        freshReleasedAtActionStart = released;
+        lastActionWasCorrection = false;
     }
 
     function fund(uint256 seed) external {
@@ -373,7 +414,7 @@ contract RewardCustodyHandler is Test {
         if (packetHashes.length == 0) return;
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
-        (, uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated) = recon.getPacketReconciliation(h);
         if (remainder == 0) return;
         if (authenticated == 0) {
             authenticated = bound(uint256(keccak256(abi.encode(seed, "evidence"))), 0, remainder + cf + cr);
@@ -397,6 +438,7 @@ contract RewardCustodyHandler is Test {
     /// of a random entry, either direction, under the pause.
     function reclassify(uint256 seed) external {
         _start();
+        lastActionWasCorrection = true;
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
         (uint256 entries, , ) = recon.getReconciliationTotals();
         if (entries == 0) return;

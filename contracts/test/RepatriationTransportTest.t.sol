@@ -1199,7 +1199,7 @@ contract RepatriationTransportTest is SetupTest {
         );
         // #1566 closure 2 cutover PR 2 — the fourth door: the return counts as
         // a NON-classification exit, and the packet's identity holds.
-        (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
+        (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
             RewardReconciliationFacet(address(diamond)).getPacketReconciliation(
                 keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("comp-11")))
             );

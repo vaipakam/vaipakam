@@ -477,6 +477,12 @@ interface IVaipakamErrors {
     ///         debit covers it; credit that left by surplus repatriation has
     ///         no fresh-side ledger to inherit it.
     error ReconciliationSpentRecycledNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the mirror
+    ///         bound: only spent fresh credit the fresh ledger charged as
+    ///         `paid` may move to the recycled side as an inherited debit;
+    ///         what a demotion unwound was never paid and has no debit to
+    ///         inherit.
+    error ReconciliationSpentFreshNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
     /// @notice The envelope under this snapshot id was already imported.
     error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
     /// @notice The stated dispositions do not resolve the envelope exactly.

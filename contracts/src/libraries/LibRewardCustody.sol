@@ -326,9 +326,12 @@ library LibRewardCustody {
         address to
     ) internal {
         if (amount == 0) return;
-        uint256 have = s.rewardCustodyRows[r];
-        if (amount > have) revert IVaipakamErrors.RewardCustodyRowShort(uint8(r), amount, have);
-        s.rewardCustodyRows[r] = have - amount;
+        uint256 have = _debitRow(s, r, amount);
+        // A release leaves the holder: a payout, a transport, a return, a
+        // disposition — every one of them a spend of what it takes from the
+        // classified queue, and a payout of it where the fresh ledger is
+        // concerned (the deficit a treasury release pays was `paid` already).
+        _recordOutflow(s, r, have, amount, true, false);
         emit RewardCustodyRowDebited(uint8(r), amount, to);
     }
 
@@ -343,8 +346,92 @@ library LibRewardCustody {
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        debit(s, from, amount, address(0));
+        uint256 have = _debitRow(s, from, amount);
+        // An in-holder move out of the live row is a payout of the fresh
+        // ledger's (the absorption of forfeited reward value charges `paid`)
+        // — except the demotion's re-attribution into `Unclassified`, the
+        // one path that unwinds `received` instead: spent, never paid. Out
+        // of restitution INTO the live row it is the paid-correction: the
+        // released records re-enter the queue backed by that very inflow.
+        _recordOutflow(
+            s, from, have, amount, to != LibVaipakam.RewardCustodyRow.Unclassified, to == LibVaipakam.RewardCustodyRow.LiveFresh
+        );
+        emit RewardCustodyRowDebited(uint8(from), amount, address(0));
         credit(s, to, amount, 1);
+    }
+
+    function _debitRow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow r,
+        uint256 amount
+    ) private returns (uint256 have) {
+        have = s.rewardCustodyRows[r];
+        if (amount > have) revert IVaipakamErrors.RewardCustodyRowShort(uint8(r), amount, have);
+        s.rewardCustodyRows[r] = have - amount;
+    }
+
+    /// @dev #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the legacy
+    ///      reconciliation epoch's SPENT-NESS, recorded here at the one row
+    ///      primitive every outflow passes through, so no writer of a pool
+    ///      has to know about the queue and no balance is ever read for it
+    ///      afterwards: a later credit cannot un-spend an earlier entry, and
+    ///      a refill cannot be consumed twice. What an outflow takes of the
+    ///      classified queue is what the row's OTHER backing could not
+    ///      cover — the other backing is consumed first, and `queued −
+    ///      spent` is what the classified records still hold of the row —
+    ///      never more than that. Two rows carry a queue here: the live row
+    ///      (the fresh queue: spent, and paid where the outflow is a payout
+    ///      of the fresh ledger's) and the restitution row (the absorbed
+    ///      records: RELEASED — into the live queue as unspent when the
+    ///      paid-correction moves them to live, as spent when the deficit
+    ///      was paid with them). The recycled queue's pool is the BUCKET
+    ///      LEDGER, whose row follows it: its record is written by the
+    ///      ledger's own two debit primitives (`LibVpfiRecycle.consume`,
+    ///      `debitRepatriationSurplus`) with the same take, so it is
+    ///      recorded whether or not the tokens' release from the row is
+    ///      paired in the same frame. The correction adjusts the queues
+    ///      BEFORE it moves tokens, so its own move records nothing. Era 0
+    ///      until slice 4 PR C's rows.
+    function _recordOutflow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow r,
+        uint256 have,
+        uint256 amount,
+        bool paid,
+        bool toLive
+    ) private {
+        if (r == LibVaipakam.RewardCustodyRow.LiveFresh) {
+            uint256 queued = s.freshQueuedTotalByEra[PRE_BACKFILL_ERA] + s.freshReleasedTotal;
+            uint256 spent = s.freshSpentTotalByEra[PRE_BACKFILL_ERA];
+            uint256 took = takeOfQueue(queued, spent, have, amount);
+            if (took == 0) return;
+            s.freshSpentTotalByEra[PRE_BACKFILL_ERA] = spent + took;
+            if (paid) s.freshPaidTotalByEra[PRE_BACKFILL_ERA] += took;
+        } else if (r == LibVaipakam.RewardCustodyRow.Restitution) {
+            uint256 released = s.freshReleasedTotal;
+            uint256 took = takeOfQueue(s.freshAbsorbedTotal, released, have, amount);
+            if (took == 0) return;
+            s.freshReleasedTotal = released + took;
+            if (toLive) return;
+            s.freshSpentTotalByEra[PRE_BACKFILL_ERA] += took;
+            if (paid) s.freshPaidTotalByEra[PRE_BACKFILL_ERA] += took;
+        }
+    }
+
+    /// @notice What an outflow of `amount` from a row holding `balance`
+    ///         takes of a queue's still-unspent records: the row's other
+    ///         backing (`balance − (queued − spent)`) goes first, and never
+    ///         more than the records still hold.
+    function takeOfQueue(
+        uint256 queued,
+        uint256 spent,
+        uint256 balance,
+        uint256 amount
+    ) internal pure returns (uint256 took) {
+        uint256 unspent = queued > spent ? queued - spent : 0;
+        uint256 other = balance > unspent ? balance - unspent : 0;
+        took = amount > other ? amount - other : 0;
+        if (took > unspent) took = unspent;
     }
 
     // ─── Measured token moves ───────────────────────────────────────────────
@@ -648,6 +735,9 @@ library LibRewardCustody {
 
     uint8 internal constant PACKET_KIND_BUDGET = 1;
     uint8 internal constant PACKET_KIND_COMPENSATION = 2;
+    /// @dev The one era every reconciliation entry keys until slice 4 PR C's
+    ///      registry assigns real ids; the row hook records into it.
+    uint64 internal constant PRE_BACKFILL_ERA = 0;
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
 

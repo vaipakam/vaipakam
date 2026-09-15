@@ -115,6 +115,11 @@
     ],
     "outputs": [
       {
+        "name": "arrivedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "protectedCumulative",
         "type": "uint256",
         "internalType": "uint256"
@@ -169,6 +174,16 @@
         "internalType": "uint256"
       },
       {
+        "name": "freshSpent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshPaid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "liveRow",
         "type": "uint256",
         "internalType": "uint256"
@@ -189,22 +204,17 @@
         "internalType": "uint256"
       },
       {
+        "name": "recycledSpent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledConsumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "bucket",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledClassifiedConsumed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledClassifiedStranded",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledConsumedInheritedTotal",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -271,11 +281,6 @@
             "name": "freshAbsorbed",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "recycledConsumedInherited",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }
@@ -305,6 +310,11 @@
           },
           {
             "name": "freshUnspent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshInheritable",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -2659,6 +2669,27 @@
       },
       {
         "name": "movable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationSpentFreshNotInheritable",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inheritable",
         "type": "uint256",
         "internalType": "uint256"
       }

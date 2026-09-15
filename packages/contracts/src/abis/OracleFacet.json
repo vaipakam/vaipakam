@@ -2397,6 +2397,27 @@
   },
   {
     "type": "error",
+    "name": "ReconciliationSpentFreshNotInheritable",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inheritable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReconciliationSpentRecycledNotInheritable",
     "inputs": [
       {

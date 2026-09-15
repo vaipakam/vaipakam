@@ -6352,60 +6352,58 @@ PR C.**
 > earlier landed shape carried — "fixed by the first entry, restated
 > after" — validated an entry against the operator's own reconstruction
 > and nothing else (Codex #2206 r3, P1: a self-declared cap is not
-> evidence), and are gone. **(2) Spent-ness reads the POOL; the queue
-> is the classified set.** This section derives spent-ness from monotone
-> outflow counters against per-entry prefixes. Two review rounds on the
-> landed PR showed that form needs every writer of the fresh pool to be
-> position-aware — the deficit split sends part of a credit to restitution
-> (not live backing), a demotion removes a delivery's credit again, the
-> paid-correction and the restore move the headroom aggregates — and each
-> unaware writer is a phantom position (Codex #2206 r1/r2). The landed form
-> reads the pool as it stands instead: per side, the classified entries'
-> QUEUED credit (credit less what is inherited and, on the fresh side, what
-> the deficit absorbed) is compared with what the pool physically backs —
-> the era's live row; the bucket — and the shortfall is what is spent,
-> attributed to the entries FIFO by classification order through a Fenwick
-> tree's prefix sums, so a correction's work is logarithmic in the log
-> (no finalization ever bounds it) and no writer of the pool has to know
-> about the queue. The pool's other backing is thus consumed before the
-> classified credits; an entry never reads spent while its side still backs
-> the classified set. An inherited debit is the entry's own per-side
-> INHERITED figure (spent without any outflow of its side, unwound by the
-> reverse move). Of a partly spent entry the UNSPENT part is corrected
-> first, with its tokens, and only what the corrected credit can no longer
-> cover moves as the debit — the order that reproduces the ledger a
-> correct-at-ingress split would have produced (L4028-4032): ten fresh with
-> five paid, two corrected to recycled, is eight fresh with the same five
-> paid and two unspent in the bucket, exactly as 8/2 at ingress would have
-> settled; this section's "spent attribution first" is the FIFO attribution
-> of spent-ness among the entries (L4249), not a move order (Codex #2206
-> r3). The restitution-absorbed part of a fresh credit is neither queued
-> nor a correction's to move FOR AS LONG AS THE RESTITUTION ROW HOLDS IT:
-> the absorbed records form a third tree, read against the restitution row
-> the way the queue is read against the live row (the row's other backing
-> released first), and what the row no longer holds of them re-enters the
-> live queue FIFO by log order — where the live row says whether it is
-> unspent (the paid-correction moved it to live) or spent (the treasury
-> release paid the deficit with it) — so a fully absorbed entry is
-> correctable once the deficit resolves (Codex #2206 r3). A packet-backed
-> entry's correction moves the packet's component counters with it, so the
-> cumulative its evidence bounds stays current. On the recycled side the
-> bucket's outflow is of two kinds and only consumption is inheritable, and
-> what a consumption took of the CLASSIFIED credit is recorded at the
-> outflow itself, where its kind is known: `consume` records the growth of
-> the queue's shortfall (nothing while the bucket's other backing still
-> covers the queued total; nothing while nothing is queued), a surplus
-> repatriation grows the shortfall without touching the record, and a
-> reversed payout (`restoreReleasedRemit`) is netted out of it
-> conservatively; both records are monotone, each advanced by its own
-> primitive only, and what the fresh side already inherited is kept beside
-> them so it is not offered again. A counter of ALL consumption read
-> against the queue's opening base — the round-2 form — attributed
-> consumption made while nothing was queued to a later entry, and kept
-> offering a reversed payout as inheritable (Codex #2206 r3). The bucket's
-> derived absorption floor nets the two reattribution cumulatives exactly
-> as it nets relocated custody, so a correction on an unseeded Diamond
-> reports no absorption it did not make.
+> evidence), and are gone. **(2) Spent-ness is RECORDED at the row
+> primitive; the queue is the classified set.** This section derives
+> spent-ness from monotone outflow counters against per-entry prefixes.
+> Rounds 1 and 2 on the landed PR showed that a positional form needs every
+> writer of the pool to be position-aware — the deficit split sends part of
+> a credit to restitution (not live backing), a demotion removes a
+> delivery's credit again, the paid-correction and the restore move the
+> headroom aggregates — and each unaware writer is a phantom position; the
+> round-3 form read the pool as it stood instead, and round 4 showed what
+> that costs: a later credit un-spent an earlier entry, and a refill was
+> consumed twice (Codex #2206 r4, two P1s). The landed form keeps what each
+> was right about. Spent-ness is RECORDED, never read from a balance: every
+> outflow of a pool passes through that pool's own debit primitive — the
+> live and restitution rows' `LibRewardCustody.debit` / `move`; the bucket
+> ledger's `consume` and `debitRepatriationSurplus`, the recycled row
+> following the ledger — and that primitive records what the outflow took
+> of the classified queue with one take (`takeOfQueue`: the pool's other
+> backing consumed first, never more than the records still hold, `queued −
+> spent`), so no writer of a pool has to know about the queue (the round-2
+> point), and nothing a later credit does can rewrite what an outflow
+> already took (this section's monotone-FIFO point). Per pool: the live
+> row's outflows spend the fresh queue, and are PAID where the fresh ledger
+> charges them (a payout, a transport, an absorption; the demotion's unwind
+> into `Unclassified` is spent, never paid); the bucket ledger's two debits
+> spend the recycled queue (`consume` also records the consumption part; a
+> surplus repatriation is spent only; a reversed payout is netted out at
+> the restore); the restitution row's outflows RELEASE the absorbed records
+> (unspent into the live queue when the paid-correction moved the custody
+> to live; spent and paid when the deficit was paid with it), so a later
+> restitution credit re-absorbs nothing (Codex #2206 r4 P2). The recorded
+> figures are distributed among the entries FIFO by classification order
+> through a Fenwick tree's prefix sums (three trees: the two queues and the
+> absorbed records), so a correction's work is logarithmic in the log and
+> no finalization ever bounds it. An inherited debit is the entry's own
+> per-side INHERITED figure (spent without any outflow of its side, unwound
+> by the reverse move), and only spent credit the side's ledger charged —
+> fresh `paid`; recycled consumption — is inheritable by the other side.
+> Of a partly spent entry the UNSPENT part is corrected first, with its
+> tokens, and only what the corrected credit can no longer cover moves as
+> the debit — the order that reproduces the ledger a correct-at-ingress
+> split would have produced (L4028-4032): ten fresh with five paid, two
+> corrected to recycled, is eight fresh with the same five paid and two
+> unspent in the bucket, exactly as 8/2 at ingress would have settled; this
+> section's "spent attribution first" is the FIFO attribution of spent-ness
+> among the entries (L4249), not a move order (Codex #2206 r3). The
+> correction adjusts the queues and the recorded figures BEFORE it moves
+> tokens, so its own move records nothing; a packet-backed entry's
+> correction moves the packet's component counters with it, so the
+> cumulative its evidence bounds stays current. The bucket's derived
+> absorption floor nets the two reattribution cumulatives exactly as it
+> nets relocated custody, so a correction on an unseeded Diamond reports no
+> absorption it did not make.
 > **(3) One era.** No era registry
 > exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
 > **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
