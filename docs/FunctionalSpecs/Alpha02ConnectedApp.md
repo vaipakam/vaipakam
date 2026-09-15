@@ -300,6 +300,12 @@ The app uses chain reads and indexed reads for different jobs.
   reminder is about is not the period the chain is on, nothing is sent and the
   record is left for a later run, by which time the platform's own records
   have caught up.
+- Confirmation is only accepted from a source that has first proved it is the
+  network it is configured to be. A source pointed at a different network —
+  by a swapped setting, say — answers every question confidently and about
+  the wrong chain, and could certify a loan that has nothing to do with the
+  one being reminded about. A run asks once, and stops if the answer is wrong
+  or if the source cannot say at all.
 - Confirmation is only accepted from a view of the chain that is at least as
   current as the platform's own records. A source lagging behind what the
   platform has already read still reports an ended loan as running, so it

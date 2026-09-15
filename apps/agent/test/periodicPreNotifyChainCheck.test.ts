@@ -99,6 +99,10 @@ let failBatchFrom: number | null = null;
 let batchedReads = 0;
 /** What the stubbed RPC reports as its current head. */
 let headBlock: bigint;
+/** What the stubbed RPC says it IS. `null` → it answers with the chain asked for. */
+let reportedChainId: number | null;
+/** When set, the identity probe cannot answer at all. */
+let identityThrows: boolean;
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
@@ -143,7 +147,17 @@ vi.mock('viem', async (importOriginal) => {
 
   return {
     ...actual,
-    createPublicClient: () => ({
+    // The transport is tagged with its URL so the stubbed client can answer
+    // `eth_chainId` as the chain that URL is configured for — the lane now
+    // refuses an endpoint that says it is a different chain (#2213 r14
+    // `4013761179`), so a stub answering one id for every chain would look
+    // like a mis-pointed secret on all but the first.
+    http: (url: string) => ({ __stubUrl: url }),
+    createPublicClient: ({ transport }: { transport: { __stubUrl: string } }) => ({
+      getChainId: async () => {
+        if (identityThrows) throw new Error('transport down');
+        return reportedChainId ?? Number(/stub-(\d+)/.exec(transport.__stubUrl)?.[1] ?? 84532);
+      },
       getBlockNumber: async () => headBlock,
       readContract: async ({
         functionName,
@@ -278,7 +292,7 @@ function env(extra: Record<string, unknown> = {}) {
   return {
     env: {
       DB,
-      RPC_BASE_SEPOLIA: 'https://stubbed.invalid',
+      RPC_BASE_SEPOLIA: 'https://stub-84532.invalid',
       // Both rails configured, so a reminded loan costs the full four sends
       // the lane reserves for one.
       PUSH_CHANNEL_PK: '0xpk',
@@ -342,6 +356,8 @@ beforeEach(() => {
   batchedReads = 0;
   pinnedAt.length = 0;
   headBlock = 1_000n;
+  reportedChainId = null;
+  identityThrows = false;
   indexedBlock = 900;
   cursorReadFails = false;
   scanOffsets.clear();
@@ -440,6 +456,33 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
     answer = (id) => ({ id: BigInt(id), status: 99, periodicInterestCadence: 1 });
     const { said } = await run();
     expect(said).toContain('reports status 99');
+  });
+});
+
+describe('an endpoint that may not be the chain it claims', () => {
+  it('sends nothing when the RPC answers a DIFFERENT chain id', async () => {
+    // #2213 r14 `4013761179`. An `RPC_*` secret swapped to a foreign network
+    // — head past our cursor, plausible state at the same address — answers
+    // every read below confidently and wrongly, certifying a foreign loan as
+    // running. The indexer has refused this configuration before reading
+    // state since #1415; this lane became authoritative in r11 and did not.
+    reportedChainId = 1; // Ethereum, not Base Sepolia
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(batchedReads).toBe(0); // it never gets as far as asking
+    expect(said).toContain('not this chain');
+  });
+
+  it('sends nothing when the RPC cannot say which chain it serves', async () => {
+    // An endpoint that cannot answer could BE the mis-pointed one, so an
+    // unanswered identity probe stops the chain exactly as a mismatch does.
+    // Same rule as the cursor read: an unanswered question is not an answer.
+    identityThrows = true;
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(batchedReads).toBe(0);
+    expect(said).toContain('could not confirm which chain it serves');
   });
 });
 
@@ -728,7 +771,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // indistinguishable from one that was never due.
     expect(said).toContain('10 loan(s) in the notification window');
     expect(said).toContain('9 examined, 9 reminded');
-    expect(said).toContain('send allowance is down to');
+    expect(said).toContain('outbound-request allowance is down to');
     // 8 loans × 2 counterparties × 2 rails.
     expect(sends.length).toBe(36);
   });
@@ -761,7 +804,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       84532: tenLoans().slice(-5),
       421614: tenLoans().slice(-5),
     };
-    const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
+    const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
     // TWO chains pay two openings (2 reads each plus a batch read), so the
     // shared allowance covers eight loans here where one chain covers nine —
     // which is the point: the reads come out of the same budget as the sends.
@@ -783,8 +826,8 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
     ).reverse();
     loanRowsByChain = { 84532: rows, 421614: rows };
-    const first = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
-    const second = await run({ RPC_ARB_SEPOLIA: 'https://stubbed.invalid' });
+    const first = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
+    const second = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
     const leaderOf = (stamps: { chainId: number }[]) => stamps[0]?.chainId;
     expect(leaderOf(first.stamps)).toBeDefined();
     expect(leaderOf(second.stamps)).toBeDefined();
@@ -947,6 +990,45 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     loanRows = tenLoans();
     const { stamped } = await run();
     expect(stamped.length).toBe(9);
+  });
+
+  it('names the allowance when it stops one request short of a batch', async () => {
+    // #2213 r14 `4013761165`. The loop needs a batch read AND a loan's sends
+    // to continue, so a tick that finishes a batch with exactly four requests
+    // left was stopped by the allowance — and the stop reason tested only
+    // four, so it reported a bare "stopping" and told an operator nothing.
+    const ids = Array.from({ length: 150 }, (_, k) => 3000 - k);
+    const known = new Map<string, number>();
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse()
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    // The nearest eight cost four requests each (32); the other ninety-two in
+    // the batch cost nothing. Four opening reads plus 32 leaves exactly four —
+    // one short of the five the next batch needs.
+    const routed = new Set(ids.slice(0, 8));
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      if (routed.has(id)) return bothRails(w);
+      return {
+        wallet: w,
+        push_channel: null,
+        tg_chat_id: null,
+        locale: 'en',
+        notify_maturity_approaching: 1,
+      };
+    };
+    const { said } = await run();
+    expect(sends.length).toBe(32);
+    expect(said).toContain('outbound-request allowance is down to 4');
   });
 
   it('keeps what earlier batches did when a later read fails', async () => {

@@ -25,6 +25,10 @@
       "types": "./src/errorDescription.ts",
       "default": "./src/errorDescription.ts"
     },
+    "./rpcIdentity": {
+      "types": "./src/rpcIdentity.ts",
+      "default": "./src/rpcIdentity.ts"
+    },
     "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"

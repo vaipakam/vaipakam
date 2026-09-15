@@ -37,6 +37,7 @@ import {
 } from '@vaipakam/lib/reminderEligibility';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
+import { verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
@@ -152,13 +153,14 @@ interface TickBudget {
 
 /**
  * The most requests ONE chain needs before it can do any useful work: the
- * lead-time read, the head read, and one batched status read.
+ * chain-identity probe (first pass of an isolate only), the lead-time read,
+ * the head read, and one batched status read.
  *
  * A chain is not started unless this plus a loan's worth is available, so a
  * pass never spends its opening reads and then discovers it cannot afford to
  * send anything with them.
  */
-const CHAIN_OPENING_REQUESTS = 3;
+const CHAIN_OPENING_REQUESTS = 4;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -305,6 +307,38 @@ async function preNotifyChain(
   // rows it never revisits; this lane decides one message and asks again next
   // tick. (The stronger version would share the indexer's settled-head
   // resolver, which lives in that Worker and is not reachable from here.)
+  // IS THIS EVEN THE RIGHT CHAIN? (#2213 r14 `4013761179`)
+  //
+  // Everything below treats what this endpoint says as authoritative enough
+  // to send a message that cannot be taken back. An `RPC_*` secret swapped to
+  // a foreign network — with a head past our cursor and plausible state at the
+  // same address — would answer every one of those reads confidently and
+  // wrongly, certifying a foreign loan as running. The indexer has refused
+  // that configuration before reading state since #1415; this lane became
+  // authoritative in r11 and never asked.
+  //
+  // Cached per isolate per (chain, url), so it costs one request on the first
+  // pass and nothing after. A MISMATCH and an UNANSWERED probe both stop the
+  // chain: an endpoint that cannot say what it is could be the mis-pointed one.
+  budget.remaining -= 1;
+  const identity = await verifyRpcChainIdentity(
+    client,
+    chain.id,
+    chain.rpc,
+    'periodicPreNotify',
+  );
+  if (!identity.ok) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the RPC ` +
+        `${
+          identity.reason === 'mismatch'
+            ? `answered eth_chainId=${identity.reported}, which is not this chain`
+            : 'could not confirm which chain it serves'
+        }. Nothing read from it can justify a reminder.`,
+    );
+    return;
+  }
+
   let head: bigint;
   budget.remaining -= 1; // the head read
   try {
@@ -443,9 +477,14 @@ async function preNotifyChain(
   // announced a remainder it had just consumed, telling an operator the run
   // was partial when it had completed the window.
   if (cursor < due.length) {
+    // THE SAME THRESHOLD THE LOOP TESTS (#2213 r14 `4013761165`). The loop
+    // needs a batch read AND a loan's sends to continue, so a tick stopping
+    // with exactly four left was halted by the allowance and reported only
+    // "stopping". And it is the OUTBOUND-REQUEST allowance now, not a send
+    // allowance — reads come out of the same counter since r13.
     const capped =
-      budget.remaining < MAX_SENDS_PER_LOAN
-        ? `the invocation's send allowance is down to ${budget.remaining}`
+      budget.remaining < 1 + MAX_SENDS_PER_LOAN
+        ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
     const span = start > 0 ? ` (resumed at ${start})` : '';
@@ -691,7 +730,16 @@ async function rotationStart(env: Env, chainCount: number): Promise<number> {
       .first<{ last_block: number }>();
     const at = row ? Number(row.last_block) : 0;
     return Number.isFinite(at) && at >= 0 ? at % chainCount : 0;
-  } catch {
+  } catch (err) {
+    // SAID, for the same reason the scan position is (#2213 r14
+    // `4013761131`). Silently leading with the first chain every tick lets a
+    // busy one hold the shared allowance and starve the rest — the failure
+    // the rotation exists to prevent, reinstated by a failure nobody sees.
+    console.warn(
+      `[periodicPreNotify] could not read the stored rotation position ` +
+        `(${describeFailure(err)}); leading with the first chain. Repeated ` +
+        `appearances mean later chains may not be reached at all.`,
+    );
     return 0;
   }
 }
@@ -705,28 +753,33 @@ async function saveRotationStart(env: Env, next: number): Promise<void> {
  * Remember where to resume — and SAY SO when that cannot be done (#2213 r13
  * `4013571011`).
  *
- * A write that never lands, or a read that keeps failing, silently returns the
- * scan to zero on every tick. That is not merely "one wasteful repeat", which
- * is what an earlier comment here claimed: with a few hundred unreachable or
- * rejected loans at the front of the window — the exact case persistence was
- * added for — it restores the starvation the persistence removed, invisibly.
+ * A write that never lands, or a read that keeps failing, returns the scan to
+ * the front on every tick. That is not merely "one wasteful repeat": with a
+ * few hundred unreachable or rejected loans at the head of the window — the
+ * exact case persistence was added for — it restores the starvation the
+ * persistence removed. So the failure is reported rather than swallowed.
  *
- * Two things follow. The failure is reported rather than swallowed, so an
- * operator can see the fairness guarantee has degraded; and the isolate keeps
- * its own copy, so a database that is refusing writes still makes progress for
- * as long as this isolate lives instead of restarting from zero every minute.
- * The in-memory copy is a fallback, never the source of truth: a fresh isolate
- * reads from D1, and a successful read overwrites it.
+ * **There was an in-isolate fallback here, and r14 deleted it** (`4013761116`,
+ * `4013761131`). The idea was that a database refusing writes should still
+ * make progress for as long as the isolate lives, and it produced two findings
+ * in one round: a later successful READ overwrote the remembered value with
+ * the stale stored one, and the rotation never consulted the memory at all.
+ * Both were real, and fixing each would have left a third — dirty-vs-clean
+ * tracking, per-kind, across two readers — for a case nothing has observed.
+ *
+ * So there is ONE source of truth, D1, and a failure to use it degrades
+ * fairness LOUDLY instead of quietly. That is what the finding which asked for
+ * this behaviour actually required ("preserve an in-isolate fallback or at
+ * minimum report the unavailable cursor"); the fallback was the more elaborate
+ * half of an either/or, and it earned its complexity in findings rather than
+ * in behaviour.
  */
-const inIsolateCursor = new Map<string, number>();
-
 async function persistCursor(
   env: Env,
   chainId: number,
   kind: string,
   at: number,
 ): Promise<void> {
-  inIsolateCursor.set(`${kind}:${chainId}`, at);
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -740,10 +793,11 @@ async function persistCursor(
   } catch (err) {
     console.warn(
       `[periodicPreNotify] could not persist ${kind} for chain ${chainId} at ` +
-        `${at}: ${describeFailure(err)}. This isolate remembers it, so this ` +
-        `tick is unaffected — but if this keeps appearing, the scan restarts ` +
-        `from the front whenever the isolate recycles, and loans behind a run ` +
-        `of unreachable ones stop being reached.`,
+        `${at}: ${describeFailure(err)}. The next tick therefore starts from ` +
+        `where this one did rather than from where it stopped — so if this ` +
+        `keeps appearing, loans behind a run of unreachable ones stop being ` +
+        `reached, and that is the fairness guarantee degrading, not a ` +
+        `wasted read.`,
     );
   }
 }
@@ -762,22 +816,19 @@ async function scanOffset(env: Env, chainId: number): Promise<number> {
       .bind(chainId, PRENOTIFY_SCAN_KIND)
       .first<{ last_block: number }>();
     const at = row ? Number(row.last_block) : 0;
-    const resolved = Number.isFinite(at) && at > 0 ? at : 0;
-    inIsolateCursor.set(`${PRENOTIFY_SCAN_KIND}:${chainId}`, resolved);
-    return resolved;
+    return Number.isFinite(at) && at > 0 ? at : 0;
   } catch (err) {
     // A failure here is safe to absorb — nothing is decided on this value
     // except where to start looking, so the worst case is a repeated prefix
-    // rather than a wrong message. It is NOT safe to absorb silently: see
-    // `persistCursor`. The isolate's own copy carries the position meanwhile.
-    const remembered = inIsolateCursor.get(`${PRENOTIFY_SCAN_KIND}:${chainId}`) ?? 0;
+    // rather than a wrong message. It is NOT safe to absorb silently: a
+    // repeated prefix IS the starvation this persistence removed.
     console.warn(
       `[periodicPreNotify] chain ${chainId}: could not read the stored scan ` +
-        `position (${describeFailure(err)}); resuming from this isolate's own ` +
-        `copy at ${remembered}. Repeated appearances mean the scan will ` +
-        `restart from the front on the next isolate.`,
+        `position (${describeFailure(err)}); starting from the front of the ` +
+        `window. Repeated appearances mean loans behind a run of unreachable ` +
+        `ones are not being reached.`,
     );
-    return remembered;
+    return 0;
   }
 }
 
@@ -951,8 +1002,10 @@ async function readLoanStates(
     // — API key included — in `HttpRequestError.message` (#2213 r5
     // `4012300079`).
     console.warn(
-      `[periodicPreNotify] chain=${chain.name} status read failed for ` +
-        `${loanIds.length} loan(s); not pre-notifying this tick: ${describeFailure(err)}`,
+      `[periodicPreNotify] chain=${chain.name} status read failed for this ` +
+        `batch of ${loanIds.length} loan(s): ${describeFailure(err)}. The scan ` +
+        `stops here; whatever earlier batches in this tick already did is ` +
+        `reported in the summary below.`,
     );
     return null;
   }

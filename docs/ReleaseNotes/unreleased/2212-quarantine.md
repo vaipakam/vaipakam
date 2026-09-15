@@ -224,7 +224,16 @@ chain is on, nothing is sent and the record waits for a later run, by which
 time the platform's records have caught up. That answer was already in the
 reply the platform was reading — it simply was not being looked at.
 
-**And a check is only as good as what it checks against.** The chain is
+**And a check is only as good as what it checks against** — starting with
+whether the source is the right network at all. A setting pointed at a
+different chain answers every question confidently and about the wrong one,
+so it could confirm a loan that has nothing to do with the reminder being
+sent. The part of the platform that scans the chain has refused that
+configuration since long before this change; the reminder lane became
+authoritative about whether a loan is still running and never asked. It asks
+now, once per source, and stays quiet if the answer is wrong or absent.
+
+ The chain is
 consulted through whichever source the platform is configured to use, and a
 source can lag behind what the platform has already recorded. Asked about a
 loan that ended after the point that source has reached, it answers that the

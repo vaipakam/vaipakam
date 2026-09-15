@@ -57,6 +57,10 @@ import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { quarantineStatements, reportStaleQuarantine, settledRows } from './loanQuarantine';
 import { createQuarantineAvailability } from '@vaipakam/lib/reminderEligibility';
 import {
+  verifyRpcChainIdentity as verifyRpcIdentityShared,
+  type RpcIdentityVerdict,
+} from '@vaipakam/lib/rpcIdentity';
+import {
   blockToNumber,
   resolveSettledHead,
   SAFE_FALLBACK_BUFFER,
@@ -583,56 +587,22 @@ async function sweepMarketSummaries(
 // both route through it). Unchanged behaviour: one cursor-derived,
 // safe-head-bounded scan that advances the cursor. `scannedTo` is the new
 // cursor, which the DO's catch-up loop compares against its target block.
-/** #1415 — RPC chain-identity assertion. A mis-pointed RPC secret
- *  (wrong `network=` slug, swapped URLs) fails in the ONE shape that
- *  produces zero signal: a different network whose head sits below our
- *  cursor reads as "caught up" — no error, no log, no cursor movement
- *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
- *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
- *  scan is skipped as a RETRYABLE failure so the caught-up check can
- *  never mistake it for success. A transport failure is not an
- *  identity VERDICT, but it is not license to proceed either (Codex
- *  #1527 r1 P1): an unverified endpoint could be the mis-pointed one,
- *  and a foreign chain whose head sits ABOVE our cursor would let the
- *  pass read an empty foreign log range and advance the monotonic
- *  cursor past real blocks — permanent, silent data loss. So a
- *  transport failure aborts the pass as a retryable `rpc-error`; the
- *  pair stays uncached and is re-probed next pass. Identity is a
- *  PRECONDITION of cursor advancement, never assumed. */
-const verifiedRpcIdentity = new Set<string>();
-
-export type RpcIdentityVerdict =
-  | { ok: true }
-  | { ok: false; reason: 'transport' }
-  | { ok: false; reason: 'mismatch'; reported: number };
-
+/**
+ * RPC chain-identity assertion — the rule itself now lives in
+ * `@vaipakam/lib/rpcIdentity`, because the agent's reminder lane needs the
+ * same precondition before it trusts a loan state (#2213 r14 `4013761179`).
+ *
+ * Kept as a named export here with the caller's own log prefix baked in, so
+ * this Worker's call sites and their tests read exactly as before. Identity is
+ * a PRECONDITION of cursor advancement, never assumed: a transport failure
+ * aborts the pass as a retryable `rpc-error` and the pair stays uncached.
+ */
 export async function verifyRpcChainIdentity(
   client: { getChainId: () => Promise<number> },
   chainId: number,
   rpc: string,
 ): Promise<RpcIdentityVerdict> {
-  const key = `${chainId}:${rpc}`;
-  if (verifiedRpcIdentity.has(key)) return { ok: true };
-  let reported: number;
-  try {
-    reported = await client.getChainId();
-  } catch {
-    return { ok: false, reason: 'transport' }; // no verdict — re-probe next pass
-  }
-  if (reported !== chainId) {
-    // Deliberately NO fragment of the RPC URL here — not even the host.
-    // Some providers put the generated credential in the HOSTNAME itself
-    // (Codex #1527 r1 P2), so any slice of the URL risks turning this
-    // diagnostic into a key leak. The expected chain id alone names the
-    // mis-pointed `RPC_*` secret unambiguously.
-    console.error(
-      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} — ` +
-        `mis-pointed RPC_* secret for this chain; skipping scan until it is fixed`,
-    );
-    return { ok: false, reason: 'mismatch', reported };
-  }
-  verifiedRpcIdentity.add(key);
-  return { ok: true };
+  return verifyRpcIdentityShared(client, chainId, rpc, 'chainIndexer');
 }
 
 /** The scan-skip kinds the ingest loop must treat as FAILURES (rewound
@@ -1103,7 +1073,22 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
   // naming a table that might not exist fails the whole batch, and that batch
   // advances the chain cursor. The reminder SWEEP takes the opposite reading
   // of 'unknown' for the opposite reason — see the probe's own doc.
-  if ((await quarantineAvailableForWrites(env.DB as never)) !== 'present') return;
+  const reportAvailability = await quarantineAvailableForWrites(env.DB as never);
+  if (reportAvailability === 'unknown') {
+    // SAID, not returned silently (#2213 r14 `4013761194`). This reporter is
+    // the ONLY surface that names long-held rows, and the rows it names are
+    // the ones suppressing reminders — so an operator investigating missing
+    // reminders during a probe outage would find the report simply absent,
+    // which reads as "nothing is held" rather than "I could not look".
+    console.warn(
+      `[chainIndexer] chain ${chainId}: could not establish whether ` +
+        `loan_reconcile_quarantine exists, so the held-row report is ` +
+        `UNAVAILABLE this tick — not empty. Rows may be held back and ` +
+        `unreported until this clears.`,
+    );
+    return;
+  }
+  if (reportAvailability !== 'present') return;
   try {
     await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
   } catch (err) {
@@ -1250,8 +1235,8 @@ export async function _runLoanReconcilePass(input: {
   // Asked once per pass, before any repair builds its batch: every repair's
   // close-out statements are gated on the same answer, so a pass cannot half
   // include the release (#2213 r2 `4011776381`).
-  const quarantineAvailable =
-    (await quarantineAvailableForWrites(env.DB as never)) === 'present';
+  const closeOutAvailability = await quarantineAvailableForWrites(env.DB as never);
+  const quarantineAvailable = closeOutAvailability === 'present';
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -5482,14 +5467,38 @@ async function _clearClosedLoanSideTables(
   chainId: number,
   loanId: number,
 ): Promise<void> {
+  const availability = await quarantineAvailableForWrites(env.DB as never);
   await env.DB.batch(
-    _closedLoanSideTableStatements(
-      env,
-      chainId,
-      loanId,
-      (await quarantineAvailableForWrites(env.DB as never)) === 'present',
-    ),
+    _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
   );
+  if (availability !== 'unknown') return;
+  // THE RELEASE STILL HAS TO BE TRIED (#2213 r14 `4013761143`).
+  //
+  // Omitting it from the batch is right — a statement naming a table that
+  // might not exist fails the whole batch, and that batch is a close-out.
+  // But abandoning it is not: this loan is terminal now, so it leaves the set
+  // the reconciliation rotation selects from, and no later pass ever revisits
+  // it. Its quarantine row would then be held and reported stale forever,
+  // for a loan that ended in the ordinary way — the exact case the release
+  // exists for.
+  //
+  // So it goes out ALONE, where failing costs nothing but a log line. If the
+  // table is there, the row is released; if it genuinely is not, this fails
+  // harmlessly and says so.
+  try {
+    await env.DB.prepare(
+      `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
+    )
+      .bind(chainId, loanId)
+      .run();
+  } catch (err) {
+    console.warn(
+      `[chainIndexer] chain ${chainId} loan ${loanId}: closed out while the ` +
+        `quarantine table's existence was unknown, and the follow-up release ` +
+        `also failed (${String(err).slice(0, 120)}). If that table exists, ` +
+        `this loan's row is now held with no path to release it.`,
+    );
+  }
 }
 
 /// The `*_current_owner` refresh a repair may fold into its own batch, for
