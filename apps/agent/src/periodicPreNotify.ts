@@ -1046,32 +1046,10 @@ async function messageBatch(
     // mid-window misses this checkpoint — per-user dedupe would need
     // a schema change, out of proportion for a courtesy reminder.
     //
-    // STAMPING KEYS ON "HANDLED", NOT ON "SENT" (#2213 r8 `4012811575`). Those
-    // were one word until this round, which is why splitting `no-route` out of
-    // `sent` would otherwise have changed behaviour nobody asked to change: a
-    // counterparty with no usable rail has nothing to retry, so it stamps
-    // exactly as it did before. Only the operator COUNT distinguishes them.
-    // `deferred` is deliberately NOT here (#2213 r27 `4016129201`): the
-    // service said "not now", so there IS something to retry and stamping
-    // would throw the retry away.
-    const handled = (o: DeliveryOutcome) => o.status === 'sent' || o.status === 'no-route';
-    const anyHandled = handled(borrowerOutcome) || handled(lenderOutcome);
-    // A REASON TO COME BACK — the gate, and it now has two entries rather than
-    // one. An opt-out may be reversed before the deadline; a deferral is the
-    // service asking to be asked again. Both leave the checkpoint unstamped,
-    // and for the same reason, so they belong in one predicate.
-    //
-    // THE FIRST ATTEMPT AT r27 `4016129201` ONLY RENAMED SOMETHING. Dropping
-    // `deferred` out of `handled` above looked like the fix and changed
-    // nothing: `anyHandled` fed only the opt-out branch, so the stamp below
-    // ran for every outcome that was not an opt-out. The diagnostic said
-    // "deferred", the count said "deferred", and the row was still stamped —
-    // which is the exact defect the finding named, surviving its own fix.
-    const retryable = (o: DeliveryOutcome) =>
-      o.status === 'opted-out' || o.status === 'deferred';
-    const worthAnotherTick =
-      !anyHandled && (retryable(borrowerOutcome) || retryable(lenderOutcome));
-    if (worthAnotherTick) continue;
+    // THE GATE, AS THREE QUESTIONS ABOUT THE LOAN (#2213 r28 — the root fix).
+    // See `stampDecision` for why this is no longer a predicate over a
+    // per-party label, and for the four findings that produced it.
+    if (!stampDecision(borrowerOutcome, lenderOutcome).stamp) continue;
     budget.remaining -= 1; // the checkpoint stamp — D1 is a subrequest
     try {
       await env.DB.prepare(
@@ -1581,41 +1559,97 @@ async function readLoanStates(
 }
 
 /**
- * Why nothing (or something) went out for one counterparty.
+ * Whether this checkpoint may be marked finished, decided for the LOAN.
  *
- * - `sent` — at least one rail was issued.
- * - `no-route` — subscribed, opted in, and no usable rail (no channel, or the
- *   deployment has no signer/token for the one they have). Stamped like a
- *   delivery, counted like none.
- * - `opted-out` — they switched these reminders off. NOT stamped: they may
- *   switch them back on before the deadline.
- * - `none` — no subscription row at all. Stamped; nobody to tell.
- */
-/**
- * `deferred` — every rail that answered said "not now" and none delivered.
+ * THE ROOT FIX FOR A SEAM THAT PRODUCED FOUR FINDINGS IN THREE ROUNDS (#2213
+ * r26 `4015927527`, r27 `4016129201`, r28 `4016565753` + `4016565763`). Each
+ * of those was a different combination of the two parties' outcomes, each was
+ * patched where it was found, and the next round produced the next
+ * combination. The cause was structural rather than arithmetic: the decision
+ * was assembled from boolean algebra over a per-party `status` word, and one
+ * word cannot carry two parties' worth of partial knowledge. So the word is
+ * gone and the rule is stated once, here, in terms of what the stamp MEANS.
  *
- * Its whole purpose is to NOT be handled (#2213 r27 `4016129201`), so the
- * checkpoint stays unstamped and a later tick tries again. Distinct from
- * `sent`, which stamps, and from `none`/`opted-out`, which are about the
- * subscriber rather than the service.
+ * The stamp means "finished — never revisit this checkpoint". That is
+ * justified exactly when no later tick could do better for anybody, which is
+ * three questions and not a taxonomy:
+ *
+ * - **Was anyone actually reached?** Then coming back would tell them about
+ *   the same payment twice. The stamp is per loan and there is no per-party
+ *   de-dup (that needs a schema change, out of proportion for a courtesy
+ *   reminder), so one confirmed delivery settles the loan.
+ * - **Is anything UNCERTAIN?** A rail that issued a request and got no answer
+ *   may have delivered. Retrying it risks the same duplicate, and the honest
+ *   position is that we do not know — so an unknown blocks the retry exactly
+ *   as a delivery does. This is `4016565763`: a Push of unknown fate beside a
+ *   rate-limited Telegram was being called a clean deferral and retried.
+ * - **Is anyone OWED another attempt?** Two things earn one, and only two: a
+ *   service that said "not now", and a subscriber who has switched the
+ *   reminder off and may switch it back on before the deadline. A refusal
+ *   does not — it will fail identically until a person acts. No route, and no
+ *   subscription at all, do not either.
+ *
+ * Stamp unless somebody is owed, nobody was reached, and nothing is
+ * uncertain.
+ *
+ * **Being owed is not cancelled by the OTHER party having nothing to offer**,
+ * which is `4016565753` and the P1 of the four. The old gate treated "no
+ * usable rail" as handled, so a deferred borrower stopped being retryable the
+ * moment their lender turned out to have no channel — the lender's absence
+ * silently spending the borrower's retry. Only a real delivery or a real
+ * uncertainty may do that, because only those two can duplicate a message.
  */
-type PreNotifyOutcome = 'sent' | 'deferred' | 'no-route' | 'opted-out' | 'none';
+function stampDecision(
+  borrower: DeliveryOutcome,
+  lender: DeliveryOutcome,
+): { stamp: boolean; reached: boolean; uncertain: boolean; owed: boolean } {
+  const reached = borrower.delivered || lender.delivered;
+  const uncertain = borrower.unconfirmedRails > 0 || lender.unconfirmedRails > 0;
+  const owedBy = (o: DeliveryOutcome) => o.optedOut || o.transientRails > 0;
+  const owed = owedBy(borrower) || owedBy(lender);
+  return { stamp: !(owed && !reached && !uncertain), reached, uncertain, owed };
+}
 
 /**
- * What happened for one counterparty, in the three senses that differ.
+ * What happened for one counterparty — FACTS, not a verdict.
  *
- * `status` drives STAMPING and is the pre-existing semantics (#1056).
+ * THERE USED TO BE A `status` LABEL HERE, and removing it is the #2213 r28
+ * root fix. It ranged over `sent | deferred | no-route | opted-out | none`,
+ * and nothing but the stamp gate ever read it: every operator count is
+ * derived from `delivered` / `attempted` / the rail tallies below. So its
+ * whole job was to compress this record into one word for one decision — and
+ * three consecutive review rounds each found a different combination the
+ * compression had lost.
+ *
+ * r26 `4015927527` found that a rate limit was filed as a refusal. r27
+ * `4016129201` found that a deferral still stamped. r28 found two more in one
+ * round: a deferral stamped anyway when the OTHER party merely had no route
+ * (`4016565753`), and a mixed unknown-plus-deferred attempt was called a
+ * deferral although the unknown one may have delivered (`4016565763`). Four
+ * findings, one cause — a label cannot carry two parties' worth of partial
+ * knowledge, and each patch fixed the combination in front of it while
+ * leaving the next one standing.
+ *
+ * The gate reads these fields directly now. See `stampDecision`.
+ *
  * `attempted` is whether any rail issued a request — what the allowance was
  * charged for. `delivered` is whether a rail was CONFIRMED accepted, and it is
  * the only thing that may be reported as a reminder (#2213 r10 `4013087415`).
- *
- * They are three fields rather than one because they genuinely disagree: a
- * Telegram 401 and a Push SDK throw are both attempted, neither delivered, and
- * both still stamp — and collapsing any two of those let a run tell an
+ * They genuinely disagree: a Telegram 401 and a Push SDK throw are both
+ * attempted and neither delivered, and collapsing them let a run tell an
  * operator it had reminded people it had not reached.
  */
 interface DeliveryOutcome {
-  status: PreNotifyOutcome;
+  /**
+   * They switched these reminders off (#1033).
+   *
+   * A FACT about the subscriber, and the reason it survives the label's
+   * removal: it is the one thing the numeric fields below cannot express —
+   * an opt-out and an absent subscription both attempt nothing, deliver
+   * nothing and fail no rails, yet only the first earns another tick,
+   * because they may switch the reminder back on before the deadline.
+   */
+  optedOut: boolean;
   attempted: boolean;
   delivered: boolean;
   /**
@@ -1714,7 +1748,7 @@ async function pushIfSubscribed(
   }
   if (!sub) {
     return {
-      status: 'none', attempted: false, delivered: false,
+      optedOut: false, attempted: false, delivered: false,
       unconfirmedRails: 0, refusedRails: 0, transientRails: 0,
       pushUnconfigured: false, tgUnconfigured: false,
     };
@@ -1725,7 +1759,7 @@ async function pushIfSubscribed(
   // the deadline must still get its reminder).
   if (sub.notify_maturity_approaching === 0) {
     return {
-      status: 'opted-out', attempted: false, delivered: false,
+      optedOut: true, attempted: false, delivered: false,
       unconfirmedRails: 0, refusedRails: 0, transientRails: 0,
       pushUnconfigured: false, tgUnconfigured: false,
     };
@@ -1855,27 +1889,21 @@ async function pushIfSubscribed(
       );
     }
   }
-  // TWO DIFFERENT ANSWERS, because two different questions are asked of this
-  // return value (#2213 r8 `4012811575`). A subscriber row whose rails are
-  // both empty — a shape the settings upsert really produces — used to report
-  // 'sent', which was right for STAMPING (there is nothing to retry for them,
-  // so re-querying every tick is waste) and wrong for REPORTING (the operator
-  // count then says hundreds were reminded on a tick that sent nothing).
-  // 'no-route' keeps the stamp and leaves the count honest.
-  // DEFERRED IS NOT HANDLED (#2213 r27 `4016129201`). r26 introduced
-  // `transient` for a service saying "not now" and told the operator it
-  // retries — while `attempted` stayed true, so the loan stamped and
-  // `candidatesInWindow` excluded that checkpoint on every later tick. The
-  // diagnostic said "deferred" and the behaviour was "abandoned", and a
-  // thirty-second rate limit could therefore suppress a borrower's payment
-  // reminder permanently. That is worse than the flattening r26 fixed.
+  // NO VERDICT IS COMPUTED HERE ANY MORE (#2213 r28). This used to end in a
+  // `status` word — `deferred` when every rail that answered said "not now",
+  // `sent` when anything was attempted, `no-route` otherwise — and that line
+  // was wrong twice in four rounds for the same structural reason: it decided
+  // one party's fate without the other party's facts, and the stamp is a
+  // per-LOAN decision. `stampDecision` now asks the three questions that
+  // actually bear on it, over both parties at once.
   //
-  // Only when NOTHING better happened: a loan whose other rail delivered is
-  // still handled, because the stamp is per loan and re-sending would tell the
-  // reached party twice.
-  const onlyDeferred = attempted && !delivered && transientRails > 0 && refusedRails === 0;
+  // What the deleted `deferred` branch missed, kept here because it names the
+  // trap: it ignored `unconfirmedRails`, so a Push whose fate is unknown
+  // alongside a Telegram rate limit was reported as a clean deferral and
+  // retried — although the unknown one may already have arrived
+  // (`4016565763`).
   return {
-    status: onlyDeferred ? 'deferred' : attempted ? 'sent' : 'no-route',
+    optedOut: false,
     attempted,
     delivered,
     unconfirmedRails,

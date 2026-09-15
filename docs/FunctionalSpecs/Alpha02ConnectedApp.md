@@ -407,16 +407,36 @@ The app uses chain reads and indexed reads for different jobs.
   leaves a reader unable to tell which is happening. Where a channel cannot
   distinguish the two, the platform says so rather than implying that channel
   never refuses.
-- A record whose every attempted message was DEFERRED is left unmarked, so a
-  later run sends it. Saying a message will be retried while marking the
-  record as handled is a contradiction the reader cannot see: a marked record
-  is never revisited, so a brief rate limit would suppress that period's
-  reminder permanently. The two neighbouring cases stay marked, and
-  deliberately: a message the service REFUSED will fail the same way until a
-  person repairs something, so repeating it for the rest of the window reaches
-  nobody; and a record where one party WAS reached is marked whatever the
-  other channel did, because the mark is per record and returning would tell
-  the reached party about the same payment twice.
+- Whether a record is marked as finished is ONE rule about the record, not a
+  verdict reached separately for each party. Marking it means "never revisit
+  this period", which is justified exactly when no later run could do better
+  for anybody. Three questions decide it:
+  - **Was anybody actually reached?** Then returning would tell them about the
+    same payment twice. The mark is per record, so one confirmed delivery
+    settles it.
+  - **Is anything uncertain?** A message that was issued and never answered
+    for may have arrived. Returning risks the same duplicate, so an unknown
+    blocks the retry exactly as a delivery does — the platform does not know,
+    and a duplicate reminder is the worse of the two ways to be wrong.
+  - **Is anybody owed another attempt?** Two things earn one and only two: a
+    service that said "not now", and a subscriber who switched the reminder
+    off and may switch it back on before the deadline. A refusal does not — it
+    will fail identically until a person acts. Having no usable channel, and
+    having no subscription at all, do not either.
+
+  The record is left unmarked when somebody is owed, nobody was reached and
+  nothing is uncertain; otherwise it is marked.
+- **Being owed another attempt is not cancelled by the other party having
+  nothing to offer.** A borrower whose reminder the service deferred stays
+  owed one even when their lender turns out to have no usable channel at all;
+  the lender's absence is not a reason to spend the borrower's retry. Only a
+  real delivery or a real uncertainty may end it, because only those two can
+  result in somebody being told twice. **This changes a previously stated
+  behaviour**: a record where one party had no usable channel and the other
+  had switched reminders off used to be marked, on the reasoning that the
+  first party was settled. That is true of them and says nothing about the
+  second, who may re-enable before the deadline — and since nothing was sent
+  to anybody, there was no duplicate to protect against.
 - Where a run reports how many subscribers a configuration problem affects, it
   counts distinct subscribers and not how many records they appear on. One
   wallet that is a counterparty on many positions is one affected subscriber;

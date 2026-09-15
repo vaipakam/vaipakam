@@ -1564,6 +1564,17 @@ export async function runChainIndexerForChain(
 ): Promise<ChainIndexerResult> {
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
+  // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
+  // `4016565774`). Every close-out in this pass now shares one answer, so a
+  // backfill full of terminal events costs one `sqlite_master` read rather
+  // than one per event — which during the deploy-before-migration window
+  // (#2214) could spend the invocation's whole subrequest allowance on
+  // identical probes and abort before the cursor advanced, freezing the very
+  // rollout this guard exists to survive. Drawn HERE, at the top of a chain's
+  // pass, rather than threaded through the fifteen close-out call sites: the
+  // rule is one rule and belongs in one place, and threading it is how the
+  // fourteenth site gets missed.
+  quarantineAvailableForWrites.beginPass();
   // Each chain has its own deployBlock; resolved via getChainConfigs
   // → deployments.json. We re-look it up here because ChainConfig
   // intentionally exposes only the runtime essentials.

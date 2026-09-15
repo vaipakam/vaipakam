@@ -468,6 +468,11 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
+    // One probe for this sweep, and the scope is opened explicitly (#2213 r28
+    // `4016565774`). This lane asks once either way; the call is here so both
+    // lanes draw the boundary the same way rather than one relying on asking
+    // only once by accident.
+    quarantineTableExists.beginPass();
     const availability = await quarantineTableExists(db);
     if (availability === 'unknown') {
       // DEFER THE WHOLE SWEEP (#2213 r13 `4013570995`). This is the one place

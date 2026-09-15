@@ -1025,11 +1025,36 @@ describe('what counts as a send, and what only looks like one', () => {
     expect(said).toContain(`${LOANS_PER_TICK * 2} rail(s) unconfirmed`);
   });
 
-  it('still stamps when one side has no route and the other opted out', async () => {
-    // Splitting `no-route` out of `sent` must not change WHO gets stamped —
-    // that semantics predates this PR (#1056) and nobody asked to change it.
-    // Here nothing is sent at all, yet the loan stamps, because the side that
-    // was reachable was handled: there is nothing to retry for them.
+  it('does NOT stamp when one side has no route and the other opted out', async () => {
+    // THIS ASSERTION IS INVERTED FROM WHAT IT WAS, and the inversion is a
+    // deliberate behaviour change rather than a test being bent to fit
+    // (#2213 r28). It is called out here, in the release note and in the
+    // functional spec, because the old behaviour predates this PR (#1056) and
+    // nobody asked for it to change.
+    //
+    // It used to stamp, on the reasoning that the side with no usable rail
+    // "was handled — there is nothing to retry for them". That is true of
+    // THEM and says nothing about the other side, who has switched the
+    // reminder off and may switch it back on before the deadline. Stamping
+    // here spends that person's reminder on their counterparty's missing
+    // channel.
+    //
+    // The P1 of round 28 (`4016565753`) made exactly this argument about a
+    // DEFERRED party. Fixing it there and leaving it here would be the
+    // symmetric hole this PR keeps rediscovering — the rule applied to the
+    // instance that prompted it rather than to the class — so the gate now
+    // treats both reasons alike, and this case moves with them.
+    //
+    // What justifies the stamp is the risk of telling somebody twice, and
+    // nothing was sent here at all, so there is no such risk. The
+    // per-loan-granularity note in the code says the same thing from the
+    // other side: an opted-out party re-enabling mid-window loses this
+    // checkpoint only WHEN THE OTHER SIDE WAS NOTIFIED. Nobody was.
+    //
+    // The cost is that this loan is re-examined each tick for the rest of its
+    // window, at two lookups a tick — the same cost a both-opted-out loan has
+    // always had, and the scan position still advances past it, so nothing
+    // behind it is starved.
     const lender = `0x${'1'.repeat(40)}`;
     const borrower = `0x${'2'.repeat(40)}`;
     loanRows = [{ ...dueLoan, lender, borrower }];
@@ -1043,6 +1068,30 @@ describe('what counts as a send, and what only looks like one', () => {
             notify_maturity_approaching: 1,
           }
         : { ...bothRails(w), notify_maturity_approaching: 0 };
+    const { stamped } = await run();
+    expect(sends).toEqual([]);
+    expect(stamped).toEqual([]);
+  });
+
+  it('still stamps when NEITHER side is owed anything — no route, no subscription', async () => {
+    // The neighbouring case, kept explicit so the change above cannot be read
+    // as "a loan that sends nothing never stamps". A subscriber with no usable
+    // rail and a counterparty with no subscription row at all are both
+    // settled: no later tick does anything for either of them, so re-querying
+    // every tick for the rest of the window is pure waste.
+    const lender = `0x${'3'.repeat(40)}`;
+    const borrower = `0x${'4'.repeat(40)}`;
+    loanRows = [{ ...dueLoan, lender, borrower }];
+    subscriberFor = (w) =>
+      w.toLowerCase() === borrower.toLowerCase()
+        ? {
+            wallet: w,
+            push_channel: null,
+            tg_chat_id: null,
+            locale: 'en',
+            notify_maturity_approaching: 1,
+          }
+        : null;
     const { stamped } = await run();
     expect(sends).toEqual([]);
     expect(stamped).toEqual([7]);
@@ -2002,6 +2051,49 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(sends.length).toBeGreaterThan(0); // it really did try
     expect(stamped).toEqual([]); // and kept the checkpoint retryable
     expect(said).toContain('deferred by the service');
+  });
+
+  it('keeps a DEFERRED party retryable when the other merely has no route', async () => {
+    // #2213 r28 `4016565753` (P1). The old gate counted "subscribed with no
+    // usable rail" as handled, so the moment one counterparty turned out to
+    // have no channel, the OTHER one's rate-limited reminder stopped being
+    // retryable and the checkpoint stamped — the lender's absence silently
+    // spending the borrower's retry. Nothing was delivered to anybody, so
+    // there was never a duplicate to protect against.
+    const lender = `0x${'5'.repeat(40)}`;
+    const borrower = `0x${'6'.repeat(40)}`;
+    loanRows = [{ ...dueLoan, lender, borrower }];
+    tgAccepts = 'transient';
+    subscriberFor = (w) =>
+      w.toLowerCase() === borrower.toLowerCase()
+        ? { ...bothRails(w), push_channel: null } // Telegram only, deferred
+        : {
+            wallet: w,
+            push_channel: null,
+            tg_chat_id: null,
+            locale: 'en',
+            notify_maturity_approaching: 1,
+          };
+    const { stamped } = await run();
+    expect(sends.length).toBeGreaterThan(0); // the borrower's rail really tried
+    expect(stamped).toEqual([]);
+  });
+
+  it('does NOT call a mixed unknown-and-deferred attempt a clean deferral', async () => {
+    // #2213 r28 `4016565763`. A Push whose fate is unknown MAY have arrived.
+    // Retrying the loan because Telegram was rate-limited would then tell that
+    // person about the same payment twice — so an unknown blocks the retry
+    // exactly as a confirmed delivery does. The honest position is that the
+    // platform cannot tell, and the two ways of being wrong are not
+    // symmetrical: a duplicate reminder is worse than a missed courtesy one.
+    tgAccepts = 'transient';
+    pushAttemptFor = () => 'failed'; // issued, never confirmed
+    loanRows = tenLoans().slice(-2);
+    const { stamped, said } = await run();
+    expect(stamped.length).toBe(2);
+    // And the report still names both things for what they are.
+    expect(said).toContain('deferred by the service');
+    expect(said).toContain('rail(s) unconfirmed');
   });
 
   it('DOES stamp a loan the service refused — there is nothing to retry there', async () => {

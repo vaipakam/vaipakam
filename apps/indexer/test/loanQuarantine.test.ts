@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createQuarantineAvailability,
   QUARANTINE_STALE_SECONDS,
   quarantineStatements,
   releaseTerminalQuarantine,
@@ -311,5 +312,89 @@ describe('telling the operator about a row that stays', () => {
     // The claim it must NOT make: that the row has not been looked at since.
     expect(said).not.toContain('last examined');
     warn.mockRestore();
+  });
+});
+
+describe('how often the table is probed for', () => {
+  /**
+   * A `sqlite_master` read is a D1 binding call and therefore one of the
+   * Worker's ~50 subrequests. The costs below are counted, not assumed.
+   */
+  function countingDb(present: boolean | 'throws') {
+    let probes = 0;
+    return {
+      probes: () => probes,
+      db: {
+        prepare() {
+          return {
+            async first<T>(): Promise<T | null> {
+              probes += 1;
+              if (present === 'throws') throw new Error('D1_ERROR: unavailable');
+              return (present ? ({ name: 'loan_quarantine' } as unknown as T) : null);
+            },
+          };
+        },
+      },
+    };
+  }
+
+  it('asks ONCE for a whole pass while the table is missing', async () => {
+    // #2213 r28 `4016565774`. A negative answer was never cached, so during
+    // the guaranteed deploy-before-migration window every terminal event
+    // re-probed — and a close-out can reach the helper twice, once in its own
+    // handler and again through the deferred status cleanup. A backfill with
+    // enough close-outs spent the invocation's allowance on identical reads
+    // and aborted before the cursor advanced, which is the rollout freeze the
+    // guard exists to survive.
+    const { db, probes } = countingDb(false);
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    for (let i = 0; i < 40; i++) expect(await probe(db)).toBe('absent');
+    expect(probes()).toBe(1);
+  });
+
+  it('asks again on the NEXT pass, so a landed migration is noticed', async () => {
+    // The other half, and the reason the scope is a pass rather than the
+    // isolate: caching the absence for the isolate's life would leave this
+    // Worker ignoring the quarantine after the migration landed, until it
+    // happened to recycle, with nothing saying so.
+    const { db, probes } = countingDb(false);
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    await probe(db);
+    probe.beginPass();
+    await probe(db);
+    expect(probes()).toBe(2);
+  });
+
+  it('caches an UNKNOWN for the pass too — a failing probe is not free either', async () => {
+    const { db, probes } = countingDb('throws');
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    for (let i = 0; i < 10; i++) expect(await probe(db)).toBe('unknown');
+    expect(probes()).toBe(1);
+  });
+
+  it('keeps a PRESENT across passes — a table does not un-exist', async () => {
+    const { db, probes } = countingDb(true);
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    await probe(db);
+    probe.beginPass();
+    expect(await probe(db)).toBe('present');
+    expect(probes()).toBe(1);
+  });
+
+  it('caches NOTHING negative for a caller that never opens a pass', async () => {
+    // The safety direction, and it is why `beginPass` opens the scope rather
+    // than merely clearing it. Written the other way round, a lane that forgot
+    // the call would latch `absent` for the life of its isolate and go on
+    // ignoring the quarantine long after the migration landed — the failure
+    // the no-caching rule existed to prevent, reintroduced by the fix for the
+    // probe count. Forgetting must cost an extra read, never a stale answer.
+    const { db, probes } = countingDb(false);
+    const probe = createQuarantineAvailability();
+    for (let i = 0; i < 5; i++) expect(await probe(db)).toBe('absent');
+    expect(probes()).toBe(5);
   });
 });

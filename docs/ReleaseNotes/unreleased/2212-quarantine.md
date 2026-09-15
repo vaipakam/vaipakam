@@ -239,6 +239,38 @@ first clears on its own, and filing it under the total whose stated meaning is
 "keeps failing until someone repairs it" would send that person to replace a
 credential during an incident that needed nobody.
 
+**Whether a reminder is marked as finished is now one rule, decided for the
+position rather than assembled from each party's outcome.** Marking it means
+"never come back to this period", and that is earned exactly when no later
+run could do better for anyone — which is three questions. Was anybody
+actually reached, in which case coming back would tell them twice? Is
+anything uncertain — a message that was sent and never answered for may have
+arrived, so coming back risks that same duplicate? And is anybody owed
+another attempt?
+
+Only two things earn one: a service that said "not now", and a recipient who
+switched the reminder off and may switch it back on before the deadline. A
+refusal does not, because it will fail the same way until a person acts.
+Having no usable channel does not, and neither does having no subscription.
+
+This replaces a scatter of separate judgements that was corrected four times
+in three review rounds, each time for a different combination of the two
+recipients' situations, and each correction leaving the next combination
+standing. The cause was structural rather than arithmetic: a single word per
+recipient cannot carry two recipients' worth of partial knowledge. The rule
+is stated once now, in terms of what the mark means.
+
+**One consequence changes a previously stated behaviour, and is called out
+because nobody asked for it.** A position where one party had no usable
+channel and the other had switched reminders off used to be marked as
+finished, on the reasoning that the first party was settled. That is true of
+them and says nothing about the second, who may re-enable before the
+deadline — and since nothing was sent to anybody, there was no duplicate to
+protect against. It is now left unmarked, like any other position where
+somebody is still owed an attempt. The cost is that such a position is looked
+at again each run for the rest of its window, which is what a position with
+both parties opted out has always cost.
+
 **And "not now" now means the platform comes back.** Telling an operator the
 message would be retried was only half of it: the reminder was still marked as
 handled, and a reminder marked handled is one the platform never revisits — so
@@ -475,6 +507,28 @@ a close-out, so during the deploy window it would have failed that group,
 which in turn would have stopped the reader advancing — leaving that chain
 frozen on one block until the database change landed. Everything that touches
 the new memory, read or write, now asks first whether it is there.
+
+**And asking that question is itself not free, which nearly reinstated the
+freeze it prevents.** A "does this memory exist yet" check is a database
+call, and a database call is one of the limited number of outbound requests a
+run may make. A negative answer was deliberately not remembered — remembering
+it would leave a run ignoring the memory after it had been created, until
+that run happened to restart — so during the window before the database
+change lands, EVERY closing loan asked again, and a closing loan can reach
+the check twice. A catch-up over a stretch of history with enough closures
+would spend the whole allowance on identical questions and stop before
+recording its progress, which is precisely the frozen chain this guard
+exists to avoid.
+
+The answer is now remembered for the length of ONE pass over a network:
+however many loans close in it, the question is asked once, and it is asked
+afresh on the next pass so a database change that has just landed is noticed
+within a pass rather than whenever a run restarts. Both mistakes are bounded,
+and the one that remains is the harmless one. Remembering also only happens
+where a pass has explicitly been opened — a lane that never opens one keeps
+the old behaviour and pays the extra question, because the cost of getting
+this wrong in the other direction is a run silently ignoring the memory for
+hours, and the cost in this direction is one database read.
 
 **A deployment that cannot send one kind of message now says so.** The
 platform reaches people over two channels, and one of them needs a signing

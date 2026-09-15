@@ -348,17 +348,47 @@ export type QuarantineAvailability = 'present' | 'absent' | 'unknown';
  * missing table" is a guess about an error message, and a failure classifier
  * narrowed round after round cannot be sharpened into correctness.
  *
- * **Only a PRESENT is cached.** A table does not un-exist, so the steady-state
- * cost is one read per isolate — while caching an absence would mean the
- * migration lands and this isolate goes on ignoring the quarantine until it
- * happens to recycle, with nothing saying so.
+ * **A PRESENT is cached for the life of the isolate.** A table does not
+ * un-exist, so the steady-state cost is one read per isolate.
+ *
+ * **An ABSENT or an UNKNOWN is cached for the life of one PASS** (#2213 r28
+ * `4016565774`). Neither used to be cached at all, on the reasoning that
+ * caching an absence would leave this isolate ignoring the quarantine after
+ * the migration landed, until it happened to recycle. That reasoning is right
+ * about an isolate-lifetime cache and it bought an unbounded one instead:
+ * during the guaranteed deploy-before-migration window (#2214) EVERY terminal
+ * event re-probed, and a normal close-out can reach the helper twice — once in
+ * its own handler and again through the deferred `LoanStatusChanged` cleanup.
+ * A backfill with enough close-outs then spends the Worker's subrequest
+ * allowance on identical `sqlite_master` reads and aborts before advancing the
+ * cursor, which is the rollout freeze this guard exists to prevent.
+ *
+ * A pass is the right scope because it bounds both errors: at most one probe
+ * per pass however many close-outs it carries, and at most one pass of
+ * ignoring a migration that has just landed.
+ *
+ * `beginPass()` both OPENS that scope and clears it, and the opening half is
+ * load-bearing: a caller that never calls it never caches a negative at all,
+ * and so keeps the pre-r28 behaviour exactly. Written the other way round —
+ * caching by default, `beginPass()` merely clearing — a lane that forgot the
+ * call would latch `absent` for the life of its isolate and go on ignoring
+ * the quarantine long after the migration landed, which is the failure the
+ * no-caching rule was protecting against in the first place. Forgetting is
+ * now a missed optimisation rather than a stale answer.
  */
-export function createQuarantineAvailability(): (
-  db: QuarantineProbeDb,
-) => Promise<QuarantineAvailability> {
+export interface QuarantineAvailabilityProbe {
+  (db: QuarantineProbeDb): Promise<QuarantineAvailability>;
+  /** Forget a cached `absent`/`unknown`; a cached `present` survives. */
+  beginPass(): void;
+}
+
+export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   let seen = false;
-  return async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
+  let passOpen = false;
+  let thisPass: QuarantineAvailability | null = null;
+  const probe = async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
     if (seen) return 'present';
+    if (thisPass !== null) return thisPass;
     try {
       const row = await db
         .prepare(
@@ -369,6 +399,7 @@ export function createQuarantineAvailability(): (
         seen = true;
         return 'present';
       }
+      if (passOpen) thisPass = 'absent';
       return 'absent';
     } catch {
       // STILL DOES NOT THROW. Its callers are a reminder sweep and a close-out
@@ -376,7 +407,13 @@ export function createQuarantineAvailability(): (
       // database hiccup into a stalled chain cursor or a dropped sweep. What
       // changed in r13 is that the answer is no longer a confident "absent":
       // the caller is told the question failed and decides for itself.
+      if (passOpen) thisPass = 'unknown';
       return 'unknown';
     }
   };
+  probe.beginPass = () => {
+    passOpen = true;
+    thisPass = null;
+  };
+  return probe as QuarantineAvailabilityProbe;
 }
