@@ -245,12 +245,20 @@ export async function reportStaleQuarantine(
   const described = shown
     .map((r) => {
       const heldHours = Math.floor((nowSec - r.first_seen_at) / 3600);
-      // "Last confirmed unsettled" is the honest label for `last_seen_at`: it
-      // is when a pass last LOOKED, not when the problem last occurred.
-      const sinceSeen = Math.floor((nowSec - r.last_seen_at) / 3600);
+      // WHAT THIS COLUMN ACTUALLY IS: the last time an unsettled sighting was
+      // successfully WRITTEN — not the last time a pass looked (#2213 r23
+      // `4015375760`).
+      //
+      // The two come apart exactly when the upsert batch fails, which is a
+      // case this PR made reachable and then reported on: the pass examined
+      // the row minutes ago, only recording it failed, so the column keeps an
+      // older value. Calling that "last examined" then tells an operator the
+      // row is merely waiting for the rotation — the one reading that sends
+      // them away from a row whose bookkeeping is broken.
+      const sinceRecorded = Math.floor((nowSec - r.last_seen_at) / 3600);
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
-        `last examined ${sinceSeen}h ago)`
+        `last recorded unsettled ${sinceRecorded}h ago)`
       );
     })
     .join('; ');
@@ -258,9 +266,10 @@ export async function reportStaleQuarantine(
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +
       `for over ${QUARANTINE_STALE_SECONDS / 3600}h — ${described}${overflow}. ` +
-      `A row last examined recently is still failing; one last examined long ` +
-      `ago is waiting for the rotation to reach it, not necessarily still ` +
-      `broken. An orphan needs a person either way.`,
+      `A row recorded recently is still failing; one recorded long ago is ` +
+      `either waiting for the rotation to reach it or being examined and not ` +
+      `written — the quarantine WRITE failure above says which, and this ` +
+      `column cannot. An orphan needs a person either way.`,
   );
 }
 

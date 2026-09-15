@@ -35,7 +35,8 @@ record the chain denies all need different responses — and *when it was first
 noticed*, which is preserved rather than refreshed each time. That distinction
 is the whole operator signal: minutes means a source having a bad moment, days
 means a position nobody has resolved. A record held back that long is now
-named out loud, with its age and when it was last examined — the platform says
+named out loud, with its age and when its unconfirmed state was last
+successfully recorded — the platform says
 what it observed and leaves the conclusion to whoever reads it.
 
 Releasing is the half that had to be right. A record held back forever on the
@@ -342,6 +343,15 @@ immediately sent whoever read it looking for reminders that could not yet
 have escaped, and understated the real risk, which begins quietly on the
 following turn.
 
+**That "last recorded" wording is exact, and the exactness was earned.** The
+stored time moves only when the record of the problem is successfully written,
+which is not the same as when the platform last looked — and this change made
+the difference reachable, because it also made a failed write reportable. A
+record examined minutes ago whose write failed keeps an older time, and
+calling that "last examined" would say it is merely waiting its turn, sending
+whoever reads it away from a record whose bookkeeping is broken. The stored
+time cannot tell those apart; the failed-write report can, and now says so.
+
 **A failure at the very last step could erase everything the run had just
 done.** Marking a record as told is the final act for that record, and it
 happens after the messages have gone out. When that write failed, the error
@@ -409,6 +419,13 @@ accounting took the disclosure with it. So a run could mark forty records as
 handled, deliver nothing, and say nothing, which is the ordinary shape of a
 misconfigured deployment rather than an exotic one. The run now reports the
 count once, naming the setting.
+
+It covers a credential that is PRESENT and unusable as well as one that is
+missing, and the first is the worse case: a missing credential is at least
+obviously missing, where a malformed one fails every message on that channel
+while looking correctly configured. The platform now takes that answer from
+the sending step — which tried and could not — rather than from inspecting the
+setting and guessing.
 
 The same disclosure now covers the platform's OTHER message channel, which
 the first version of this fix left out — a rule applied to the case that

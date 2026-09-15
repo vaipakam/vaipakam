@@ -250,4 +250,24 @@ describe('telling the operator about a row that stays', () => {
     expect(said).toContain('orphan');
     warn.mockRestore();
   });
+
+  it('calls the timestamp what it is — the last RECORDED sighting', async () => {
+    // #2213 r23 `4015375760`. `last_seen_at` only moves when the upsert
+    // SUCCEEDS, and this PR made a failed upsert both reachable and reported.
+    // So a row examined minutes ago whose write failed keeps an older value,
+    // and calling that "last examined" tells an operator the row is merely
+    // waiting for the rotation — sending them away from a row whose
+    // bookkeeping is broken. The column cannot distinguish the two; the label
+    // must not pretend otherwise.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [42], unresolvable: [42] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('last recorded unsettled');
+    // The claim it must NOT make: that the row has not been looked at since.
+    expect(said).not.toContain('last examined');
+    warn.mockRestore();
+  });
 });

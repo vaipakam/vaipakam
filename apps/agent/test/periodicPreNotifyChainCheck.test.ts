@@ -1559,6 +1559,26 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('2 with nobody to tell');
   });
 
+  it('treats a MALFORMED Push signer as a deployment failure, not a missing route', async () => {
+    // #2213 r23 `4015375741`. `pushUnconfigured` was `push_channel && !PK` —
+    // a truthiness test on the env. A non-empty but MALFORMED key passes it,
+    // so the rail looked configured while `sendPush` returned `not-requested`
+    // having issued nothing. The loan then fell into the user-routing bucket
+    // and was reported as "nobody to tell".
+    //
+    // That is the worse of the two misconfigurations: an unset key is at least
+    // obviously unset, where a malformed one fails EVERY push on the
+    // deployment while looking fine.
+    subscriberFor = (w) => ({ ...bothRails(w), tg_chat_id: null });
+    pushAttemptFor = () => 'not-requested'; // the shape a bad key produces
+    loanRows = tenLoans().slice(-2);
+    const { said } = await run(); // PUSH_CHANNEL_PK is SET, and unusable
+    expect(sends.length).toBe(0);
+    // Reported where it belongs: against the deployment, once, with a count.
+    expect(said).toContain('4 subscriber(s) this tick have a Push channel set');
+    expect(said).toContain('no Push was sent to them');
+  });
+
   it('says nothing about a cap it did not reach', async () => {
     // The ordinary case: a handful of due loans, everything sent, no warning
     // an operator has to learn to ignore.

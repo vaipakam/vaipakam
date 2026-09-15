@@ -1606,6 +1606,9 @@ async function pushIfSubscribed(
   let attempted = false;
   let delivered = false;
   let unconfirmedRails = 0;
+  // WHETHER THE PUSH RAIL IS USABLE AT ALL, answered by the sender rather than
+  // by inspecting the env (#2213 r23 `4015375741`). See where this is returned.
+  let pushSignerUnusable = false;
   if (pushSigner) {
     // CHARGED FROM WHAT THE SENDER REPORTS, not from the fact that we called
     // it (#2213 r9 `4012940120`). `sendPush` swallows its own failures, so a
@@ -1636,6 +1639,13 @@ async function pushIfSubscribed(
         budget.remaining -= 1;
         if (attempt === 'accepted') delivered = true;
         else unconfirmedRails += 1;
+      } else {
+        // A SIGNER THAT IS PRESENT AND UNUSABLE. `sendPush` builds the signer
+        // before it sends, so a malformed key returns here having issued
+        // nothing — and it does so for EVERY push on that deployment, which
+        // makes this strictly worse than an unset key while looking
+        // configured (#2213 r23 `4015375741`).
+        pushSignerUnusable = true;
       }
     } catch (err) {
       console.error(
@@ -1680,7 +1690,14 @@ async function pushIfSubscribed(
     // The subscriber WANTED push (they have a channel) and the deployment
     // cannot sign for it. Distinct from "no channel": that is the user's
     // choice, this is the operator's configuration.
-    pushUnconfigured: Boolean(sub.push_channel) && !env.PUSH_CHANNEL_PK,
+    // DERIVED FROM WHAT THE SENDER DID, not from the env being falsy (#2213
+    // r23 `4015375741`). The truthiness test saw a non-empty key and called
+    // the rail configured, so a MALFORMED `PUSH_CHANNEL_PK` — which fails
+    // every push while looking set — fell into the user-routing bucket and was
+    // reported as "nobody to tell". The deployment-level disclosure exists
+    // precisely for that case; sending it to the user bucket is the same
+    // misattribution r19 and r22 removed, arriving through the one door left.
+    pushUnconfigured: Boolean(sub.push_channel) && (!env.PUSH_CHANNEL_PK || pushSignerUnusable),
     tgUnconfigured: Boolean(sub.tg_chat_id) && !env.TG_BOT_TOKEN,
   };
 }
