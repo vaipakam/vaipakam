@@ -103,6 +103,12 @@ const MAX_SENDS_PER_LOAN = 4;
 const EXAMINE_BATCH = 100;
 const MAX_EXAMINE_BATCHES = 3;
 
+/**
+ * How much of the window one tick can examine, and therefore the step the scan
+ * start rotates by when the window is wider than that (#2213 r8 `4012811563`).
+ */
+const SCAN_SPAN = EXAMINE_BATCH * MAX_EXAMINE_BATCHES;
+
 /** Cadence enum value → interval in days. Mirrors
  *  `LibVaipakam.intervalDays`. */
 function intervalDays(cadence: number): number {
@@ -279,7 +285,32 @@ async function preNotifyChain(
   //
   // So the read pass now SCANS PAST rejected candidates, in batches, and only
   // the sends draw on the allowance.
-  let cursor = 0;
+  // AND THE SCAN DOES NOT ALWAYS START AT THE HEAD (#2213 r8 `4012811563`).
+  // Counting the allowance in sends stopped a non-sending candidate from
+  // spending it; it did not stop one from being examined again on every tick.
+  // A candidate that is deliberately never stamped — an opted-out pair, a row
+  // the chain rejects — stays exactly where it was in the deadline order, so a
+  // window whose first three hundred are all of that kind hides candidate 301
+  // for good. Round 6 wrote that residue down and called it an operator
+  // problem; opted-out counterparties made it an ordinary one, and the spec
+  // now promises it cannot happen.
+  //
+  // The fix is stateless on purpose. A persisted cursor would need a table,
+  // and therefore a migration, and therefore the deploy window #2214 is about
+  // — real cost for a case that a rotation answers exactly: when the window is
+  // wider than one tick can scan, successive ticks start at successive spans,
+  // so every candidate is examined within `spans` ticks. Minutes apart, in a
+  // window days wide.
+  //
+  // It engages ONLY when it has to. With 300 or fewer candidates there is one
+  // span, the offset is zero, and the nearest deadline is examined first on
+  // every tick exactly as before — so the common case keeps the ordering that
+  // makes the send cap fair, and only the overloaded case trades a tick of
+  // latency for not starving anyone.
+  const spans = Math.ceil(due.length / SCAN_SPAN);
+  const start = spans > 1 ? (Math.floor(now / 60) % spans) * SCAN_SPAN : 0;
+
+  let cursor = start;
   let reminded = 0;
   let rejected = 0;
   let unreadable = 0;
@@ -310,20 +341,24 @@ async function preNotifyChain(
   }
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
-  if (cursor < due.length) {
+  const examined = cursor - start;
+  if (examined < due.length) {
     const capped =
       budget.remaining < MAX_SENDS_PER_LOAN
         ? `the invocation's send allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
+    const span =
+      spans > 1 ? ` (scanning span ${start / SCAN_SPAN + 1} of ${spans}, from ${start})` : '';
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
-        `notification window, ${cursor} examined, ${reminded} reminded, ` +
+        `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
         `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
         `${capped ?? scanned ?? 'stopping'}. ` +
-        `The remainder is not dropped: nothing is stamped for it, and it is ` +
-        `nearer the front next tick. A tick that reports the read cap with ` +
-        `hundreds rejected is reporting orphaned rows, not load.`,
+        `The remainder is not dropped: nothing is stamped for it, and a later ` +
+        `tick reaches it — the next spans in turn when there is more than one. ` +
+        `A tick that reports the read cap with hundreds rejected is reporting ` +
+        `orphaned rows, not load.`,
     );
   }
 }
@@ -453,9 +488,16 @@ async function messageBatch(
     // side WAS notified, an opted-out counterparty re-enabling
     // mid-window misses this checkpoint — per-user dedupe would need
     // a schema change, out of proportion for a courtesy reminder.
-    const anySent = borrowerOutcome === 'sent' || lenderOutcome === 'sent';
+    //
+    // STAMPING KEYS ON "HANDLED", NOT ON "SENT" (#2213 r8 `4012811575`). Those
+    // were one word until this round, which is why splitting `no-route` out of
+    // `sent` would otherwise have changed behaviour nobody asked to change: a
+    // counterparty with no usable rail has nothing to retry, so it stamps
+    // exactly as it did before. Only the operator COUNT distinguishes them.
+    const handled = (o: PreNotifyOutcome) => o === 'sent' || o === 'no-route';
+    const anyHandled = handled(borrowerOutcome) || handled(lenderOutcome);
     const onlyBlockedByOptOut =
-      !anySent &&
+      !anyHandled &&
       (borrowerOutcome === 'opted-out' || lenderOutcome === 'opted-out');
     if (onlyBlockedByOptOut) continue;
     await env.DB.prepare(
@@ -565,8 +607,18 @@ async function readLoanStates(
   }
 }
 
-/** Why nothing (or something) went out for one counterparty. */
-type PreNotifyOutcome = 'sent' | 'opted-out' | 'none';
+/**
+ * Why nothing (or something) went out for one counterparty.
+ *
+ * - `sent` — at least one rail was issued.
+ * - `no-route` — subscribed, opted in, and no usable rail (no channel, or the
+ *   deployment has no signer/token for the one they have). Stamped like a
+ *   delivery, counted like none.
+ * - `opted-out` — they switched these reminders off. NOT stamped: they may
+ *   switch them back on before the deadline.
+ * - `none` — no subscription row at all. Stamped; nobody to tell.
+ */
+type PreNotifyOutcome = 'sent' | 'no-route' | 'opted-out' | 'none';
 
 async function pushIfSubscribed(
   env: Env,
@@ -632,7 +684,19 @@ async function pushIfSubscribed(
   const linkBase = env.FRONTEND_ORIGIN.split(',')[0]!.trim();
   const deepLink = `${linkBase}/loans/${loan.loan_id}`;
 
-  if (sub.push_channel) {
+  // `env.PUSH_CHANNEL_PK` is in the condition, not only in `sendPush`, and
+  // that is the r7 rule applied to itself (#2213 r8 `4012811567`): with the
+  // signer unset, `sendPush` returns without issuing anything, so a charge here
+  // would spend the allowance on a deployment that made no request — the same
+  // "non-sending thing holds the budget" failure, one layer down. The condition
+  // that decides whether a request happens has to BE the condition that
+  // charges for it.
+  const pushSigner = sub.push_channel ? env.PUSH_CHANNEL_PK : undefined;
+  const tgRoute =
+    sub.tg_chat_id && env.TG_BOT_TOKEN
+      ? { chat: sub.tg_chat_id, token: env.TG_BOT_TOKEN }
+      : null;
+  if (pushSigner) {
     // CHARGED HERE, at the point an outbound request is actually made (#2213
     // r7 `4012662252`). Every earlier revision charged a loan slot further up
     // and was wrong in the same way each time: a candidate that sends nothing
@@ -642,7 +706,7 @@ async function pushIfSubscribed(
     // line, and no path to this line that skips a send.
     budget.remaining -= 1;
     try {
-      await sendPush(env.PUSH_CHANNEL_PK, {
+      await sendPush(pushSigner, {
         subscriber: wallet,
         title,
         body,
@@ -655,10 +719,10 @@ async function pushIfSubscribed(
       );
     }
   }
-  if (sub.tg_chat_id && env.TG_BOT_TOKEN) {
+  if (tgRoute) {
     budget.remaining -= 1;
     try {
-      await sendMessage(env.TG_BOT_TOKEN, sub.tg_chat_id, `${title}\n${body}\n${deepLink}`);
+      await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
     } catch (err) {
       console.error(
         `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} ` +
@@ -666,13 +730,14 @@ async function pushIfSubscribed(
       );
     }
   }
-  // Delivery was attempted (per-rail failures are logged above, and
-  // a subscriber with no rail configured still counts — matching the
-  // pre-existing stamp semantics for subscribed users). Note this is the
-  // STAMP semantics, not the budget's: a subscriber with no rail configured
-  // returns 'sent' here and has decremented nothing, which is correct on both
-  // counts — nothing went out, and there is nothing to retry for them.
-  return 'sent';
+  // TWO DIFFERENT ANSWERS, because two different questions are asked of this
+  // return value (#2213 r8 `4012811575`). A subscriber row whose rails are
+  // both empty — a shape the settings upsert really produces — used to report
+  // 'sent', which was right for STAMPING (there is nothing to retry for them,
+  // so re-querying every tick is waste) and wrong for REPORTING (the operator
+  // count then says hundreds were reminded on a tick that sent nothing).
+  // 'no-route' keeps the stamp and leaves the count honest.
+  return pushSigner || tgRoute ? 'sent' : 'no-route';
 }
 
 function cadenceI18nLabel(cadence: number): string {

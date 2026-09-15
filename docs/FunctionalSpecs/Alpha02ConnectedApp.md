@@ -326,11 +326,23 @@ The app uses chain reads and indexed reads for different jobs.
   would mark the reminder as delivered with one side never told, and that
   side's reminder is then lost rather than delayed. Leaving a little allowance
   unused is the cheaper error.
-- A run that stops early says which limit stopped it, and separates what it
-  found: examined, reminded, declined by the chain, and unreadable. Those need
-  different remedies — a run reporting many declines is reporting records the
-  platform holds wrongly, not load — so they are never flattened into one
-  "deferred" count.
+- A run does not always begin at the front of the order. Not spending the
+  bound is not the same as making progress: a record that sends nothing is
+  also never marked as handled, so it keeps its place at the front and is
+  examined again on every run. If enough such records sit ahead of a record
+  that WOULD send, starting at the front every time hides it for good. So when
+  the window is wider than one run can examine, successive runs begin at
+  successive parts of it, and every record is examined within a few runs —
+  minutes apart, in a window days wide. When the window fits in one run, which
+  is the ordinary case, the nearest deadline is still examined first.
+- A run that stops early says which limit stopped it, which part of the window
+  it examined, and separates what it found: examined, reminded, declined by
+  the chain, and unreadable. Those need different remedies — a run reporting
+  many declines is reporting records the platform holds wrongly, not load — so
+  they are never flattened into one "deferred" count. "Reminded" means a
+  message was actually issued: a recipient the platform has on file but has no
+  way to reach is counted as handled, never as reminded, so the count cannot
+  claim hundreds were told on a run that sent nothing.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

@@ -155,6 +155,28 @@ function periodicLoan(loanId: number, settledAt: number) {
 
 const dueLoan = periodicLoan(7, NOW - 29 * DAY);
 
+/** Ten due loans, ids DESCENDING with the deadline, handed back FARTHEST FIRST. */
+function tenLoans() {
+  // k = 0 is nearest (settled longest ago), and carries the highest id — so
+  // neither row order nor id order accidentally produces the right answer.
+  const loans = Array.from({ length: 10 }, (_, k) =>
+    periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
+  );
+  return loans.reverse();
+}
+
+/** Run with the clock pinned to a minute of the given parity. */
+async function atMinute(minute: number, extra: Record<string, unknown> = {}) {
+  vi.useFakeTimers();
+  const m = Math.floor(Date.now() / 60_000);
+  vi.setSystemTime((m - (m % 2) + minute) * 60_000);
+  try {
+    return await run(extra);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 function env(extra: Record<string, unknown> = {}) {
   const writes: { sql: string; params: unknown[] }[] = [];
   const DB = {
@@ -336,22 +358,113 @@ describe('periodic pre-notify checks the chain before an unretractable send', ()
   });
 });
 
+describe('what counts as a send, and what only looks like one', () => {
+  it('does not charge the allowance when the deployment has no Push signer', async () => {
+    // #2213 r8 `4012811567`. `sendPush` returns without issuing anything when
+    // `PUSH_CHANNEL_PK` is unset, so charging for it spends the allowance on a
+    // request that was never made — the r7 failure one layer down, where the
+    // condition that decides whether a request happens was not the condition
+    // that charged for it.
+    loanRows = [dueLoan];
+    const { stamped } = await run({ PUSH_CHANNEL_PK: undefined });
+    expect(stamped).toEqual([7]);
+    // Telegram still goes out for both counterparties; Push does not, and is
+    // not charged for.
+    expect(sends).toEqual(['tg:12345', 'tg:12345']);
+  });
+
+  it('does not count a subscriber with no usable rail as reminded', async () => {
+    // #2213 r8 `4012811575`. A row with both rails empty is a real shape the
+    // settings upsert produces. It still STAMPS — there is nothing to retry
+    // for them, so re-querying every tick is waste — but reporting it as a
+    // reminder would let the operator count claim hundreds were told on a
+    // tick that sent nothing.
+    loanRows = tenLoans();
+    subscriberFor = (w) => ({
+      wallet: w,
+      push_channel: null,
+      tg_chat_id: null,
+      locale: 'en',
+      notify_maturity_approaching: 1,
+    });
+    const { stamped, said } = await run();
+    expect(sends).toEqual([]);
+    // Stamped exactly as before — the semantics that existed are preserved.
+    expect(stamped.length).toBe(10);
+    // Nothing sent, so the allowance is untouched and there is no stop-early
+    // warning to read a count out of. That is why the NEXT test exists: this
+    // assertion alone would pass whatever the count did.
+    expect(said).toBe('');
+  });
+
+  it('reports only the loans that actually sent, when the tick stops early', async () => {
+    // The assertion above cannot see the count, so this one makes the count
+    // observable: ten loans with no usable rail, then ten fully subscribed.
+    // The subscribed ones exhaust the allowance and the warning fires, and it
+    // must say EIGHT reminded out of EIGHTEEN examined — not eighteen.
+    const ids = Array.from({ length: 20 }, (_, k) => 200 - k); // nearest first
+    const noRoute = new Set(ids.slice(0, 10));
+    const known = new Map<string, number>();
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse()
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      if (noRoute.has(id)) {
+        return {
+          wallet: w,
+          push_channel: null,
+          tg_chat_id: null,
+          locale: 'en',
+          notify_maturity_approaching: 1,
+        };
+      }
+      return bothRails(w);
+    };
+    const { said } = await run();
+    expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
+    expect(said).toContain('18 examined, 8 reminded');
+  });
+
+  it('still stamps when one side has no route and the other opted out', async () => {
+    // Splitting `no-route` out of `sent` must not change WHO gets stamped —
+    // that semantics predates this PR (#1056) and nobody asked to change it.
+    // Here nothing is sent at all, yet the loan stamps, because the side that
+    // was reachable was handled: there is nothing to retry for them.
+    const lender = `0x${'1'.repeat(40)}`;
+    const borrower = `0x${'2'.repeat(40)}`;
+    loanRows = [{ ...dueLoan, lender, borrower }];
+    subscriberFor = (w) =>
+      w.toLowerCase() === borrower.toLowerCase()
+        ? {
+            wallet: w,
+            push_channel: null,
+            tg_chat_id: null,
+            locale: 'en',
+            notify_maturity_approaching: 1,
+          }
+        : { ...bothRails(w), notify_maturity_approaching: 0 };
+    const { stamped } = await run();
+    expect(sends).toEqual([]);
+    expect(stamped).toEqual([7]);
+  });
+});
+
 describe('the invocation spends a bounded allowance, nearest deadline first', () => {
   // #2213 r5 `4012300071`. A Worker invocation has ~50 outbound subrequests
   // and each reminded loan costs up to four, so the lane caps how many it
   // messages about. A cap without an order is what starves a borrower: the
   // database hands back the same rows every tick, so the ones behind them are
   // never reached and miss the very deadline the reminder was for.
-
-  /** Ten due loans, ids DESCENDING with the deadline, handed back FARTHEST FIRST. */
-  function tenLoans() {
-    // k = 0 is nearest (settled longest ago), and carries the highest id — so
-    // neither row order nor id order accidentally produces the right answer.
-    const loans = Array.from({ length: 10 }, (_, k) =>
-      periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
-    );
-    return loans.reverse();
-  }
 
   it('reminds only as many as the allowance permits, and takes the nearest', async () => {
     loanRows = tenLoans();
@@ -519,6 +632,52 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped.length).toBe(8);
   });
 
+  it('rotates the scan start so a wide window cannot hide its tail', async () => {
+    // #2213 r8 `4012811563`. Counting the allowance in sends stopped a
+    // non-sending candidate from SPENDING it; it did not stop one from being
+    // examined again every tick. A candidate that is deliberately never
+    // stamped stays exactly where it was in the deadline order, so 300
+    // opted-out loans at the head hid candidate 301 on every tick — for good,
+    // because the scan restarted at zero each time.
+    const N = 350;
+    const ids = Array.from({ length: N }, (_, k) => 1000 - k); // nearest first
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse();
+    // Everyone is subscribed; the first 300 have opted out, so they send
+    // nothing, are never stamped, and never leave the front of the order.
+    const optedOut = new Set(ids.slice(0, 300));
+    const known = new Map<string, number>();
+    loanRows = loanRows.map((r) => {
+      const id = r.loan_id as number;
+      const lender = `0x${String(id).padStart(40, '1')}`;
+      const borrower = `0x${String(id).padStart(40, '2')}`;
+      known.set(lender.toLowerCase(), id);
+      known.set(borrower.toLowerCase(), id);
+      return { ...r, lender, borrower };
+    });
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      const row = bothRails(w);
+      return optedOut.has(id) ? { ...row, notify_maturity_approaching: 0 } : row;
+    };
+
+    // Two spans (350 candidates, 300 per tick), so the start alternates with
+    // the minute. Drive both and require the tail to be reached on one of
+    // them — the point is that SOME tick reaches it, not which.
+    const a = await atMinute(0);
+    const b = await atMinute(1);
+    const reached = [...a.stamped, ...b.stamped];
+    // The 50 loans past the first 300 are subscribed and opted in, so reaching
+    // them means reminding them. Before this fix, neither tick saw any.
+    expect(reached.length).toBeGreaterThan(0);
+    expect(reached.every((id) => !optedOut.has(id))).toBe(true);
+    // And the operator is told which span was scanned, not just that
+    // something was left over.
+    expect(`${a.said}\n${b.said}`).toContain('scanning span');
+  });
+
   it('stops scanning at the read cap, and says what it found', async () => {
     // The residue, stated rather than implied: a window whose first three
     // hundred candidates are all rejected still defers whatever is behind
@@ -528,7 +687,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       periodicLoan(1000 - k, NOW - 29 * DAY + k * 60),
     ).reverse();
     answer = () => ({ id: 0n, status: 0 }); // every one an orphan
-    const { stamped, said } = await run();
+    // THE MINUTE IS PINNED because the scan start rotates once the window
+    // exceeds one tick's reach (#2213 r8) — 350 candidates is two spans, so an
+    // unpinned clock would scan 300 on one tick and 50 on the next and this
+    // assertion would flake. Span 1 is the one with a full read cap to hit.
+    const { stamped, said } = await atMinute(0);
     expect(stamped).toEqual([]);
     expect(batchedReads).toBe(3); // 3 × 100, not 350 reads and not one
     expect(said).toContain('300 examined');

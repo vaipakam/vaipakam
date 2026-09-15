@@ -151,6 +151,25 @@ of allowance unused. Stopping halfway through a record would tell one party and
 mark the reminder as delivered, so the other party's reminder would not be
 delayed — it would be lost.
 
+**Not spending the allowance is not the same as making progress**, and that
+took one more round to see. A record that sends nothing is also never marked
+as handled, so it keeps its place at the front of the order and is examined
+again on the next run, and the next. Costing nothing does not move it. With
+enough of them ahead of a record that would send — a few hundred recipients
+who have these reminders switched off is not an exotic situation — starting at
+the front every time hides the record behind them permanently. So when the
+window is wider than one run can examine, successive runs begin at successive
+parts of it. Every record is examined within a few runs, which are minutes
+apart in a window measured in days, and when the window fits in one run the
+nearest deadline is still examined first.
+
+Two smaller corrections of the same kind: the platform no longer counts a
+message it did not send. A deployment with no signer configured for one of the
+two channels was charging itself for messages that were never issued, and a
+recipient the platform has on file but has no way to reach was being reported
+as reminded. Neither changes who gets a reminder; both were letting the
+run's own accounting say more than had happened.
+
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain
 rejected, how many it could not read, and which of the two limits stopped it.
