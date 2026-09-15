@@ -260,6 +260,16 @@ The app uses chain reads and indexed reads for different jobs.
   costs nothing a reminder needs — its window is hours to days — and the
   platform already waits on the same surface when the grace schedule the
   reminders depend on has not been read.
+- The same rule applies record by record, not only turn by turn. A turn that
+  checked may still have records it could not settle — one the chain has
+  never heard of, one whose state could not be read, one whose correction
+  failed to write, one in a state this build does not recognise — and each
+  of those is still recorded as open. Those records are left out of that
+  turn's reminders by name, while every record the turn did settle is
+  reminded about as usual. The alternative, withholding the whole chain's
+  reminders because one record could not be read, would punish every other
+  holder for it — and would do so indefinitely if that record stays
+  unreadable.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

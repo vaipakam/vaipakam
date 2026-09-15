@@ -204,7 +204,14 @@ describe('the join, not just the wording', () => {
     const { out, outcome } = await drive(async () => noticed());
     expect(out).toContain('99');
     expect(out).toContain('loan 21 = 7');
-    expect(outcome).toEqual({ established: true, repairedLoanIds: [8] });
+    // The orphan, the unread row and the unprojectable status are named as
+    // UNESTABLISHED as well as logged — the reminder sweep withholds exactly
+    // those ids (#2211 r3 `4011279296`).
+    expect(outcome).toEqual({
+      established: true,
+      repairedLoanIds: [8],
+      unestablishedLoanIds: [13, 99, 21],
+    });
   });
 
   it('reports everything the pass noticed when it DIED on its cursor write', async () => {
@@ -222,8 +229,13 @@ describe('the join, not just the wording', () => {
     // The repairs committed, so they are still announced (#2190 r6) — and
     // the tick counts as ESTABLISHED: those rows WERE checked against the
     // chain at a settled head, so the calendar sweep it gates must not be
-    // deferred (#2211 r1).
-    expect(outcome).toEqual({ established: true, repairedLoanIds: [8] });
+    // deferred (#2211 r1) — but the rows it could not settle are still
+    // withheld from it individually.
+    expect(outcome).toEqual({
+      established: true,
+      repairedLoanIds: [8],
+      unestablishedLoanIds: [13, 99, 21],
+    });
   });
 
   it('says the SAME things either way, because one call says them', async () => {

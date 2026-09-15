@@ -965,6 +965,29 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
 }
 
 /**
+ * Every row this pass looked at and could not settle.
+ *
+ * The four buckets the report already keeps, read as one question: which
+ * rows are still recorded active WITHOUT this tick having confirmed that
+ * against the chain? `repaired` rows are not here (they are no longer
+ * active) and neither are `superseded` ones (another writer terminalized
+ * them, which is the better-informed write — the row is terminal either
+ * way).
+ *
+ * `unresolvable` belongs here even though the chain DID answer, because the
+ * answer was "no such loan" and the row is still published as open. It is
+ * the most alarming member of the set, not an edge of it.
+ */
+export function _unestablishedRows(report: ReconcileReport): number[] {
+  return [
+    ...report.unread,
+    ...report.writeFailed,
+    ...report.unresolvable,
+    ...report.unknownStatus.map((u) => u.loanId),
+  ];
+}
+
+/**
  * What a tick learned about its live loan rows — and whether it learned
  * anything at all (#2211 r1 `4011103056`).
  *
@@ -977,7 +1000,23 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
  * tell a user to prepare for the default of a loan that already ended.
  */
 export type ReconcilePassOutcome =
-  | { established: true; repairedLoanIds: number[] }
+  | {
+      established: true;
+      repairedLoanIds: number[];
+      /**
+       * Rows the pass looked at and could NOT settle — an orphan the chain
+       * has never heard of, a status it could not read, a repair write that
+       * failed, a status this build cannot project (#2211 r3 `4011279296`).
+       *
+       * A pass that returns normally has still established only the rows it
+       * established. Each of these is sitting at `status = 'active'` and is
+       * exactly the shape a missed terminal leaves behind, so each is
+       * withheld from the reminder sweep BY ID — not by deferring the whole
+       * sweep, which would punish every healthy loan on the chain for one
+       * unreadable row.
+       */
+      unestablishedLoanIds: number[];
+    }
   | { established: false; reason: string };
 
 /**
@@ -1012,7 +1051,15 @@ export async function _sweepCalendarIfEstablished(
     );
     return EMPTY_SWEEP;
   }
-  return sweepCalendarNotifications(env.DB, chainId, nowSec, headBlock);
+  // The tick established SOME rows; the ones it did not are named and held
+  // back individually (#2211 r3 `4011279296`).
+  return sweepCalendarNotifications(
+    env.DB,
+    chainId,
+    nowSec,
+    headBlock,
+    new Set(outcome.unestablishedLoanIds),
+  );
 }
 
 /**
@@ -1261,7 +1308,11 @@ export async function _runLoanReconcilePass(input: {
     // and does not mention the loan — and a repaired loan is old, so it is
     // never in `allLogs`. The holders of the position just corrected would
     // have been precisely the ones whose refetch was scoped away.
-    return { established: true, repairedLoanIds: report!.repaired.map((r) => r.loanId) };
+    return {
+      established: true,
+      repairedLoanIds: report!.repaired.map((r) => r.loanId),
+      unestablishedLoanIds: _unestablishedRows(report!),
+    };
   }
 
   {
@@ -1288,7 +1339,11 @@ export async function _runLoanReconcilePass(input: {
       // against the chain at a settled head; what failed was the cursor
       // write. Reporting this as unchecked would defer the calendar sweep on
       // a tick that did the very work the sweep depends on.
-      return { established: true, repairedLoanIds: partial };
+      return {
+        established: true,
+        repairedLoanIds: partial,
+        unestablishedLoanIds: report ? _unestablishedRows(report) : [],
+      };
     }
     console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
     // A failure BEFORE any repair landed leaves the live set unverified —

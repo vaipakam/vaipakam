@@ -21,7 +21,8 @@
  * when the grace schedule has not been snapshotted, on the same reasoning.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { _sweepCalendarIfEstablished } from '../src/chainIndexer';
+import { _sweepCalendarIfEstablished, _unestablishedRows } from '../src/chainIndexer';
+import type { ReconcileReport } from '../src/loanReconcile';
 import type { Env } from '../src/env';
 
 const CHAIN = 84532;
@@ -72,6 +73,58 @@ describe('a tick that did not establish the live set', () => {
   }
 });
 
+describe('which rows a pass has actually established', () => {
+  const report = (over: Partial<ReconcileReport> = {}): ReconcileReport => ({
+    chainId: CHAIN,
+    chainActive: 6,
+    indexedActive: 6,
+    agreed: true,
+    examined: [],
+    repaired: [],
+    unread: [],
+    writeFailed: [],
+    unresolvable: [],
+    unknownStatus: [],
+    superseded: [],
+    nextPointer: 0,
+    wrappedLap: false,
+    ...over,
+  });
+
+  it('counts every row it could not settle, the orphan included', () => {
+    // #2211 r3 `4011279296`. A pass that RETURNS NORMALLY has still
+    // established only the rows it established, and each of these is sitting
+    // at `status = 'active'` — the shape a missed terminal leaves behind.
+    expect(
+      _unestablishedRows(
+        report({
+          unread: [13],
+          writeFailed: [14],
+          unresolvable: [99],
+          unknownStatus: [{ loanId: 21, status: 7 }],
+        }),
+      ).sort((a, b) => a - b),
+    ).toEqual([13, 14, 21, 99]);
+  });
+
+  it('counts the ORPHAN, which is the alarming member and not an edge', () => {
+    // The chain answered — "no such loan" — and the row is still published
+    // as open. Reminding its holder to repay would be the worst line this
+    // surface could write.
+    expect(_unestablishedRows(report({ unresolvable: [99] }))).toEqual([99]);
+  });
+
+  it('counts neither a repaired row nor one another writer terminalized', () => {
+    // Both are terminal now, so neither can be reminded about. Withholding
+    // them would cost reminders for no safety.
+    expect(
+      _unestablishedRows(
+        report({ repaired: [{ loanId: 8, from: 'active', to: 'defaulted' }], superseded: [9] }),
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe('a tick that did establish it', () => {
   it('sweeps, even when the pass repaired nothing', async () => {
     // The common case, and the one a too-eager gate would break: a healthy
@@ -82,6 +135,7 @@ describe('a tick that did establish it', () => {
     await _sweepCalendarIfEstablished(env, CHAIN, 1_700_000_000, 900, {
       established: true,
       repairedLoanIds: [],
+      unestablishedLoanIds: [],
     }).catch(() => undefined);
     // The stub throws on first query; reaching it is the proof that the gate
     // let this tick through.
@@ -97,6 +151,7 @@ describe('a tick that did establish it', () => {
     await _sweepCalendarIfEstablished(env, CHAIN, 1_700_000_000, 900, {
       established: true,
       repairedLoanIds: [8],
+      unestablishedLoanIds: [],
     }).catch(() => undefined);
     expect(prepare).toHaveBeenCalled();
   });

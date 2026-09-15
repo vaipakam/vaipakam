@@ -64,6 +64,18 @@ Waiting costs nothing — a reminder's own window is hours to days — and the
 same surface already waits, for the same reason, when the grace schedule it
 depends on has not been read.
 
+Nor is "the check ran" the same as "every record was checked". A turn that
+finishes normally can still have rows it could not settle — one the chain has
+never heard of, one whose state could not be read, one whose correction failed
+to write, one in a state this build does not recognise. Each of those is still
+recorded open, which is exactly what a missed ending leaves behind, and the
+first is the worst of them: the chain has said the loan does not exist and the
+platform is still showing it as running. Those records are now held back from
+the reminders **individually**, by name. The other loans on that chain are
+reminded about as normal — withholding everyone's because one record could not
+be read would punish the many for the one, indefinitely if that record stays
+unreadable.
+
 **The operator log would have carried the provider's API key.** The message
 explaining why no settled point could be read quoted what the provider said,
 and providers put the whole request address — key included — inside that text.
