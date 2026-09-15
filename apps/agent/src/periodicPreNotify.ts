@@ -24,23 +24,14 @@
  */
 
 import { createPublicClient, http, type Address } from 'viem';
-import { NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
+import { LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
 import { sendMessage } from './telegram';
-import {
-  createQuarantineAvailability,
-  quarantineExclusionSql,
-} from '@vaipakam/lib/reminderEligibility';
+import { isOpenLoanStatus } from '@vaipakam/lib/reminderEligibility';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
-/**
- * This Worker's own availability probe (#2213 r2). Its own instance: the
- * cache is per isolate, and the agent's isolate is not the indexer's.
- */
-const quarantineAvailable = createQuarantineAvailability();
-
 const SECONDS_PER_DAY = 86_400;
 
 /** Cadence enum value → interval in days. Mirrors
@@ -112,9 +103,12 @@ async function preNotifyChain(
   // Pull the configured pre-notify lead time. Fall through to the
   // library default on any read failure so a transient hiccup
   // doesn't turn the lane silent for the entire tick.
+  //
+  // ONE CLIENT for the whole chain pass: the lead-time read below and the
+  // per-loan status check further down both use it (#2213 r3).
+  const client = createPublicClient({ transport: http(chain.rpc) });
   let preNotifyDays = DEFAULT_PRE_NOTIFY_DAYS;
   try {
-    const client = createPublicClient({ transport: http(chain.rpc) });
     const v = (await client.readContract({
       address: chain.diamond as Address,
       abi: PRE_NOTIFY_DAYS_ABI,
@@ -134,17 +128,6 @@ async function preNotifyChain(
   // (any periodic-cadence active loan with a known last-settle stamp)
   // and filter the cron-window check in TS — keeps the SQL simple
   // while the cadence-specific interval math stays out of D1.
-  // LOANS THE PLATFORM HAS NOT CONFIRMED ARE LEFT OUT (#2213 r2
-  // `4011776403`). `status = 'active'` is stored state, and a loan whose
-  // terminal event was missed for good sits at exactly that — so this lane,
-  // which sends a payment-due Push/Telegram and stamps the checkpoint
-  // permanently, could otherwise tell a holder their payment is due on a loan
-  // the chain says has ended.
-  //
-  // The indexer's calendar sweep already withheld those. This one did not,
-  // and reads the same D1 — so the first fix covered one lane of two. The
-  // rule is shared rather than copied: see `@vaipakam/lib/reminderEligibility`.
-  const quarantineReady = await quarantineAvailable(env.DB as never);
   const rows = await env.DB.prepare(
     `SELECT loan_id, chain_id, lender, borrower,
             periodic_interest_cadence, last_period_settled_at,
@@ -153,8 +136,7 @@ async function preNotifyChain(
      WHERE chain_id = ?
        AND status = 'active'
        AND periodic_interest_cadence > 0
-       AND last_period_settled_at > 0
-       ${quarantineReady ? `AND ${quarantineExclusionSql('loans')}` : ''}`,
+       AND last_period_settled_at > 0`,
   )
     .bind(chain.id)
     .all<LoanRow>();
@@ -171,6 +153,51 @@ async function preNotifyChain(
     if (secsUntil <= 0 || secsUntil > windowSec) continue;
     // De-dup: we've already pushed for this exact checkpoint.
     if (row.period_pre_notified_at === nextCheckpoint) continue;
+
+    // ASK THE CHAIN BEFORE SAYING SOMETHING THAT CANNOT BE TAKEN BACK
+    // (#2213 r3 `4011960593`). `status = 'active'` above is STORED state, and
+    // a loan whose terminal event this platform missed for good sits at
+    // exactly that — so without this the holder of an ended loan is told a
+    // payment is due, and the checkpoint is stamped so it is never revisited.
+    //
+    // Asked HERE, after every cheap filter, because by this point the
+    // candidates are the handful of loans actually inside the notification
+    // window rather than the whole active set. One read per message, on a
+    // lane that sends few.
+    //
+    // This is the keeper's pattern rather than the indexer's: a lane that can
+    // ask the chain needs no cross-Worker suppression list, and does not
+    // inherit that list's races, deploy-window coupling, or "could not ask"
+    // ambiguity. An earlier revision of this PR did import the list; three
+    // findings followed, all from the coordination rather than the rule.
+    //
+    // A FAILED READ SKIPS, and skipping is safe: nothing is stamped, so the
+    // next tick asks again while the window is still open. Sending on a
+    // failed read would be choosing the unretractable outcome on no evidence.
+    let chainStatus: number;
+    try {
+      const detail = (await client.readContract({
+        address: chain.diamond as Address,
+        abi: LoanFacetABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(row.loan_id)],
+      })) as { status: number };
+      chainStatus = Number(detail.status);
+    } catch (err) {
+      console.warn(
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} status read ` +
+          `failed; not pre-notifying this tick: ${String(err).slice(0, 200)}`,
+      );
+      continue;
+    }
+    if (!isOpenLoanStatus(chainStatus)) {
+      console.warn(
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id} is stored as ` +
+          `active but the chain reports status ${chainStatus} — no reminder sent. ` +
+          `The stored row is stale; the reconciliation pass will correct it.`,
+      );
+      continue;
+    }
 
     const daysUntil = Math.max(1, Math.ceil(secsUntil / SECONDS_PER_DAY));
 

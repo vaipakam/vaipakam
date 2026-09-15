@@ -36,6 +36,21 @@
  * That is the test for a new lane: ask where its loan set comes from. From
  * `loans.status` — it needs this rule. From the chain — it already has a
  * better one.
+ *
+ * **The periodic-interest lane moved to the second answer (#2213 r3).** It
+ * briefly used this rule, and three findings followed from the fact that it
+ * was importing a suppression list another Worker writes on another schedule:
+ * a race against that write, a deploy-window coupling, and an availability
+ * answer that could not distinguish "absent" from "could not ask". None of
+ * those are bugs in the rule; they are the cost of coordinating across
+ * Workers to answer a question one of them can ask the chain directly. By the
+ * time that lane is about to send, its candidates are the handful of loans
+ * actually inside the notification window, so it asks.
+ *
+ * The calendar sweep keeps this rule, and the difference is width, not
+ * principle: its window can hold a hundred rows per chain per tick, so
+ * per-row chain reads there are the subrequest-budget problem #2194 tracks.
+ * Cheap memory for the wide path; direct verification for the narrow one.
  */
 
 /** The table the memory lives in. Named once so a rename cannot half-land. */
@@ -106,4 +121,23 @@ export function createQuarantineAvailability(): (db: QuarantineProbeDb) => Promi
       return false;
     }
   };
+}
+
+/**
+ * The chain's `LoanStatus` members that are NOT terminal.
+ *
+ * `Active(0)` and `FallbackPending(4)`. Everything else — Repaid, Defaulted,
+ * Settled, InternalMatched — has ended, and an unknown future member is
+ * treated as ended rather than guessed at, which is the safe direction for a
+ * caller about to send something it cannot take back.
+ *
+ * Deliberately an ALLOW-list of open states rather than a deny-list of
+ * terminal ones: a member appended to the enum must not silently become
+ * "still running" in a lane that messages users about running loans.
+ */
+const OPEN_LOAN_STATUSES = new Set([0, 4]);
+
+/** Whether the chain considers this loan still open. */
+export function isOpenLoanStatus(status: number): boolean {
+  return OPEN_LOAN_STATUSES.has(status);
 }
