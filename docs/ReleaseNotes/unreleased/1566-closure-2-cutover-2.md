@@ -6,10 +6,14 @@ identity. This second part is what an administrator does with that
 protected value: classify it, correct a classification, and reconcile the
 inventory that arrived before packets were stamped. All of it is
 administrator-only, under the platform's manual pause, on a deployment
-whose custody is activated, and all of it stays inside the custody
-address — a classification moves attribution and, where tokens move at
+whose custody is activated. A classification and a correction stay inside
+the custody address — they move attribution and, where tokens move at
 all, they move between the address's own rows, never from the platform's
-own balance.
+own balance. The envelope import is the one entry that brings tokens in:
+it relocates what still sits in the platform's own balance into the
+address, measured at both ends, and pulls what the administrator funds
+from the administrator, delta-checked, as the envelope paragraph below
+states.
 
 A classification takes part of what one recorded packet put into the
 unclassified attribution and makes it fresh backing (what a standing
@@ -33,13 +37,13 @@ A classification is correctable, within a bound. Attribution moves between
 the fresh and recycled sides of an entry without changing its total; only
 what has not been spent moves freely, and a move toward fresh is bounded
 by the same evidence as a classification, cumulatively over the packet's
-entries. What is spent is read from the backing itself: whatever the
-side's backing — live fresh backing; the recycled backing — no longer
-holds of the classified value is spent, the side's other backing being
-counted as consumed first, and that shortfall is attributed among the
-classified entries in the order they were classified, the earliest first,
-by a structure whose cost grows only logarithmically with the record, so
-a correction stays possible however long the record becomes. Of a partly
+entries. What is spent is what each outflow of a side's backing — live
+fresh backing; the recycled backing — recorded against the classified
+value, into the entry's own record, earliest first, the side's other
+backing being counted as consumed first; the record is consulted, never
+the backing's balance, and the work per outflow is bounded (stated
+below), so a correction stays possible however long the record becomes.
+Of a partly
 spent entry the unspent part moves first, with its tokens, and only what
 the corrected value can no longer cover moves as a debit: that order
 gives exactly the ledger a correct split at ingress would have produced —
