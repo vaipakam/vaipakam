@@ -339,14 +339,22 @@ The app uses chain reads and indexed reads for different jobs.
   it examined, and separates what it found: examined, reminded, declined by
   the chain, and unreadable. Those need different remedies — a run reporting
   many declines is reporting records the platform holds wrongly, not load — so
-  they are never flattened into one "deferred" count. "Reminded" means a
-  message was actually issued: a recipient the platform has on file but has no
-  way to reach, or one whose delivery channel is configured but unusable, is
-  counted as handled, never as reminded, so the count cannot claim hundreds
-  were told on a run that sent nothing. The same answer governs the bound — a
-  message that never left does not spend it — which matters most when a
-  channel is misconfigured, since that fails every message of its kind rather
-  than one.
+  they are never flattened into one "deferred" count. "Reminded" means a message the
+  delivery service CONFIRMED it accepted — not one the platform tried to send.
+  A message refused by the service, or one whose fate is unknown because the
+  attempt itself failed, is counted separately and never as a reminder; a
+  recipient the platform has on file but cannot reach at all is counted as
+  handled. So the count can never claim people were told on a run that
+  reached nobody, which is the number someone reads while investigating
+  silence.
+- The bound and the count deliberately disagree about a failed attempt, and
+  that is the correct disagreement. A request that may have gone out has to be
+  charged, because the limit exists to keep the platform inside what it is
+  allowed to send; the same request must not be reported as a delivery,
+  because nothing confirms it arrived. What never leaves at all — no signer
+  configured, a channel the platform cannot use — is neither charged nor
+  counted, and that case matters most because it fails every message of its
+  kind rather than one.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

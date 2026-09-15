@@ -174,11 +174,19 @@ the misconfigured-signer one had teeth: it spent the run's whole budget on
 messages that never left, deferring the recipients the platform could still
 have reached on the other channel.
 
-The sending step now reports whether a request actually left, and the run
-charges and counts from that answer rather than from having called it. Where
-the answer is genuinely unknowable — the send was entered and then failed, and
-the platform cannot tell whether the request had already gone — it assumes it
-did, which is the safe direction for a ceiling.
+The sending step now reports what actually happened — nothing left, the
+service accepted it, or the attempt failed — and the run charges and counts
+from that answer rather than from having called it. Those two uses of the same
+answer disagree about a failed attempt, deliberately: a request that may have
+gone out is charged, because the limit exists to keep the platform inside what
+it is allowed to send, and is *not* reported as a delivery, because nothing
+confirms it arrived.
+
+So "reminded" now means the delivery service confirmed it. A message it
+refused — a rotated token, a stale chat — and a message whose fate is unknown
+are each counted as their own thing. Before this, both were reported as
+reminders, which is precisely the number someone would read while trying to
+work out why nobody had heard from the platform.
 
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain

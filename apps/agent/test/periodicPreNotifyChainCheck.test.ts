@@ -41,18 +41,20 @@ const sends: string[] = [];
  * different answers and the lane must charge from the second (#2213 r9
  * `4012940120`). A stub that always reported success could not see that.
  */
-let pushAttemptFor: (subscriber: string) => 'requested' | 'not-requested';
+let pushAttemptFor: (subscriber: string) => 'accepted' | 'failed' | 'not-requested';
+/** Whether Telegram ACCEPTS the message. `false` = a 401/400 or a dead network. */
+let tgAccepts: boolean;
 vi.mock('../src/push', () => ({
   sendPush: vi.fn(async (_pk: string, m: { subscriber: string }) => {
     const attempt = pushAttemptFor(m.subscriber);
-    if (attempt === 'requested') sends.push(`push:${m.subscriber}`);
+    if (attempt !== 'not-requested') sends.push(`push:${m.subscriber}`);
     return attempt;
   }),
 }));
 vi.mock('../src/telegram', () => ({
   sendMessage: vi.fn(async (_t: string, chat: string) => {
     sends.push(`tg:${chat}`);
-    return true;
+    return tgAccepts;
   }),
 }));
 
@@ -273,7 +275,8 @@ beforeEach(() => {
   batchError = null;
   batchedReads = 0;
   sends.length = 0;
-  pushAttemptFor = () => 'requested';
+  pushAttemptFor = () => 'accepted';
+  tgAccepts = true;
   subscriberFor = (w) => bothRails(w);
   loanRows = [dueLoan];
   loanRowsByChain = null;
@@ -475,7 +478,7 @@ describe('what counts as a send, and what only looks like one', () => {
     // ...and their Push is the one that never leaves.
     pushAttemptFor = (subscriber) => {
       const id = known.get(subscriber.toLowerCase());
-      return id !== undefined && pushOnly.has(id) ? 'not-requested' : 'requested';
+      return id !== undefined && pushOnly.has(id) ? 'not-requested' : 'accepted';
     };
     const { said } = await run();
     // Nothing went out for the Push-only ten; the fully-routed loans spend
@@ -486,6 +489,47 @@ describe('what counts as a send, and what only looks like one', () => {
     // the reminded. Charging on truthiness gave them the allowance and called
     // them reminded.
     expect(said).toContain('18 examined, 8 reminded');
+  });
+
+  it('does not call a rejected delivery a reminder', async () => {
+    // #2213 r10 `4013087415`. Telegram answering 401 (a rotated token) and the
+    // Push SDK throwing are both REQUESTS — charged, because one may have gone
+    // — and neither is evidence that anyone was told. Counting them as
+    // reminders lets a run report deliveries it has no basis for, which is the
+    // number an operator reads while investigating silence.
+    tgAccepts = false;
+    pushAttemptFor = () => 'failed';
+    const ids = Array.from({ length: 12 }, (_, k) => 400 - k);
+    loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
+    const { stamped, said } = await run();
+    // Both rails were issued for eight loans, so the allowance is spent and
+    // the stamp behaviour is unchanged — nothing here is about who gets told
+    // NEXT tick.
+    expect(sends.length).toBe(32);
+    expect(stamped.length).toBe(8);
+    // ...and the report says plainly that nobody was confirmed reached.
+    expect(said).toContain('0 reminded');
+    expect(said).toContain('8 attempted without confirmation');
+  });
+
+  it('counts a loan as reminded when EITHER rail is accepted', async () => {
+    // The mirror of the case above, so "0 reminded" cannot be passing because
+    // the counter is simply stuck at zero. Push fails, Telegram accepts, and
+    // the loan is a reminder — one confirmed rail is enough to have told
+    // someone.
+    pushAttemptFor = () => 'failed';
+    tgAccepts = true;
+    // The SAME shape as the case above — twelve loans, both rails issued,
+    // eight of them fitting the allowance — so the two differ in exactly one
+    // thing: whether Telegram accepted. That is what makes "0 reminded" above
+    // a measurement rather than a counter stuck at zero.
+    const ids = Array.from({ length: 12 }, (_, k) => 400 - k);
+    loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
+    const { said, stamped } = await run();
+    expect(sends.length).toBe(32);
+    expect(stamped.length).toBe(8);
+    expect(said).toContain('8 reminded');
+    expect(said).toContain('0 attempted without confirmation');
   });
 
   it('still stamps when one side has no route and the other opted out', async () => {

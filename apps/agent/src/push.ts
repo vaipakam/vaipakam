@@ -81,17 +81,30 @@ function getSignerAndChannel(channelPk: string): {
  * deployment whose signer is misconfigured that is EVERY push, which exhausts
  * the allowance and defers recipients the platform could have reached.
  *
- * WHAT THIS DOES AND DOES NOT SEPARATE, because the boundary is a judgement
- * and not an oversight. `not-requested` means we never entered the SDK call:
- * no key, or a key it cannot build a signer from. Those are definite.
- * `requested` means we did enter it — and if the SDK then throws, we do not
- * try to work out whether its POST had already gone. That would be a guess
- * about an error's shape, the kind this repo has refused before, and the
- * conservative side of a ceiling is to assume the request happened. The
- * systematic case — a misconfigured deployment failing every push — is the one
- * that mattered, and it is on the definite side.
+ * THREE ANSWERS, because the caller asks two different questions of them and
+ * they do not have the same answer (#2213 r10 `4013087415`):
+ *
+ * - `not-requested` — the SDK call was never entered: no key, or a key it
+ *   cannot build a signer from. No request, so no charge, and nobody told.
+ * - `accepted` — the SDK resolved. A request happened, so charge it, and this
+ *   is the ONLY answer that justifies telling an operator someone was
+ *   reminded.
+ * - `failed` — the call was entered and threw. Charge it, because a request
+ *   may well have gone; do NOT count it as a reminder, because nobody can say
+ *   it arrived.
+ *
+ * The charge and the count deliberately disagree on `failed`, and that is the
+ * point: a ceiling must assume the request happened, and a report must not
+ * assume the message did. Folding them into one word is what let a run claim
+ * deliveries it had no evidence for.
+ *
+ * What this still does NOT separate is whether a throw came before or after
+ * the POST. That would be a guess about an error's shape, the kind this repo
+ * has refused before — so `failed` is honestly ambiguous rather than
+ * confidently wrong, and it is reported as its own thing rather than folded
+ * into either neighbour.
  */
-export type PushAttempt = 'requested' | 'not-requested';
+export type PushAttempt = 'accepted' | 'failed' | 'not-requested';
 
 /**
  * Fire-and-forget Push notification. Returns without throwing so a
@@ -206,6 +219,7 @@ export async function sendPush(
     console.error(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,
     );
+    return 'failed';
   }
-  return 'requested';
+  return 'accepted';
 }

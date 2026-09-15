@@ -320,6 +320,7 @@ async function preNotifyChain(
 
   let cursor = start;
   let reminded = 0;
+  let unconfirmed = 0;
   let rejected = 0;
   let unreadable = 0;
   let batches = 0;
@@ -343,6 +344,7 @@ async function preNotifyChain(
 
     const outcome = await messageBatch(env, chain, batch, states, budget, now);
     reminded += outcome.reminded;
+    unconfirmed += outcome.unconfirmed;
     rejected += outcome.rejected;
     unreadable += outcome.unreadable;
     cursor += outcome.consumed;
@@ -361,6 +363,7 @@ async function preNotifyChain(
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
+        `${unconfirmed} attempted without confirmation, ` +
         `${rejected} rejected by the chain, ${unreadable} unreadable — ` +
         `${capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and a later ` +
@@ -391,15 +394,22 @@ async function messageBatch(
   states: (LoanState | null)[],
   budget: TickBudget,
   now: number,
-): Promise<{ consumed: number; reminded: number; rejected: number; unreadable: number }> {
+): Promise<{
+  consumed: number;
+  reminded: number;
+  unconfirmed: number;
+  rejected: number;
+  unreadable: number;
+}> {
   let reminded = 0;
+  let unconfirmed = 0;
   let rejected = 0;
   let unreadable = 0;
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
-      return { consumed: i, reminded, rejected, unreadable };
+      return { consumed: i, reminded, unconfirmed, rejected, unreadable };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
@@ -485,7 +495,17 @@ async function messageBatch(
     const lenderOutcome = await pushIfSubscribed(
       env, chain, row, row.lender, daysUntil, 'lender', budget,
     );
-    if (borrowerOutcome === 'sent' || lenderOutcome === 'sent') reminded += 1;
+    // THREE OUTCOMES, COUNTED SEPARATELY (#2213 r10 `4013087415`).
+    // "Reminded" is a claim about a person having been told, so it needs a
+    // rail that was CONFIRMED accepted. A Telegram 401 and a Push SDK throw
+    // both issued a request — they are charged — and neither is evidence that
+    // anyone was reached, so they are their own count rather than folded into
+    // either neighbour.
+    if (borrowerOutcome.delivered || lenderOutcome.delivered) {
+      reminded += 1;
+    } else if (borrowerOutcome.attempted || lenderOutcome.attempted) {
+      unconfirmed += 1;
+    }
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -502,11 +522,11 @@ async function messageBatch(
     // `sent` would otherwise have changed behaviour nobody asked to change: a
     // counterparty with no usable rail has nothing to retry, so it stamps
     // exactly as it did before. Only the operator COUNT distinguishes them.
-    const handled = (o: PreNotifyOutcome) => o === 'sent' || o === 'no-route';
+    const handled = (o: DeliveryOutcome) => o.status === 'sent' || o.status === 'no-route';
     const anyHandled = handled(borrowerOutcome) || handled(lenderOutcome);
     const onlyBlockedByOptOut =
       !anyHandled &&
-      (borrowerOutcome === 'opted-out' || lenderOutcome === 'opted-out');
+      (borrowerOutcome.status === 'opted-out' || lenderOutcome.status === 'opted-out');
     if (onlyBlockedByOptOut) continue;
     await env.DB.prepare(
       `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
@@ -515,7 +535,7 @@ async function messageBatch(
       .bind(nextCheckpoint, now, chain.id, row.loan_id)
       .run();
   }
-  return { consumed: batch.length, reminded, rejected, unreadable };
+  return { consumed: batch.length, reminded, unconfirmed, rejected, unreadable };
 }
 
 /** A loan inside the notification window, with the arithmetic already done. */
@@ -628,6 +648,25 @@ async function readLoanStates(
  */
 type PreNotifyOutcome = 'sent' | 'no-route' | 'opted-out' | 'none';
 
+/**
+ * What happened for one counterparty, in the three senses that differ.
+ *
+ * `status` drives STAMPING and is the pre-existing semantics (#1056).
+ * `attempted` is whether any rail issued a request — what the allowance was
+ * charged for. `delivered` is whether a rail was CONFIRMED accepted, and it is
+ * the only thing that may be reported as a reminder (#2213 r10 `4013087415`).
+ *
+ * They are three fields rather than one because they genuinely disagree: a
+ * Telegram 401 and a Push SDK throw are both attempted, neither delivered, and
+ * both still stamp — and collapsing any two of those let a run tell an
+ * operator it had reminded people it had not reached.
+ */
+interface DeliveryOutcome {
+  status: PreNotifyOutcome;
+  attempted: boolean;
+  delivered: boolean;
+}
+
 async function pushIfSubscribed(
   env: Env,
   chain: { id: number; name: string },
@@ -636,7 +675,7 @@ async function pushIfSubscribed(
   daysUntil: number,
   role: 'borrower' | 'lender',
   budget: TickBudget,
-): Promise<PreNotifyOutcome> {
+): Promise<DeliveryOutcome> {
   let sub: UserPushRow | null;
   try {
     sub = await env.DB.prepare(
@@ -660,12 +699,14 @@ async function pushIfSubscribed(
       .first<Omit<UserPushRow, 'notify_maturity_approaching'>>();
     sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
   }
-  if (!sub) return 'none';
+  if (!sub) return { status: 'none', attempted: false, delivered: false };
   // #1033 — the connected app Alerts card exposes this as a real opt-out;
   // honor it before any rail fires. Reported distinctly so the
   // caller can leave the checkpoint unstamped (a re-enable before
   // the deadline must still get its reminder).
-  if (sub.notify_maturity_approaching === 0) return 'opted-out';
+  if (sub.notify_maturity_approaching === 0) {
+    return { status: 'opted-out', attempted: false, delivered: false };
+  }
 
   const cadenceLabel = cadenceI18nLabel(loan.periodic_interest_cadence);
   // English-only copy for now — the watcher's existing translation
@@ -704,7 +745,8 @@ async function pushIfSubscribed(
     sub.tg_chat_id && env.TG_BOT_TOKEN
       ? { chat: sub.tg_chat_id, token: env.TG_BOT_TOKEN }
       : null;
-  let pushRequested = false;
+  let attempted = false;
+  let delivered = false;
   if (pushSigner) {
     // CHARGED FROM WHAT THE SENDER REPORTS, not from the fact that we called
     // it (#2213 r9 `4012940120`). `sendPush` swallows its own failures, so a
@@ -728,9 +770,12 @@ async function pushIfSubscribed(
         body,
         deepLinkUrl: deepLink,
       });
-      if (attempt === 'requested') {
-        pushRequested = true;
+      if (attempt !== 'not-requested') {
+        // CHARGED for `failed` as well as `accepted` — a request may have gone
+        // — while only `accepted` is evidence anyone was told.
+        attempted = true;
         budget.remaining -= 1;
+        if (attempt === 'accepted') delivered = true;
       }
     } catch (err) {
       console.error(
@@ -740,9 +785,16 @@ async function pushIfSubscribed(
     }
   }
   if (tgRoute) {
+    attempted = true;
     budget.remaining -= 1;
     try {
-      await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
+      // `sendMessage` returns whether TELEGRAM ACCEPTED it: false covers both
+      // a definitive rejection (a 401 from a rotated token, a 400 from a stale
+      // chat id) and a network failure. Either way nobody can say the message
+      // arrived, so it is charged and not counted (#2213 r10 `4013087415`).
+      if (await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`)) {
+        delivered = true;
+      }
     } catch (err) {
       console.error(
         `[periodicPreNotify] tg failed loan=${loan.loan_id} wallet=${wallet} ` +
@@ -757,7 +809,7 @@ async function pushIfSubscribed(
   // so re-querying every tick is waste) and wrong for REPORTING (the operator
   // count then says hundreds were reminded on a tick that sent nothing).
   // 'no-route' keeps the stamp and leaves the count honest.
-  return pushRequested || tgRoute ? 'sent' : 'no-route';
+  return { status: attempted ? 'sent' : 'no-route', attempted, delivered };
 }
 
 function cadenceI18nLabel(cadence: number): string {
