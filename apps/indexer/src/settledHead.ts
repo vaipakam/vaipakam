@@ -142,3 +142,18 @@ export async function resolveSettledHead(client: HeadReader): Promise<SettledHea
   const pinned = await client.getBlock({ blockNumber: block });
   return { block, timestamp: pinned.timestamp, settled: false, fallbackReason: reason };
 }
+
+/**
+ * A block number as a number, and ONLY a block number.
+ *
+ * `Number()` accepts anything, which is how `Number(head)` kept compiling
+ * after `head` was rebound from a `bigint` to the object above — and quietly
+ * produced `NaN` for the block stamped on every repaired terminal
+ * notification (#2211 r2 `4011201400`). A name reverting to its old meaning
+ * fixes that site; this makes the class of mistake a compile error wherever
+ * a block crosses into D1, which is where it matters, since SQLite takes
+ * `NaN` without complaint.
+ */
+export function blockToNumber(block: bigint): number {
+  return Number(block);
+}

@@ -72,6 +72,16 @@ on every turn. What is reported now is built from bounded fields that cannot
 contain a secret, and still tells apart the two cases an operator has to act
 on differently.
 
+**A repaired position's notice would have carried no block at all.** Giving
+the head a companion fact meant the value passed around was no longer just a
+number, and one place that turned it into a number for storage kept accepting
+it and quietly produced nothing usable. The notice announcing a corrected
+position would have been stored with no position in the chain's order — filed
+behind everything, possibly never surfacing, while the correction itself
+committed normally. The value is a plain block number again everywhere it is
+used that way, and the conversion into storage now refuses anything that is
+not one, so the same substitution cannot be made silently again.
+
 ### What this does not change, and one thing it does not fix
 
 Nothing about which positions are corrected, or when, on any deployment whose

@@ -172,6 +172,9 @@ describe('the join, not just the wording', () => {
     // A head the CHAIN called settled. The pass refuses a guessed one
     // outright (#2201), which the last case below pins.
     head: { block: 100n, timestamp: 1_700_000_000n, settled: true },
+    // The tick's records reach exactly the head — the pass refuses any other
+    // relationship, so this is what "a pass that runs" looks like.
+    readThrough: 100n,
     budget: {},
   });
 
@@ -273,6 +276,59 @@ describe('the join, not just the wording', () => {
     // the settled read, so an asserted cause would send an operator whose
     // RPC timed out to reconfigure an RPC that works.
     expect(out).toContain('TimeoutError');
+  });
+
+  it('refuses when the records run PAST the head, and says that is abnormal', async () => {
+    // A provider swapped for one whose head trails our cursor would disable
+    // reconciliation on this chain indefinitely. Worth a line every tick:
+    // an operator seeing it repeatedly is seeing a stuck head, not weather.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({ ...passInput(), readThrough: 140n });
+    expect(outcome.established).toBe(false);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('SKIPPED');
+    expect(said).toContain('140');
+  });
+
+  it('refuses QUIETLY when the records fall short, because that is a backfill', async () => {
+    // Every catch-up tick is in this state and it resolves itself. Logging
+    // it would bury the two conditions that do need an operator.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({ ...passInput(), readThrough: 60n });
+    expect(outcome.established).toBe(false);
+    // Still refuses — the calendar sweep must wait either way.
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toBe('');
+  });
+
+  it('reports the SETTLED failure first when both conditions hold', async () => {
+    // THE ORDER IS THE FIX (#2211 r2 `4011201404`). A guessed head lands
+    // below the cursor, so the cursor test would fire first and blame a
+    // regressed RPC head — sending an operator to investigate a head that is
+    // behaving, when no settled block could be read at all.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({
+      ...passInput(),
+      head: { block: 60n, timestamp: 1n, settled: false, fallbackReason: 'TimeoutError' },
+      readThrough: 100n,
+    });
+    expect(outcome.established).toBe(false);
+    if (!outcome.established) expect(outcome.reason).toContain('TimeoutError');
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('NOT RUNNING');
+    expect(said).toContain('TimeoutError');
+    expect(said).not.toContain('regressed RPC head');
   });
 
   it('still reports what it noticed when the failure is NOT a partial one', async () => {

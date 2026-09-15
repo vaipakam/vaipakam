@@ -54,7 +54,12 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
-import { resolveSettledHead, SAFE_FALLBACK_BUFFER, type SettledHead } from './settledHead';
+import {
+  blockToNumber,
+  resolveSettledHead,
+  SAFE_FALLBACK_BUFFER,
+  type SettledHead,
+} from './settledHead';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -1027,13 +1032,35 @@ export async function _runLoanReconcilePass(input: {
   diamond: Address;
   /**
    * The head this path resolved, WITH its provenance. Every read pins to
-   * `head.block`; a head the chain did not call settled is refused here
-   * rather than at the call sites (#2201).
+   * its block; a head the chain did not call settled is refused here rather
+   * than at the call sites (#2201).
    */
   head: SettledHead;
+  /**
+   * The block this tick's stored records are current through — the cursor on
+   * a quiet tick, the scanned tail on a busy one.
+   *
+   * The pass refuses unless this EQUALS the head. Both call sites used to
+   * test their own version of that (`lastBlock > head`, `scanTo === head`),
+   * which is how the unsettled-head refusal ended up unreachable from one of
+   * them (#2211 r2 `4011201404`): a guessed head below the cursor took the
+   * cursor branch, and the operator was told the RPC head had regressed when
+   * the truth was that no settled block could be read at all. One
+   * precondition, checked in one order, in one place.
+   */
+  readThrough: bigint;
   budget: ReconcileOptions;
 }): Promise<ReconcilePassOutcome> {
-  const { env, chain, chainId, diamond, head, budget } = input;
+  // `head` STAYS A BLOCK NUMBER inside this function (#2211 r2
+  // `4011201400`). Rebinding the name to the provenance-carrying object was
+  // how `Number(head)` — correct for years — silently became `NaN` and
+  // stamped every repaired terminal notification with a non-block value. The
+  // typechecker caught the uses that wanted a `bigint` and could not catch
+  // that one, because `Number()` accepts anything. Reverting the name to the
+  // number makes the whole class impossible rather than fixing the one site;
+  // anything wanting provenance names `settled` explicitly.
+  const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
+  const head = settled.block;
   // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
   //
   // `latest - 32` is a heuristic finality margin, not the chain's statement
@@ -1059,7 +1086,7 @@ export async function _runLoanReconcilePass(input: {
   // a provider that normally answers looks identical here to a provider that
   // cannot; telling an operator to "configure an RPC that supports `safe`"
   // when theirs does would send them to fix something that is not broken.
-  if (!head.settled) {
+  if (!settled.settled) {
     console.warn(
       `[chainIndexer] reconcile NOT RUNNING on chain ${chainId}: no settled ` +
         `block could be read, so the only head available is a guess ` +
@@ -1067,11 +1094,42 @@ export async function _runLoanReconcilePass(input: {
         `that — a row it closes is never re-examined. Loans whose terminal ` +
         `event was missed stay published as open on this chain until the ` +
         `settled read succeeds. The provider said: ` +
-        `${head.fallbackReason ?? 'no reason given'}`,
+        `${settled.fallbackReason ?? 'no reason given'}`,
     );
     return {
       established: false,
-      reason: `no settled block could be read (${head.fallbackReason ?? 'no reason given'})`,
+      reason: `no settled block could be read (${settled.fallbackReason ?? 'no reason given'})`,
+    };
+  }
+  // THE TICK'S RECORDS AND THE HEAD MUST DESCRIBE THE SAME BLOCK.
+  //
+  // The status read and the holder read have to agree on one block, and only
+  // the head is safe for the status — so when what we have stored runs past
+  // it, or has not yet reached it, there is no block that satisfies both.
+  //
+  // The two shapes are not the same event and must not read alike. Falling
+  // short is the ordinary backfill: every catch-up tick is in that state and
+  // it resolves itself, so it is not worth a line. Running PAST the head is
+  // not ordinary — a provider swapped for one whose head persistently trails
+  // our cursor would disable reconciliation on that chain indefinitely with
+  // every tick reporting health, which is the silent-skip failure this pass
+  // exists to end, pointed at the pass itself.
+  if (readThrough !== head) {
+    if (readThrough > head) {
+      console.warn(
+        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: records are ` +
+          `current through ${readThrough} but the head resolved to ${head}. ` +
+          `No block is safe for both the status read and the holder read ` +
+          `while those disagree; retried next tick. Every tick = a stuck or ` +
+          `regressed RPC head.`,
+      );
+    }
+    return {
+      established: false,
+      reason:
+        readThrough > head
+          ? `records are current through ${readThrough}, past the head ${head}`
+          : `records are current through ${readThrough}, short of the head ${head}`,
     };
   }
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
@@ -1100,7 +1158,7 @@ export async function _runLoanReconcilePass(input: {
         db: env.DB,
         chainId,
         diamond,
-        head: head.block,
+        head,
         readContract: (args) =>
           reconcileClient.readContract(args as never) as Promise<unknown>,
         metricsAbi: DIAMOND_METRICS_ABI,
@@ -1135,7 +1193,7 @@ export async function _runLoanReconcilePass(input: {
           const holders = await resolveCurrentHolders(
             reconcileClient,
             diamond,
-            head.block,
+            head,
             tokenIds,
           );
           // OWNER WRITE, FOR A SUBSTANTIATED SIDE ONLY (#2190 r7
@@ -1162,7 +1220,7 @@ export async function _runLoanReconcilePass(input: {
             env.DB,
             chainId,
             [{ loanId, to }],
-            Number(head),
+            blockToNumber(head),
             Math.floor(Date.now() / 1000),
             holders,
           );
@@ -1404,34 +1462,26 @@ export async function runChainIndexerForChain(
     // health. One transient regression is noise, so this is `warn` and names
     // both blocks — an operator seeing it every tick is seeing a stuck
     // provider, not a passing cloud.
-    let quietOutcome: ReconcilePassOutcome;
-    if (lastBlock > head) {
-      console.warn(
-        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: cursor is at ` +
-          `${lastBlock} but the head resolved to ${head}. No block is safe ` +
-          `for both the status read and the holder read while those disagree; ` +
-          `retried next tick. Every tick = a stuck or regressed RPC head.`,
-      );
-      quietOutcome = {
-        established: false,
-        reason: `the cursor (${lastBlock}) is ahead of the resolved head (${head})`,
-      };
-    } else {
-      quietOutcome = await _runLoanReconcilePass({
-        env,
-        chain,
-        chainId,
-        diamond,
-        head: settledHead,
-        budget: reconcileBudget,
-      });
-    }
+    // No branch here any more (#2211 r2 `4011201404`). The cursor-vs-head
+    // test used to live at this call site, which meant a guessed head below
+    // the cursor never reached the pass and the operator was told the RPC
+    // head had regressed when no settled block could be read at all. The
+    // pass takes both facts and decides, in one order.
+    const quietOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+      env,
+      chain,
+      chainId,
+      diamond,
+      head: settledHead,
+      readThrough: lastBlock,
+      budget: reconcileBudget,
+    });
     const quietReconciledIds = quietOutcome.established ? quietOutcome.repairedLoanIds : [];
     const quietCal = await _sweepCalendarIfEstablished(
       env,
       chainId,
       Math.floor(Date.now() / 1000),
-      Number(lastBlock),
+      blockToNumber(lastBlock),
       quietOutcome,
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
@@ -1715,7 +1765,7 @@ export async function runChainIndexerForChain(
        updated_at = excluded.updated_at
      WHERE excluded.last_block > indexer_cursor.last_block`,
   )
-    .bind(chainId, CURSOR_KIND, Number(scanTo), now)
+    .bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now)
     .run();
 
   // #1270 — market_summary sweep: recompute discovery rows for every
@@ -1741,20 +1791,17 @@ export async function runChainIndexerForChain(
   // terminal question for this tick with the ghost still active. Ordering
   // is the whole fix for the first; the second is narrower and is answered
   // separately (see the reply on that thread).
-  const reconcileOutcome: ReconcilePassOutcome =
-    scanTo === head
-      ? await _runLoanReconcilePass({
-          env,
-          chain,
-          chainId,
-          diamond,
-          head: settledHead,
-          budget: reconcileBudget,
-        })
-      : {
-          established: false,
-          reason: `the scan reached ${scanTo}, short of the head ${head}`,
-        };
+  // Likewise unconditional: `scanTo === head` was this path's copy of the
+  // same precondition, and the pass now owns it (#2211 r2 `4011201404`).
+  const reconcileOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+    env,
+    chain,
+    chainId,
+    diamond,
+    head: settledHead,
+    readThrough: scanTo,
+    budget: reconcileBudget,
+  });
   const reconciledLoanIds = reconcileOutcome.established
     ? reconcileOutcome.repairedLoanIds
     : [];
@@ -1799,7 +1846,13 @@ export async function runChainIndexerForChain(
   // rather than re-tested here: `scanTo !== head` is one of the ways a tick
   // fails to establish the live set, and an unsettled head is another that
   // this condition could not see (#2211 r1 `4011103056`).
-  const cal = await _sweepCalendarIfEstablished(env, chainId, now, Number(scanTo), reconcileOutcome);
+  const cal = await _sweepCalendarIfEstablished(
+    env,
+    chainId,
+    now,
+    blockToNumber(scanTo),
+    reconcileOutcome,
+  );
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
   // for OTHER writers of the notifications table (today: the keeper's
