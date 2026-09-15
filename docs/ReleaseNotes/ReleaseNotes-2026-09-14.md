@@ -1292,8 +1292,12 @@ delivery, a compensation, a stranded return, a repatriation return — still
 land and are protected while the pause refuses every reward consumer,
 because those ingresses are no longer pause-gated; a recovery ceremony,
 being an administrator's own transaction rather than an arrival, still
-waits for the unpause. The expiry clocks already respect the pause boundary,
-so the paused interval never counts as claimable time; the receivers'
+waits for the unpause. The claim-expiry clocks already respect the pause
+boundary, so the paused interval never counts as claimable time; a
+mirror's compensation deadlines do keep running through it — a zeroed or
+short-compensated day that reaches its deadline under the pause can still
+be lapsed, permissionlessly, as before — so a cutover pause is planned
+around those deadlines rather than assumed to stop them; the receivers'
 own guardian pause remains the way to stop packets at the edge. The
 activation ceremony's pre-flight also now mirrors the activation's
 holder-wide check, so an unreadable or under-held holder is refused
