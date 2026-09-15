@@ -566,8 +566,32 @@ which in turn would have stopped the reader advancing — leaving that chain
 frozen on one block until the database change landed. Everything that touches
 the new memory, read or write, now asks first whether it is there.
 
-**And asking that question is itself not free, which nearly reinstated the
-freeze it prevents.** A "does this memory exist yet" check is a database
+**And the platform still does not know what one of its own passes costs.**
+The reader's pass has a fixed allowance of outbound requests, and the parts
+of it were always reasoned about in prose rather than counted. That was
+survivable while database calls were believed free — and they are not, which
+is what this change established. Three separate corrections followed, each
+found by someone re-reading the sum rather than by anything in the system: a
+second lane making its own copy of the same question, and then nine further
+database calls inside the repair step that nobody had ever counted, because
+the code said in as many words that they cost nothing.
+
+So the honest position, which the code now states instead of a fourth
+figure: the worst case is ABOVE the ceiling and its exact value is unknown.
+Going over does not degrade a pass, it stops it before its progress is
+recorded, which is the frozen reader this whole change works to avoid.
+
+What could be done now was: correct the claim that those calls are free,
+before anyone else builds on it; take the repair step from three positions
+per pass to one, which removes most of the uncounted cost as well as six
+chain reads; and stop asserting a total that three rounds of arithmetic had
+each got wrong. The risk predates this change — those calls were always made
+and never counted — and this change is what made it visible. Giving that
+pass a real counter is tracked separately and is a blocker for it, not a
+tidy-up.
+
+**And asking the "does this memory exist" question is itself not free, which
+nearly reinstated the freeze it prevents.** A "does this memory exist yet" check is a database
 call, and a database call is one of the limited number of outbound requests a
 run may make. A negative answer was deliberately not remembered — remembering
 it would leave a run ignoring the memory after it had been created, until

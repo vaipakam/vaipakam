@@ -695,22 +695,44 @@ export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minR
  * scan cursor is recorded, which is the frozen chain this whole PR keeps
  * working to avoid.
  *
- * r29 took it to two rows and called that 50 exactly. r30 `4017166962` found
- * a sixth maintenance request — the calendar lane's own probe, in this same
- * invocation — so that arithmetic was 51, i.e. already over. ONE ROW:
- * 38 + 4 + 6 = 48, with two to spare.
+ * THE SUM IS NOT ESTABLISHED, AND THIS NOTE NO LONGER PRETENDS IT IS.
  *
- * THIS NOW EQUALS THE SHARED-TICK BUDGET, and that is worth saying out loud
- * rather than leaving for someone to notice. The constant whose name means
- * "the roomy one" has been squeezed until it is the tight one — the pass has
- * outgrown the distinction, and the next request added anywhere here has
- * nowhere left to come from. It is a signal about the lane, not a tuning
- * choice.
+ * Three consecutive review rounds each corrected a worst-case figure stated
+ * here, and each correction was found by someone else looking rather than by
+ * anything in the code: r29 said 50 and it was 51 (the calendar lane's own
+ * probe, r30 `4017166962`); r30 said 48 and it is at least 57 (nine
+ * uncounted D1 calls inside the reconciliation pass itself, r31
+ * `4017540301`). A fourth number asserted the same way would be worth
+ * exactly as much as the first three.
  *
- * The durable answer is an explicit counter — the agent's lane got one in
- * r27 and this one still reasons in comments, which is exactly why r29 could
- * assert a sum that was wrong by one. Filed as #2221 rather than attempted at
- * the end of a review loop.
+ * So what is claimed here is only what can be substantiated:
+ *
+ * - The scan is about 38, this pass contributes `1 + maxRows * 3` chain
+ *   reads, and quarantine maintenance is 6.
+ * - The reconciliation pass makes at least nine further D1 calls per
+ *   repaired row that NOBODY counts — pointer, lap boundary, maximum id, row
+ *   selection, party lookup, repair batch, cursor writes. They were believed
+ *   free; `loanReconcile.ts` carried that belief in a comment until r31, and
+ *   this PR is what disproved it.
+ * - Therefore the invocation's true worst case is ABOVE 50 and its exact
+ *   value is unknown. Going over aborts the pass before the scan cursor is
+ *   recorded, which is a frozen chain.
+ *
+ * ONE ROW is what this constant can do about that, and it is a mitigation
+ * rather than a fix: it takes the pass from three repaired rows to one,
+ * removing roughly two thirds of the uncounted reconciliation cost as well
+ * as six chain reads. The risk predates this PR — those D1 calls were always
+ * made and never counted — and this PR is what made it visible, so leaving
+ * the allowance where it was would be worse.
+ *
+ * It now equals the shared-tick budget, which is itself the signal: the
+ * constant whose name means "the roomy one" has been squeezed until it is
+ * the tight one, and there is nothing left to give here.
+ *
+ * #2221 is the fix — an explicit counter, as the agent's lane got in r27 —
+ * and it is a blocker for this lane rather than a tidy-up. Do not add
+ * another request to this path, or another number to this note, before it
+ * lands.
  *
  * The rotation still reaches every row; it takes more turns.
  */
