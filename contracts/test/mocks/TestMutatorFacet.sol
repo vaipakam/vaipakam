@@ -1096,10 +1096,8 @@ contract TestMutatorFacet {
     ///         value moving between the two terms of the derived floor
     ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
     ///         move would not exercise the thing that matters.
-    function consumeRecycleRaw(
-        uint256 amount
-    ) external returns (uint256 classifiedTake, uint256 classifiedFrom, uint256 classifiedTo) {
-        return LibVpfiRecycle.consume(amount, true);
+    function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, 0);
     }
 
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) test-only — the
@@ -1107,7 +1105,15 @@ contract TestMutatorFacet {
     ///         walk of the classified queue is bounded and leaves the rest
     ///         pending.
     function consumeRecycleRawBounded(uint256 amount) external {
-        LibVpfiRecycle.consume(amount, false);
+        LibVpfiRecycle.consume(amount, false, 0);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r7) test-only — the
+    ///         REMIT form of {LibVpfiRecycle.consume}: the take's writes are
+    ///         noted on the reservation `remitId`, as a remittance's are, so
+    ///         {restoreReleasedRemitRaw} reverses exactly them.
+    function consumeRecycleRawAsRemit(uint256 amount, uint256 remitId) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, remitId);
     }
 
     /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
@@ -2408,13 +2414,7 @@ contract TestMutatorFacet {
     /// @notice #1566 closure 2 cutover PR 2 test-only — drive the REAL
     ///         released-remit restore: the reversed payout the
     ///         reconciliation nets out of inheritable consumption.
-    function restoreReleasedRemitRaw(
-        uint256 recycledFull,
-        uint256 recycledSent,
-        uint256 classifiedFrom,
-        uint256 classifiedTo,
-        uint256 classifiedTake
-    ) external {
-        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, classifiedFrom, classifiedTo, classifiedTake);
+    function restoreReleasedRemitRaw(uint256 recycledFull, uint256 recycledSent, uint256 remitId) external {
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, remitId);
     }
 }

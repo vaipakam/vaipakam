@@ -296,7 +296,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (side == LibRewardCustody.SIDE_FRESH) {
             LibRewardCustody.advanceFresh(s, LibRewardCustody.PRE_BACKFILL_ERA, steps);
         } else if (side == LibRewardCustody.SIDE_RECYCLED) {
-            LibRewardCustody.advanceRecycled(s, steps);
+            LibRewardCustody.advanceRecycled(s, steps, 0);
         } else {
             revert ReconciliationUnknownSide(side);
         }
@@ -333,25 +333,25 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.takeRecycled} — a
-    ///         bucket-ledger debit's take of the recycled queue.
+    ///         bucket-ledger debit's take of the recycled queue (a remit's
+    ///         writes noted on its reservation).
     function reconciliationTakeRecycled(
         uint256 bucketBefore,
         uint256 amount,
         bool consumption,
-        bool mustComplete
-    ) external returns (uint256 took, uint256 from, uint256 to) {
+        bool mustComplete,
+        uint256 remitId
+    ) external returns (uint256 took) {
         _requireDiamondInternal();
-        return LibRewardCustody.takeRecycled(LibVaipakam.storageSlot(), bucketBefore, amount, consumption, mustComplete);
+        return LibRewardCustody.takeRecycled(
+            LibVaipakam.storageSlot(), bucketBefore, amount, consumption, mustComplete, remitId
+        );
     }
 
-    /// @notice Diamond-internal: {LibRewardCustody.reverseRecycledConsumption}.
-    function reconciliationReverseRecycledConsumption(
-        uint256 from,
-        uint256 to,
-        uint256 take
-    ) external returns (uint256 found) {
+    /// @notice Diamond-internal: {LibRewardCustody.reverseRemitTake}.
+    function reconciliationReverseRemitTake(uint256 remitId) external returns (uint256 found, uint256 stranded) {
         _requireDiamondInternal();
-        return LibRewardCustody.reverseRecycledConsumption(LibVaipakam.storageSlot(), from, to, take);
+        return LibRewardCustody.reverseRemitTake(LibVaipakam.storageSlot(), remitId);
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────
@@ -468,7 +468,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
 
     /// @notice The fresh side as it stands for `era`: the queue's frontier,
     ///         its unspent, spent and paid figures, what its pending takes
-    ///         still hold unwritten, the live row; the absorbed records'
+    ///         still hold unwritten (a counter, never a scan), the live row;
+    ///         the absorbed records'
     ///         frontier, unreleased and released figures, the restitution
     ///         row; and what a released remit's inherited consumption
     ///         stranded on the fresh ledger. Invariants: `paid ≤ spent`,
@@ -494,16 +495,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.PendingTake[] storage pend = s.freshPendingByEra[era];
-        for (uint256 i = s.freshPendingHeadByEra[era]; i < pend.length; ++i) {
-            pendingAmount += pend[i].amount;
-        }
         return (
             s.freshFrontierByEra[era],
             s.freshUnspentByEra[era],
             s.freshSpentTotalByEra[era],
             s.freshPaidTotalByEra[era],
-            pendingAmount,
+            s.freshPendingAmountByEra[era],
             s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh],
             s.absorbedFrontier,
             s.absorbedUnreleased,
@@ -530,16 +527,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.PendingTake[] storage pend = s.recycledPending;
-        for (uint256 i = s.recycledPendingHead; i < pend.length; ++i) {
-            pendingAmount += pend[i].amount;
-        }
         return (
             s.recycledFrontier,
             s.recycledUnspent,
             s.recycledSpentTotal,
             s.recycledConsumedTotal,
-            pendingAmount,
+            s.recycledPendingAmount,
             s.recycleBucket
         );
     }

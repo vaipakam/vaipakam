@@ -7500,6 +7500,11 @@ library LibVaipakam {
         ///      amount is recorded here, the fresh-side twin of
         ///      `recycleReleasedRemitStrandedCumulative`.
         uint256 freshStrandedInheritedCumulative;
+        /// @dev Codex #2206 r7 — what each side's pending takes still hold
+        ///      unwritten, kept as counters (an outflow adds, the walk
+        ///      subtracts) so the queue views never scan a backlog.
+        mapping(uint64 => uint256) freshPendingAmountByEra;
+        uint256 recycledPendingAmount;
         mapping(bytes32 => bool) reconciliationEntryUsed;
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
         uint256 recycleReattributedInCumulative;
@@ -7974,15 +7979,15 @@ library LibVaipakam {
         // move UNRELATED receipts' recovery credit into the overage
         // quarantine off the global position balance.
         bool conflictClawed;
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r5) — what this remit's
-        // consumption took of the CLASSIFIED recycled queue, and the segment
-        // that take began at, so a release reverses exactly its own
-        // consumption and no other remit's.
-        uint256 classifiedFrom;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r5–r7) — what this
+        // remit's consumption took of the CLASSIFIED recycled queue, and
+        // EXACTLY which records it wrote and by how much (`entryIndex << 128
+        // | amount`, in walk order), so a release reverses exactly its own
+        // consumption on exactly those records — never another take's units
+        // in a record the walk passed, never a backlog drained ahead of it
+        // (Codex #2206 r7). Cleared by the release.
         uint256 classifiedTake;
-        // Codex #2206 r6 — the entry the take ENDED at, so the reversal
-        // walks exactly [from, to] and never another remit's units.
-        uint256 classifiedTo;
+        uint256[] classifiedTakes;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

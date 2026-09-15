@@ -604,20 +604,10 @@
   },
   {
     "type": "function",
-    "name": "reconciliationReverseRecycledConsumption",
+    "name": "reconciliationReverseRemitTake",
     "inputs": [
       {
-        "name": "from",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "take",
+        "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -625,6 +615,11 @@
     "outputs": [
       {
         "name": "found",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "stranded",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -677,21 +672,16 @@
         "name": "mustComplete",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
         "name": "took",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
         "type": "uint256",
         "internalType": "uint256"
       }

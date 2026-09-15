@@ -1836,10 +1836,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 62, id);
         _evidence(_packetHash(id), 10e18);
         _classify(_packetHash(id), 0, 10e18, keccak256("e-rev"));
-        (uint256 took, uint256 from, uint256 to) = _mut().consumeRecycleRaw(4e18); // a remit's consumption
+        uint256 took = _mut().consumeRecycleRawAsRemit(4e18, 901); // a remit's consumption
         assertEq(took, 4e18, "the remit's take of the classified queue");
         assertEq(_spentOf(0).recycledInheritable, 4e18);
-        _mut().restoreReleasedRemitRaw(4e18, 4e18, from, to, took); // the remit released: it paid nobody
+        _mut().restoreReleasedRemitRaw(4e18, 4e18, 901); // the remit released: it paid nobody
         _mut().setOutstandingCommitRaw(0, 0); // the restored commitment is the re-remit's; not under test here
         (, , uint256 recycledSpent, uint256 consumed, ) = _rqueue();
         assertEq(recycledSpent, 4e18, "the spend stands recorded");
@@ -2402,15 +2402,15 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 79, keccak256("A"));
         _evidence(hA, 10e18);
         _classify(hA, 0, 10e18, keccak256("e-A"));
-        (uint256 took1, uint256 from1, uint256 to1) = _mut().consumeRecycleRaw(10e18); // R1: A's 10
+        uint256 took1 = _mut().consumeRecycleRawAsRemit(10e18, 911); // R1: A's 10
         assertEq(took1, 10e18);
         _feeInflow(10e18);
-        (uint256 took2, uint256 from2, uint256 to2) = _mut().consumeRecycleRaw(10e18); // R2: the other backing
+        uint256 took2 = _mut().consumeRecycleRawAsRemit(10e18, 912); // R2: the other backing
         assertEq(took2, 0, "R2 took nothing of the classified queue");
-        _mut().restoreReleasedRemitRaw(10e18, 10e18, from2, to2, took2); // R2 released
+        _mut().restoreReleasedRemitRaw(10e18, 10e18, 912); // R2 released
         _mut().setOutstandingCommitRaw(0, 0);
         assertEq(_spentOf(0).recycledInheritable, 10e18, "A untouched: R2's payout was not A's");
-        _mut().restoreReleasedRemitRaw(10e18, 10e18, from1, to1, took1); // R1 released
+        _mut().restoreReleasedRemitRaw(10e18, 10e18, 911); // R1 released
         _mut().setOutstandingCommitRaw(0, 0);
         RewardReconciliationFacet.Spent memory a = _spentOf(0);
         assertEq(a.recycledSpent, 10e18, "still spent");
@@ -2424,10 +2424,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _evidence(hC, 10e18);
         _classify(hB, 0, 10e18, keccak256("e-B"));
         _classify(hC, 0, 10e18, keccak256("e-C"));
-        (uint256 took3, uint256 from3, uint256 to3) = _mut().consumeRecycleRaw(10e18); // R3: B
-        (uint256 took4, , ) = _mut().consumeRecycleRaw(10e18); // R4: C
+        uint256 took3 = _mut().consumeRecycleRawAsRemit(10e18, 913); // R3: B
+        uint256 took4 = _mut().consumeRecycleRawAsRemit(10e18, 914); // R4: C
         assertEq(took3 + took4, 20e18);
-        _mut().restoreReleasedRemitRaw(10e18, 10e18, from3, to3, took3); // R3 released
+        _mut().restoreReleasedRemitRaw(10e18, 10e18, 913); // R3 released
         _mut().setOutstandingCommitRaw(0, 0);
         assertEq(_spentOf(1).recycledInheritable, 0, "B: its remit's payout never happened");
         assertEq(_spentOf(2).recycledInheritable, 10e18, "C: its remit stands");
@@ -2449,17 +2449,18 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 82, keccak256("A"));
         _evidence(hA, 10e18);
         _classify(hA, 0, 10e18, keccak256("e-A"));
-        (uint256 took1, uint256 from1, uint256 to1) = _mut().consumeRecycleRaw(10e18); // R1: A's 10
+        uint256 took1 = _mut().consumeRecycleRawAsRemit(10e18, 921); // R1: A's 10
         assertEq(took1, 10e18);
         _reclassify(0, false, 10e18, keccak256("r-A")); // A lifted to fresh: 10 inherited
+        assertEq(_spentOf(0).freshInheritable, 10e18, "on A's fresh record, charged");
         assertEq(_paidOutRecycled(), 0, "the bucket's payout figure gave R1's payout back");
         (uint256 received0, uint256 paid0) = _ledger();
         _untyped(10e18, 83, keccak256("B"));
         _evidence(hB, 10e18);
         _classify(hB, 0, 10e18, keccak256("e-B"));
-        _mut().consumeRecycleRaw(10e18); // R2: B's 10
+        _mut().consumeRecycleRawAsRemit(10e18, 922); // R2: B's 10
         assertEq(_paidOutRecycled(), 10e18, "R2's payout");
-        _mut().restoreReleasedRemitRaw(10e18, 10e18, from1, to1, took1); // R1 released
+        _mut().restoreReleasedRemitRaw(10e18, 10e18, 921); // R1 released
         _mut().setOutstandingCommitRaw(0, 0);
         assertEq(_spentOf(1).recycledInheritable, 10e18, "B untouched: its consumption is R2's");
         assertEq(_paidOutRecycled(), 10e18, "R2's payout figure untouched: R1's was given back already");
@@ -2468,7 +2469,14 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(paid0 - paid1, 10e18, "and paid with it: no headroom created");
         (, , , , , , , , , , uint256 stranded) = _recon().getFreshQueueState(0);
         assertEq(stranded, 10e18, "recorded");
-        assertEq(_spentOf(0).freshSpent, 10e18, "A's inherited debit stands on its fresh record");
+        assertEq(_spentOf(0).freshSpent, 10e18, "A's inherited debit stands on its fresh record, spent");
+        assertEq(_spentOf(0).freshInheritable, 0, "but no longer charged: the payout never happened");
+        (, , , uint256 freshPaid, , ) = _queue();
+        assertEq(freshPaid, 0, "the fresh paid figure fell with it");
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationSpentFreshNotInheritable.selector, 0, 10e18, 0));
+        _recon().reclassifyReconciliationEntry(0, true, 10e18, keccak256("r-A-back"));
+        _admin().unpause();
     }
 
     /// Codex #2206 r6 (P1) — what an armed day reserved stays in the live
@@ -2573,10 +2581,46 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _reclassify(40, true, 4e18, keccak256("r-last-back")); // and back, at index 40
         (, , , , pending) = _rqueue();
         assertEq(pending, 0);
-        (uint256 took, uint256 from, uint256 to) = _mut().consumeRecycleRaw(2e18);
+        uint256 took = _mut().consumeRecycleRaw(2e18);
         assertEq(took, 2e18);
-        assertEq(from, 40);
-        assertEq(to, 40);
+    }
+
+    /// Codex #2206 r7 (P1) — a remit's reversal touches exactly the records
+    /// its own take wrote, and by exactly what it wrote there: a bounded
+    /// claim leaves a charged take pending on entry 40; the remit drains it
+    /// first (the claim's 5 land on entry 40), then writes its own 5 on
+    /// entry 40 and 5 on entry 41. Releasing the remit lowers entry 40's
+    /// charge by 5 — the claim's 5 stay inheritable — and entry 41's by 5.
+    function test_Reclassify_ARemitsReversalTouchesOnlyItsOwnWrites() public {
+        _activatedMirror();
+        _seedDiamond(70e18);
+        for (uint256 i = 0; i < 40; ++i) {
+            bytes32 id = keccak256(abi.encode("bulk", i));
+            _untyped(1e18, 300 + i, id);
+            _evidence(_packetHash(id), 1e18);
+            _classify(_packetHash(id), 0, 1e18, keccak256(abi.encode("e-bulk", i)));
+            _reclassify(i, false, 1e18, keccak256(abi.encode("r-bulk", i)));
+        }
+        bytes32 h40 = _packetHash(keccak256("e40"));
+        bytes32 h41 = _packetHash(keccak256("e41"));
+        _untyped(10e18, 400, keccak256("e40"));
+        _classify(h40, 0, 10e18, keccak256("e-40")); // index 40
+        _mut().consumeRecycleRawBounded(5e18); // a claim: its take stays pending behind the exhausted forty
+        (, , , , uint256 pending) = _rqueue();
+        assertGt(pending, 0);
+        _untyped(10e18, 401, keccak256("e41"));
+        _classify(h41, 0, 10e18, keccak256("e-41")); // index 41
+        uint256 took = _mut().consumeRecycleRawAsRemit(10e18, 931); // the remit: drains the claim's take, then writes its own
+        assertEq(took, 10e18);
+        (, , , , pending) = _rqueue();
+        assertEq(pending, 0);
+        assertEq(_spentOf(40).recycledInheritable, 10e18, "entry 40: the claim's 5 and the remit's 5");
+        assertEq(_spentOf(41).recycledInheritable, 5e18, "entry 41: the remit's 5");
+        _mut().restoreReleasedRemitRaw(10e18, 10e18, 931); // the remit released
+        _mut().setOutstandingCommitRaw(0, 0);
+        assertEq(_spentOf(40).recycledInheritable, 5e18, "entry 40 keeps the claim's 5");
+        assertEq(_spentOf(41).recycledInheritable, 0, "entry 41's 5 were the remit's");
+        assertEq(_spentOf(40).recycledSpent + _spentOf(41).recycledSpent, 15e18, "all still spent");
     }
 
     // ─── 6. the transports ───────────────────────────────────────────────────

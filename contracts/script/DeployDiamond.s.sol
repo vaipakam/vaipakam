@@ -3132,7 +3132,7 @@ contract DeployDiamond is Script {
         s[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
         s[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
         s[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
-        s[17] = RewardReconciliationFacet.reconciliationReverseRecycledConsumption.selector;
+        s[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

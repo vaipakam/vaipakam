@@ -6396,12 +6396,20 @@ PR C.**
 > absorbed records, each released part re-entering the entry's own fresh
 > record (free when the paid-correction moved the custody to live; spent
 > and paid when the deficit was paid with it), so a later restitution
-> credit re-absorbs nothing (Codex #2206 r4). A remit records its take and
-> the entries it spanned, so its release reverses exactly that consumption
-> over exactly those entries; what a correction had meanwhile moved to the
-> fresh ledger as an inherited debit is stranded THERE — `received` and
-> `paid` fall together, no headroom — and is not given back on the bucket's
-> payout figure a second time (Codex #2206 r6). An inherited debit arrives
+> credit re-absorbs nothing (Codex #2206 r4). A remit's reservation is told
+> EXACTLY which records its take wrote and by how much (an operator path
+> writes down whatever backlog stands before its own take, so the notes are
+> its own — a range could span a backlog drained ahead of it or an exhausted
+> record another take had charged, Codex #2206 r7), and its release
+> reverses exactly that on exactly those records: the recycled charge
+> first, then what a correction had meanwhile moved to the entry's fresh
+> record as an inherited debit — that charge is cleared too and stranded
+> THERE (`received` and `paid` fall together, no headroom; a later
+> correction can never inherit a payout that never happened) — and none of
+> it is given back on the bucket's payout figure a second time (Codex #2206
+> r6, r7). What each queue's pending takes still hold is a counter the
+> outflow adds to and the walk subtracts from, never a scan of the backlog
+> (Codex #2206 r7). An inherited debit arrives
 > spent and charged; only spent credit the side's ledger charged — fresh
 > `paid`; recycled consumption — is inheritable by the other side; and
 > unspent credit moves with its tokens only up to what the pool holds

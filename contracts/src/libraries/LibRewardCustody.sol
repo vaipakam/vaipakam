@@ -449,6 +449,7 @@ library LibRewardCustody {
         s.freshSpentTotalByEra[era] += took;
         if (paid) s.freshPaidTotalByEra[era] += took;
         s.freshPendingByEra[era].push(LibVaipakam.PendingTake({amount: uint128(took), kind: paid ? KIND_CHARGED : 0}));
+        s.freshPendingAmountByEra[era] += took;
         advanceFresh(s, era, QUEUE_WALK_STEPS);
     }
 
@@ -478,6 +479,7 @@ library LibRewardCustody {
         }
         uint8 kind = KIND_RELEASE | (toLive ? KIND_TO_LIVE : 0) | (paid ? KIND_CHARGED : 0);
         s.freshPendingByEra[era].push(LibVaipakam.PendingTake({amount: uint128(take), kind: kind}));
+        s.freshPendingAmountByEra[era] += take;
         advanceFresh(s, era, QUEUE_WALK_STEPS);
     }
 
@@ -496,12 +498,14 @@ library LibRewardCustody {
         while (head < pend.length && steps != 0) {
             LibVaipakam.PendingTake storage item = pend[head];
             uint256 take = item.amount;
+            uint256 before = take;
             if (item.kind & KIND_RELEASE != 0) {
                 (take, steps) = _walkRelease(s, era, take, item.kind, steps, n);
             } else {
                 (take, steps) = _walkFresh(s, era, take, item.kind & KIND_CHARGED != 0, steps, n);
             }
             item.amount = uint128(take);
+            s.freshPendingAmountByEra[era] -= before - take;
             if (take == 0) ++head;
         }
         s.freshPendingHeadByEra[era] = head;
@@ -569,39 +573,44 @@ library LibRewardCustody {
     }
 
     /// @notice The recycled queue's record of a bucket-ledger debit of
-    ///         `amount` from a ledger holding `bucketBefore`: what it took,
-    ///         and the entries the take began and ended at (a remit records
-    ///         all three, so its release reverses exactly its own
-    ///         consumption). An operator path (`mustComplete`) writes the
-    ///         whole backlog and its own take, so `to` is exact; a hot path
-    ///         walks a bounded number of entries and `to` is meaningless.
+    ///         `amount` from a ledger holding `bucketBefore`: what it took.
+    ///         An operator path (`mustComplete`) first writes down whatever
+    ///         backlog stands, then its own take, whole; a remit
+    ///         (`remitId != 0`) has EXACTLY the records its own take wrote,
+    ///         and by how much, recorded on its reservation (Codex #2206 r7:
+    ///         a range could span a backlog drained ahead of it, or an
+    ///         exhausted record another take had charged). A hot path walks
+    ///         a bounded number of entries and leaves the rest pending.
     function takeRecycled(
         LibVaipakam.Storage storage s,
         uint256 bucketBefore,
         uint256 amount,
         bool consumption,
-        bool mustComplete
-    ) internal returns (uint256 took, uint256 from, uint256 to) {
+        bool mustComplete,
+        uint256 remitId
+    ) internal returns (uint256 took) {
         uint256 unspent = s.recycledUnspent;
         took = takeOfQueue(unspent, bucketBefore, amount);
-        from = s.recycledFrontier;
-        if (took == 0) return (0, from, from);
+        if (took == 0) return 0;
         s.recycledUnspent = unspent - took;
         s.recycledSpentTotal += took;
         if (consumption) s.recycledConsumedTotal += took;
+        if (mustComplete) advanceRecycled(s, type(uint256).max, 0);
         s.recycledPending.push(LibVaipakam.PendingTake({amount: uint128(took), kind: consumption ? KIND_CHARGED : 0}));
+        s.recycledPendingAmount += took;
         if (mustComplete) {
-            advanceRecycled(s, type(uint256).max);
-            to = s.recycledFrontier;
+            advanceRecycled(s, type(uint256).max, remitId);
+            if (remitId != 0) s.remitReservations[remitId].classifiedTake = took;
         } else {
-            advanceRecycled(s, QUEUE_WALK_STEPS);
-            to = type(uint256).max;
+            advanceRecycled(s, QUEUE_WALK_STEPS, 0);
         }
     }
 
     /// @notice Write the recycled queue's pending takes into the records, in
-    ///         order, visiting at most `steps` entries.
-    function advanceRecycled(LibVaipakam.Storage storage s, uint256 steps) internal {
+    ///         order, visiting at most `steps` entries; with `remitId` set,
+    ///         every record written is noted on that remit's reservation
+    ///         (the caller has drained everything older first).
+    function advanceRecycled(LibVaipakam.Storage storage s, uint256 steps, uint256 remitId) internal {
         LibVaipakam.PendingTake[] storage pend = s.recycledPending;
         uint256 head = s.recycledPendingHead;
         uint256 n = s.reconciliationLog.length;
@@ -622,7 +631,9 @@ library LibRewardCustody {
                 uint256 u = take < free ? take : free;
                 rec.spent += uint128(u);
                 if (charged) rec.charged += uint128(u);
+                if (remitId != 0) s.remitReservations[remitId].classifiedTakes.push((f << 128) | u);
                 take -= u;
+                s.recycledPendingAmount -= u;
             }
             item.amount = uint128(take);
             if (take == 0) ++head;
@@ -637,31 +648,47 @@ library LibRewardCustody {
         return s.recycledPendingHead == s.recycledPending.length;
     }
 
-    /// @notice Reverse a released remit's recorded consumption over exactly
-    ///         the entries its take spanned, `[from, to]`: each record's
-    ///         charge is lowered by what it still holds, up to `take`. What
-    ///         is not found there a correction had already moved to the
-    ///         fresh ledger as an inherited debit — the caller strands that
-    ///         part there ({strandInheritedFresh}); no other remit's units
-    ///         are ever touched.
-    function reverseRecycledConsumption(
+    /// @notice Reverse a released remit's recorded consumption on exactly the
+    ///         records it wrote, by exactly what it wrote there (its payout
+    ///         never happened): a record's recycled charge is lowered first;
+    ///         what is no longer there a correction had moved to the entry's
+    ///         FRESH record as an inherited debit, and that charge is
+    ///         lowered too and STRANDED on the fresh ledger — `received` and
+    ///         `paid` fall together, no headroom — so a later correction can
+    ///         never inherit a payout that never happened (Codex #2206 r7).
+    ///         What neither record holds is a defect (the entry's charges
+    ///         always sum to the consumption attributed to it) and refuses.
+    ///         The reservation's record is cleared: a release is one-shot.
+    /// @return found    Reversed on the recycled records.
+    /// @return stranded Reversed on the fresh records and stranded there.
+    function reverseRemitTake(
         LibVaipakam.Storage storage s,
-        uint256 from,
-        uint256 to,
-        uint256 take
-    ) internal returns (uint256 found) {
-        uint256 n = s.reconciliationLog.length;
-        uint256 last = to < n ? to : (n == 0 ? 0 : n - 1);
-        for (uint256 i = from; i <= last && take != 0; ++i) {
-            LibVaipakam.SideRecord storage rec = s.recycledRecords[i];
+        uint256 remitId
+    ) internal returns (uint256 found, uint256 stranded) {
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256[] storage takes = r.classifiedTakes;
+        uint256 n = takes.length;
+        for (uint256 i = 0; i < n; ++i) {
+            uint256 packed = takes[i];
+            uint256 index = packed >> 128;
+            uint256 remaining = packed & type(uint128).max;
+            LibVaipakam.SideRecord storage rec = s.recycledRecords[index];
             uint256 c = rec.charged;
-            if (c == 0) continue;
-            uint256 u = take < c ? take : c;
+            uint256 u = remaining < c ? remaining : c;
             rec.charged = uint128(c - u);
-            take -= u;
             found += u;
+            remaining -= u;
+            if (remaining == 0) continue;
+            LibVaipakam.SideRecord storage fr = s.freshRecords[index];
+            uint256 fc = fr.charged;
+            if (remaining > fc) revert IVaipakamErrors.ReconciliationQueueInconsistent(SIDE_RECYCLED);
+            fr.charged = uint128(fc - remaining);
+            s.freshPaidTotalByEra[s.reconciliationLog[index].era] -= remaining;
+            stranded += remaining;
         }
         s.recycledConsumedTotal -= found;
+        strandInheritedFresh(s, stranded);
+        delete r.classifiedTakes;
     }
 
     /// @notice A released remit's consumption the fresh ledger already
@@ -1436,24 +1463,28 @@ library LibRewardCustody {
         uint256 bucketBefore,
         uint256 amount,
         bool consumption,
-        bool mustComplete
-    ) internal returns (uint256 took, uint256 from, uint256 to) {
+        bool mustComplete,
+        uint256 remitId
+    ) internal returns (uint256 took) {
         bytes memory ret = _custodyReturning(
             abi.encodeWithSignature(
-                "reconciliationTakeRecycled(uint256,uint256,bool,bool)", bucketBefore, amount, consumption, mustComplete
+                "reconciliationTakeRecycled(uint256,uint256,bool,bool,uint256)",
+                bucketBefore,
+                amount,
+                consumption,
+                mustComplete,
+                remitId
             )
         );
-        (took, from, to) = abi.decode(ret, (uint256, uint256, uint256));
+        took = abi.decode(ret, (uint256));
     }
 
-    /// @dev {reverseRecycledConsumption} through the reconciliation facet;
-    ///      returns what was found and reversed there.
-    function callReverseRecycledConsumption(uint256 from, uint256 to, uint256 take) internal returns (uint256 found) {
-        if (take == 0) return 0;
-        bytes memory ret = _custodyReturning(
-            abi.encodeWithSignature("reconciliationReverseRecycledConsumption(uint256,uint256,uint256)", from, to, take)
-        );
-        found = abi.decode(ret, (uint256));
+    /// @dev {reverseRemitTake} through the reconciliation facet; returns what
+    ///      was reversed on the recycled records and what was stranded on
+    ///      the fresh ledger.
+    function callReverseRemitTake(uint256 remitId) internal returns (uint256 found, uint256 stranded) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("reconciliationReverseRemitTake(uint256)", remitId));
+        (found, stranded) = abi.decode(ret, (uint256, uint256));
     }
 
     /// @dev {releaseFromRow} through the custody facet.

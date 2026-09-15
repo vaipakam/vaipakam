@@ -721,19 +721,14 @@
             "internalType": "bool"
           },
           {
-            "name": "classifiedFrom",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "classifiedTake",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "classifiedTo",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "classifiedTakes",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
           }
         ]
       }

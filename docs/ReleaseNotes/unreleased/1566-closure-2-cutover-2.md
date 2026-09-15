@@ -55,9 +55,10 @@ known — and only the part the side's own ledger charged (paid on the
 fresh side, consumed on the recycled side) may be inherited by the other
 side: recycled value that left by a surplus repatriation, or whose payout
 was later reversed (a released remit reverses exactly its own
-consumption over exactly the value it took, no other's; the part a
-correction had meanwhile moved to the fresh side is stranded there, the
-fresh side's received and paid figures falling together), and fresh
+consumption on exactly the value it took, no other's; the part a
+correction had meanwhile moved to the fresh side is stranded there — no
+longer inheritable, the fresh side's received and paid figures falling
+together), and fresh
 value a demotion unwound, are never inherited, and consumption made
 while nothing classified was in the backing is nobody's. Value a
 correction moves keeps its original place in the order. Recording what
