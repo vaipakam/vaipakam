@@ -441,15 +441,13 @@ interface IVaipakamErrors {
     ///         record: its value is reserved for the R4 return and is not
     ///         classifiable.
     error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
-    /// @notice The stated component caps exceed the packet's classifiable
-    ///         part (what it holds in the row plus what was classified).
-    error ReconciliationCapsExceedBudget(bytes32 packetHash, uint256 capsSum, uint256 budget);
-    /// @notice The packet's caps were fixed by an earlier entry and this one
-    ///         states different ones.
-    error ReconciliationCapsFixed(bytes32 packetHash, uint256 freshCap, uint256 recycledCap);
-    /// @notice A component's cumulative classification would pass its cap.
-    /// @param side 0 fresh, 1 recycled.
-    error ReconciliationComponentCapExceeded(bytes32 packetHash, uint8 side, uint256 cumulative, uint256 cap);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
+    ///         rule: an entry's fresh side would exceed its authenticated
+    ///         fresh figure (a packet's transport-attested remainder split;
+    ///         the envelope's replacement-funded fresh). Fresh is the
+    ///         privileged direction; without evidence, value classifies
+    ///         recycled or stays.
+    error ReconciliationFreshUnevidenced(bytes32 key, uint256 cumulativeFresh, uint256 authenticated);
     /// @notice The entry asks for more than the packet still holds in the row.
     error ReconciliationExceedsPacketRemainder(bytes32 packetHash, uint256 requested, uint256 remainder);
     /// @notice A row figure cannot cover the exit.

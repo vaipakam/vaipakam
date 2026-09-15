@@ -2511,74 +2511,6 @@
   },
   {
     "type": "error",
-    "name": "ReconciliationCapsExceedBudget",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "capsSum",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "budget",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReconciliationCapsFixed",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "freshCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReconciliationComponentCapExceeded",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "side",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "cumulative",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ReconciliationEntryReplayed",
     "inputs": [
       {
@@ -2673,6 +2605,27 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationFreshUnevidenced",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "cumulativeFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authenticated",
         "type": "uint256",
         "internalType": "uint256"
       }

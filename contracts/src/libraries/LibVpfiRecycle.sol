@@ -1241,7 +1241,8 @@ library LibVpfiRecycle {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bucket = s.recycleBucket;
-        s.recycleBucket = bucket > amount ? bucket - amount : 0;
+        uint256 left = bucket > amount ? bucket - amount : 0;
+        s.recycleBucket = left;
         uint256 outstanding = s.outstandingCommitRecycled;
         // #1222 M3 B3 — record the ACTUAL decrement, not `amount`: the floor
         // below is load-bearing (cap-trim dust can make a day's consumption
@@ -1252,13 +1253,21 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled = outstanding - retired;
         s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
-        // #1566 closure 2 cutover PR 2 — the MONOTONE consumption counter
-        // the reconciliation epoch reads (what of the spent classified credit
-        // is CONSUMPTION and so inheritable by the fresh side) advances by
-        // what actually LEFT the bucket (the floor above can make a request
-        // exceed it), and nothing ever decrements it — unlike
-        // `paidOutRecycled`, which {restoreReleasedRemit} corrects downward.
-        s.recycledConsumedSeq += bucket > amount ? amount : bucket;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3) — what this
+        // consumption took of the CLASSIFIED credit is recorded HERE, where
+        // the outflow's kind is known. The reconciliation FIFO reads the
+        // pool with the bucket's other backing consumed first, so the
+        // classified part of an outflow is the growth of the queue's
+        // shortfall: nothing while the bucket still covers the queued total,
+        // nothing when no credit is queued, and never more than what LEFT.
+        // A surplus repatriation grows the shortfall without touching this
+        // counter, so it is never inheritable; a reversed payout is netted
+        // out at {restoreReleasedRemit}. Monotone: nothing decrements it —
+        // unlike `paidOutRecycled`, which the restore corrects downward.
+        uint256 queued = s.recycledQueuedTotal;
+        uint256 shortBefore = queued > bucket ? queued - bucket : 0;
+        uint256 shortAfter = queued > left ? queued - left : 0;
+        s.recycledClassifiedConsumed += shortAfter - shortBefore;
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         // As in {creditCustodyRelocated}: an informational label, not an
         // attribution — consumption writes no day-keyed accumulator (#1504).
@@ -1396,6 +1405,17 @@ library LibVpfiRecycle {
         uint256 reversed = paid > recycledSent ? recycledSent : paid;
         s.paidOutRecycled = paid - reversed;
         s.recycleReleasedRemitStrandedCumulative += reversed;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r3) — a reversed payout
+        // is consumption that paid nobody. To the extent classified
+        // consumption is still unattributed here, the reversal is attributed
+        // to it, so the reconciliation's inheritable consumption excludes it
+        // — the conservative reading (an inheritable figure understated is
+        // fresh headroom not published; overstated is a `paid` claim for a
+        // payout that did not happen). Monotone, like the counter it nets.
+        uint256 classified = s.recycledClassifiedConsumed;
+        uint256 stranded = s.recycledClassifiedStranded;
+        uint256 open = classified > stranded ? classified - stranded : 0;
+        s.recycledClassifiedStranded = stranded + (reversed < open ? reversed : open);
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

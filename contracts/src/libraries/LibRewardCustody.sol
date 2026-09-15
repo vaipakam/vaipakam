@@ -855,7 +855,7 @@ library LibRewardCustody {
     // `unclassified + classifiedFresh + classifiedRecycled + disposed ==
     // protectedCumulative` holds too. The bucket side of a recycled exit is
     // `LibVpfiRecycle`'s (it owns the bucket's counters); the entry logic —
-    // caps, bounds, the FIFO — is the reconciliation facet's.
+    // the evidence bound, the FIFO — is the reconciliation facet's.
 
     /// @notice A classification's step-down: the packet's remainder and the
     ///         row figure it belongs to (uncounted for a delivery or

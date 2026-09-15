@@ -7443,7 +7443,8 @@ library LibVaipakam {
         /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
         ///      epoch. The classification log (append-only; the order is the
         ///      immutable thing), the two queues that distribute spent-ness
-        ///      among the entries, the recycled consumption counter, the
+        ///      among the entries, the absorbed records, the recycled
+        ///      consumption record, the
         ///      per-entry replay guard, the envelopes, and the two
         ///      reattribution cumulatives that keep the bucket's composition
         ///      identity stated: `bucket == credited + relocated +
@@ -7466,17 +7467,37 @@ library LibVaipakam {
         mapping(uint64 => uint256) freshQueuedTotalByEra;
         uint256[] recycledQueueTree;
         uint256 recycledQueuedTotal;
+        /// @dev The absorbed records (Codex #2206 r3): a third tree over the
+        ///      log holding what the standing deficit absorbed of each fresh
+        ///      credit into restitution at credit, and its total. Absorbed
+        ///      credit is neither queued nor movable for as long as the
+        ///      restitution row holds it; what the row no longer holds of
+        ///      the records — the row read as it stands, its other backing
+        ///      released first — re-enters the live queue FIFO by log
+        ///      order, where the live row says whether it is unspent (the
+        ///      paid-correction moved it to live) or spent (the treasury
+        ///      release paid the deficit with it). Global, as the
+        ///      restitution row is; PR C's era rows decide the attribution
+        ///      across eras.
+        uint256[] freshAbsorbedTree;
+        uint256 freshAbsorbedTotal;
         /// @dev The recycled side's outflow has two kinds, and only
-        ///      CONSUMPTION may be inherited by the fresh side as a debit:
-        ///      the bucket's consumption since the recycled queue opened (a
-        ///      MONOTONE counter, advanced by `consume` only, never moved by
-        ///      a correction), less what the fresh side already inherited,
-        ///      is attributed to the spent classified credit first in queue
-        ///      order; what left by surplus repatriation stays where it
-        ///      left from.
-        uint256 recycledConsumedSeq;
-        bool recycledQueueOpen;
-        uint256 recycledQueueConsumedBase;
+        ///      CONSUMPTION may be inherited by the fresh side as a debit.
+        ///      What a consumption took of the CLASSIFIED credit is recorded
+        ///      at the outflow itself (`consume`: the growth of the queue's
+        ///      shortfall — the bucket's other backing is consumed first),
+        ///      where the outflow's kind is known; a surplus repatriation
+        ///      grows the shortfall without touching it (Codex #2206 r3: a
+        ///      counter of ALL consumption read against a base attributed
+        ///      consumption made while nothing was queued to a later
+        ///      entry). A reversed payout (`restoreReleasedRemit`) is netted
+        ///      out of it conservatively (`recycledClassifiedStranded`).
+        ///      Both are MONOTONE, each advanced by its own outflow
+        ///      primitive only, never by a correction; what the fresh side
+        ///      already inherited is `recycledConsumedInheritedTotal`, so it
+        ///      is not offered again.
+        uint256 recycledClassifiedConsumed;
+        uint256 recycledClassifiedStranded;
         uint256 recycledConsumedInheritedTotal;
         mapping(bytes32 => bool) reconciliationEntryUsed;
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
@@ -7590,17 +7611,19 @@ library LibVaipakam {
         ///      component (the total is derived, never kept alone — design
         ///      §5c); `disposed` its NON-classification exits (the R4 return).
         ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
-        ///      + disposed == protectedCumulative`. `freshCap` / `recycledCap`
-        ///      are the operator's authenticated component caps for the
-        ///      classifiable part, fixed by the first entry and immutable
-        ///      after (`capsFixed`), their sum bounded by that part.
+        ///      + disposed == protectedCumulative`. `freshAuthenticated` is
+        ///      the EVIDENCE bounding the packet's fresh side (design §5c: a
+        ///      fresh share requires authenticated source evidence; absent
+        ///      it, value classifies recycled or stays): what the source
+        ///      chain's own recorded split says of the remainder, written
+        ///      by the transport-carried attestation only (landing with the
+        ///      transport epochs) — never by an administrator. Zero until
+        ///      then. `classifiedFresh` never exceeds it (Codex #2206 r3).
         uint256 protectedCumulative;
         uint256 classifiedFresh;
         uint256 classifiedRecycled;
         uint256 disposed;
-        uint256 freshCap;
-        uint256 recycledCap;
-        bool capsFixed;
+        uint256 freshAuthenticated;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
@@ -7609,7 +7632,8 @@ library LibVaipakam {
     ///         each side, as CURRENTLY attributed.
     /// @dev    `key` is the packet's ingress stamp, or the envelope's
     ///         snapshot id (`envelope` says which, so a correction knows
-    ///         whether a packet's component counters and caps follow it).
+    ///         whether a packet's component counters follow it and whose
+    ///         evidence bounds its fresh side).
     ///         The ORDER of the log is the immutable thing (design §5c):
     ///         spent-ness is distributed among the entries FIFO by that
     ///         order. Per side, the entry's credit splits into what is
@@ -7619,8 +7643,11 @@ library LibVaipakam {
     ///         outflow of this side, unwound by the reverse move; Codex
     ///         #2206 r1) and, on the fresh side, what the standing deficit
     ///         ABSORBED into restitution at credit (Codex #2206 r2: not
-    ///         live backing, so neither queued nor a correction's to move —
-    ///         restitution custody moves only through its own dispositions).
+    ///         live backing, so neither queued nor a correction's to move
+    ///         for as long as the restitution row holds it; what the row
+    ///         no longer holds of the absorbed records re-enters the queue,
+    ///         FIFO — Codex #2206 r3). `freshAbsorbed` is the RECORD; the
+    ///         part still held is derived against the row.
     ///         `recycledConsumedInherited` is the consumption of this
     ///         entry's recycled credit the fresh side carries, so the
     ///         consumption-first attribution does not offer it again. `era`
@@ -7641,9 +7668,12 @@ library LibVaipakam {
     /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
     ///         pre-stamp inventory as one bounded aggregate, its netting
     ///         figures all read on chain at the import, and the disposition
-    ///         of every unit of it (relocated, replacement-funded, or
-    ///         written down). Its log entry (`entryIndex`) is what the
-    ///         snapshot-keyed error path reclassifies.
+    ///         of every unit of it (relocated as recycled — the inventory
+    ///         has no evidence source, so its fresh share is exactly what
+    ///         is replacement-funded; replacement-funded as fresh or
+    ///         recycled; or written down). Its log entry (`entryIndex`) is
+    ///         what the snapshot-keyed error path reclassifies, its fresh
+    ///         side bounded by `replacedFresh`.
     struct LegacyEnvelope {
         uint64 importedAt;
         uint256 rawUncounted;
@@ -7651,7 +7681,6 @@ library LibVaipakam {
         uint256 diamondReserved;
         uint256 returnedCumulative;
         uint256 netTotal;
-        uint256 relocatedFresh;
         uint256 relocatedRecycled;
         uint256 replacedFresh;
         uint256 replacedRecycled;

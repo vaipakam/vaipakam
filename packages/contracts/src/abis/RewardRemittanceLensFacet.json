@@ -354,19 +354,9 @@
             "internalType": "uint256"
           },
           {
-            "name": "freshCap",
+            "name": "freshAuthenticated",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "recycledCap",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "capsFixed",
-            "type": "bool",
-            "internalType": "bool"
           }
         ]
       }

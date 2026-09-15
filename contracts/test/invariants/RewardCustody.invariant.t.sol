@@ -77,6 +77,11 @@ contract RewardCustodyInvariant is SetupTest {
         handler = new RewardCustodyHandler(address(diamond), vpfi, address(this));
         AccessControlFacet(address(diamond)).grantRole(LibAccessControl.ADMIN_ROLE, address(handler));
         AccessControlFacet(address(diamond)).grantRole(LibAccessControl.PAUSER_ROLE, address(handler));
+        // Codex #2206 r3 — `unpause` is UNPAUSER_ROLE's (the asymmetric
+        // split); without it every paused action reverted at its own
+        // unpause and rolled its mutation back, so the classification
+        // invariants below ran on an idle log.
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.UNPAUSER_ROLE, address(handler));
 
         targetContract(address(handler));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(handler));
@@ -146,44 +151,82 @@ contract RewardCustodyInvariant is SetupTest {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
-            (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, , , ) =
+            (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
                 recon.getPacketReconciliation(handler.packetAt(i));
             assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
         }
     }
 
-    /// #1566 closure 2 cutover PR 2 — the recycled consumption counter the
-    /// epoch reads never falls: whatever the last action was (a
-    /// reclassification included), it is at least what it read at that
-    /// action's start.
-    function invariant_ConsumptionCounterIsMonotone() public view {
-        (, , , , , uint256 consumed, , ) = RewardReconciliationFacet(address(diamond)).getQueueState(0);
-        assertGe(consumed, handler.recycledSeqAtActionStart(), "the consumption counter never falls");
+    /// #1566 closure 2 cutover PR 2 — the two recycled consumption records
+    /// the epoch reads never fall: whatever the last action was (a
+    /// reclassification included), each is at least what it read at that
+    /// action's start — a correction moves the inherited total, never the
+    /// records of what the outflows took.
+    function invariant_ClassifiedConsumptionRecordsAreMonotone() public view {
+        (, , , , , , , uint256 consumed, uint256 stranded, ) =
+            RewardReconciliationFacet(address(diamond)).getQueueState(0);
+        assertGe(consumed, handler.classifiedConsumedAtActionStart(), "the classified consumption never falls");
+        assertGe(stranded, handler.classifiedStrandedAtActionStart(), "the stranded part never falls");
     }
 
-    /// #1566 closure 2 cutover PR 2 (Codex #2206 r2) — the two queues equal
-    /// the log: each side's queued total is the sum of the entries' queued
-    /// credits, and the tree's prefix before the last entry plus that
-    /// entry's queued credit is the total.
+    /// #1566 closure 2 cutover PR 2 (Codex #2206 r2, r3) — the three trees
+    /// equal the log: each side's queued total and the absorbed total are
+    /// the sums of the entries' records, what the restitution row released
+    /// never exceeds the absorbed total, and the tree's prefix before the
+    /// last entry plus that entry's queued credit (as the view derives it,
+    /// released part included) is the queued total plus the released part.
     function invariant_QueuesMatchTheLog() public view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         (uint256 entries, , ) = recon.getReconciliationTotals();
-        (uint256 queuedFresh, , uint256 queuedRecycled, , , , , ) = recon.getQueueState(0);
+        (uint256 queuedFresh, uint256 released, , uint256 absorbedTotal, , uint256 queuedRecycled, , , , ) =
+            recon.getQueueState(0);
         uint256 sumFresh;
         uint256 sumRecycled;
+        uint256 sumAbsorbed;
         for (uint256 i = 0; i < entries; ++i) {
             LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(i);
             sumFresh += e.freshCredit - e.freshInherited - e.freshAbsorbed;
             sumRecycled += e.recycledCredit - e.recycledInherited;
+            sumAbsorbed += e.freshAbsorbed;
         }
         assertEq(sumFresh, queuedFresh, "fresh queued total == sum of entries");
         assertEq(sumRecycled, queuedRecycled, "recycled queued total == sum of entries");
+        assertEq(sumAbsorbed, absorbedTotal, "absorbed total == sum of records");
+        assertLe(released, absorbedTotal, "released <= absorbed");
         if (entries > 0) {
             RewardReconciliationFacet.Spent memory last = recon.getReconciliationEntrySpent(entries - 1);
             LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(entries - 1);
-            assertEq(last.freshPrefix + (e.freshCredit - e.freshInherited - e.freshAbsorbed), queuedFresh, "fresh tree == total");
+            assertEq(
+                last.freshPrefix + (e.freshCredit - e.freshInherited - last.freshAbsorbed),
+                queuedFresh + released,
+                "fresh tree == total"
+            );
             assertEq(last.recycledPrefix + (e.recycledCredit - e.recycledInherited), queuedRecycled, "recycled tree == total");
         }
+    }
+
+    /// Codex #2206 r3 — the handler's classification actions PERSIST (it
+    /// unpauses with the role that can): driven directly, the log grows, so
+    /// the packet and queue invariants above are exercised on real state
+    /// rather than on rolled-back calls.
+    function test_HandlerClassificationActionsPersist() public {
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        handler.untypedIngress(7);
+        bytes32 h = handler.packetAt(0);
+        (, uint256 remainder, , , , ) = recon.getPacketReconciliation(h);
+        // The whole remainder evidenced, so whichever way the handler splits
+        // its entry, one direction of a later correction is always open.
+        TestMutatorFacet(address(diamond)).setPacketFreshAuthenticatedRaw(h, remainder);
+        for (uint256 seed = 1; seed <= 16 && handler.classified() == 0; ++seed) {
+            handler.classify(seed);
+        }
+        assertGt(handler.classified(), 0, "a classification was applied");
+        (uint256 entries, , ) = recon.getReconciliationTotals();
+        assertEq(entries, 1, "the log grew");
+        for (uint256 seed = 1; seed <= 64 && handler.reclassified() == 0; ++seed) {
+            handler.reclassify(seed);
+        }
+        assertGt(handler.reclassified(), 0, "a reclassification was applied");
     }
 
     /// Reward flows never touch the Diamond's own balance: it holds exactly
@@ -218,12 +261,17 @@ contract RewardCustodyHandler is Test {
     uint64 internal nextLoan = 1;
     /// @dev #1566 closure 2 cutover PR 2 — the untyped packets this handler
     ///      landed (zero transport id → the per-source sequence stamps them,
-    ///      and this handler is the only source-8453 ingress), the caps it
-    ///      fixed per packet, and the sequencing counters at the start of
-    ///      the current action (the monotonicity invariant's baseline).
+    ///      and this handler is the only source-8453 ingress), the two
+    ///      consumption records at the start of the current action (the
+    ///      monotonicity invariant's baseline), and how many classification
+    ///      actions were APPLIED (Codex #2206 r3: the liveness the campaign
+    ///      is checked against).
     bytes32[] internal packetHashes;
     uint256 internal seqStamped;
-    uint256 public recycledSeqAtActionStart;
+    uint256 public classifiedConsumedAtActionStart;
+    uint256 public classifiedStrandedAtActionStart;
+    uint256 public classified;
+    uint256 public reclassified;
 
     constructor(address diamond_, VPFIToken vpfi_, address minter_) {
         diamond = diamond_;
@@ -246,8 +294,9 @@ contract RewardCustodyHandler is Test {
 
     function _start() internal {
         calls++;
-        (, , , , , uint256 consumed, , ) = RewardReconciliationFacet(diamond).getQueueState(0);
-        recycledSeqAtActionStart = consumed;
+        (, , , , , , , uint256 consumed, uint256 stranded, ) = RewardReconciliationFacet(diamond).getQueueState(0);
+        classifiedConsumedAtActionStart = consumed;
+        classifiedStrandedAtActionStart = stranded;
     }
 
     function fund(uint256 seed) external {
@@ -314,31 +363,31 @@ contract RewardCustodyHandler is Test {
     }
 
     /// #1566 closure 2 cutover PR 2 — classify a random share of a random
-    /// landed packet's remainder, under the pause; the caps are the
-    /// packet's classifiable part split at random on the first entry and
-    /// restated after (read back from the packet).
+    /// landed packet's remainder, under the pause. The packet's evidence
+    /// (its authenticated fresh figure) is written once per packet, at
+    /// random within what it put in, the way the transport attestation
+    /// would; the fresh share stays within it, the recycled share within
+    /// the remainder.
     function classify(uint256 seed) external {
         _start();
         if (packetHashes.length == 0) return;
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
-        (, uint256 remainder, uint256 cf, uint256 cr, , uint256 fc, uint256 rc, bool fixed_) =
-            recon.getPacketReconciliation(h);
+        (, uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated) = recon.getPacketReconciliation(h);
         if (remainder == 0) return;
-        if (!fixed_) {
-            uint256 budget = remainder + cf + cr;
-            fc = bound(uint256(keccak256(abi.encode(seed, "cap"))), 0, budget);
-            rc = budget - fc;
+        if (authenticated == 0) {
+            authenticated = bound(uint256(keccak256(abi.encode(seed, "evidence"))), 0, remainder + cf + cr);
+            TestMutatorFacet(diamond).setPacketFreshAuthenticatedRaw(h, authenticated);
         }
-        uint256 freshRoom = fc > cf ? fc - cf : 0;
-        uint256 recycledRoom = rc > cr ? rc - cr : 0;
+        uint256 freshRoom = authenticated > cf ? authenticated - cf : 0;
+        if (freshRoom > remainder) freshRoom = remainder;
         uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "f"))), 0, freshRoom);
-        uint256 recycled = bound(uint256(keccak256(abi.encode(seed, "r"))), 0, recycledRoom);
-        if (fresh + recycled > remainder) recycled = remainder - fresh;
+        uint256 recycled = bound(uint256(keccak256(abi.encode(seed, "r"))), 0, remainder - fresh);
         if (fresh + recycled == 0) return;
         AdminFacet(diamond).pause();
-        try recon.classifyLegacyPacket(h, fresh, recycled, fc, rc, keccak256(abi.encode("entry", calls))) {}
-        catch {
+        try recon.classifyLegacyPacket(h, fresh, recycled, keccak256(abi.encode("entry", calls))) {
+            classified++;
+        } catch {
             refusals++;
         }
         AdminFacet(diamond).unpause();
@@ -358,8 +407,9 @@ contract RewardCustodyHandler is Test {
         if (credit == 0) return;
         uint256 amount = bound(uint256(keccak256(abi.encode(seed, "amt"))), 1, credit);
         AdminFacet(diamond).pause();
-        try recon.reclassifyReconciliationEntry(index, freshToRecycled, amount, keccak256(abi.encode("re", calls))) {}
-        catch {
+        try recon.reclassifyReconciliationEntry(index, freshToRecycled, amount, keccak256(abi.encode("re", calls))) {
+            reclassified++;
+        } catch {
             refusals++;
         }
         AdminFacet(diamond).unpause();

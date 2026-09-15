@@ -6338,9 +6338,21 @@ PR C.**
 > into the row and keeps its per-packet remainder, so an entry can never
 > classify beyond what the packet put into the row — the third bound of
 > "three bounds, not two" is enforced by custody rather than by a check;
-> the two component caps (operator-stated for the classifiable part, fixed
-> by the first entry, their sum bounded by that part) stay, because a wrong
-> SPLIT still passes the total. **(2) Spent-ness reads the POOL; the queue
+> and the fresh side of a split is bounded by EVIDENCE, as this section's
+> privileged-direction rule states (L4436-4450) and as landed: a packet's
+> classified fresh never exceeds its AUTHENTICATED fresh figure, which no
+> administrator writes — the transport-carried attestation of the source
+> chain's own recorded split is its writer and lands with the transport
+> epochs, so until then the figure is zero and an untyped packet
+> classifies recycled or stays where it is; the correction toward fresh is
+> the same door and takes the same bound, cumulatively over the packet's
+> entries; the envelope, whose history has no evidence source, relocates
+> as recycled only, its fresh side exactly what was replacement-funded
+> (delta-checked) and bounded by it. The operator-stated component caps an
+> earlier landed shape carried — "fixed by the first entry, restated
+> after" — validated an entry against the operator's own reconstruction
+> and nothing else (Codex #2206 r3, P1: a self-declared cap is not
+> evidence), and are gone. **(2) Spent-ness reads the POOL; the queue
 > is the classified set.** This section derives spent-ness from monotone
 > outflow counters against per-entry prefixes. Two review rounds on the
 > landed PR showed that form needs every writer of the fresh pool to be
@@ -6359,17 +6371,41 @@ PR C.**
 > classified credits; an entry never reads spent while its side still backs
 > the classified set. An inherited debit is the entry's own per-side
 > INHERITED figure (spent without any outflow of its side, unwound by the
-> reverse move); the restitution-absorbed part of a fresh credit is neither
-> queued nor a correction's to move; a packet-backed entry's correction
-> moves the packet's component counters AND its caps (the split restated,
-> their sum unchanged). On the recycled side the bucket's outflow is of two
-> kinds and only consumption is inheritable: the consumption since the
-> recycled queue opened (a monotone counter advanced by `consume` only),
-> less what the fresh side already inherited, is attributed to the spent
-> classified credit first in queue order; what left by surplus repatriation
-> stays where it left from. The bucket's derived absorption floor nets the
-> two reattribution cumulatives exactly as it nets relocated custody, so a
-> correction on an unseeded Diamond reports no absorption it did not make.
+> reverse move). Of a partly spent entry the UNSPENT part is corrected
+> first, with its tokens, and only what the corrected credit can no longer
+> cover moves as the debit — the order that reproduces the ledger a
+> correct-at-ingress split would have produced (L4028-4032): ten fresh with
+> five paid, two corrected to recycled, is eight fresh with the same five
+> paid and two unspent in the bucket, exactly as 8/2 at ingress would have
+> settled; this section's "spent attribution first" is the FIFO attribution
+> of spent-ness among the entries (L4249), not a move order (Codex #2206
+> r3). The restitution-absorbed part of a fresh credit is neither queued
+> nor a correction's to move FOR AS LONG AS THE RESTITUTION ROW HOLDS IT:
+> the absorbed records form a third tree, read against the restitution row
+> the way the queue is read against the live row (the row's other backing
+> released first), and what the row no longer holds of them re-enters the
+> live queue FIFO by log order — where the live row says whether it is
+> unspent (the paid-correction moved it to live) or spent (the treasury
+> release paid the deficit with it) — so a fully absorbed entry is
+> correctable once the deficit resolves (Codex #2206 r3). A packet-backed
+> entry's correction moves the packet's component counters with it, so the
+> cumulative its evidence bounds stays current. On the recycled side the
+> bucket's outflow is of two kinds and only consumption is inheritable, and
+> what a consumption took of the CLASSIFIED credit is recorded at the
+> outflow itself, where its kind is known: `consume` records the growth of
+> the queue's shortfall (nothing while the bucket's other backing still
+> covers the queued total; nothing while nothing is queued), a surplus
+> repatriation grows the shortfall without touching the record, and a
+> reversed payout (`restoreReleasedRemit`) is netted out of it
+> conservatively; both records are monotone, each advanced by its own
+> primitive only, and what the fresh side already inherited is kept beside
+> them so it is not offered again. A counter of ALL consumption read
+> against the queue's opening base — the round-2 form — attributed
+> consumption made while nothing was queued to a later entry, and kept
+> offering a reversed payout as inheritable (Codex #2206 r3). The bucket's
+> derived absorption floor nets the two reattribution cumulatives exactly
+> as it nets relocated custody, so a correction on an unseeded Diamond
+> reports no absorption it did not make.
 > **(3) One era.** No era registry
 > exists yet; every entry keys era 0 and PR C's backfill assigns real ids.
 > **(4) Transport epochs are NOT here.** PR 1's note listed them as PR 2's;
@@ -6386,7 +6422,16 @@ PR C.**
 > PR B's activation gate, and the envelope's recycled share takes the
 > slice-0 disposition family here. The epoch has no finalization; the two
 > owner-only dispositions (an imported-gap shortfall, an undrainable lane)
-> are escalated, not decided.
+> are escalated, not decided. **(5) PR 1 and PR 2 are one layout era.**
+> PR 2 appends a packet's reconciliation figures (`protectedCumulative`
+> and the exits) to the struct PR 1 introduced; a packet recorded under
+> PR 1's code alone would hold `unclassified` with no cumulative behind
+> it. No deployment carries PR 1's code — `ingressPackets` first shipped on
+> `main` with #2198 (2026-09-14) and the newest deployment artifact
+> predates it (base-sepolia, 2026-06-30) — and PR 2 lands before any
+> refresh, so every packet ever recorded on a refreshed chain is recorded
+> with both figures in the same statement. PR 1's commit is not a
+> deployable era on its own (Codex #2206 r3).
 
 - **Role-branched custody, so the frozen column stays frozen** (review r1):
   every custody read and debit below is branched on `LibVaipakam.rewardRole`.

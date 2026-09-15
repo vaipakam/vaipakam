@@ -2385,4 +2385,20 @@ contract TestMutatorFacet {
             }
         }
     }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — a landed packet's
+    ///         AUTHENTICATED fresh figure, which in production only the
+    ///         transport-carried attestation of the source chain's recorded
+    ///         split writes (the transport epochs' change). Written raw here
+    ///         so the evidence-bound fresh path is exercised.
+    function setPacketFreshAuthenticatedRaw(bytes32 packetHash, uint256 amount) external {
+        LibVaipakam.storageSlot().ingressPackets[packetHash].freshAuthenticated = amount;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — drive the REAL
+    ///         released-remit restore: the reversed payout the
+    ///         reconciliation nets out of inheritable consumption.
+    function restoreReleasedRemitRaw(uint256 recycledFull, uint256 recycledSent) external {
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent);
+    }
 }

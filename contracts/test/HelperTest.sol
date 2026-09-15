@@ -97,7 +97,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](206); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5
+        selectors = new bytes4[](208); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +2
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -149,6 +149,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1566 closure 2 cutover PR 2 — the evidence writer + the restore driver.
+        selectors[n++] = TestMutatorFacet.setPacketFreshAuthenticatedRaw.selector;
+        selectors[n++] = TestMutatorFacet.restoreReleasedRemitRaw.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
         selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;

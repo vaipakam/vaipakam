@@ -19,16 +19,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "freshCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "entryId",
         "type": "bytes32",
         "internalType": "bytes32"
@@ -80,11 +70,6 @@
           },
           {
             "name": "netTotal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "relocatedFresh",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -155,19 +140,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "freshCap",
+        "name": "freshAuthenticated",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "recycledCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "capsFixed",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -184,7 +159,12 @@
     ],
     "outputs": [
       {
-        "name": "freshQueuedTotal",
+        "name": "freshQueued",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshReleased",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -194,7 +174,17 @@
         "internalType": "uint256"
       },
       {
-        "name": "recycledQueuedTotal",
+        "name": "freshAbsorbedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "restitutionRow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledQueued",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -204,17 +194,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "recycledOpen",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "recycledConsumedSeq",
+        "name": "recycledClassifiedConsumed",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "recycledConsumedBase",
+        "name": "recycledClassifiedStranded",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -391,11 +376,6 @@
         "internalType": "bytes32"
       },
       {
-        "name": "relocateFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "relocateRecycled",
         "type": "uint256",
         "internalType": "uint256"
@@ -522,12 +502,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "relocatedFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "relocatedRecycled",
         "type": "uint256",
         "indexed": false,
@@ -547,37 +521,6 @@
       },
       {
         "name": "writtenDown",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LegacyPacketCapsFixed",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "freshCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "budget",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2505,74 +2448,6 @@
   },
   {
     "type": "error",
-    "name": "ReconciliationCapsExceedBudget",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "capsSum",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "budget",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReconciliationCapsFixed",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "freshCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReconciliationComponentCapExceeded",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "side",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "cumulative",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ReconciliationEntryReplayed",
     "inputs": [
       {
@@ -2667,6 +2542,27 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationFreshUnevidenced",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "cumulativeFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authenticated",
         "type": "uint256",
         "internalType": "uint256"
       }
