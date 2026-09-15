@@ -54,6 +54,7 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import { resolveSettledHead, SAFE_FALLBACK_BUFFER, type SettledHead } from './settledHead';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -197,7 +198,6 @@ async function stampNotifiedWatermark(
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
  *  (Base / Arb / OP / Polygon zkEVM) settle well within ~10. 32 covers
  *  every chain we ship on with a comfortable margin. */
-const SAFE_FALLBACK_BUFFER = 32n;
 
 /** #1415 — how far the reported head may sit below the stored cursor
  *  before the caught-up path logs a loud stale/mis-pointed-RPC
@@ -973,11 +973,52 @@ export async function _runLoanReconcilePass(input: {
   chain: ChainConfig;
   chainId: number;
   diamond: Address;
-  /** The SAFE head this path resolved. Every read pins to it. */
-  head: bigint;
+  /**
+   * The head this path resolved, WITH its provenance. Every read pins to
+   * `head.block`; a head the chain did not call settled is refused here
+   * rather than at the call sites (#2201).
+   */
+  head: SettledHead;
   budget: ReconcileOptions;
 }): Promise<number[]> {
   const { env, chain, chainId, diamond, head, budget } = input;
+  // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
+  //
+  // `latest - 32` is a heuristic finality margin, not the chain's statement
+  // about finality, and a reorg deeper than the margin presents a terminal
+  // state that later disappears. This pass selects only live rows, so a row
+  // it terminalizes leaves the live set and is never examined again: a wrong
+  // read publishes an OPEN position as closed, permanently, and the
+  // correction that exists to end ghost rows would be minting them.
+  //
+  // Refusing here is not a claim that the guess is safe for the scan — it is
+  // not, and #2201 stays open for that half. It is that this consumer's
+  // wrong record is the worse one and is the one its own mechanism cannot
+  // revisit.
+  //
+  // And the refusal is SAID. A chain that cannot supply a settled point has
+  // NO correction running at all; an operator must learn that from the log
+  // rather than from a divergence months later, because a check that quietly
+  // declines to run reports perfect health while records stay wrong — the
+  // whole argument of #2203.
+  //
+  // The MESSAGE NAMES THE PROVIDER'S OWN REASON rather than asserting one.
+  // The fallback is taken on any failure of the settled read, so a timeout on
+  // a provider that normally answers looks identical here to a provider that
+  // cannot; telling an operator to "configure an RPC that supports `safe`"
+  // when theirs does would send them to fix something that is not broken.
+  if (!head.settled) {
+    console.warn(
+      `[chainIndexer] reconcile NOT RUNNING on chain ${chainId}: no settled ` +
+        `block could be read, so the only head available is a guess ` +
+        `(latest - ${SAFE_FALLBACK_BUFFER}). A correction may not act on ` +
+        `that — a row it closes is never re-examined. Loans whose terminal ` +
+        `event was missed stay published as open on this chain until the ` +
+        `settled read succeeds. The provider said: ` +
+        `${head.fallbackReason ?? 'no reason given'}`,
+    );
+    return [];
+  }
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1004,7 +1045,7 @@ export async function _runLoanReconcilePass(input: {
         db: env.DB,
         chainId,
         diamond,
-        head,
+        head: head.block,
         readContract: (args) =>
           reconcileClient.readContract(args as never) as Promise<unknown>,
         metricsAbi: DIAMOND_METRICS_ABI,
@@ -1039,7 +1080,7 @@ export async function _runLoanReconcilePass(input: {
           const holders = await resolveCurrentHolders(
             reconcileClient,
             diamond,
-            head,
+            head.block,
             tokenIds,
           );
           // OWNER WRITE, FOR A SUBSTANTIATED SIDE ONLY (#2190 r7
@@ -1184,16 +1225,21 @@ export async function runChainIndexerForChain(
   // block, leaving the stale row in D1 forever. Reading at the safe
   // head keeps the cursor reorg-proof — by the time a block is
   // safe-tagged its reorg horizon is past. Falls back to
-  // `latest - SAFE_FALLBACK_BUFFER` when the RPC doesn't support the
-  // safe tag (older nodes / some private RPCs).
-  let head: bigint;
-  try {
-    const safeBlock = await client.getBlock({ blockTag: 'safe' });
-    head = safeBlock.number;
-  } catch {
-    const latest = await client.getBlockNumber();
-    head = latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
-  }
+  // `latest - SAFE_FALLBACK_BUFFER` when the settled read does not answer —
+  // an old node or a private RPC that lacks the tag, and equally a timeout
+  // from one that has it, since the catch cannot tell those apart.
+  //
+  // THE FALLBACK IS NOT SAFE HERE EITHER, AND THIS PR DOES NOT FIX IT
+  // (#2201). Do not read the correction's refusal below as "the guess is
+  // fine for the scan": the cursor advances monotonically from
+  // `lastBlock + 1`, exactly as the paragraph above says, so a
+  // reorganised-out block is never revisited and its rows stay wrong for
+  // good. What differs is severity — the correction publishes an OPEN
+  // position as closed and cannot re-examine it — not recoverability.
+  // `_CodeVsDocsAudit.md` carries the retraction of the self-correcting
+  // claim, which has had to be made more than once.
+  const settledHead = await resolveSettledHead(client);
+  const head = settledHead.block;
 
   // Resume cursor: last block we successfully processed. On first
   // run, start from deployBlock — but cap the per-tick work at
@@ -1311,7 +1357,7 @@ export async function runChainIndexerForChain(
         chain,
         chainId,
         diamond,
-        head,
+        head: settledHead,
         budget: reconcileBudget,
       });
     }
@@ -1630,7 +1676,14 @@ export async function runChainIndexerForChain(
   // separately (see the reply on that thread).
   const reconciledLoanIds =
     scanTo === head
-      ? await _runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
+      ? await _runLoanReconcilePass({
+          env,
+          chain,
+          chainId,
+          diamond,
+          head: settledHead,
+          budget: reconcileBudget,
+        })
       : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);

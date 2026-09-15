@@ -169,7 +169,9 @@ describe('the join, not just the wording', () => {
     chain: { rpc: 'http://127.0.0.1:1/unused' } as unknown as ChainConfig,
     chainId: CHAIN,
     diamond: '0x0000000000000000000000000000000000000001' as `0x${string}`,
-    head: 100n,
+    // A head the CHAIN called settled. The pass refuses a guessed one
+    // outright (#2201), which the last case below pins.
+    head: { block: 100n, timestamp: 1_700_000_000n, settled: true },
     budget: {},
   });
 
@@ -233,6 +235,38 @@ describe('the join, not just the wording', () => {
       expect(finished.out).toContain(line);
       expect(died.out).toContain(line);
     }
+  });
+
+  it('refuses outright on a head the chain did not call settled', async () => {
+    // #2201. `latest - 32` is a finality GUESS, and this pass terminalizes
+    // rows it then never selects again — so a reorg deeper than the margin
+    // would publish an open position as closed, permanently, from the very
+    // code that exists to end ghost rows. The gate lives inside the pass
+    // rather than at its two call sites, so a third caller cannot be
+    // written without it.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const ids = await _runLoanReconcilePass({
+      ...passInput(),
+      head: {
+        block: 100n,
+        timestamp: 1_700_000_000n,
+        settled: false,
+        fallbackReason: 'unsupported block tag: safe',
+      },
+    });
+    expect(ids).toEqual([]);
+    const out = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // SAID, not silently skipped — a check that quietly declines to run
+    // reports perfect health while records stay wrong.
+    expect(out).toContain('NOT RUNNING');
+    // The PROVIDER'S reason, quoted. The fallback is taken on any failure of
+    // the settled read, so an asserted cause would send an operator whose
+    // RPC timed out to reconfigure an RPC that works.
+    expect(out).toContain('unsupported block tag: safe');
   });
 
   it('still reports what it noticed when the failure is NOT a partial one', async () => {

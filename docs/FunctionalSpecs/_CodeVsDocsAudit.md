@@ -845,3 +845,31 @@ settled tag therefore does not exempt a deployment; it only makes the
 contingency rarer. An earlier version of this entry said the deployed
 configuration "reads a settled point normally", which is true on the ordinary
 path and was doing the work of an exemption it does not provide.
+
+**HALF RESOLVED (#2201, correction side).** The correction no longer acts on
+a guessed settled point: the resolution now reports whether the chain named
+the block or the platform stepped back from the tip, and the correction
+refuses the latter and says which chain it is not running on. The spec's
+statement of intent is unchanged — this is the code moving toward it, not the
+doc being weakened — and `Alpha02ConnectedApp.md` now also states the
+not-running behaviour, since "it declines, and says so" is itself intended
+behaviour rather than an implementation detail.
+
+The message quotes the source's own reason rather than naming a cause, which
+is this entry's unconditional-`catch` paragraph made operational: a timeout
+from a capable source and a source that lacks the capability are
+indistinguishable at that moment, so an asserted cause would send an operator
+to replace something that works.
+
+**The scan half remains open and #2201 stays open with it.** The entry above
+is right that the fix must cover both consumers; what stopped the scan being
+covered in the same change is that its remedy is a real trade rather than a
+strictly-better refusal. The correction declining costs nothing that was
+working — no correction is the status quo ante. A scan declining to advance
+would mean a deployment whose source never answers the settled read never
+indexes that chain at all. That is a liveness decision with an owner-visible
+cost, and folding it into a correction fix would have made it silently.
+
+Recorded because the temptation, twice now, has been to resolve the asymmetry
+by restating the retracted claim — that the scan self-corrects — and thereby
+closing the whole entry. It does not, and the retraction above stands.

@@ -233,6 +233,20 @@ The app uses chain reads and indexed reads for different jobs.
   can tell a forced sale from an ordinary default where the chain's own
   status cannot — a record corrected from the chain may therefore name
   the ending less precisely than the event would have.
+- When no settled point can be read, the correction does not run at all,
+  and says which chain it is not running on. Guessing one — stepping back a
+  fixed distance from the newest block — answers the question with the
+  wrong kind of answer, and the whole reason for the rule above is that
+  being wrong here cannot be undone. Not running is the honest outcome;
+  running quietly on a guess is not, and neither is declining quietly,
+  because a check that silently skips itself reports perfect health while
+  records stay wrong. What the platform reports is the reason its source
+  gave, never a cause inferred from the failure: a source that supports the
+  question and merely timed out is indistinguishable at that moment from
+  one that cannot answer it, and an operator sent to replace a working
+  source has been told something false. A chain in that state keeps
+  whatever records it already had — nothing is corrected, nothing is
+  damaged — until the settled read succeeds.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a
