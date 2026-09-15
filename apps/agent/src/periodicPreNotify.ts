@@ -517,6 +517,13 @@ async function readLoanStates(
         'getLoanDetails',
         loanIds.map((id) => [BigInt(id)]),
       ),
+      // CHUNK SIZE PASSED EXPLICITLY, not left to the library's default. The
+      // scan's whole cost model is "one outbound request per batch", and that
+      // is only true while the chunk size is at least the batch size — today
+      // both happen to be 100, which is a coincidence a reader would have to
+      // check in another package to notice. Passing it makes the claim
+      // structural: whatever `EXAMINE_BATCH` becomes, a batch is one request.
+      EXAMINE_BATCH,
     );
   } catch (err) {
     // BOUNDED DESCRIPTION, never the message: viem puts the full request URL
