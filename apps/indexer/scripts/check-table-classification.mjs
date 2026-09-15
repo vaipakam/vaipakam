@@ -89,6 +89,13 @@ const CLASSIFICATION = {
     reason: 'keeper band-edge producer state; cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
+  loan_reconcile_quarantine: {
+    class: 'replay-derived',
+    reason:
+      'reconciliation findings about `loans` rows; the pass rebuilds them from the chain, ' +
+      'and a restored entry naming a loan the replay has not recreated would withhold ' +
+      "reminders for a row that no longer exists in that shape (#2212)",
+  },
 
   // decision-needed — every entry here is #1481 scope. Do NOT clear
   // these in §6 and do NOT assume the archive covers them.
