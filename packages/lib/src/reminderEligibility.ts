@@ -50,8 +50,11 @@
  * small" was an assumption about load, and an assumption is not a limit.
  *
  * The calendar sweep keeps this rule, and the difference is width, not
- * principle: its window can hold a hundred rows per chain per tick, so
- * per-row chain reads there are the subrequest-budget problem #2194 tracks.
+ * principle: its window is bounded at 2,000 rows per chain per tick
+ * (`SWEEP_LIMIT`), so even batched, verifying it on-chain would cost that
+ * Worker twenty subrequests per chain against the invocation budget #2194
+ * already reports as over. Batching moved the narrow lane's reads from
+ * one-per-loan to one-per-chain; it does not make the wide one affordable.
  * Cheap memory for the wide path; direct verification for the narrow one.
  */
 

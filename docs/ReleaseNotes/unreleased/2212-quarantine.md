@@ -102,9 +102,10 @@ the large case: a record that has been wrong for hours or days because an
 ending was missed. What remains is a few seconds, on a reminder about a
 payment that is still days away.
 
-The reason for the split is width. The sweep considers up to a hundred records
-per chain each turn, where asking about each one would cost more requests than
-the platform's own budget allows; this lane considers a few. A first attempt
+The reason for the split is width. The sweep considers up to two thousand
+records per chain each turn, where asking about them would cost more requests
+than that part of the platform's budget allows even when the asking is
+batched; this lane considers the few inside a three-day window. A first attempt
 had it share the memory instead, and three separate problems followed — all of
 them about coordinating two independently-scheduled parts of the system rather
 than about the rule itself.
