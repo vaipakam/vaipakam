@@ -4,16 +4,19 @@ Four entries. The first is the second half of the #1566 closure-2 cutover
 apparatus — the legacy reconciliation epoch — and it is the one that
 moves attribution: an administrator, under the platform's manual pause on
 an activated deployment, classifies the value the first half protected at
-ingress into fresh or recycled backing, corrects a classification within
-what is unspent, and reconciles the inventory that predates packet
-stamping once, as one aggregate the platform measures itself. What makes
+ingress into fresh or recycled backing, corrects a classification —
+unspent value moving with its tokens, spent value moving as a debit the
+other side inherits, and only what the side's own ledger charged — and
+reconciles the inventory that predates packet stamping once, as one
+aggregate the platform measures itself. What makes
 those moves safe to offer is stated with them: a fresh share needs
 evidence the administrator cannot write, which no transport supplies yet,
 so until the transport epochs land a classification can only be recycled
 (the envelope's administrator-funded fresh is the one fresh the epoch can
 carry, and its later correction is bounded by it); what each outflow
-spent of a classified value is
-recorded into the entry's own record at the outflow, so a correction
+spent of a classified value is recorded into the entry's own record — in
+bounded work at the outflow, the remainder carried and written by later
+steps anyone may take, and a correction waits for it — so a correction
 never infers spent-ness from a total and never inherits a payout that
 did not happen; and the identity that ties the recycled backing's lifetime
 figures together has one implementation on chain, which the one-time
@@ -136,9 +139,13 @@ the tokens are still there (measured at both ends, and as recycled backing
 only — the inventory has no evidence source), funded by the administrator
 where they are not (delta-checked into the address, as fresh or recycled;
 the funded fresh is the only fresh the envelope can carry, and its later
-correction is bounded by it), or written down. The resolution must be exact and the aggregate is then
-entered into the same correctable record as every classification, so its
-error path is the same correction. The epoch has no end: nothing here
+correction is bounded by it), or written down. The resolution must be exact. What the import credits — the
+relocated and replaced recycled share, the funded fresh — is entered into
+the same correctable record as every classification, so a wrong fresh or
+recycled attribution of the credited portion has the same correction; the
+write-down and the choice between relocating and funding are recorded
+once and are not correctable afterwards, so the import must be right the
+first time. The epoch has no end: nothing here
 closes it, by design.
 
 One small correction to the refresh rides along: the remittance
@@ -158,7 +165,7 @@ together with the packet from the first refresh that carries them.
 Refs #1566, #1349, #1956.
 <!-- assembled-fragment: 1566-closure-2-cutover-2.md sha256=9404704456d185ec08452a0a75dc3cf3eb65067e19df53f3329f209f625ed177 -->
 
-## Thread — A correction could close a position on a block the chain never called settled (issue #2201)
+## Thread — A correction could close a position on a block the chain never called settled (PR #2211, issue #2201)
 
 Before the platform corrects a loan's recorded state against the chain, it
 has to pick a moment to look at. It asks the chain for the point the chain
@@ -194,7 +201,10 @@ operator learns that from the log rather than from a divergence months later.
 A check that quietly declines to run reports perfect health while records stay
 wrong — the same failure a companion change fixed on the same path this week.
 
-The message quotes the provider's own reason rather than asserting one. The
+The message names a bounded failure category built from what the client
+raised — its class, and a numeric code or status where there is one —
+never a cause the provider stated; a timeout in particular carries no
+provider reason at all. The
 fallback is taken whenever the settled read does not answer, so a momentary
 timeout on a capable provider looks identical to a provider that cannot answer
 at all; telling that operator their setup lacks a feature it has would send
@@ -289,7 +299,7 @@ Refs #2201. The published recycling snapshot still does not tell its readers
 which kind of block it was pinned to; that is #2210.
 <!-- assembled-fragment: 2201-settled-head.md sha256=69355ef6919ac8c717ab6b8f580bc5ee9b3faae6c914feb6aeb2575c98485b6d -->
 
-## Thread — Two published figures named the wrong ingest arrangement (PR #2204, issue #2202)
+## Thread — Two published figures named the wrong ingest arrangement (PR #2207, issue #2202)
 
 The platform can take in chain data two ways, and it publishes how fast it
 expects to do so — a figure an operator uses to judge how long a wrong record
