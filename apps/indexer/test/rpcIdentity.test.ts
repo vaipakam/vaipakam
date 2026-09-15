@@ -34,8 +34,12 @@ describe('verifyRpcChainIdentity', () => {
   it('a matching chain id verifies and CACHES — the probe costs one call per isolate per pair', async () => {
     const c = stubClient(() => Promise.resolve(84532));
     const rpc = 'https://rpc.example/match-cache';
-    expect(await verifyRpcChainIdentity(c, 84532, rpc)).toEqual({ ok: true });
-    expect(await verifyRpcChainIdentity(c, 84532, rpc)).toEqual({ ok: true });
+    // `probed` says whether a REQUEST went out, which is what a caller with an
+    // outbound-request budget has to charge for (#2213 r16 `4014095543`).
+    // The first call probes; the second answers from memory and must say so,
+    // or a caller invents a subrequest per chain per tick.
+    expect(await verifyRpcChainIdentity(c, 84532, rpc)).toEqual({ ok: true, probed: true });
+    expect(await verifyRpcChainIdentity(c, 84532, rpc)).toEqual({ ok: true, probed: false });
     expect(c.calls()).toBe(1);
   });
 
@@ -75,6 +79,7 @@ describe('verifyRpcChainIdentity', () => {
     const healed = stubClient(() => Promise.resolve(84532));
     expect(await verifyRpcChainIdentity(healed, 84532, rpc)).toEqual({
       ok: true,
+      probed: true,
     });
     expect(healed.calls()).toBe(1);
   });

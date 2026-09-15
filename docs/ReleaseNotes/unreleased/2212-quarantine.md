@@ -157,17 +157,20 @@ it — and one whose recipients have both switched these reminders off. The firs
 was fixed by separating "looked at" from "sent"; the second showed that fixing
 cases one at a time would keep finding the next one.
 
-So the limit now counts the thing it exists to protect: **outbound messages**,
-decremented where a message is actually issued. A record that sends nothing
-cannot consume it, whatever the reason it sent nothing — rejected, switched
-off, or nobody subscribed — because there is no path to sending that skips the
-count and no path to the count that skips a send. A run also walks past records
+So the limit now counts the thing it exists to protect: **outbound requests**,
+decremented wherever one is actually issued — the platform's own queries to
+the chain as well as the messages it sends. What it does NOT count is records:
+a record that issues nothing cannot consume the limit, whatever the reason it
+sent nothing — rejected, switched off, or nobody subscribed. That is the
+distinction the earlier version of this paragraph lost by saying the limit
+counts messages, which would leave an operator unable to explain a run that
+exhausted its allowance while delivering little. A run also walks past records
 it cannot send for, in batches of a hundred, and reaches the ones behind them
 on the same run.
 
 One consequence is worth stating because it looks like waste: a run refuses to
-begin a record it might not be able to finish, which can leave a few messages
-of allowance unused. Stopping halfway through a record would tell one party and
+begin a record it might not be able to finish, which can leave a little
+allowance unused. Stopping halfway through a record would tell one party and
 mark the reminder as delivered, so the other party's reminder would not be
 delayed — it would be lost.
 

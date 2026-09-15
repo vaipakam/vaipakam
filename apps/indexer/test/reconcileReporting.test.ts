@@ -278,6 +278,11 @@ describe('the join, not just the wording', () => {
             bind: () => ({
               first: async () => ({ n: 0 }),
               all: async () => ({ results: [] }),
+              // The release sweep RUNS — without this it throws, the
+              // production catch returns, and the reporter below is never
+              // reached while this test still passes (#2213 r16
+              // `4014095568`).
+              run: async () => ({ meta: { changes: 0 } }),
             }),
             first: async () => ({ name: 'loan_reconcile_quarantine' }),
           };
@@ -285,12 +290,15 @@ describe('the join, not just the wording', () => {
       },
     } as unknown as Env;
     await _reportQuarantineForChain(env, CHAIN);
-    // `FROM loan_reconcile_quarantine`, not merely the table's NAME: the
-    // availability probe's own SQL mentions the name (in a `sqlite_master`
-    // lookup), so the looser assertion passed with the report disabled —
-    // found by mutation, and exactly the class of false pass this suite has
-    // caught three times now.
-    expect(seen.some((q) => /FROM\s+loan_reconcile_quarantine/.test(q))).toBe(true);
+    // THE REPORTER'S OWN QUERY, not any query naming the table. Three
+    // different statements mention it now — the availability probe via
+    // `sqlite_master`, the release sweep's DELETE, and the report's COUNT —
+    // so each loosening of this assertion has found a new way to pass while
+    // the thing it names never ran. This matches the COUNT, which only the
+    // reporter issues.
+    expect(
+      seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
+    ).toBe(true);
   });
 
   it('refuses outright on a head the chain did not call settled', async () => {

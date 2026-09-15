@@ -238,6 +238,48 @@ async function preNotifyChain(
   const client = createPublicClient({
     transport: http(chain.rpc, { retryCount: 0, timeout: 5_000 }),
   });
+  // IS THIS EVEN THE RIGHT CHAIN? ASKED FIRST (#2213 r14 `4013761179`, and
+  // the ORDER is r16 `4014095561`).
+  //
+  // Everything below treats what this endpoint says as authoritative enough
+  // to send a message that cannot be taken back. An `RPC_*` secret swapped to
+  // a foreign network — with a head past our cursor and plausible state at the
+  // same address — would answer every one of those reads confidently and
+  // wrongly. The indexer has refused that configuration before reading state
+  // since #1415; this lane became authoritative in r11 and never asked.
+  //
+  // IT GOES BEFORE THE LEAD-TIME READ, and that ordering is the whole of r16's
+  // finding. With the probe after it, a foreign deployment answering a shorter
+  // `getPreNotifyDays` could empty the candidate window, and an empty window
+  // returns before the identity check ever runs — so the mis-pointed endpoint
+  // decided whether its own identity was examined, and suppressed every
+  // reminder on the chain for as long as the secret stayed wrong. Silently.
+  // A precondition that a later step can skip is not a precondition.
+  //
+  // Cached per isolate per (chain, url), and CHARGED ONLY WHEN IT PROBES
+  // (r16 `4014095543`): after the first pass it answers from memory and issues
+  // nothing, so charging for the call rather than the request would invent one
+  // per chain per tick. A MISMATCH and an UNANSWERED probe both stop the
+  // chain — an endpoint that cannot say what it is could be the mis-pointed one.
+  const identity = await verifyRpcChainIdentity(
+    client,
+    chain.id,
+    chain.rpc,
+    'periodicPreNotify',
+  );
+  if (!identity.ok || identity.probed) budget.remaining -= 1;
+  if (!identity.ok) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the RPC ` +
+        `${
+          identity.reason === 'mismatch'
+            ? `answered eth_chainId=${identity.reported}, which is not this chain`
+            : 'could not confirm which chain it serves'
+        }. Nothing read from it can justify a reminder.`,
+    );
+    return;
+  }
+
   let preNotifyDays = DEFAULT_PRE_NOTIFY_DAYS;
   budget.remaining -= 1; // the lead-time read below
   try {
@@ -307,38 +349,6 @@ async function preNotifyChain(
   // rows it never revisits; this lane decides one message and asks again next
   // tick. (The stronger version would share the indexer's settled-head
   // resolver, which lives in that Worker and is not reachable from here.)
-  // IS THIS EVEN THE RIGHT CHAIN? (#2213 r14 `4013761179`)
-  //
-  // Everything below treats what this endpoint says as authoritative enough
-  // to send a message that cannot be taken back. An `RPC_*` secret swapped to
-  // a foreign network — with a head past our cursor and plausible state at the
-  // same address — would answer every one of those reads confidently and
-  // wrongly, certifying a foreign loan as running. The indexer has refused
-  // that configuration before reading state since #1415; this lane became
-  // authoritative in r11 and never asked.
-  //
-  // Cached per isolate per (chain, url), so it costs one request on the first
-  // pass and nothing after. A MISMATCH and an UNANSWERED probe both stop the
-  // chain: an endpoint that cannot say what it is could be the mis-pointed one.
-  budget.remaining -= 1;
-  const identity = await verifyRpcChainIdentity(
-    client,
-    chain.id,
-    chain.rpc,
-    'periodicPreNotify',
-  );
-  if (!identity.ok) {
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the RPC ` +
-        `${
-          identity.reason === 'mismatch'
-            ? `answered eth_chainId=${identity.reported}, which is not this chain`
-            : 'could not confirm which chain it serves'
-        }. Nothing read from it can justify a reminder.`,
-    );
-    return;
-  }
-
   let head: bigint;
   budget.remaining -= 1; // the head read
   try {

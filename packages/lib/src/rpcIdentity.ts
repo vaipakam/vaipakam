@@ -22,9 +22,18 @@
  * check, both callers.
  */
 
-/** What the probe concluded. `transport` is "no answer", never "fine". */
+/**
+ * What the probe concluded. `transport` is "no answer", never "fine".
+ *
+ * `probed` says whether a request was actually issued, because the caller has
+ * an outbound-request budget and this function answers from cache most of the
+ * time (#2213 r16 `4014095543`). A caller charging for the call rather than
+ * for the request invents one per chain per tick — which is the same
+ * "charged for something that did not happen" this PR has now corrected in
+ * four places.
+ */
 export type RpcIdentityVerdict =
-  | { ok: true }
+  | { ok: true; probed: boolean }
   | { ok: false; reason: 'transport' }
   | { ok: false; reason: 'mismatch'; reported: number };
 
@@ -50,7 +59,7 @@ export async function verifyRpcChainIdentity(
   lane: string,
 ): Promise<RpcIdentityVerdict> {
   const key = `${chainId}:${rpc}`;
-  if (verified.has(key)) return { ok: true };
+  if (verified.has(key)) return { ok: true, probed: false };
   let reported: number;
   try {
     reported = await client.getChainId();
@@ -70,5 +79,5 @@ export async function verifyRpcChainIdentity(
     return { ok: false, reason: 'mismatch', reported };
   }
   verified.add(key);
-  return { ok: true };
+  return { ok: true, probed: true };
 }

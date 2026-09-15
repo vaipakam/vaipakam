@@ -474,6 +474,19 @@ describe('an endpoint that may not be the chain it claims', () => {
     expect(said).toContain('not this chain');
   });
 
+  it('checks identity BEFORE the chain gets to influence the candidate set', async () => {
+    // #2213 r16 `4014095561`. The identity probe used to run after the
+    // lead-time read, and an empty candidate window returns before it — so a
+    // foreign deployment answering a shorter notification window could empty
+    // the set and skip the check on its own identity, suppressing every
+    // reminder on the chain for as long as the secret stayed wrong. A
+    // precondition a later step can skip is not a precondition.
+    reportedChainId = 1;
+    loanRows = []; // nothing due, so the old order would have returned early
+    const { said } = await run();
+    expect(said).toContain('not this chain');
+  });
+
   it('sends nothing when the RPC cannot say which chain it serves', async () => {
     // An endpoint that cannot answer could BE the mis-pointed one, so an
     // unanswered identity probe stops the chain exactly as a mismatch does.
