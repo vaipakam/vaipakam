@@ -313,13 +313,19 @@ The app uses chain reads and indexed reads for different jobs.
   reminder deferred by it is nearer the front next time and arrives well
   before the deadline it concerns, where an arbitrary order would reach the
   same records every run and the ones behind them never.
-- The bound is on reminders SENT, never on records examined. A record the
-  chain declines to confirm costs nothing to send, so charging it against the
-  bound would let a handful of permanently unconfirmable records at the front
-  of the order consume every run — examined again each time, never resolved,
-  and blocking the healthy loans behind them indefinitely. A run therefore
-  continues past records it cannot send for, up to a stated limit of its own,
-  and reaches the ones behind them in the same run.
+- The bound is on messages SENT, never on records examined or records handled.
+  Anything that occupies a slot without sending — a record the chain declines
+  to confirm, one whose recipients have switched these reminders off, one with
+  no subscriber at all — would otherwise hold the whole run's allowance while
+  never being marked as handled, so the same few would sit at the front of the
+  order on every run and the people behind them would never be reached. A run
+  therefore continues past records it cannot send for, up to a stated limit of
+  its own, and reaches the ones behind them in the same run.
+- A run will not begin a record it might not be able to finish, even when some
+  allowance remains. Stopping between one party's message and the other's
+  would mark the reminder as delivered with one side never told, and that
+  side's reminder is then lost rather than delayed. Leaving a little allowance
+  unused is the cheaper error.
 - A run that stops early says which limit stopped it, and separates what it
   found: examined, reminded, declined by the chain, and unreadable. Those need
   different remedies — a run reporting many declines is reporting records the

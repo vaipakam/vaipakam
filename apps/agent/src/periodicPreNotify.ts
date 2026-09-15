@@ -37,28 +37,49 @@ const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
 
 /**
- * The most loans this lane will MESSAGE about in one invocation, across every
- * chain (#2213 r5 `4012300071`).
+ * The allowance, counted in OUTBOUND SENDS — not in loans (#2213 r7
+ * `4012662252`).
  *
  * A Worker invocation gets a documented 50 outbound subrequests, shared with
- * every other lane on the same tick. Messaging one loan costs up to four of
- * them — push and Telegram, to borrower and lender — so eight loans is about
- * thirty-two, and the remainder covers this lane's own chain reads plus
- * whatever else the tick is doing.
+ * every other lane on the same tick. This lane spends them on pushes and
+ * Telegram messages; 32 leaves comfortable headroom for its own batched chain
+ * reads and for whatever else the tick is doing.
  *
- * The number is deliberately low rather than tuned to the ceiling. Running
- * out mid-loop is the failure worth avoiding: the throw lands in the
- * per-chain catch, so every later chain in the list loses its reminders too,
- * and it would do so on every tick.
+ * **The unit is the point, and two review rounds went into learning that.**
+ * Rounds 5 and 6 counted LOANS, which meant anything that consumed a loan slot
+ * without sending anything could hold the allowance forever: first candidates
+ * the chain rejected (r6), then candidates whose counterparties had opted out
+ * or had no subscription at all (r7). Both were charged, neither was stamped,
+ * so the same handful sat at the front of the deadline order on every tick and
+ * the subscribed borrowers behind them were never reached. Patching each case
+ * as it was found would have left the next one waiting; counting the thing the
+ * budget actually protects makes the whole class impossible, because a
+ * candidate that sends nothing cannot decrement a counter that only sending
+ * decrements.
  *
  * THIS IS A CAP ON A TICK, NOT ON A LOAN. The window is `preNotifyDays` wide
  * (three days by default) and ticks are minutes apart, so a deferred loan has
  * thousands of later chances. Two things make that true rather than hopeful:
- * the ORDER (`candidatesInWindow`) and the fact that this allowance bounds
- * SENDING ONLY — a candidate the chain rejects does not spend it, and does not
- * hold up the scan behind it either (see `EXAMINE_BATCH` below).
+ * the ORDER (`candidatesInWindow`) and the unit above.
  */
-const MAX_REMINDED_LOANS_PER_INVOCATION = 8;
+const MAX_OUTBOUND_SENDS_PER_INVOCATION = 32;
+
+/**
+ * The most sends ONE loan can need: two counterparties × two rails.
+ *
+ * Reserved in full before a loan is STARTED, which is what keeps the ceiling a
+ * ceiling. Nothing inside a loan re-checks the allowance — deliberately, since
+ * stopping between the borrower's message and the lender's would stamp the
+ * checkpoint with one side never told, and the stamp is per-loan so that side's
+ * reminder is lost rather than deferred. A loan therefore always finishes, and
+ * the only way to keep the total inside the cap is to refuse to begin one that
+ * might not fit.
+ *
+ * The cost is up to three sends unused at the end of a tick. The alternative
+ * is overshooting the invocation's subrequest budget by up to three, which is
+ * how a lane starts failing mid-loop and taking later chains down with it.
+ */
+const MAX_SENDS_PER_LOAN = 4;
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -138,7 +159,7 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
   );
   if (chains.length === 0) return;
 
-  const budget: TickBudget = { remaining: MAX_REMINDED_LOANS_PER_INVOCATION };
+  const budget: TickBudget = { remaining: MAX_OUTBOUND_SENDS_PER_INVOCATION };
 
   // START AT A DIFFERENT CHAIN EACH TICK (#2213 r5 `4012300071`). A budget
   // spent in list order is a budget the first chain spends first, so a busy
@@ -149,14 +170,15 @@ export async function runPeriodicPreNotify(env: Env): Promise<void> {
 
   for (let i = 0; i < chains.length; i++) {
     const chain = chains[(i + offset) % chains.length]!;
-    if (budget.remaining <= 0) {
+    if (budget.remaining < MAX_SENDS_PER_LOAN) {
       // SAID, not silently dropped. A chain skipped for want of allowance is
       // a chain whose borrowers got no reminder this tick, and an operator
       // seeing this every tick is being told the cap is too low for the load.
       console.warn(
         `[periodicPreNotify] chain=${chain.name} skipped: this invocation's ` +
-          `allowance of ${MAX_REMINDED_LOANS_PER_INVOCATION} reminder(s) was ` +
-          `already spent. Its turn comes first on a later tick (the start ` +
+          `allowance of ${MAX_OUTBOUND_SENDS_PER_INVOCATION} outbound send(s) ` +
+          `is down to ${budget.remaining}, below the ${MAX_SENDS_PER_LOAN} one ` +
+          `loan can need. Its turn comes first on a later tick (the start ` +
           `rotates), and the notification window is days wide.`,
       );
       continue;
@@ -262,7 +284,11 @@ async function preNotifyChain(
   let rejected = 0;
   let unreadable = 0;
   let batches = 0;
-  while (cursor < due.length && budget.remaining > 0 && batches < MAX_EXAMINE_BATCHES) {
+  while (
+    cursor < due.length &&
+    budget.remaining >= MAX_SENDS_PER_LOAN &&
+    batches < MAX_EXAMINE_BATCHES
+  ) {
     const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
     batches += 1;
 
@@ -285,7 +311,10 @@ async function preNotifyChain(
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   if (cursor < due.length) {
-    const capped = budget.remaining <= 0 ? 'the invocation ran out of allowance' : null;
+    const capped =
+      budget.remaining < MAX_SENDS_PER_LOAN
+        ? `the invocation's send allowance is down to ${budget.remaining}`
+        : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
@@ -324,7 +353,11 @@ async function messageBatch(
   let rejected = 0;
   let unreadable = 0;
   for (let i = 0; i < batch.length; i++) {
-    if (budget.remaining <= 0) return { consumed: i, reminded, rejected, unreadable };
+    // RESERVED, not spent. A loan may need up to four sends and must not be
+    // started unless all four are available — see `MAX_SENDS_PER_LOAN`.
+    if (budget.remaining < MAX_SENDS_PER_LOAN) {
+      return { consumed: i, reminded, rejected, unreadable };
+    }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
 
     // ASK THE CHAIN BEFORE SAYING SOMETHING THAT CANNOT BE TAKEN BACK
@@ -397,12 +430,6 @@ async function messageBatch(
       continue;
     }
 
-    // SPENT ONLY HERE. An ineligible loan costs no outbound message, so
-    // charging it would shrink the allowance for reasons that never used it —
-    // and, before r6, would have been the ONLY thing moving a scan past it.
-    budget.remaining -= 1;
-    reminded += 1;
-
     const daysUntil = Math.max(1, Math.ceil(secsUntil / SECONDS_PER_DAY));
 
     // Push to BOTH counterparties — borrower first (they need to
@@ -410,11 +437,12 @@ async function messageBatch(
     // query; subscribers usually overlap with HF-watcher rows so
     // the table is hot in cache.
     const borrowerOutcome = await pushIfSubscribed(
-      env, chain, row, row.borrower, daysUntil, 'borrower',
+      env, chain, row, row.borrower, daysUntil, 'borrower', budget,
     );
     const lenderOutcome = await pushIfSubscribed(
-      env, chain, row, row.lender, daysUntil, 'lender',
+      env, chain, row, row.lender, daysUntil, 'lender', budget,
     );
+    if (borrowerOutcome === 'sent' || lenderOutcome === 'sent') reminded += 1;
 
     // Stamp the de-dup column when a delivery went out, or when
     // there's genuinely no one to notify (re-querying every tick is
@@ -547,6 +575,7 @@ async function pushIfSubscribed(
   wallet: string,
   daysUntil: number,
   role: 'borrower' | 'lender',
+  budget: TickBudget,
 ): Promise<PreNotifyOutcome> {
   let sub: UserPushRow | null;
   try {
@@ -604,6 +633,14 @@ async function pushIfSubscribed(
   const deepLink = `${linkBase}/loans/${loan.loan_id}`;
 
   if (sub.push_channel) {
+    // CHARGED HERE, at the point an outbound request is actually made (#2213
+    // r7 `4012662252`). Every earlier revision charged a loan slot further up
+    // and was wrong in the same way each time: a candidate that sends nothing
+    // held the allowance, was never stamped, and so held it again on the next
+    // tick. Decrementing where the request is issued makes that impossible
+    // rather than merely handled — there is no path to a send that skips this
+    // line, and no path to this line that skips a send.
+    budget.remaining -= 1;
     try {
       await sendPush(env.PUSH_CHANNEL_PK, {
         subscriber: wallet,
@@ -619,6 +656,7 @@ async function pushIfSubscribed(
     }
   }
   if (sub.tg_chat_id && env.TG_BOT_TOKEN) {
+    budget.remaining -= 1;
     try {
       await sendMessage(env.TG_BOT_TOKEN, sub.tg_chat_id, `${title}\n${body}\n${deepLink}`);
     } catch (err) {
@@ -630,7 +668,10 @@ async function pushIfSubscribed(
   }
   // Delivery was attempted (per-rail failures are logged above, and
   // a subscriber with no rail configured still counts — matching the
-  // pre-existing stamp semantics for subscribed users).
+  // pre-existing stamp semantics for subscribed users). Note this is the
+  // STAMP semantics, not the budget's: a subscriber with no rail configured
+  // returns 'sent' here and has decremented nothing, which is correct on both
+  // counts — nothing went out, and there is nothing to retry for them.
   return 'sent';
 }
 

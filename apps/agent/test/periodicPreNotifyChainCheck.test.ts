@@ -23,7 +23,42 @@
  * about — so a positional mix-up between the candidate slice and the results
  * array fails these tests instead of silently answering about the wrong loan.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+
+/**
+ * Every outbound send the lane made this run, in order.
+ *
+ * The allowance counts SENDS, so a suite whose stubs never send exercises
+ * none of it — which is how rounds 5 and 6 shipped a budget that a
+ * non-sending candidate could hold (#2213 r7 `4012662252`). Both rails are
+ * stubbed and counted here so the cap tests below cost what a real tick costs.
+ */
+const sends: string[] = [];
+vi.mock('../src/push', () => ({
+  sendPush: vi.fn(async (_pk: string, m: { subscriber: string }) => {
+    sends.push(`push:${m.subscriber}`);
+  }),
+}));
+vi.mock('../src/telegram', () => ({
+  sendMessage: vi.fn(async (_t: string, chat: string) => {
+    sends.push(`tg:${chat}`);
+    return true;
+  }),
+}));
+
+/** Who is subscribed, and how. `null` = no subscription row at all. */
+let subscriberFor: (wallet: string) => Record<string, unknown> | null;
+
+/** A subscriber on both rails — four sends for a loan with two of them. */
+function bothRails(wallet: string) {
+  return {
+    wallet,
+    push_channel: '0xchannel',
+    tg_chat_id: '12345',
+    locale: 'en',
+    notify_maturity_approaching: 1,
+  };
+}
 
 /** What the stubbed chain answers for one loan. `null` = that sub-call failed. */
 let answer: (loanId: number) => { id: bigint; status: number } | null;
@@ -135,9 +170,11 @@ function env(extra: Record<string, unknown> = {}) {
       const record = (params: unknown[]) => {
         if (!sql.trim().startsWith('SELECT')) writes.push({ sql, params });
       };
+      const isSubscriberLookup = sql.includes('FROM user_thresholds');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
-        first: async () => null,
+        first: async () =>
+          isSubscriberLookup ? subscriberFor(String(params[1] ?? '')) : null,
         run: async () => {
           record(params);
           return { meta: { changes: 0 } };
@@ -147,20 +184,51 @@ function env(extra: Record<string, unknown> = {}) {
     },
   };
   return {
-    env: { DB, RPC_BASE_SEPOLIA: 'https://stubbed.invalid', ...extra } as never,
+    env: {
+      DB,
+      RPC_BASE_SEPOLIA: 'https://stubbed.invalid',
+      // Both rails configured, so a reminded loan costs the full four sends
+      // the lane reserves for one.
+      PUSH_CHANNEL_PK: '0xpk',
+      TG_BOT_TOKEN: 'bot-token',
+      FRONTEND_ORIGIN: 'https://app.example',
+      ...extra,
+    } as never,
     writes,
   };
 }
+
+/**
+ * PAY THE COLD IMPORT ONCE, OUTSIDE ANY TEST'S DEADLINE (#2213 r7
+ * `4012662256`). `run()` calls `vi.resetModules()` and re-imports the lane,
+ * and while the module REGISTRY is cleared each time, the transform is cached
+ * — so only the first import is expensive. Left inside the first test it put a
+ * multi-second transform under a five-second deadline, which review observed
+ * failing twice at ~5.0s and ~5.3s. Worse than the flake itself is what
+ * follows it: the timed-out case goes on to restore the warning spy while the
+ * NEXT case is running, so one slow import fails two tests and the second
+ * failure looks unrelated to the first.
+ */
+beforeAll(async () => {
+  await import('../src/periodicPreNotify');
+}, 30_000);
 
 async function run(extra: Record<string, unknown> = {}) {
   vi.resetModules();
   const { env: e, writes } = env(extra);
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   warn.mockClear();
-  const mod = await import('../src/periodicPreNotify');
-  await mod.runPeriodicPreNotify(e).catch(() => undefined);
-  const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
-  warn.mockRestore();
+  let said: string;
+  try {
+    const mod = await import('../src/periodicPreNotify');
+    await mod.runPeriodicPreNotify(e).catch(() => undefined);
+  } finally {
+    // RESTORED ON THE WAY OUT, whatever happened. A spy left installed by a
+    // throwing or timing-out case is what turns one failure into two, and the
+    // second one names a test that is fine.
+    said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+  }
   // `UPDATE loans SET period_pre_notified_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`
   const stamps = writes
     .filter((w) => w.sql.includes('period_pre_notified_at'))
@@ -172,6 +240,8 @@ beforeEach(() => {
   answer = (id) => ({ id: BigInt(id), status: 0 });
   batchError = null;
   batchedReads = 0;
+  sends.length = 0;
+  subscriberFor = (w) => bothRails(w);
   loanRows = [dueLoan];
   loanRowsByChain = null;
 });
@@ -293,7 +363,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // indistinguishable from one that was never due.
     expect(said).toContain('10 loan(s) in the notification window');
     expect(said).toContain('8 examined, 8 reminded');
-    expect(said).toContain('ran out of allowance');
+    expect(said).toContain('send allowance is down to');
+    // 8 loans × 2 counterparties × 2 rails.
+    expect(sends.length).toBe(32);
   });
 
   it('matches each answer to the loan it was asked about', async () => {
@@ -376,6 +448,75 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // One batch covered all ten — the scan does not pay a read per loan to do
     // this.
     expect(batchedReads).toBe(1);
+  });
+
+  it('does not let opted-out loans hold the allowance', async () => {
+    // #2213 r7 `4012662252`. The same failure as the rejected-candidate one,
+    // a door further in: the eight nearest loans have both counterparties
+    // opted out, so nothing is sent AND nothing is stamped (an opt-out is
+    // deliberately not stamped — the user may re-enable before the deadline).
+    // Charging them a loan slot, as rounds 5 and 6 did, meant they consumed
+    // the whole allowance on every tick while the subscribed borrowers behind
+    // them were never reached.
+    loanRows = tenLoans(); // ids 100…91, nearest deadline first
+    const optedOut = new Set([100, 99, 98, 97, 96, 95, 94, 93]);
+    // The subscriber rows are per WALLET, so the opted-out loans get their own
+    // counterparties rather than sharing the shared test pair.
+    const wallets = new Map<string, number>();
+    loanRows = loanRows.map((r) => {
+      const id = r.loan_id as number;
+      const lender = `0x${String(id).padStart(40, '1')}`;
+      const borrower = `0x${String(id).padStart(40, '2')}`;
+      wallets.set(lender.toLowerCase(), id);
+      wallets.set(borrower.toLowerCase(), id);
+      return { ...r, lender, borrower };
+    });
+    subscriberFor = (w) => {
+      const id = wallets.get(w.toLowerCase());
+      if (id === undefined) return null;
+      const row = bothRails(w);
+      return optedOut.has(id) ? { ...row, notify_maturity_approaching: 0 } : row;
+    };
+    const { stamped } = await run();
+    // The two subscribed loans are reminded in the SAME tick, and only they
+    // cost anything: 2 loans × 2 counterparties × 2 rails.
+    expect([...stamped].sort((a, b) => b - a)).toEqual([92, 91]);
+    expect(sends.length).toBe(8);
+  });
+
+  it('never overshoots the ceiling, even when loans cost different amounts', async () => {
+    // The allowance only divides evenly by chance. Give the nearest loan one
+    // subscribed counterparty instead of two and the running total stops
+    // landing on a multiple of four — so a tick that merely checks "is there
+    // anything left" starts a four-send loan with two left and overshoots.
+    // Nothing inside a loan re-checks (stopping mid-loan would stamp the
+    // checkpoint with one side never told), so refusing to begin is the only
+    // place the ceiling can be held.
+    loanRows = Array.from({ length: 12 }, (_, k) =>
+      periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
+    ).reverse();
+    const lenderOf = (id: number) => `0x${String(id).padStart(40, '1')}`;
+    const borrowerOf = (id: number) => `0x${String(id).padStart(40, '2')}`;
+    const known = new Map<string, number>();
+    loanRows = loanRows.map((r) => {
+      const id = r.loan_id as number;
+      known.set(lenderOf(id).toLowerCase(), id);
+      known.set(borrowerOf(id).toLowerCase(), id);
+      return { ...r, lender: lenderOf(id), borrower: borrowerOf(id) };
+    });
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      // Loan 100 (the nearest) has no lender subscription: two sends, not four.
+      if (id === 100 && w.toLowerCase() === lenderOf(100).toLowerCase()) return null;
+      return bothRails(w);
+    };
+    const { stamped } = await run();
+    // 2 + 4×7 = 30 spent, 2 left, and the eighth full-cost loan is refused
+    // rather than begun.
+    expect(sends.length).toBe(30);
+    expect(sends.length).toBeLessThanOrEqual(32);
+    expect(stamped.length).toBe(8);
   });
 
   it('stops scanning at the read cap, and says what it found', async () => {

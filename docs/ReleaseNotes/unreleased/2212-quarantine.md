@@ -116,9 +116,9 @@ everything else happening on that run, and "a few" was an assumption about
 load rather than a limit. On a busy day the allowance ran out partway through,
 which does not merely stop that chain — it stops every chain after it in the
 same run, on every run, indefinitely. Two changes make the assumption
-unnecessary: all of a chain's checks now go out as one request instead of one
-per loan, and the number of reminders a single run will send is capped
-outright.
+unnecessary: a chain's checks now go out in batches of a hundred rather than
+one request per loan — up to three batches, so three requests where there were
+a hundred — and what a single run may send is capped outright.
 
 A cap has to be fair or it is just a quieter way to lose reminders, so the
 order is now **nearest deadline first**, and the run starts at a different
@@ -127,17 +127,29 @@ next run, and gets there well before its own deadline; without that order the
 same records would be reached every time and the ones behind them never.
 
 **The first version of that cap had the fairness defect it was meant to
-prevent**, in a form worth describing because it is easy to reproduce. It
-counted *records looked at* and *reminders sent* as one number. Checking a
-record is cheap and sending is not, but more importantly a record the chain
-**rejects** — one it has never heard of — costs nothing to reject, so it was
-examined again on every run without ever being resolved or moved past. Eight
-such records at the front of the deadline order therefore filled the whole
-run, every run, and healthy loans behind them were never looked at: a cap
-meant to delay a reminder by one run delayed those indefinitely. Checking and
-sending are now separate limits. A run walks past records the chain rejects —
-in batches, so a hundred of them cost one request, not a hundred — and reaches
-the healthy ones behind them on the same run.
+prevent, and review found it twice before the right fix landed.** It counted
+*records*, when what the limit protects is *messages sent*. Anything that
+occupied a record slot without sending anything therefore held the whole run's
+allowance and was never marked as handled, so the same few records sat at the
+front on every run while the people behind them were never reached. Two
+separate kinds of record do that: one the chain rejects — it has never heard of
+it — and one whose recipients have both switched these reminders off. The first
+was fixed by separating "looked at" from "sent"; the second showed that fixing
+cases one at a time would keep finding the next one.
+
+So the limit now counts the thing it exists to protect: **outbound messages**,
+decremented where a message is actually issued. A record that sends nothing
+cannot consume it, whatever the reason it sent nothing — rejected, switched
+off, or nobody subscribed — because there is no path to sending that skips the
+count and no path to the count that skips a send. A run also walks past records
+it cannot send for, in batches of a hundred, and reaches the ones behind them
+on the same run.
+
+One consequence is worth stating because it looks like waste: a run refuses to
+begin a record it might not be able to finish, which can leave a few messages
+of allowance unused. Stopping halfway through a record would tell one party and
+mark the reminder as delivered, so the other party's reminder would not be
+delayed — it would be lost.
 
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain
