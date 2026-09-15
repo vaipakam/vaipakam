@@ -1100,7 +1100,26 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
     // cleanup path for a release the close-out could not make: it keys on the
     // row's own state rather than on remembering what failed, so it runs every
     // pass until there is nothing to release.
-    await releaseTerminalQuarantine(env.DB, chainId);
+    // SEPARATE CATCHES, because a failed CLEANUP must not silence the REPORT
+    // (#2213 r26 `4015927513`). r15 put the release first so the report never
+    // names an already-resolvable row, and sharing one `try` was the cost of
+    // that ordering: a recurring write failure here — a transient D1 fault,
+    // say — returned before the report ran, so every long-held row on every
+    // tick went unnamed while the reads that would have named them were
+    // perfectly healthy. Broken maintenance hiding the disclosure is the
+    // worse half of the pair, because the disclosure is what tells anyone the
+    // maintenance is broken.
+    try {
+      await releaseTerminalQuarantine(env.DB, chainId);
+    } catch (err) {
+      console.error(
+        `[chainIndexer] quarantine RELEASE failed for chain ${chainId} — rows ` +
+          `whose loan has ended stay held until a later pass releases them, ` +
+          `and the report below may therefore name rows that are already ` +
+          `resolvable`,
+        err,
+      );
+    }
     await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
   } catch (err) {
     // The marks are unaffected: this is the read that NAMES long-held rows.

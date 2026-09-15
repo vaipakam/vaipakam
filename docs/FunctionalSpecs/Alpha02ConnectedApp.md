@@ -390,7 +390,10 @@ The app uses chain reads and indexed reads for different jobs.
   decides which by what the sending step actually did rather than by
   inspecting the setting.
 - A message the delivery service ANSWERED and refused is counted apart from
-  one whose fate is unknown. They need opposite responses — a refusal is a
+  one whose fate is unknown, and apart again from one it DEFERRED — rate
+  limiting, or the service being briefly unwell. A deferral did not deliver
+  and needs nobody; a refusal needs a person. Counting a deferral as a refusal
+  sends that person to repair a configuration that is fine. They need opposite responses — a refusal is a
   credential or destination to fix and will keep failing until someone does,
   where an unknown attempt may be a passing incident — so flattening them
   leaves a reader unable to tell which is happening. Where a channel cannot

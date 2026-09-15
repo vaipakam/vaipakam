@@ -1680,6 +1680,24 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).not.toContain('RESUMES from');
   });
 
+  it('counts a DEFERRED rail apart from a refused one', async () => {
+    // #2213 r26 `4015927527`. The `refused` bucket's stated meaning is "keeps
+    // failing until someone repairs it", which is what an operator acts on.
+    // A 429 or a 5xx clears itself, so filing it there sends them to rotate a
+    // credential during an incident that needed nobody.
+    tgAccepts = 'transient';
+    pushAttemptFor = () => 'failed';
+    const ids = Array.from({ length: 12 }, (_, k) => 400 - k);
+    loanRows = ids.map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60)).reverse();
+    const { said } = await run();
+    // Telegram deferred on every loan the allowance reached; Push threw.
+    expect(said).toContain(`${SENDS_PER_TICK / 2} deferred by the service`);
+    // And NOTHING is filed as a refusal, which is the claim that would have
+    // sent someone to repair a configuration that is fine.
+    expect(said).toContain('0 refused by the service');
+    expect(said).toContain(`${SENDS_PER_TICK / 2} rail(s) unconfirmed`);
+  });
+
   it('says nothing about a cap it did not reach', async () => {
     // The ordinary case: a handful of due loans, everything sent, no warning
     // an operator has to learn to ignore.

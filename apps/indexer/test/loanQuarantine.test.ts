@@ -22,6 +22,10 @@ import {
   unsettledRows,
 } from '../src/loanQuarantine';
 import type { ReconcileReport } from '../src/loanReconcile';
+import {
+  _reportQuarantineForChain,
+  _resetQuarantineWriteProbe,
+} from '../src/chainIndexer';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -249,6 +253,44 @@ describe('telling the operator about a row that stays', () => {
     expect(said).toContain('loan 99');
     expect(said).toContain('orphan');
     warn.mockRestore();
+  });
+
+  it('still NAMES long-held rows when the release sweep fails', async () => {
+    // #2213 r26 `4015927513`. r15 put the release before the report so the
+    // report never names an already-resolvable row, and sharing one `try` was
+    // the cost of that ordering: a recurring write failure returned before the
+    // report ran, so every long-held row on every tick went unnamed while the
+    // reads that would have named them were perfectly healthy.
+    //
+    // Broken maintenance hiding the disclosure is the worse half of the pair,
+    // because the disclosure is what tells anyone the maintenance is broken.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [77], unresolvable: [77] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warn.mockClear();
+    error.mockClear();
+    // The release path throws; the reporting reads are untouched.
+    const db = {
+      prepare(sql: string) {
+        if (/DELETE\s+FROM\s+loan_reconcile_quarantine/i.test(sql)) {
+          throw new Error('D1_ERROR: write refused');
+        }
+        return h.d1.prepare(sql);
+      },
+      batch: (h.d1 as unknown as { batch: unknown }).batch,
+    };
+    // `NOW` is 2023, so the seeded row is long past the stale threshold
+    // against the real clock this helper reads.
+    _resetQuarantineWriteProbe();
+    await _reportQuarantineForChain({ DB: db } as never, CHAIN);
+    const said = [...warn.mock.calls, ...error.mock.calls].map((c) => c.join(' ')).join('\n');
+    // The failed cleanup is named...
+    expect(said).toContain('RELEASE failed');
+    // ...and the row is STILL reported, which is the whole point.
+    expect(said).toContain('loan 77');
+    warn.mockRestore();
+    error.mockRestore();
   });
 
   it('calls the timestamp what it is — the last RECORDED sighting', async () => {

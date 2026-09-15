@@ -73,7 +73,8 @@ It also no longer asserts that a source "has not recovered", nor that
 retrying cannot settle the record: on a chain whose check takes longer than
 the threshold to come round, a record can pass it without having been looked
 at again, and may settle the moment it is. The report gives its age and when
-it was last examined, and leaves the conclusion to the evidence.
+its unconfirmed state was last successfully recorded, and leaves the
+conclusion to the evidence.
 
 ### What else had to be right
 
@@ -214,6 +215,13 @@ refused — a rotated token, a stale chat — and a message whose fate is unknow
 are each counted as their own thing. Before this, both were reported as
 reminders, which is precisely the number someone would read while trying to
 work out why nobody had heard from the platform.
+
+A service that says "not now" — rate limiting, or being briefly unwell — is
+counted apart from one that says "not ever, as configured". Both are answers
+and both mean the message did not go, but only the second needs a person: the
+first clears on its own, and filing it under the total whose stated meaning is
+"keeps failing until someone repairs it" would send that person to replace a
+credential during an incident that needed nobody.
 
 A message the service ANSWERED and refused is counted apart from one whose
 fate is unknown, because they need opposite responses: a refusal is a
@@ -409,6 +417,15 @@ that is the identifying part, and none of it can carry a secret. The rule had
 already been written down once, next to the code that first needed it, and was
 not followed the next time the situation arose a Worker away — so it now lives
 in the shared library both sides use.
+
+**And a cleanup that fails no longer silences the report that would have said
+so.** The tidy-up and the naming of long-held records ran under one failure
+handler, in that order, so a repeating write failure returned before anything
+was named — every long-held record on every pass went unmentioned while the
+reads that would have mentioned them were perfectly healthy. That is the worse
+half of the pair to lose, because the report is what tells anyone the tidy-up
+is broken. They fail independently now, and a failed tidy-up says so and then
+lets the report run.
 
 **A record can also be released long after the fact, and now is.** The
 ordinary release happens when a loan closes, alongside everything else that

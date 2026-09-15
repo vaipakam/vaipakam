@@ -93,3 +93,51 @@ describe('what sendMessage reports', () => {
     expect(said).not.toContain('secret-bot-token-value');
   });
 });
+
+describe('a NO that clears itself, versus a NO that does not', () => {
+  it('calls a 429 TRANSIENT, not a refusal', async () => {
+    // #2213 r26 `4015927527`. `refused` means "keeps failing until someone
+    // repairs it" — that is its stated meaning in the spec and what the
+    // aggregate tells an operator to act on. A rate limit repairs itself, so
+    // filing it there sends someone to rotate a credential during an incident
+    // that would have cleared on its own.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('slow down', { status: 429 })));
+    expect(await sendMessage(TOKEN, CHAT, 'hello')).toBe('transient');
+  });
+
+  it('calls a 5xx TRANSIENT — the service being unwell is not our configuration', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('bad gateway', { status: 502 })));
+    expect(await sendMessage(TOKEN, CHAT, 'hello')).toBe('transient');
+  });
+
+  it('still calls a 401 and a 400 REFUSED — those do need a person', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })));
+    expect(await sendMessage(TOKEN, CHAT, 'hello')).toBe('refused');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('bad chat', { status: 400 })));
+    expect(await sendMessage(TOKEN, CHAT, 'hello')).toBe('refused');
+  });
+
+  it('keeps all FOUR apart — the property, not the individual values', async () => {
+    // Each case above passes on its own while a taxonomy that collapses two
+    // of them still satisfies every one. What matters is that four different
+    // situations produce four different answers.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const of = async (f: () => Promise<Response>) => {
+      vi.stubGlobal('fetch', vi.fn(f));
+      return sendMessage(TOKEN, CHAT, 'hello');
+    };
+    const seen = new Set([
+      await of(async () => new Response('ok', { status: 200 })),
+      await of(async () => new Response('no', { status: 401 })),
+      await of(async () => new Response('wait', { status: 429 })),
+      await of(async () => {
+        throw new Error('down');
+      }),
+    ]);
+    expect(seen.size).toBe(4);
+  });
+});
+

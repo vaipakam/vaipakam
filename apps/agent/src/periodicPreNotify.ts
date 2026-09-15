@@ -616,6 +616,7 @@ async function preNotifyChain(
   let noRoute = 0;
   let failedRails = 0;
   let refusedRails = 0;
+  let transientRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
   let staleCheckpoint = 0;
@@ -661,6 +662,7 @@ async function preNotifyChain(
     noRoute += outcome.noRoute;
     failedRails += outcome.failedRails;
     refusedRails += outcome.refusedRails;
+    transientRails += outcome.transientRails;
     rejected += outcome.rejected;
     checkpointLag += outcome.checkpointLag;
     staleCheckpoint += outcome.staleCheckpoint;
@@ -705,7 +707,7 @@ async function preNotifyChain(
         `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
         `${failedRails} rail(s) unconfirmed, ${refusedRails} refused by the ` +
-        `service, ` +
+        `service, ${transientRails} deferred by the service, ` +
         `${rejected} rejected by the chain, ${checkpointLag} awaiting the ` +
         `indexer, ${staleCheckpoint} with a checkpoint ahead of the chain, ` +
         `${unreadable} unreadable — ` +
@@ -725,8 +727,8 @@ async function preNotifyChain(
         `repairs that on its own.`,
     );
   } else if (
-    noRoute + unreached + failedRails + refusedRails + rejected + checkpointLag +
-      staleCheckpoint + unreadable >
+    noRoute + unreached + failedRails + refusedRails + transientRails + rejected +
+      checkpointLag + staleCheckpoint + unreadable >
     0
   ) {
     // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
@@ -745,6 +747,7 @@ async function preNotifyChain(
         `${examined} examined, ${reminded} reminded, ${unreached} reached ` +
         `nobody, ${noRoute} with nobody to tell, ${failedRails} rail(s) ` +
         `unconfirmed, ${refusedRails} refused by the service, ` +
+        `${transientRails} deferred by the service, ` +
         `${rejected} rejected by the chain, ${checkpointLag} ` +
         `awaiting the indexer, ${staleCheckpoint} with a checkpoint ahead of ` +
         `the chain, ${unreadable} unreadable.`,
@@ -822,6 +825,7 @@ async function messageBatch(
   noRoute: number;
   failedRails: number;
   refusedRails: number;
+  transientRails: number;
   rejected: number;
   checkpointLag: number;
   staleCheckpoint: number;
@@ -834,6 +838,7 @@ async function messageBatch(
   let noRoute = 0;
   let failedRails = 0;
   let refusedRails = 0;
+  let transientRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
   let staleCheckpoint = 0;
@@ -847,7 +852,7 @@ async function messageBatch(
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
         rejected, checkpointLag, staleCheckpoint, unreadable,
-        refusedRails, pushUnconfigured, tgUnconfigured,
+        refusedRails, transientRails, pushUnconfigured, tgUnconfigured,
       };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
@@ -981,6 +986,7 @@ async function messageBatch(
     }
     failedRails += borrowerOutcome.unconfirmedRails + lenderOutcome.unconfirmedRails;
     refusedRails += borrowerOutcome.refusedRails + lenderOutcome.refusedRails;
+    transientRails += borrowerOutcome.transientRails + lenderOutcome.transientRails;
     pushUnconfigured +=
       (borrowerOutcome.pushUnconfigured ? 1 : 0) + (lenderOutcome.pushUnconfigured ? 1 : 0);
     tgUnconfigured +=
@@ -1056,6 +1062,7 @@ async function messageBatch(
     noRoute,
     failedRails,
     refusedRails,
+    transientRails,
     rejected,
     checkpointLag,
     staleCheckpoint,
@@ -1550,6 +1557,16 @@ interface DeliveryOutcome {
    */
   refusedRails: number;
   /**
+   * Rails the service DEFERRED — 429 or 5xx.
+   *
+   * Apart from `refusedRails` because that bucket's stated meaning is "will
+   * keep failing until someone repairs it" (#2213 r26 `4015927527`), and a
+   * rate limit repairs itself. Reported apart from `unconfirmedRails` too,
+   * even though neither needs an operator, because a deferral definitely did
+   * NOT deliver where an unconfirmed attempt may have.
+   */
+  transientRails: number;
+  /**
    * The subscriber asked for Push and the DEPLOYMENT has no signer.
    *
    * Carried out of here rather than logged here (#2213 r19 `4014677438`),
@@ -1614,7 +1631,7 @@ async function pushIfSubscribed(
   if (!sub) {
     return {
       status: 'none', attempted: false, delivered: false,
-      unconfirmedRails: 0, refusedRails: 0,
+      unconfirmedRails: 0, refusedRails: 0, transientRails: 0,
       pushUnconfigured: false, tgUnconfigured: false,
     };
   }
@@ -1625,7 +1642,7 @@ async function pushIfSubscribed(
   if (sub.notify_maturity_approaching === 0) {
     return {
       status: 'opted-out', attempted: false, delivered: false,
-      unconfirmedRails: 0, refusedRails: 0,
+      unconfirmedRails: 0, refusedRails: 0, transientRails: 0,
       pushUnconfigured: false, tgUnconfigured: false,
     };
   }
@@ -1672,6 +1689,8 @@ async function pushIfSubscribed(
   let unconfirmedRails = 0;
   /** Rails the service ANSWERED and refused — a credential or target to fix. */
   let refusedRails = 0;
+  /** Rails the service deferred — 429 or 5xx. Clears without anyone acting. */
+  let transientRails = 0;
   // WHETHER THE PUSH RAIL IS USABLE AT ALL, answered by the sender rather than
   // by inspecting the env (#2213 r23 `4015375741`). See where this is returned.
   let pushSignerUnusable = false;
@@ -1733,6 +1752,14 @@ async function pushIfSubscribed(
       const tg = await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
       if (tg === 'accepted') delivered = true;
       else if (tg === 'refused') refusedRails += 1;
+      // `transient` joins the unconfirmed bucket deliberately (#2213 r26
+      // `4015927527`). What it must NOT join is `refused`, whose stated
+      // meaning is "keeps failing until someone repairs it" — a rate limit
+      // repaired by waiting would send an operator to rotate a credential
+      // during an incident. Grouped with unconfirmed because the action is
+      // the same there (nothing to do; it retries), and the summary names it
+      // apart so the difference is still legible.
+      else if (tg === 'transient') transientRails += 1;
       else unconfirmedRails += 1;
     } catch (err) {
       // `sendMessage` swallows its own failures, so reaching here is a throw
@@ -1757,6 +1784,7 @@ async function pushIfSubscribed(
     delivered,
     unconfirmedRails,
     refusedRails,
+    transientRails,
     // The subscriber WANTED push (they have a channel) and the deployment
     // cannot sign for it. Distinct from "no channel": that is the user's
     // choice, this is the operator's configuration.
