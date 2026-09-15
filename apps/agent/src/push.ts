@@ -32,6 +32,7 @@
 
 import * as PushAPI from '@pushprotocol/restapi';
 import { Wallet } from 'ethers';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 
 // Push channels live on Ethereum mainnet; the CAIP-2 prefix is
 // shared across both the channel id and recipient ids.
@@ -70,6 +71,27 @@ function getSignerAndChannel(channelPk: string): {
   cachedChannelCaip = channelCaip;
   return { signer, channelCaip };
 }
+
+/**
+ * Whether a call consumed an outbound request (#2213 r9 `4012940120`).
+ *
+ * The caller has a subrequest allowance to spend, and it cannot see inside
+ * here: an unset key and a malformed one both return quietly, so charging on
+ * "we called sendPush" charged for requests that never happened. On a
+ * deployment whose signer is misconfigured that is EVERY push, which exhausts
+ * the allowance and defers recipients the platform could have reached.
+ *
+ * WHAT THIS DOES AND DOES NOT SEPARATE, because the boundary is a judgement
+ * and not an oversight. `not-requested` means we never entered the SDK call:
+ * no key, or a key it cannot build a signer from. Those are definite.
+ * `requested` means we did enter it — and if the SDK then throws, we do not
+ * try to work out whether its POST had already gone. That would be a guess
+ * about an error's shape, the kind this repo has refused before, and the
+ * conservative side of a ceiling is to assume the request happened. The
+ * systematic case — a misconfigured deployment failing every push — is the one
+ * that mattered, and it is on the definite side.
+ */
+export type PushAttempt = 'requested' | 'not-requested';
 
 /**
  * Fire-and-forget Push notification. Returns without throwing so a
@@ -116,15 +138,29 @@ console.log = (...args: unknown[]) => {
 export async function sendPush(
   channelPk: string | undefined,
   payload: PushPayload,
-): Promise<void> {
+): Promise<PushAttempt> {
   if (!channelPk) {
     console.log(
       `[push] skipping (PUSH_CHANNEL_PK unset) subscriber=${payload.subscriber} title="${payload.title}"`,
     );
-    return;
+    return 'not-requested';
+  }
+  let signer: Wallet;
+  let channelCaip: string;
+  try {
+    ({ signer, channelCaip } = getSignerAndChannel(channelPk));
+  } catch (err) {
+    // SEPARATE FROM THE SEND BELOW, for two reasons. It is the branch that
+    // definitely made no request, so the caller must not be charged for it.
+    // And a PRIVATE KEY is the argument in scope here, so the failure is
+    // described by class rather than quoted — the send's own catch keeps its
+    // message, which is the diagnostic there and has no secret in reach.
+    console.error(
+      `[push] channel signer unusable (PUSH_CHANNEL_PK malformed): ${describeFailure(err)}`,
+    );
+    return 'not-requested';
   }
   try {
-    const { signer, channelCaip } = getSignerAndChannel(channelPk);
     await PushAPI.payloads.sendNotification({
       signer,
       // type=3 → targeted notification to a single recipient.
@@ -171,4 +207,5 @@ export async function sendPush(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,
     );
   }
+  return 'requested';
 }

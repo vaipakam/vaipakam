@@ -163,12 +163,22 @@ parts of it. Every record is examined within a few runs, which are minutes
 apart in a window measured in days, and when the window fits in one run the
 nearest deadline is still examined first.
 
-Two smaller corrections of the same kind: the platform no longer counts a
-message it did not send. A deployment with no signer configured for one of the
-two channels was charging itself for messages that were never issued, and a
-recipient the platform has on file but has no way to reach was being reported
-as reminded. Neither changes who gets a reminder; both were letting the
-run's own accounting say more than had happened.
+Smaller corrections of the same kind: the platform no longer counts a message
+it did not send. It was charging itself for messages that were never issued —
+when no signer was configured for one of the two channels, and again when the
+configured signer was unusable, which fails every message of that kind rather
+than one — and a recipient the platform has on file but has no way to reach
+was being reported as reminded. None of these change who gets a reminder. All
+of them were letting a run's own accounting say more than had happened, and
+the misconfigured-signer one had teeth: it spent the run's whole budget on
+messages that never left, deferring the recipients the platform could still
+have reached on the other channel.
+
+The sending step now reports whether a request actually left, and the run
+charges and counts from that answer rather than from having called it. Where
+the answer is genuinely unknowable — the send was entered and then failed, and
+the platform cannot tell whether the request had already gone — it assumes it
+did, which is the safe direction for a ceiling.
 
 When a run does stop early, it says what it saw: how many records were in the
 window, how many it examined, how many it reminded, how many the chain

@@ -34,9 +34,19 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
  * stubbed and counted here so the cap tests below cost what a real tick costs.
  */
 const sends: string[] = [];
+/**
+ * What the stubbed `sendPush` reports back.
+ *
+ * It swallows its own failures, so "called" and "made a request" are
+ * different answers and the lane must charge from the second (#2213 r9
+ * `4012940120`). A stub that always reported success could not see that.
+ */
+let pushAttemptFor: (subscriber: string) => 'requested' | 'not-requested';
 vi.mock('../src/push', () => ({
   sendPush: vi.fn(async (_pk: string, m: { subscriber: string }) => {
-    sends.push(`push:${m.subscriber}`);
+    const attempt = pushAttemptFor(m.subscriber);
+    if (attempt === 'requested') sends.push(`push:${m.subscriber}`);
+    return attempt;
   }),
 }));
 vi.mock('../src/telegram', () => ({
@@ -263,6 +273,7 @@ beforeEach(() => {
   batchError = null;
   batchedReads = 0;
   sends.length = 0;
+  pushAttemptFor = () => 'requested';
   subscriberFor = (w) => bothRails(w);
   loanRows = [dueLoan];
   loanRowsByChain = null;
@@ -432,6 +443,48 @@ describe('what counts as a send, and what only looks like one', () => {
     };
     const { said } = await run();
     expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
+    expect(said).toContain('18 examined, 8 reminded');
+  });
+
+  it('does not charge — or count — a Push that never left', async () => {
+    // #2213 r9 `4012940120`. A malformed channel key is non-empty, so the
+    // rail LOOKS usable; `sendPush` then fails inside and returns quietly. On
+    // a deployment misconfigured that way every push behaves like this, so
+    // charging on "we called it" spends the whole allowance on requests that
+    // never happened and defers the recipients the platform could still reach.
+    const ids = Array.from({ length: 20 }, (_, k) => 300 - k); // nearest first
+    const pushOnly = new Set(ids.slice(0, 10));
+    const known = new Map<string, number>();
+    loanRows = ids
+      .map((id, k) => periodicLoan(id, NOW - 29 * DAY + k * 60))
+      .reverse()
+      .map((r) => {
+        const id = r.loan_id as number;
+        const lender = `0x${String(id).padStart(40, '1')}`;
+        const borrower = `0x${String(id).padStart(40, '2')}`;
+        known.set(lender.toLowerCase(), id);
+        known.set(borrower.toLowerCase(), id);
+        return { ...r, lender, borrower };
+      });
+    subscriberFor = (w) => {
+      const id = known.get(w.toLowerCase());
+      if (id === undefined) return null;
+      // The nearest ten are Push-only...
+      return pushOnly.has(id) ? { ...bothRails(w), tg_chat_id: null } : bothRails(w);
+    };
+    // ...and their Push is the one that never leaves.
+    pushAttemptFor = (subscriber) => {
+      const id = known.get(subscriber.toLowerCase());
+      return id !== undefined && pushOnly.has(id) ? 'not-requested' : 'requested';
+    };
+    const { said } = await run();
+    // Nothing went out for the Push-only ten; the fully-routed loans spend
+    // the allowance, eight of them fitting inside it.
+    expect(sends.filter((s) => s.startsWith('push:')).length).toBe(16);
+    expect(sends.length).toBe(32); // 8 loans × 2 counterparties × 2 rails
+    // Eighteen examined, and the ten whose only rail never left are NOT among
+    // the reminded. Charging on truthiness gave them the allowance and called
+    // them reminded.
     expect(said).toContain('18 examined, 8 reminded');
   });
 

@@ -704,22 +704,34 @@ async function pushIfSubscribed(
     sub.tg_chat_id && env.TG_BOT_TOKEN
       ? { chat: sub.tg_chat_id, token: env.TG_BOT_TOKEN }
       : null;
+  let pushRequested = false;
   if (pushSigner) {
-    // CHARGED HERE, at the point an outbound request is actually made (#2213
-    // r7 `4012662252`). Every earlier revision charged a loan slot further up
+    // CHARGED FROM WHAT THE SENDER REPORTS, not from the fact that we called
+    // it (#2213 r9 `4012940120`). `sendPush` swallows its own failures, so a
+    // malformed `PUSH_CHANNEL_PK` returns quietly having made no request —
+    // and on a deployment misconfigured that way, that is EVERY push. The
+    // truthiness guard added in r8 saw a non-empty key and charged anyway,
+    // which is the same "charged for something that did not happen" this
+    // whole sequence of rounds has been about, one layer further down.
+    //
+    // The same answer drives the REPORT: a loan whose only rail made no
+    // request is not "reminded". Every earlier revision charged a loan slot further up
     // and was wrong in the same way each time: a candidate that sends nothing
     // held the allowance, was never stamped, and so held it again on the next
     // tick. Decrementing where the request is issued makes that impossible
     // rather than merely handled — there is no path to a send that skips this
     // line, and no path to this line that skips a send.
-    budget.remaining -= 1;
     try {
-      await sendPush(pushSigner, {
+      const attempt = await sendPush(pushSigner, {
         subscriber: wallet,
         title,
         body,
         deepLinkUrl: deepLink,
       });
+      if (attempt === 'requested') {
+        pushRequested = true;
+        budget.remaining -= 1;
+      }
     } catch (err) {
       console.error(
         `[periodicPreNotify] push failed loan=${loan.loan_id} wallet=${wallet} ` +
@@ -745,7 +757,7 @@ async function pushIfSubscribed(
   // so re-querying every tick is waste) and wrong for REPORTING (the operator
   // count then says hundreds were reminded on a tick that sent nothing).
   // 'no-route' keeps the stamp and leaves the count honest.
-  return pushSigner || tgRoute ? 'sent' : 'no-route';
+  return pushRequested || tgRoute ? 'sent' : 'no-route';
 }
 
 function cadenceI18nLabel(cadence: number): string {

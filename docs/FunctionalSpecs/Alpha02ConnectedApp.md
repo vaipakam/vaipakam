@@ -341,8 +341,12 @@ The app uses chain reads and indexed reads for different jobs.
   many declines is reporting records the platform holds wrongly, not load — so
   they are never flattened into one "deferred" count. "Reminded" means a
   message was actually issued: a recipient the platform has on file but has no
-  way to reach is counted as handled, never as reminded, so the count cannot
-  claim hundreds were told on a run that sent nothing.
+  way to reach, or one whose delivery channel is configured but unusable, is
+  counted as handled, never as reminded, so the count cannot claim hundreds
+  were told on a run that sent nothing. The same answer governs the bound — a
+  message that never left does not spend it — which matters most when a
+  channel is misconfigured, since that fails every message of its kind rather
+  than one.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a
