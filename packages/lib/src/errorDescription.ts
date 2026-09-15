@@ -22,6 +22,19 @@
  * part of it. A `TimeoutError`, an `RpcRequestError` carrying -32601, and an
  * `HttpRequestError` carrying HTTP 429 are the cases an operator separates,
  * and none of the three fields can contain a secret.
+ *
+ * **AND IT HAS TO LOOK THROUGH THE WRAPPER TO FIND THEM** (#2213 r25
+ * `4015755031`). viem does not throw the useful error; it throws a
+ * `ContractFunctionExecutionError` whose `cause` is the `HttpRequestError` or
+ * `RpcRequestError` that actually carries the status or the code. Reading only
+ * the outer object printed the wrapper's class name for every one of those
+ * cases — collapsing exactly the three the paragraph above says are the point
+ * of this function, on the most common caller in the tree (`readContract`).
+ *
+ * The tests did not catch it because they CONSTRUCTED the shape the code
+ * expected — a bare `Error` with a top-level `status` — rather than the shape
+ * viem produces. An assertion written against your own assumption cannot
+ * falsify it; the suite now builds real viem errors.
  */
 
 /**
@@ -35,12 +48,45 @@ export function redactAndBound(text: string): string {
   return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>').slice(0, 80);
 }
 
+/**
+ * How deep to follow `cause`.
+ *
+ * Bounded rather than trusting the chain to end: `cause` is an arbitrary
+ * value from a dependency and nothing stops it being cyclic or absurdly long.
+ * The seen-set handles cycles; this handles length.
+ */
+const MAX_CAUSE_DEPTH = 5;
+
 /** A bounded description of a failure, safe to print. Never the message. */
 export function describeFailure(err: unknown): string {
   if (!(err instanceof Error)) return 'a non-Error value was thrown';
-  const e = err as Error & { code?: unknown; status?: unknown };
-  const parts = [redactAndBound(e.name || 'Error')];
-  if (typeof e.code === 'number') parts.push(`rpc code ${e.code}`);
-  if (typeof e.status === 'number') parts.push(`HTTP ${e.status}`);
+
+  // WALK THE CHAIN, taking the first of each field that appears — outermost
+  // wins, which is the one closest to the operation that failed. Names are
+  // collected too: `ContractFunctionExecutionError` alone says only "a
+  // contract read failed", where the inner class says WHY.
+  const names: string[] = [];
+  let code: number | undefined;
+  let status: number | undefined;
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cur instanceof Error; depth += 1) {
+    if (seen.has(cur)) break; // a cycle, which a dependency is free to hand us
+    seen.add(cur);
+    const e = cur as Error & { code?: unknown; status?: unknown; cause?: unknown };
+    const name = redactAndBound(e.name || 'Error');
+    // Only distinct names, and only while they add something: a chain of five
+    // identical wrappers is one fact, not five.
+    if (name && !names.includes(name)) names.push(name);
+    if (code === undefined && typeof e.code === 'number') code = e.code;
+    if (status === undefined && typeof e.status === 'number') status = e.status;
+    cur = e.cause;
+  }
+
+  // At most two names — the operation that failed and the reason — so a deep
+  // wrapper stack cannot turn this line into a stack trace by another route.
+  const parts = [names.slice(0, 2).join(' ← ') || 'Error'];
+  if (code !== undefined) parts.push(`rpc code ${code}`);
+  if (status !== undefined) parts.push(`HTTP ${status}`);
   return parts.join(', ');
 }

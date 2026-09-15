@@ -133,7 +133,12 @@ next run, and gets there well before its own deadline; without that order the
 same records would be reached every time and the ones behind them never.
 
 A run also **remembers where it stopped**, and which network it began with,
-and the next one continues from there. Deriving either position from the clock
+and the next one continues from there — and when that could not be written
+down, the run says so instead of promising the resume anyway. The record of
+where to continue is kept by the same database that can refuse it, and a
+summary claiming a resume the database had just rejected contradicted the
+warning printed a line above it. The reassuring line is the one someone would
+have acted on. Deriving either position from the clock
 instead works until it meets the platform's other rotation: a network that
 only gets a turn every third run sees the clock advance in threes, so the
 position it computes can be the same one every time it is actually asked, and
@@ -435,6 +440,10 @@ accounting took the disclosure with it. So a run could mark forty records as
 handled, deliver nothing, and say nothing, which is the ordinary shape of a
 misconfigured deployment rather than an exotic one. The run now reports the
 count once, naming the setting.
+
+It names the credential as missing OR unusable, because it now covers both
+and saying only "missing" would send someone looking for an unset value that
+is sitting there and invalid — the slower of the two to find.
 
 It is also reported ONCE for the whole network per run, and not once per
 recipient. The sending step used to write the same line for every person it

@@ -1441,7 +1441,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // silently removed a disclosure, and these subscribers WANT Push.
     loanRows = tenLoans().slice(-2);
     const { said } = await run({ PUSH_CHANNEL_PK: undefined });
-    expect(said).toContain('no PUSH_CHANNEL_PK');
+    // "missing or unusable", because this disclosure covers both (#2213 r25
+    // `4015755007`) — an unset binding and a present-but-malformed value.
+    expect(said).toContain('PUSH_CHANNEL_PK is missing or unusable');
     // Telegram still worked, so this is a disclosure and not an outage.
     expect(sends.some((x) => x.startsWith('tg:'))).toBe(true);
     expect(sends.some((x) => x.startsWith('push:'))).toBe(false);
@@ -1654,6 +1656,28 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // have needed. Derived, so it survives the constants moving.
     const coldNeed = CHAIN_OPENING_REQUESTS_AFTER_IDENTITY + MAX_SENDS_PER_LOAN + 1;
     expect(said).toContain(`below the ${coldNeed} needed`);
+  });
+
+  it('does not promise a resume the database refused', async () => {
+    // #2213 r25 `4015755019`. `persistCursor` catches its own failure and
+    // returned void, so the summary went on promising that the next tick
+    // resumes from the new position — while the warning printed one line
+    // above said the position could not be written. Two lines of the same
+    // report contradicting each other, and the reassuring one is the one an
+    // operator would act on.
+    //
+    // In reality `scanOffset` reads the OLD position: the prefix is re-read
+    // and the tail stays unreached, which is the opposite of what the summary
+    // claimed.
+    cursorWriteFails = 'prenotify_scan';
+    loanRows = tenLoans();
+    const { said } = await run();
+    // It still reports the tick honestly...
+    expect(said).toContain('loan(s) in the notification window');
+    // ...and says the resume did NOT happen, naming the consequence.
+    expect(said).toContain('starts from where THIS one did');
+    expect(said).toContain('the tail stays unreached');
+    expect(said).not.toContain('RESUMES from');
   });
 
   it('says nothing about a cap it did not reach', async () => {

@@ -673,7 +673,8 @@ async function preNotifyChain(
   // WHERE THE NEXT TICK PICKS UP. Written even when nothing was examined, so
   // a pass that stopped for want of allowance does not re-read the same
   // prefix next time.
-  await saveScanOffset(env, chain.id, cursor < due.length ? cursor : 0);
+  const resumeAt = cursor < due.length ? cursor : 0;
+  const resumeRecorded = await saveScanOffset(env, chain.id, resumeAt);
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   const examined = cursor - start;
@@ -710,8 +711,13 @@ async function preNotifyChain(
         `${unreadable} unreadable — ` +
         `${failed ?? capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and the ` +
-        `next tick RESUMES from ${cursor < due.length ? cursor : 0} rather ` +
-        `than re-reading this prefix. A tick that reports the read cap with ` +
+        `next tick ${
+          resumeRecorded
+            ? `RESUMES from ${resumeAt} rather than re-reading this prefix`
+            : `starts from where THIS one did, because the position could ` +
+              `not be recorded (see the warning above) — so this prefix is ` +
+              `re-read and the tail stays unreached until a write lands`
+        }. A tick that reports the read cap with ` +
         `hundreds rejected is reporting orphaned rows, not load — whereas ` +
         `hundreds awaiting the indexer is the indexer being behind, which ` +
         `needs nothing done to the rows themselves — and anything at all ` +
@@ -757,12 +763,19 @@ async function preNotifyChain(
   // it never made — but `sendPush` was then never reached, and the diagnostic
   // went with it. A fix to the accounting silently removed a disclosure.
   if (pushUnconfigured > 0) {
+    // "MISSING OR UNUSABLE", because r24 made this count both (#2213 r25
+    // `4015755007`). The disclosure now fires for a key that is absent AND for
+    // one that is present and malformed — which was the point of that fix —
+    // while the wording still said the deployment had none. That sends an
+    // operator to look for an unset binding when the value is sitting there
+    // and invalid, which is the slower of the two things to discover.
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
-        `deployment has no PUSH_CHANNEL_PK, so no Push was sent to them and ` +
-        `none can be. They were reached on Telegram or not at all. Set the ` +
-        `signer, or the Push channel on those subscriptions is inert.`,
+        `deployment's PUSH_CHANNEL_PK is missing or unusable, so no Push was ` +
+        `sent to them and none can be. They were reached on Telegram or not ` +
+        `at all. Check that the signer is set AND that it is a valid key — ` +
+        `either way the Push channel on those subscriptions is inert.`,
     );
   }
   // THE SAME DISCLOSURE FOR THE OTHER RAIL (#2213 r22 `4015173418`). r19 fixed
@@ -1188,7 +1201,7 @@ async function persistCursor(
   chainId: number,
   kind: PrenotifyCursorKind,
   at: number,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -1199,17 +1212,25 @@ async function persistCursor(
     )
       .bind(chainId, kind, at, Math.floor(Date.now() / 1000))
       .run();
+    return true;
   } catch (err) {
     const { subject, consequence } = describeCursorLoss(kind, chainId);
     console.warn(
       `[periodicPreNotify] could not persist ${subject} at ${at}: ` +
         `${describeFailure(err)}. ${consequence}`,
     );
+    // REPORTED, not swallowed (#2213 r25 `4015755019`). The caller's summary
+    // tells an operator where the next tick resumes, and that sentence is only
+    // true if this landed. Returning void let the summary promise a resume the
+    // database had just refused — contradicting the warning printed one line
+    // above it.
+    return false;
   }
 }
 
-async function saveScanOffset(env: Env, chainId: number, at: number): Promise<void> {
-  await persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at);
+/** @returns whether the position actually landed — the summary depends on it. */
+async function saveScanOffset(env: Env, chainId: number, at: number): Promise<boolean> {
+  return persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at);
 }
 
 

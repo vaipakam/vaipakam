@@ -77,3 +77,82 @@ describe('redactAndBound', () => {
     expect(redactAndBound('wss://node.example/KEY')).toBe('<redacted url>');
   });
 });
+
+/**
+ * THE SHAPE VIEM ACTUALLY THROWS (#2213 r25 `4015755031`).
+ *
+ * Every case above constructs a bare `Error` with a top-level `status` or
+ * `code` — the shape this function was written expecting. That is the shape of
+ * my own assumption, and an assertion written against an assumption cannot
+ * falsify it: the suite was green while `readContract` failures, the most
+ * common caller in the tree, printed nothing but the wrapper's class name.
+ *
+ * These build REAL viem errors so the test fails when the real nesting
+ * changes, rather than when my model of it does.
+ */
+describe('viem\'s real wrapper shape, not a hand-built stand-in', () => {
+  it('finds the HTTP status viem buried under its contract wrapper', async () => {
+    const { HttpRequestError } = await import('viem');
+    const inner = new HttpRequestError({
+      status: 429,
+      url: 'https://rpc.example/v1/SECRETKEY',
+      details: 'rate limited',
+    });
+    // The wrapper viem raises from `readContract`, standing in for
+    // `ContractFunctionExecutionError` without needing its full ABI context.
+    const outer = new Error('contract read failed');
+    outer.name = 'ContractFunctionExecutionError';
+    (outer as Error & { cause?: unknown }).cause = inner;
+
+    const said = describeFailure(outer);
+    expect(said).toContain('HTTP 429');
+    // Both classes, because the wrapper alone says only "a read failed".
+    expect(said).toContain('ContractFunctionExecutionError');
+    expect(said).toContain('HttpRequestError');
+    // And the credential in the inner error's URL still never appears.
+    expect(said).not.toContain('SECRETKEY');
+    expect(said).not.toContain('rpc.example');
+  });
+
+  it('finds an RPC code nested the same way', async () => {
+    const { RpcRequestError } = await import('viem');
+    const inner = new RpcRequestError({
+      body: {},
+      error: { code: -32601, message: 'method not found' },
+      url: 'https://rpc.example/v1/SECRETKEY',
+    });
+    const outer = new Error('contract read failed');
+    outer.name = 'ContractFunctionExecutionError';
+    (outer as Error & { cause?: unknown }).cause = inner;
+
+    const said = describeFailure(outer);
+    expect(said).toContain('rpc code -32601');
+    expect(said).not.toContain('SECRETKEY');
+  });
+
+  it('stops on a CYCLIC cause instead of spinning', () => {
+    // `cause` is an arbitrary value from a dependency; nothing stops it
+    // pointing back at its own parent.
+    const a = new Error('a');
+    const b = new Error('b');
+    (a as Error & { cause?: unknown }).cause = b;
+    (b as Error & { cause?: unknown }).cause = a;
+    expect(describeFailure(a)).toBe('Error');
+  });
+
+  it('does not let a deep wrapper stack become a stack trace', () => {
+    // Six distinct nested classes; at most two may be named.
+    let cur: Error = new Error('deepest');
+    cur.name = 'Innermost';
+    for (let i = 5; i >= 1; i -= 1) {
+      const next = new Error(`level ${i}`);
+      next.name = `Wrapper${i}`;
+      (next as Error & { cause?: unknown }).cause = cur;
+      cur = next;
+    }
+    const said = describeFailure(cur);
+    expect(said.split(' ← ').length).toBeLessThanOrEqual(2);
+    expect(said).not.toContain('Innermost');
+  });
+});
+
