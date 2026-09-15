@@ -24,6 +24,18 @@
  * all. A read surface that publishes a status a user can re-check does not
  * need this — suppressing there would hide the very rows an operator has to
  * see. The rule is for messages that cannot be taken back.
+ *
+ * **AND IT IS FOR LANES THAT DERIVE FROM STORED STATUS.** There is a third
+ * user-messaging lane — the keeper's health-factor band alerts — and it does
+ * NOT need this, for a structural reason worth writing down so nobody "fixes"
+ * it: it takes its loan set from the CHAIN (`getActiveLoansPaginated`, pinned
+ * to one block) and consults D1 only to resolve who to tell. A loan the chain
+ * considers ended is not in that list at all, so the case this rule exists
+ * for cannot arise there.
+ *
+ * That is the test for a new lane: ask where its loan set comes from. From
+ * `loans.status` — it needs this rule. From the chain — it already has a
+ * better one.
  */
 
 /** The table the memory lives in. Named once so a rename cannot half-land. */

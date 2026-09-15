@@ -90,6 +90,13 @@ which in turn would have stopped the reader advancing — leaving that chain
 frozen on one block until the database change landed. Everything that touches
 the new memory, read or write, now asks first whether it is there.
 
+A third lane that messages users — the health alerts about a loan's safety
+margin — needed no change, and the reason is worth stating: it works from the
+chain's own list of open loans rather than from the platform's records, and
+asks the records only who to tell. A loan the chain considers ended is not in
+its list at all. That is the test for any lane added later: where does its
+list of loans come from?
+
 ### What this does not change
 
 Reminders for every record the platform *has* confirmed, which is nearly all
