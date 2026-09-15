@@ -717,11 +717,12 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
     } catch {
       /* keep the stored count */
     }
-    // The route sees only the flag; the scheduler owns the real decision
-    // and records it. Reading the flag here is a floor on the CURRENT
-    // rotation, never the authority on the one that wrote the row.
-    const currentTick =
-      env.CHAIN_INGEST_VIA_DO === 'true' ? DO_PATH_CADENCE_MINUTES : 1;
+    // The scheduler owns the real decision and records it; this is a floor
+    // on the CURRENT rotation, never the authority on the one that wrote the
+    // row. It now reads the RESOLVED gate — the older comment said "the route
+    // sees only the flag", which was true and was the bug (#2202): the flag
+    // alone reports the DO cadence on a deployment running the legacy path.
+    const currentTick = env.doIngestEnabled ? DO_PATH_CADENCE_MINUTES : 1;
     if (
       !Number.isFinite(observedAge) ||
       observedAge >

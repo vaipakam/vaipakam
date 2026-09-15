@@ -131,6 +131,56 @@ export interface WorkerEnv {
 }
 
 /**
+ * Is the DO ingest path active? THE single definition of the #757 gate.
+ *
+ * Both halves are required: the `CHAIN_INGEST_VIA_DO` rollout flag AND the
+ * `CHAIN_INGEST_DO` binding. Merging or deploying the DO must never re-route
+ * live ingest on its own, and flipping the flag on a deployment without the
+ * binding must not either — so the cron, the webhook forward and every
+ * consumer of the resolved env answer this question the same way.
+ *
+ * It lives HERE, beside both env shapes, rather than in the module that
+ * happened to need it first. `index.ts` owned the only copy while three
+ * route modules re-derived a half of it from the one field they could see
+ * (#2202); a predicate that two layers must agree on belongs with the types,
+ * not with either caller.
+ *
+ * Callers holding a raw `WorkerEnv` (the cron, the webhook route, the DO)
+ * call this directly; everything downstream reads the resolved
+ * `Env.doIngestEnabled`, which `resolveEnv` stamps from this.
+ */
+export function isDoIngestEnabled(raw: WorkerEnv): boolean {
+  return raw.CHAIN_INGEST_VIA_DO === 'true' && !!raw.CHAIN_INGEST_DO;
+}
+
+/**
+ * The resolved env for a route that must SKIP `resolveEnv`.
+ *
+ * One route does: `/metrics/recycling` bypasses the Secrets Store resolution
+ * for latency, because it needs D1, the ingest gate and the deployment
+ * artifact — none of which come from Secrets Store — and paying for the
+ * secrets binding could push the response past the browser's abort.
+ *
+ * It exists as a named function because the bare cast that used to do this
+ * job got it wrong the moment the gate became a resolved field (#2202 r1):
+ * `raw as unknown as Env` type-checks happily and hands the route
+ * `doIngestEnabled: undefined`, which reads as "legacy" and is a worse
+ * answer than the half-gate it replaced. A double cast defeats the
+ * typechecker, so the only defence is that there is one obvious way to do
+ * this and it is tested.
+ *
+ * This is NOT a workaround for a missing binding: the raw env carries both
+ * halves, so this performs the same resolution `resolveEnv` does. It simply
+ * omits the part that costs latency.
+ */
+export function earlyRouteEnv(raw: WorkerEnv): Env {
+  return {
+    ...(raw as unknown as Env),
+    doIngestEnabled: isDoIngestEnabled(raw),
+  };
+}
+
+/**
  * The RESOLVED env passed to all downstream code. `RPC_*` are plain
  * strings; a missing / unconfigured chain is `undefined` and its
  * chain scan is skipped this tick (see `getChainConfigs`).
@@ -138,12 +188,27 @@ export interface WorkerEnv {
 export interface Env {
   DB: D1Database;
 
-  // RPC read-diet PR 0 — pass the #757 rollout gate through to the resolved
-  // env so the public stats routes can report the ingest mode's expected
-  // scan cadence (DO path = every chain pinged each minute; legacy inline
-  // round-robin = unknown here → reported as null and clients fail safe to
-  // their polling posture).
-  CHAIN_INGEST_VIA_DO?: string;
+  /**
+   * The #757 rollout gate, ALREADY RESOLVED — is the DO ingest path actually
+   * active? Consumers report the ingest mode's expected scan cadence from
+   * this (DO path = every chain pinged each minute; legacy inline
+   * round-robin = unknown → reported as null so clients fail safe to their
+   * polling posture).
+   *
+   * This carries the ANSWER rather than the flag, and that is the fix for
+   * #2202. The field used to be `CHAIN_INGEST_VIA_DO?: string` — half of a
+   * two-part gate — and its own comment claimed to "pass the rollout gate
+   * through". It did not: the gate is the flag AND the DO binding, the
+   * binding is deliberately not on the resolved env (a route has no business
+   * holding a namespace), so every consumer here could only ever test the
+   * half it could see. Three of them did, and all three reported the DO
+   * cadence on a deployment running the legacy path.
+   *
+   * A boolean nobody can half-read makes that unrepresentable, which is
+   * better than three corrected call sites: the next consumer gets the whole
+   * answer by default instead of the visible fragment.
+   */
+  doIngestEnabled: boolean;
 
   /** Cloudflare version-metadata binding — makes "what's actually
    *  deployed?" a one-curl question (surfaced on the stats routes).
@@ -259,8 +324,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
   ]);
   return {
     DB: raw.DB,
-    // RPC read-diet PR 0 — see the Env field doc.
-    CHAIN_INGEST_VIA_DO: raw.CHAIN_INGEST_VIA_DO,
+    // Resolved HERE because this is the only layer that can see both
+    // halves — see the `doIngestEnabled` field doc.
+    doIngestEnabled: isDoIngestEnabled(raw),
     CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
     OPENSEA_API_KEY: openSea,
