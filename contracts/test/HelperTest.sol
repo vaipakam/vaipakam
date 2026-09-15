@@ -2411,7 +2411,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](18);
         selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
@@ -2420,9 +2420,17 @@ contract HelperTest {
         selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
         selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        selectors[8] = RewardReconciliationFacet.getQueueState.selector;
+        selectors[8] = RewardReconciliationFacet.getFreshQueueState.selector;
         selectors[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
         selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
+        selectors[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        selectors[12] = RewardReconciliationFacet.getQueueSegment.selector;
+        selectors[13] = RewardReconciliationFacet.getEntrySegments.selector;
+        selectors[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        selectors[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        selectors[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        selectors[17] = RewardReconciliationFacet.reconciliationReverseRecycledConsumption.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

@@ -38,32 +38,34 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *  2. **`reclassifyReconciliationEntry`** — attribution moves between the two
  *     sides of an already-classified entry without changing its total,
  *     bounded by what is still UNSPENT and, toward fresh, by the same
- *     evidence. Spent-ness is RECORDED, never read from a balance (Codex
- *     #2206 r4): every outflow of a pool passes through that pool's own
- *     debit primitive (the live and restitution rows'; the bucket ledger's,
- *     whose row follows it), and that primitive records what the outflow
- *     took of the classified queue — the pool's other backing consumed
- *     first, never more than the records still hold — so a later credit
- *     un-spends nothing and a refill
- *     is consumed once; the figure is distributed among the entries FIFO by
- *     classification order (the earliest spent first) through a Fenwick
- *     tree's prefix sums, logarithmic in the log. Unspent credit moves WITH
- *     its tokens (in-holder; the recycled side bounded by the uncommitted
- *     bucket); spent credit moves as an inherited debit — `received` and
- *     `paid` together, the destination's consumption rising — never
- *     replacement capital, because an authenticated ledger inherits it; and
- *     only spent credit the side's ledger actually charged (fresh `paid`;
- *     recycled consumption) is inheritable. Unspent credit moves FIRST:
- *     that order is what reproduces the ledger a correct-at-ingress split
- *     would have produced (design §5c) — the corrected credit still covers
- *     the first of the entry's payouts, and only what it can no longer
- *     cover was, in truth, the other side's. The part of a fresh credit the
- *     standing deficit absorbed into restitution is neither queued nor
- *     movable for as long as the restitution row holds it; what the row
- *     releases of it (recorded at the row's outflow the same way) re-enters
- *     the live queue FIFO — unspent when the paid-correction moved it to
- *     live, spent when the deficit was paid with it. A packet's component
- *     counters follow its entry.
+ *     evidence. Spent-ness is RECORDED, never read from a balance, and
+ *     recorded INTO the classified value's own record (Codex #2206 r4, r5):
+ *     each side's queue is a sequence of SEGMENTS in classification order
+ *     with a frontier, and every outflow of a pool passes through that
+ *     pool's own debit primitive, which writes what the outflow took of the
+ *     queue — the pool's other backing consumed first, never more than the
+ *     segments still hold — into the segments at the frontier, earliest
+ *     first, with its kind. So a later credit un-spends nothing, a refill is
+ *     consumed once, and which entry a consumption or a repatriation took
+ *     from is known, not inferred. Unspent credit moves WITH its tokens
+ *     (in-holder; the recycled side bounded by the uncommitted bucket);
+ *     spent credit moves as an inherited debit — `received` and `paid`
+ *     together, the destination's consumption rising — never replacement
+ *     capital, because an authenticated ledger inherits it; and only spent
+ *     credit the side's ledger actually charged (fresh `paid`; recycled
+ *     consumption) is inheritable. Credit a correction moves to a side joins
+ *     that side's queue as a new segment at the tail — classified there at
+ *     the correction. Unspent credit moves FIRST: that order is what
+ *     reproduces the ledger a correct-at-ingress split would have produced
+ *     (design §5c) — the corrected credit still covers the first of the
+ *     entry's payouts, and only what it can no longer cover was, in truth,
+ *     the other side's. The part of a fresh credit the standing deficit
+ *     absorbed into restitution is neither queued nor movable for as long as
+ *     the restitution row holds it; what the row releases of it (recorded at
+ *     the row's outflow the same way) re-enters the fresh queue as a segment
+ *     of its own — unspent when the paid-correction moved it to live, spent
+ *     when the deficit was paid with it. A packet's component counters
+ *     follow its entry.
  *  3. **`importLegacyEnvelope`** — the inventory that arrived BEFORE packets
  *     were stamped, as ONE netted aggregate every figure of which is read on
  *     chain at the import (`uncounted − holder-held − Diamond-side reserved −
@@ -118,6 +120,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         uint256 writtenDown
     );
 
+    /// @dev The sides a queue view names: the fresh queue (of era 0), the
+    ///      recycled queue, the absorbed segments.
+    uint8 internal constant SIDE_FRESH = 0;
+    uint8 internal constant SIDE_RECYCLED = 1;
+    uint8 internal constant SIDE_ABSORBED = 2;
+
     // ─── The entries ────────────────────────────────────────────────────────
 
     /**
@@ -158,7 +166,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // row figure, global aggregate — each exact), the fresh credit under
         // the split, the bucket credit as relocated custody. The credits are
         // INFLOWS of their rows; the row primitive records nothing for them,
-        // and the entry queues behind everything recorded so far.
+        // and the entry's segments join the queues at the tail.
         LibRewardCustody.takeFromUnclassified(s, packetHash, freshShare, recycledShare);
         (uint256 toLive, uint256 toRestitution) =
             LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare);
@@ -170,9 +178,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     /**
      * @notice Move `amount` of an entry's attribution from one side to the
      *         other — its total unchanged — bounded by the still-unspent
-     *         source credit under the FIFO; beyond it, the spent part moves
-     *         as an inherited debit, and only the part the source's ledger
-     *         charged is inheritable.
+     *         source credit; beyond it, the spent part moves as an inherited
+     *         debit, and only the part the source's ledger charged is
+     *         inheritable.
      * @dev    ADMIN, MANUAL pause, activated. Fresh → recycled: the unspent
      *         part leaves the LIVE row with its tokens (restitution custody
      *         is not a correction's to move) and raises the bucket; the
@@ -184,10 +192,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
      *         live or restitution under the split; the spent part
      *         (consumption) raises `received` and `paid` together and gives
      *         the recycled consumption back. The queues are adjusted BEFORE
-     *         the tokens move, so the row primitive records nothing for the
-     *         correction's own move. Every later entry of the touched queue
-     *         reads exactly as before for the spent part, and shifts by the
-     *         unspent part.
+     *         the tokens move, so the pool's debit primitive records nothing
+     *         for the correction's own move; what moves joins the
+     *         destination's queue as new segments at the tail.
      * @param  index           The log entry.
      * @param  freshToRecycled The direction.
      * @param  amount          What moves.
@@ -340,16 +347,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return s.reconciliationLog[index];
     }
 
-    /// @notice An entry's spent-ness, per side — its inherited figure plus
-    ///         what the side's outflows took of it, in FIFO order — what of
-    ///         it is still unspent (movable with its tokens), the part of
-    ///         its spent-ness the other side may inherit (what the side's
-    ///         ledger charged: fresh `paid`; recycled consumption — first in
-    ///         queue order, plus what was inherited from the other side),
-    ///         the part of its fresh credit the restitution row STILL holds
-    ///         absorbed (neither queued nor movable), and the queued credit
-    ///         classified before it on each side (the tree's prefix).
-    ///         Logarithmic in the log's length; reads no balance.
+    /// @notice An entry's figures per side, read from its own segments:
+    ///         what is unspent (movable with its tokens), what is spent,
+    ///         what of the spent the other side may inherit (what the side's
+    ///         ledger charged: fresh `paid`; recycled consumption), and the
+    ///         part of its fresh credit the restitution row STILL holds
+    ///         absorbed (neither queued nor movable). Linear in the entry's
+    ///         own segments (one per classification or correction of it);
+    ///         reads no balance and infers nothing.
     function getReconciliationEntrySpent(
         uint256 index
     ) external view returns (Spent memory) {
@@ -358,49 +363,91 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return _spent(s, index);
     }
 
-    /// @notice The queues as they stand: on the fresh side the tree's queued
-    ///         total (each entry's credit less its inherited and absorbed
-    ///         records), what the restitution row released of the absorbed
-    ///         records (re-queued, FIFO), the recorded spent and paid
-    ///         figures, the live row, the absorbed total and the restitution
-    ///         row; on the recycled side the queued total, the recorded
-    ///         spent and consumption figures, and the bucket. Invariants:
-    ///         `paid ≤ spent ≤ queued + released`, `consumed ≤ spent ≤
-    ///         queued`, `released ≤ absorbed`, and each queue's unspent part
-    ///         is what its row holds of it.
-    function getQueueState(
+    /// @notice The fresh side as it stands for `era`: the fresh queue's
+    ///         segment count, frontier, unspent, spent and paid figures and
+    ///         the live row; the absorbed segments' count, frontier,
+    ///         unreleased and released figures and the restitution row.
+    ///         Invariants: `paid ≤ spent`, `unspent ≤ liveRow`, `unreleased
+    ///         ≤ restitutionRow`, every segment before a frontier exhausted.
+    function getFreshQueueState(
         uint64 era
     )
         external
         view
         returns (
-            uint256 freshQueued,
-            uint256 freshReleased,
-            uint256 freshSpent,
-            uint256 freshPaid,
+            uint256 segments,
+            uint256 frontier,
+            uint256 unspent,
+            uint256 spent,
+            uint256 paid,
             uint256 liveRow,
-            uint256 freshAbsorbedTotal,
-            uint256 restitutionRow,
-            uint256 recycledQueued,
-            uint256 recycledSpent,
-            uint256 recycledConsumed,
-            uint256 bucket
+            uint256 absorbedSegments,
+            uint256 absorbedFrontier,
+            uint256 absorbedUnreleased,
+            uint256 absorbedReleased,
+            uint256 restitutionRow
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.freshQueuedTotalByEra[era],
-            s.freshReleasedTotal,
+            s.freshQueueByEra[era].length,
+            s.freshQueueFrontierByEra[era],
+            s.freshUnspentByEra[era],
             s.freshSpentTotalByEra[era],
             s.freshPaidTotalByEra[era],
             s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh],
-            s.freshAbsorbedTotal,
-            s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution],
-            s.recycledQueuedTotal,
+            s.absorbedQueue.length,
+            s.absorbedQueueFrontier,
+            s.absorbedUnreleased,
+            s.absorbedReleasedTotal,
+            s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution]
+        );
+    }
+
+    /// @notice The recycled side as it stands: the queue's segment count,
+    ///         frontier, unspent, spent and consumed figures and the bucket.
+    ///         Invariants: `consumed ≤ spent`, `unspent ≤ the recycled row`.
+    function getRecycledQueueState()
+        external
+        view
+        returns (uint256 segments, uint256 frontier, uint256 unspent, uint256 spent, uint256 consumed, uint256 bucket)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.recycledQueue.length,
+            s.recycledQueueFrontier,
+            s.recycledUnspent,
             s.recycledSpentTotal,
             s.recycledConsumedTotal,
             s.recycleBucket
         );
+    }
+
+    /// @notice One segment of a queue: `side` 0 = the fresh queue of era 0,
+    ///         1 = the recycled queue (`charged` = consumption), 2 = the
+    ///         absorbed segments (`spent` = released; `charged` unused).
+    function getQueueSegment(
+        uint8 side,
+        uint256 i
+    ) external view returns (uint256 entryIndex, uint256 amount, uint256 spent, uint256 charged) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (side == SIDE_ABSORBED) {
+            LibVaipakam.AbsorbedSegment storage a = s.absorbedQueue[i];
+            return (a.entryIndex, a.amount, a.released, 0);
+        }
+        LibVaipakam.QueueSegment storage q =
+            side == SIDE_FRESH ? s.freshQueueByEra[LibRewardCustody.PRE_BACKFILL_ERA][i] : s.recycledQueue[i];
+        return (q.entryIndex, q.amount, q.spent, q.charged);
+    }
+
+    /// @notice The indices of an entry's segments on `side` (see
+    ///         {getQueueSegment}), in the order they joined the queue.
+    function getEntrySegments(uint256 index, uint8 side) external view returns (uint256[] memory) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
+        if (side == SIDE_FRESH) return s.entryFreshSegments[index];
+        if (side == SIDE_RECYCLED) return s.entryRecycledSegments[index];
+        return s.entryAbsorbedSegments[index];
     }
 
     /// @notice The log's length and the bucket's two reattribution
@@ -417,6 +464,53 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     /// @notice Whether an entry reference was applied.
     function isReconciliationEntryUsed(bytes32 entryId) external view returns (bool) {
         return LibVaipakam.storageSlot().reconciliationEntryUsed[entryId];
+    }
+
+    // ─── Diamond-internal: the queue machinery ──────────────────────────────
+    //
+    // The pools' debit primitives (`LibRewardCustody.debit` / `move` for the
+    // live and restitution rows; `LibVpfiRecycle.consume` and
+    // `debitRepatriationSurplus` for the bucket ledger) decide WHEN the
+    // queues are written and reach the walks here through the Diamond's own
+    // fallback, exactly as every facet reaches the custody mutations: the
+    // primitives are inlined into facets at the EIP-170 budget, and the
+    // queue machinery belongs with the epoch that owns it. Callable by the
+    // Diamond itself only; never `nonReentrant` (a correction's own token
+    // move reaches here from inside its guard, and finds nothing to take).
+
+    function _requireDiamondInternal() private view {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.takeFresh} — a live-row
+    ///         outflow's take of the fresh queue.
+    function reconciliationTakeFresh(uint256 have, uint256 amount, bool paid) external {
+        _requireDiamondInternal();
+        LibRewardCustody.takeFresh(LibVaipakam.storageSlot(), LibRewardCustody.PRE_BACKFILL_ERA, have, amount, paid);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.releaseAbsorbed} — a
+    ///         restitution-row outflow's release of the absorbed segments.
+    function reconciliationReleaseAbsorbed(uint256 have, uint256 amount, bool toLive, bool paid) external {
+        _requireDiamondInternal();
+        LibRewardCustody.releaseAbsorbed(LibVaipakam.storageSlot(), have, amount, toLive, paid);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.takeRecycled} — a
+    ///         bucket-ledger debit's take of the recycled queue.
+    function reconciliationTakeRecycled(
+        uint256 bucketBefore,
+        uint256 amount,
+        bool consumption
+    ) external returns (uint256 took, uint256 from) {
+        _requireDiamondInternal();
+        return LibRewardCustody.takeRecycled(LibVaipakam.storageSlot(), bucketBefore, amount, consumption);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.reverseRecycledConsumption}.
+    function reconciliationReverseRecycledConsumption(uint256 from, uint256 take) external {
+        _requireDiamondInternal();
+        LibRewardCustody.reverseRecycledConsumption(LibVaipakam.storageSlot(), from, take);
     }
 
     // ─── Internals ──────────────────────────────────────────────────────────
@@ -460,17 +554,15 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return (p.classifiedFresh, p.freshAuthenticated);
     }
 
-    /// @notice An entry's derived figures, per side.
+    /// @notice An entry's figures, per side, read from its own segments.
     struct Spent {
         uint256 freshSpent;
         uint256 freshUnspent;
         uint256 freshInheritable;
         uint256 freshAbsorbed;
-        uint256 freshPrefix;
         uint256 recycledSpent;
         uint256 recycledUnspent;
         uint256 recycledInheritable;
-        uint256 recycledPrefix;
     }
 
     /// @dev Fresh → recycled. The absorbed part still held is restitution
@@ -478,8 +570,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///      with its tokens; only then spent credit, as an inherited debit
     ///      — so what an entry keeps after any move that took spent units is
     ///      all spent, which is the correct-at-ingress result (design §5c).
-    ///      The queues and the recorded figures move FIRST; the row
-    ///      primitive then records nothing for the token move.
+    ///      The queues move FIRST: the units leave the entry's fresh
+    ///      segments and join the recycled queue as new segments at the
+    ///      tail; the row primitive then records nothing for the token move.
     function _moveToRecycled(
         LibVaipakam.Storage storage s,
         uint256 index,
@@ -494,14 +587,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (movingSpent > sp.freshInheritable) {
             revert ReconciliationSpentFreshNotInheritable(index, movingSpent, sp.freshInheritable);
         }
-        // Spent units leave the source's INHERITED figure first (a reversal
-        // of an earlier move: those consumption units return to the
-        // recycled queue, spent there by its own record again); the rest
-        // were paid out of the fresh queue and become inherited there.
-        uint256 reversing = movingSpent < e.freshInherited ? movingSpent : e.freshInherited;
-        _leaveFreshQueue(s, index, amount - reversing, movingSpent - reversing, e.freshAbsorbed - sp.freshAbsorbed, reversing);
-        e.freshInherited -= reversing;
-        e.recycledInherited += movingSpent - reversing;
+        _leaveSide(s.freshQueueByEra[e.era], s.entryFreshSegments[index], movingUnspent, movingSpent, SIDE_FRESH);
+        s.freshUnspentByEra[e.era] -= movingUnspent;
+        s.freshSpentTotalByEra[e.era] -= movingSpent;
+        s.freshPaidTotalByEra[e.era] -= movingSpent;
+        LibRewardCustody.appendRecycledSegment(s, index, movingUnspent, 0, 0);
+        LibRewardCustody.appendRecycledSegment(s, index, movingSpent, movingSpent, movingSpent);
         e.freshCredit -= amount;
         e.recycledCredit += amount;
         // Then the tokens and the ledgers.
@@ -515,9 +606,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
 
     /// @dev Recycled → fresh: the privileged direction, bounded by the
     ///      entry's evidence before anything moves. Only consumption is
-    ///      inheritable of the spent part. The queues and the recorded
-    ///      figures move FIRST (the split the credit will take is read
-    ///      ahead); the row primitive then records nothing for the move.
+    ///      inheritable of the spent part. The queues move FIRST (the split
+    ///      the credit will take is read ahead: its live part joins the
+    ///      fresh queue, its absorbed part the absorbed segments); the bucket
+    ///      ledger's own debit then finds nothing more to record.
     function _moveToFresh(
         LibVaipakam.Storage storage s,
         uint256 index,
@@ -532,10 +624,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         if (movingSpent > sp.recycledInheritable) {
             revert ReconciliationSpentRecycledNotInheritable(index, movingSpent, sp.recycledInheritable);
         }
-        uint256 reversing = movingSpent < e.recycledInherited ? movingSpent : e.recycledInherited;
-        _enterFreshQueue(s, index, movingUnspent, movingSpent - reversing, reversing);
-        e.recycledInherited -= reversing;
-        e.freshInherited += movingSpent - reversing;
+        _leaveSide(s.recycledQueue, s.entryRecycledSegments[index], movingUnspent, movingSpent, SIDE_RECYCLED);
+        s.recycledUnspent -= movingUnspent;
+        s.recycledSpentTotal -= movingSpent;
+        s.recycledConsumedTotal -= movingSpent;
+        (uint256 toLive, uint256 absorbed) = LibRewardCustody.freshSplit(s, movingUnspent);
+        LibRewardCustody.appendFreshSegment(s, e.era, index, toLive, 0, 0);
+        LibRewardCustody.appendAbsorbedSegment(s, index, absorbed);
+        LibRewardCustody.appendFreshSegment(s, e.era, index, movingSpent, movingSpent, movingSpent);
         e.recycledCredit -= amount;
         e.freshCredit += amount;
         // Then the tokens and the ledgers.
@@ -547,85 +643,45 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         _packetFollows(s, e, amount, false);
     }
 
-    /// @dev Fresh → recycled, the queues and the recorded figures first.
-    ///      Of the QUEUED credit that leaves (`queuedLeaving`: everything
-    ///      but the reversed inherited part), the part the restitution row
-    ///      had released back into the queue goes first — the entry's
-    ///      absorbed record shrinks by it, so what it keeps recorded is
-    ///      exactly what the row still holds. The spent units that leave
-    ///      the fresh queue (`leavingSpent`, all of them paid) take their
-    ///      figures with them; the reversed units (`reversing`) re-enter
-    ///      the recycled queue as spent consumption, which is what they
-    ///      were before the earlier move inherited them.
-    function _leaveFreshQueue(
-        LibVaipakam.Storage storage s,
-        uint256 index,
-        uint256 queuedLeaving,
-        uint256 leavingSpent,
-        uint256 released,
-        uint256 reversing
+    /// @dev Take `unspentOut` free units and `spentOut` charged-spent units
+    ///      out of an entry's segments on one side, in the order the
+    ///      segments joined the queue: free units shrink a segment's amount;
+    ///      charged units shrink its amount, spent and charged together, so
+    ///      what leaves is exactly what the entry's own record holds. A
+    ///      segment before the frontier has nothing free, so the frontier
+    ///      never has to move back. The figures asked for were read from
+    ///      these same segments a moment ago; not finding them is a defect.
+    function _leaveSide(
+        LibVaipakam.QueueSegment[] storage q,
+        uint256[] storage ids,
+        uint256 unspentOut,
+        uint256 spentOut,
+        uint8 side
     ) private {
-        uint256 fromTree = queuedLeaving - _releaseLeave(s, index, queuedLeaving, released);
-        uint64 era = s.reconciliationLog[index].era;
-        _queueAdjust(s, era, index, -int256(fromTree), int256(queuedLeaving - leavingSpent + reversing));
-        _shiftSpentFigures(s, era, -int256(leavingSpent), int256(reversing));
+        uint256 n = ids.length;
+        for (uint256 i = 0; i < n && (unspentOut != 0 || spentOut != 0); ++i) {
+            LibVaipakam.QueueSegment storage seg = q[ids[i]];
+            if (unspentOut != 0) {
+                uint256 free = seg.amount - seg.spent;
+                uint256 u = unspentOut < free ? unspentOut : free;
+                seg.amount -= uint96(u);
+                unspentOut -= u;
+            }
+            if (spentOut != 0) {
+                uint256 c = seg.charged;
+                uint256 u = spentOut < c ? spentOut : c;
+                seg.amount -= uint96(u);
+                seg.spent -= uint96(u);
+                seg.charged -= uint96(u);
+                spentOut -= u;
+            }
+        }
+        if (unspentOut != 0 || spentOut != 0) revert ReconciliationQueueInconsistent(side);
     }
 
-    /// @dev The released part of the queued credit that leaves in a
-    ///      correction: the entry's absorbed record and the released total
-    ///      shrink by it. Returns what left of the released part.
-    function _releaseLeave(
-        LibVaipakam.Storage storage s,
-        uint256 index,
-        uint256 queuedLeaving,
-        uint256 released
-    ) private returns (uint256 releasedLeaving) {
-        releasedLeaving = queuedLeaving < released ? queuedLeaving : released;
-        _absorbedAdjust(s, index, -int256(releasedLeaving));
-        s.freshReleasedTotal -= releasedLeaving;
-    }
-
-    /// @dev A correction's shift of the recorded spent figures: what leaves
-    ///      a side's queue as an inherited debit takes its spent AND
-    ///      charged figure with it (every unit that may leave is charged —
-    ///      the inheritable bound says so), and what returns re-enters as
-    ///      both.
-    function _shiftSpentFigures(
-        LibVaipakam.Storage storage s,
-        uint64 era,
-        int256 freshDelta,
-        int256 recycledDelta
-    ) private {
-        s.freshSpentTotalByEra[era] = _applyDelta(s.freshSpentTotalByEra[era], freshDelta);
-        s.freshPaidTotalByEra[era] = _applyDelta(s.freshPaidTotalByEra[era], freshDelta);
-        s.recycledSpentTotal = _applyDelta(s.recycledSpentTotal, recycledDelta);
-        s.recycledConsumedTotal = _applyDelta(s.recycledConsumedTotal, recycledDelta);
-    }
-
-    /// @dev Recycled → fresh, the queues and the recorded figures first.
-    ///      The unspent part enters the fresh queue under the split the
-    ///      credit will take (read ahead of the move: its absorbed part is
-    ///      a record, not queued credit); the spent units that leave the
-    ///      recycled queue (`leavingSpent`, all of them consumption) take
-    ///      their figures with them; the reversed units (`reversing`)
-    ///      re-enter the fresh queue as paid spend, which is what they were
-    ///      before the earlier move inherited them.
-    function _enterFreshQueue(
-        LibVaipakam.Storage storage s,
-        uint256 index,
-        uint256 movingUnspent,
-        uint256 leavingSpent,
-        uint256 reversing
-    ) private {
-        uint64 era = s.reconciliationLog[index].era;
-        (, uint256 absorbed) = LibRewardCustody.freshSplit(s, movingUnspent);
-        _absorbedAdjust(s, index, int256(absorbed));
-        _queueAdjust(s, era, index, int256(movingUnspent + reversing - absorbed), -int256(movingUnspent + leavingSpent));
-        _shiftSpentFigures(s, era, int256(reversing), -int256(leavingSpent));
-    }
-
-    /// @dev Append a log entry and its records to the three trees: its
-    ///      queued credit per side, and its absorbed record.
+    /// @dev Append a log entry and its segments: its live fresh credit to
+    ///      the fresh queue, its absorbed part to the absorbed segments, its
+    ///      recycled credit to the recycled queue — each at the tail.
     function _pushEntry(
         LibVaipakam.Storage storage s,
         bytes32 key,
@@ -643,48 +699,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
                 era: era,
                 landedAt: uint64(block.timestamp),
                 freshCredit: fresh,
-                recycledCredit: recycled,
-                freshInherited: 0,
-                recycledInherited: 0,
-                freshAbsorbed: absorbed
+                recycledCredit: recycled
             })
         );
-        uint256 queuedFresh = fresh - absorbed;
-        _treeAppend(s.freshQueueTreeByEra[era], queuedFresh);
-        s.freshQueuedTotalByEra[era] += queuedFresh;
-        _treeAppend(s.freshAbsorbedTree, absorbed);
-        s.freshAbsorbedTotal += absorbed;
-        _treeAppend(s.recycledQueueTree, recycled);
-        s.recycledQueuedTotal += recycled;
-    }
-
-    /// @dev A correction's change to an entry's QUEUED credit on each side,
-    ///      applied to the trees and the totals.
-    function _queueAdjust(
-        LibVaipakam.Storage storage s,
-        uint64 era,
-        uint256 index,
-        int256 freshDelta,
-        int256 recycledDelta
-    ) private {
-        if (freshDelta != 0) {
-            _treeAdd(s.freshQueueTreeByEra[era], index + 1, freshDelta);
-            s.freshQueuedTotalByEra[era] = _applyDelta(s.freshQueuedTotalByEra[era], freshDelta);
-        }
-        if (recycledDelta != 0) {
-            _treeAdd(s.recycledQueueTree, index + 1, recycledDelta);
-            s.recycledQueuedTotal = _applyDelta(s.recycledQueuedTotal, recycledDelta);
-        }
-    }
-
-    /// @dev A change to an entry's ABSORBED record, applied to the entry,
-    ///      the absorbed tree and its total.
-    function _absorbedAdjust(LibVaipakam.Storage storage s, uint256 index, int256 delta) private {
-        if (delta == 0) return;
-        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        e.freshAbsorbed = _applyDelta(e.freshAbsorbed, delta);
-        _treeAdd(s.freshAbsorbedTree, index + 1, delta);
-        s.freshAbsorbedTotal = _applyDelta(s.freshAbsorbedTotal, delta);
+        LibRewardCustody.appendFreshSegment(s, era, index, fresh - absorbed, 0, 0);
+        LibRewardCustody.appendAbsorbedSegment(s, index, absorbed);
+        LibRewardCustody.appendRecycledSegment(s, index, recycled, 0, 0);
     }
 
     /// @dev A packet-backed entry's correction moves the packet's component
@@ -707,94 +727,31 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         }
     }
 
-    /// @dev Spent-ness from the RECORDED figures (design §5c's FIFO, on the
-    ///      landed shape): what a side's outflows took of the classified
-    ///      queue — recorded at the row primitive, never read from a balance
-    ///      — is attributed to the entries FIFO by log order: an entry's
-    ///      spent part is that figure less the queued credit classified
-    ///      before it (the tree's prefix), clamped to its own; its
-    ///      inheritable part reads the charged figure the same way.
-    ///      Inherited credit is spent, and inheritable back, by definition.
+    /// @dev An entry's figures, per side, summed over its own segments.
     function _spent(LibVaipakam.Storage storage s, uint256 index) private view returns (Spent memory r) {
-        _spentFresh(s, index, r);
-        _spentRecycled(s, index, r);
-    }
-
-    /// @dev The fresh side. The absorbed record is released the same way the
-    ///      queue is spent: what the restitution row's outflows released of
-    ///      the absorbed records (the row's other backing released first) is
-    ///      attributed FIFO by log order over the absorbed tree and
-    ///      re-enters the live queue — where the recorded spent figure says
-    ///      whether it is unspent (the paid-correction moved it to live) or
-    ///      spent (the deficit was paid with it). What the row still holds
-    ///      is neither queued nor movable.
-    function _spentFresh(LibVaipakam.Storage storage s, uint256 index, Spent memory r) private view {
         LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        uint256 releasedTotal = s.freshReleasedTotal;
-        uint256 absorbedPrefix = _treePrefix(s.freshAbsorbedTree, index);
-        uint256 released = _clampSpent(releasedTotal, absorbedPrefix, e.freshAbsorbed);
-        r.freshAbsorbed = e.freshAbsorbed - released;
-        uint256 queued = e.freshCredit - e.freshInherited - r.freshAbsorbed;
-        r.freshPrefix = _treePrefix(s.freshQueueTreeByEra[e.era], index)
-            + (absorbedPrefix < releasedTotal ? absorbedPrefix : releasedTotal);
-        uint256 fifo = _clampSpent(s.freshSpentTotalByEra[e.era], r.freshPrefix, queued);
-        r.freshSpent = e.freshInherited + fifo;
-        r.freshUnspent = queued - fifo;
-        r.freshInheritable = e.freshInherited + _clampSpent(s.freshPaidTotalByEra[e.era], r.freshPrefix, queued);
-    }
-
-    /// @dev The recycled side. Of the spent part only CONSUMPTION is
-    ///      inheritable: what `consume` recorded (net of reversed payouts),
-    ///      attributed first in queue order; plus what was inherited from
-    ///      fresh. What left by surplus repatriation stays where it left from.
-    function _spentRecycled(LibVaipakam.Storage storage s, uint256 index, Spent memory r) private view {
-        LibVaipakam.ReconciliationEntry storage e = s.reconciliationLog[index];
-        uint256 queued = e.recycledCredit - e.recycledInherited;
-        r.recycledPrefix = _treePrefix(s.recycledQueueTree, index);
-        uint256 fifo = _clampSpent(s.recycledSpentTotal, r.recycledPrefix, queued);
-        r.recycledSpent = e.recycledInherited + fifo;
-        r.recycledUnspent = queued - fifo;
-        r.recycledInheritable = e.recycledInherited + _clampSpent(s.recycledConsumedTotal, r.recycledPrefix, queued);
-    }
-
-    function _clampSpent(uint256 figure, uint256 prefix, uint256 credit) private pure returns (uint256) {
-        if (figure <= prefix) return 0;
-        uint256 beyond = figure - prefix;
-        return beyond < credit ? beyond : credit;
-    }
-
-    function _applyDelta(uint256 value, int256 delta) private pure returns (uint256) {
-        return delta < 0 ? value - uint256(-delta) : value + uint256(delta);
-    }
-
-    // ─── Fenwick tree (1-indexed; index i = log index i − 1) ─────────────────
-
-    function _lowbit(uint256 i) private pure returns (uint256) {
-        unchecked {
-            return i & (~i + 1);
+        (r.freshUnspent, r.freshSpent, r.freshInheritable) =
+            _sideFigures(s.freshQueueByEra[e.era], s.entryFreshSegments[index]);
+        (r.recycledUnspent, r.recycledSpent, r.recycledInheritable) =
+            _sideFigures(s.recycledQueue, s.entryRecycledSegments[index]);
+        uint256[] storage a = s.entryAbsorbedSegments[index];
+        uint256 n = a.length;
+        for (uint256 i = 0; i < n; ++i) {
+            LibVaipakam.AbsorbedSegment storage seg = s.absorbedQueue[a[i]];
+            r.freshAbsorbed += seg.amount - seg.released;
         }
     }
 
-    /// @dev Append the next index with `value`: the new node covers
-    ///      (n − lowbit(n), n], so its sum is the prefix difference plus the
-    ///      value.
-    function _treeAppend(uint256[] storage t, uint256 value) private {
-        uint256 n = t.length + 1;
-        uint256 covered = value + _treePrefix(t, n - 1) - _treePrefix(t, n - _lowbit(n));
-        t.push(covered);
-    }
-
-    function _treeAdd(uint256[] storage t, uint256 i, int256 delta) private {
-        uint256 n = t.length;
-        for (; i <= n; i += _lowbit(i)) {
-            t[i - 1] = _applyDelta(t[i - 1], delta);
-        }
-    }
-
-    /// @dev The sum of the first `i` indices (log indices 0 .. i − 1).
-    function _treePrefix(uint256[] storage t, uint256 i) private view returns (uint256 sum) {
-        for (; i > 0; i -= _lowbit(i)) {
-            sum += t[i - 1];
+    function _sideFigures(
+        LibVaipakam.QueueSegment[] storage q,
+        uint256[] storage ids
+    ) private view returns (uint256 unspent, uint256 spent, uint256 charged) {
+        uint256 n = ids.length;
+        for (uint256 i = 0; i < n; ++i) {
+            LibVaipakam.QueueSegment storage seg = q[ids[i]];
+            unspent += seg.amount - seg.spent;
+            spent += seg.spent;
+            charged += seg.charged;
         }
     }
 

@@ -547,7 +547,13 @@ contract RewardRemittanceFacet is
         s.rewardBudgetRemittedGlobal += st.fresh;
         s.rewardBudgetRemittedTotal[dstChainId] += st.totalAll;
         if (st.recycled > 0) {
-            LibVpfiRecycle.consume(st.recycled);
+            // #1566 closure 2 cutover PR 2 (Codex #2206 r5) — the remit
+            // records what its consumption took of the classified recycled
+            // queue, so a release reverses exactly that.
+            (uint256 classifiedTake, uint256 classifiedFrom) = LibVpfiRecycle.consume(st.recycled);
+            LibVaipakam.RemitReservation storage rr = s.remitReservations[remitId];
+            rr.classifiedTake = classifiedTake;
+            rr.classifiedFrom = classifiedFrom;
         }
         LibInteractionRewards.consumeArmedFresh(st.armedFresh);
 

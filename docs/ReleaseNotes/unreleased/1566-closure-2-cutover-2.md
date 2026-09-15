@@ -47,14 +47,18 @@ ten fresh with five paid out, two corrected to recycled, is eight fresh
 with the same five paid and two unspent on the recycled side. A debit one
 side inherited is unwound by the reverse move, so a correction and its
 reversal leave an entry exactly as spent as it was. What each side's outflows took of the classified value is recorded at
-the outflow itself, where the kind of outflow is known — never read back
-from the backing's balance, so a later credit un-spends nothing and a
-refill is consumed once — and only the part the side's own ledger charged
-(paid on the fresh side, consumed on the recycled side) may be inherited
-by the other side: recycled value that left by a surplus repatriation, or
-whose payout was later reversed, and fresh value a demotion unwound, are
-never inherited, and consumption made while nothing classified was in the
-backing is nobody's. The part of a classification that a standing deficit absorbed
+the outflow itself, into that value's own record, earliest first, with
+the kind of outflow — never read back from the backing's balance and
+never inferred from totals, so a later credit un-spends nothing, a refill
+is consumed once, and which classified value an outflow took, and how, is
+known — and only the part the side's own ledger charged (paid on the
+fresh side, consumed on the recycled side) may be inherited by the other
+side: recycled value that left by a surplus repatriation, or whose payout
+was later reversed (a released remit reverses exactly its own
+consumption, no other's), and fresh value a demotion unwound, are never
+inherited, and consumption made while nothing classified was in the
+backing is nobody's. Value a correction moves to a side takes its place
+at the end of that side's record, as of the correction. The part of a classification that a standing deficit absorbed
 into the restitution position is neither counted as spendable nor movable
 for as long as that position holds it; what the position releases
 of it — because a correction of the paid figure moved it back into live

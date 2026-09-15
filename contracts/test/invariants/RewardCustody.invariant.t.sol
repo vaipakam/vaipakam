@@ -164,8 +164,9 @@ contract RewardCustodyInvariant is SetupTest {
     /// never lowers what the outflows already took.
     function invariant_SpentFiguresFallOnlyByACorrection() public view {
         if (handler.lastActionWasCorrection()) return;
-        (, uint256 released, uint256 freshSpent, , , , , , uint256 recycledSpent, , ) =
-            RewardReconciliationFacet(address(diamond)).getQueueState(0);
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        (, , , uint256 freshSpent, , , , , , uint256 released, ) = recon.getFreshQueueState(0);
+        (, , , uint256 recycledSpent, , ) = recon.getRecycledQueueState();
         assertGe(freshSpent, handler.freshSpentAtActionStart(), "the fresh spent figure never falls");
         assertGe(recycledSpent, handler.recycledSpentAtActionStart(), "the recycled spent figure never falls");
         assertGe(released, handler.freshReleasedAtActionStart(), "the released figure never falls");
@@ -178,65 +179,102 @@ contract RewardCustodyInvariant is SetupTest {
     /// restitution row holds the rest. The record and the pool never
     /// disagree, under every interleaving.
     function invariant_UnspentQueuesAreBacked() public view {
-        (
-            uint256 freshQueued,
-            uint256 released,
-            uint256 freshSpent,
-            uint256 freshPaid,
-            uint256 liveRow,
-            uint256 absorbedTotal,
-            uint256 restitutionRow,
-            uint256 recycledQueued,
-            uint256 recycledSpent,
-            uint256 recycledConsumed,
-        ) = RewardReconciliationFacet(address(diamond)).getQueueState(0);
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        (, , uint256 freshUnspent, uint256 freshSpent, uint256 freshPaid, uint256 liveRow, , , uint256 unreleased, , uint256 restitutionRow) =
+            recon.getFreshQueueState(0);
+        (, , uint256 recycledUnspent, uint256 recycledSpent, uint256 consumed, ) = recon.getRecycledQueueState();
         assertLe(freshPaid, freshSpent, "paid <= spent");
-        assertLe(freshSpent, freshQueued + released, "spent <= queued + released");
-        assertLe(freshQueued + released - freshSpent, liveRow, "the live row backs the unspent fresh queue");
-        assertLe(recycledConsumed, recycledSpent, "consumed <= spent");
-        assertLe(recycledSpent, recycledQueued, "recycled spent <= queued");
+        assertLe(freshUnspent, liveRow, "the live row backs the unspent fresh queue");
+        assertLe(consumed, recycledSpent, "consumed <= spent");
         assertLe(
-            recycledQueued - recycledSpent,
+            recycledUnspent,
             _custody().rewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled),
             "the recycled row backs the unspent recycled queue"
         );
-        assertLe(released, absorbedTotal, "released <= absorbed");
-        assertLe(absorbedTotal - released, restitutionRow, "restitution holds the unreleased records");
+        assertLe(unreleased, restitutionRow, "restitution holds the unreleased records");
     }
 
-    /// #1566 closure 2 cutover PR 2 (Codex #2206 r2, r3) — the three trees
-    /// equal the log: each side's queued total and the absorbed total are
-    /// the sums of the entries' records, what the restitution row released
-    /// never exceeds the absorbed total, and the tree's prefix before the
-    /// last entry plus that entry's queued credit (as the view derives it,
-    /// released part included) is the queued total plus the released part.
+    /// #1566 closure 2 cutover PR 2 (Codex #2206 r2–r5) — the queues equal
+    /// the log: every figure the queues report is the sum of the entries'
+    /// own segments, every segment before a frontier is exhausted, and an
+    /// entry's credit on a side is the sum of its segments' amounts.
     function invariant_QueuesMatchTheLog() public view {
+        _freshQueueMatchesTheLog();
+        _recycledQueueMatchesTheLog();
+        _absorbedSegmentsMatchTheLog();
+    }
+
+    function _freshQueueMatchesTheLog() internal view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         (uint256 entries, , ) = recon.getReconciliationTotals();
-        (uint256 queuedFresh, uint256 released, , , , uint256 absorbedTotal, , uint256 queuedRecycled, , , ) =
-            recon.getQueueState(0);
-        uint256 sumFresh;
-        uint256 sumRecycled;
-        uint256 sumAbsorbed;
+        (uint256 segments, uint256 frontier, uint256 unspent, uint256 spent, uint256 paid, , , , , , ) =
+            recon.getFreshQueueState(0);
+        uint256 sumUnspent;
+        uint256 sumSpent;
+        uint256 sumPaid;
         for (uint256 i = 0; i < entries; ++i) {
-            LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(i);
-            sumFresh += e.freshCredit - e.freshInherited - e.freshAbsorbed;
-            sumRecycled += e.recycledCredit - e.recycledInherited;
-            sumAbsorbed += e.freshAbsorbed;
-        }
-        assertEq(sumFresh, queuedFresh, "fresh queued total == sum of entries");
-        assertEq(sumRecycled, queuedRecycled, "recycled queued total == sum of entries");
-        assertEq(sumAbsorbed, absorbedTotal, "absorbed total == sum of records");
-        assertLe(released, absorbedTotal, "released <= absorbed");
-        if (entries > 0) {
-            RewardReconciliationFacet.Spent memory last = recon.getReconciliationEntrySpent(entries - 1);
-            LibVaipakam.ReconciliationEntry memory e = recon.getReconciliationEntry(entries - 1);
+            RewardReconciliationFacet.Spent memory sp = recon.getReconciliationEntrySpent(i);
+            sumUnspent += sp.freshUnspent;
+            sumSpent += sp.freshSpent;
+            sumPaid += sp.freshInheritable;
             assertEq(
-                last.freshPrefix + (e.freshCredit - e.freshInherited - last.freshAbsorbed),
-                queuedFresh + released,
-                "fresh tree == total"
+                sp.freshUnspent + sp.freshSpent + sp.freshAbsorbed,
+                recon.getReconciliationEntry(i).freshCredit,
+                "an entry's fresh credit is its segments"
             );
-            assertEq(last.recycledPrefix + (e.recycledCredit - e.recycledInherited), queuedRecycled, "recycled tree == total");
+        }
+        assertEq(sumUnspent, unspent, "fresh unspent == sum of entries");
+        assertEq(sumSpent, spent, "fresh spent == sum of entries");
+        assertEq(sumPaid, paid, "fresh paid == sum of entries");
+        assertLe(frontier, segments, "frontier within the queue");
+        for (uint256 i = 0; i < frontier; ++i) {
+            (, uint256 amount, uint256 segSpent, ) = recon.getQueueSegment(0, i);
+            assertEq(amount, segSpent, "every fresh segment before the frontier is exhausted");
+        }
+    }
+
+    function _recycledQueueMatchesTheLog() internal view {
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        (uint256 entries, , ) = recon.getReconciliationTotals();
+        (uint256 segments, uint256 frontier, uint256 unspent, uint256 spent, uint256 consumed, ) =
+            recon.getRecycledQueueState();
+        uint256 sumUnspent;
+        uint256 sumSpent;
+        uint256 sumConsumed;
+        for (uint256 i = 0; i < entries; ++i) {
+            RewardReconciliationFacet.Spent memory sp = recon.getReconciliationEntrySpent(i);
+            sumUnspent += sp.recycledUnspent;
+            sumSpent += sp.recycledSpent;
+            sumConsumed += sp.recycledInheritable;
+            assertEq(
+                sp.recycledUnspent + sp.recycledSpent,
+                recon.getReconciliationEntry(i).recycledCredit,
+                "an entry's recycled credit is its segments"
+            );
+        }
+        assertEq(sumUnspent, unspent, "recycled unspent == sum of entries");
+        assertEq(sumSpent, spent, "recycled spent == sum of entries");
+        assertEq(sumConsumed, consumed, "recycled consumed == sum of entries");
+        assertLe(frontier, segments, "frontier within the queue");
+        for (uint256 i = 0; i < frontier; ++i) {
+            (, uint256 amount, uint256 segSpent, ) = recon.getQueueSegment(1, i);
+            assertEq(amount, segSpent, "every recycled segment before the frontier is exhausted");
+        }
+    }
+
+    function _absorbedSegmentsMatchTheLog() internal view {
+        RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        (uint256 entries, , ) = recon.getReconciliationTotals();
+        (, , , , , , uint256 segments, uint256 frontier, uint256 unreleased, , ) = recon.getFreshQueueState(0);
+        uint256 sumHeld;
+        for (uint256 i = 0; i < entries; ++i) {
+            sumHeld += recon.getReconciliationEntrySpent(i).freshAbsorbed;
+        }
+        assertEq(sumHeld, unreleased, "absorbed still held == sum of entries");
+        assertLe(frontier, segments, "frontier within the absorbed segments");
+        for (uint256 i = 0; i < frontier; ++i) {
+            (, uint256 amount, uint256 released, ) = recon.getQueueSegment(2, i);
+            assertEq(amount, released, "every absorbed segment before the frontier is released");
         }
     }
 
@@ -332,8 +370,9 @@ contract RewardCustodyHandler is Test {
 
     function _start() internal {
         calls++;
-        (, uint256 released, uint256 freshSpent, , , , , , uint256 recycledSpent, , ) =
-            RewardReconciliationFacet(diamond).getQueueState(0);
+        RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
+        (, , , uint256 freshSpent, , , , , , uint256 released, ) = recon.getFreshQueueState(0);
+        (, , , uint256 recycledSpent, , ) = recon.getRecycledQueueState();
         freshSpentAtActionStart = freshSpent;
         recycledSpentAtActionStart = recycledSpent;
         freshReleasedAtActionStart = released;

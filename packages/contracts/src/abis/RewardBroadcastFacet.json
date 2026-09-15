@@ -1897,6 +1897,17 @@
   },
   {
     "type": "error",
+    "name": "ReconciliationQueueInconsistent",
+    "inputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReconciliationReceivedShort",
     "inputs": [
       {

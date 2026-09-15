@@ -1092,7 +1092,7 @@ contract RewardCompensationDispatchFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
         LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
+        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, r.classifiedFrom, r.classifiedTake);
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );

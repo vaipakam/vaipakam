@@ -1096,8 +1096,8 @@ contract TestMutatorFacet {
     ///         value moving between the two terms of the derived floor
     ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
     ///         move would not exercise the thing that matters.
-    function consumeRecycleRaw(uint256 amount) external {
-        LibVpfiRecycle.consume(amount);
+    function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake, uint256 classifiedFrom) {
+        return LibVpfiRecycle.consume(amount);
     }
 
     /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
@@ -2398,7 +2398,12 @@ contract TestMutatorFacet {
     /// @notice #1566 closure 2 cutover PR 2 test-only — drive the REAL
     ///         released-remit restore: the reversed payout the
     ///         reconciliation nets out of inheritable consumption.
-    function restoreReleasedRemitRaw(uint256 recycledFull, uint256 recycledSent) external {
-        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent);
+    function restoreReleasedRemitRaw(
+        uint256 recycledFull,
+        uint256 recycledSent,
+        uint256 classifiedFrom,
+        uint256 classifiedTake
+    ) external {
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, classifiedFrom, classifiedTake);
     }
 }

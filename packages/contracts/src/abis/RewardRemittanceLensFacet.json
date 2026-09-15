@@ -719,6 +719,16 @@
             "name": "conflictClawed",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "classifiedFrom",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedTake",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

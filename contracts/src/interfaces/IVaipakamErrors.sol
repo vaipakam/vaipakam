@@ -483,6 +483,12 @@ interface IVaipakamErrors {
     ///         what a demotion unwound was never paid and has no debit to
     ///         inherit.
     error ReconciliationSpentFreshNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5) — a queue's
+    ///         segments and its totals disagree (a walk ran past the last
+    ///         segment, or an entry's segments could not give what its
+    ///         figures said they held): a defect, refused rather than
+    ///         dropping units. `side`: 0 fresh, 1 recycled, 2 absorbed.
+    error ReconciliationQueueInconsistent(uint8 side);
     /// @notice The envelope under this snapshot id was already imported.
     error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
     /// @notice The stated dispositions do not resolve the envelope exactly.

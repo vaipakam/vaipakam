@@ -3113,7 +3113,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](11);
+        s = new bytes4[](18);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
@@ -3122,9 +3122,17 @@ contract DeployDiamond is Script {
         s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
         s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        s[8] = RewardReconciliationFacet.getQueueState.selector;
+        s[8] = RewardReconciliationFacet.getFreshQueueState.selector;
         s[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
         s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
+        s[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        s[12] = RewardReconciliationFacet.getQueueSegment.selector;
+        s[13] = RewardReconciliationFacet.getEntrySegments.selector;
+        s[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        s[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        s[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        s[17] = RewardReconciliationFacet.reconciliationReverseRecycledConsumption.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
