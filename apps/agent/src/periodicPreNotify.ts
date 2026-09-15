@@ -307,6 +307,14 @@ async function preNotifyChain(
   // every tick exactly as before — so the common case keeps the ordering that
   // makes the send cap fair, and only the overloaded case trades a tick of
   // latency for not starving anyone.
+  //
+  // THE DRIVER'S STEP MUST BE COPRIME WITH `spans`, and it is because this
+  // Worker's cron fires every minute — a step of 1, coprime with everything.
+  // At a five-minute schedule the minute is always a multiple of five, so a
+  // window of 1,201–1,500 candidates (`spans` = 5) would scan span 0 forever
+  // and starve the rest: this fix, undone by an edit to a different file.
+  // `apps/agent/test/cronPeriodPinsScanRotation.test.ts` asserts the schedule
+  // rather than leaving that to this comment.
   const spans = Math.ceil(due.length / SCAN_SPAN);
   const start = spans > 1 ? (Math.floor(now / 60) % spans) * SCAN_SPAN : 0;
 
