@@ -255,6 +255,46 @@ describe('the join, not just the wording', () => {
     }
   });
 
+  it('names long-held rows even on a tick it refuses (#2213 r2)', async () => {
+    // Rows in quarantine suppress reminders whatever this tick does, so the
+    // naming cannot be conditional on the tick having produced a report.
+    // Below the refusals it never ran during a backfill, a cursor/head
+    // mismatch, or a stretch with no settled head — the stretches where an
+    // operator most needs to know what is being withheld.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const seen: string[] = [];
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          seen.push(sql);
+          return {
+            bind: () => ({
+              first: async () => ({ n: 0 }),
+              all: async () => ({ results: [] }),
+            }),
+            first: async () => ({ name: 'loan_reconcile_quarantine' }),
+          };
+        },
+      },
+    } as unknown as Env;
+    const outcome = await _runLoanReconcilePass({
+      ...passInput(),
+      env,
+      head: { block: 100n, timestamp: 1n, settled: false, fallbackReason: 'TimeoutError' },
+    });
+    expect(outcome.established).toBe(false);
+    // It looked, on a tick that established nothing.
+    //
+    // `FROM loan_reconcile_quarantine`, not merely the table's NAME: the
+    // availability probe's own SQL mentions the name (in a `sqlite_master`
+    // lookup), so the looser assertion passed with the stale report disabled
+    // — found by mutation, and exactly the class of false pass this suite has
+    // caught three times now.
+    expect(seen.some((q) => /FROM\s+loan_reconcile_quarantine/.test(q))).toBe(true);
+  });
+
   it('refuses outright on a head the chain did not call settled', async () => {
     // #2201. `latest - 32` is a finality GUESS, and this pass terminalizes
     // rows it then never selects again — so a reorg deeper than the margin

@@ -1131,6 +1131,32 @@ export async function _runLoanReconcilePass(input: {
   // anything wanting provenance names `settled` explicitly.
   const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
   const head = settled.block;
+  // BEFORE ANY REFUSAL (#2213 r2 `4011776398`). Long-held rows go on
+  // suppressing reminders whatever this tick does, so naming them cannot be
+  // conditional on this tick having produced a report. Placed below the
+  // refusals, it never ran during a backfill, a cursor/head mismatch, or a
+  // stretch with no settled head — exactly the stretches where an operator
+  // most needs to know what is being withheld and why.
+  //
+  // Guarded on availability rather than caught: in the deploy window the read
+  // would throw deterministically, and a catch there would have to say
+  // something about withholding it cannot know.
+  const nowSecForQuarantine = Math.floor(Date.now() / 1000);
+  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
+  if (quarantineAvailable) {
+    try {
+      await reportStaleQuarantine(env.DB, chainId, nowSecForQuarantine);
+    } catch (err) {
+      // The marks are unaffected: this is the read that NAMES long-held rows.
+      // Withholding continues; what is lost is the operator being told.
+      console.error(
+        `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
+          `withholding is unaffected, but long-held rows are not being named`,
+        err,
+      );
+    }
+  }
+
   // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
   //
   // `latest - 32` is a heuristic finality margin, not the chain's statement
@@ -1202,10 +1228,6 @@ export async function _runLoanReconcilePass(input: {
           : `records are current through ${readThrough}, short of the head ${head}`,
     };
   }
-  // Asked ONCE per pass, before any repair builds its batch: every repair's
-  // close-out statements are gated on the same answer, so a pass cannot half
-  // include the release (#2213 r2 `4011776381`).
-  const quarantineAvailable = await quarantineAvailableForWrites(env.DB as never);
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1338,10 +1360,10 @@ export async function _runLoanReconcilePass(input: {
   // a failed tick. It is loud about failing, because a quarantine that
   // silently stops recording is a surface that silently resumes reminding.
   if (report) {
-    // TWO OPERATIONS, TWO CATCHES (#2213 r1 `4011674998`). A shared one told
-    // the operator that rows are "NOT withheld" when the marks had in fact
-    // committed and only the follow-up READ failed — sending them toward the
-    // opposite diagnosis, which is worse than saying nothing.
+    // The WRITE only. The stale-report READ moved to the top of the pass
+    // (#2213 r2 `4011776398`), which also settles r1's `4011674998`: the two
+    // operations no longer share a catch because they no longer share a
+    // place.
     const nowSec = Math.floor(Date.now() / 1000);
     try {
       const writes = quarantineStatements(env.DB, chainId, report, nowSec);
@@ -1351,17 +1373,6 @@ export async function _runLoanReconcilePass(input: {
         `[chainIndexer] quarantine WRITE failed for chain ${chainId} — rows ` +
           `this pass could not settle are NOT withheld from reminders until a ` +
           `later pass records them`,
-        err,
-      );
-    }
-    try {
-      await reportStaleQuarantine(env.DB, chainId, nowSec);
-    } catch (err) {
-      // The marks are unaffected: this is the read that NAMES long-held rows.
-      // Withholding continues; what is lost is the operator being told.
-      console.error(
-        `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
-          `withholding is unaffected, but long-held rows are not being named`,
         err,
       );
     }
