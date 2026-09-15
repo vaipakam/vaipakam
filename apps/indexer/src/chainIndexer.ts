@@ -1333,15 +1333,30 @@ export async function _runLoanReconcilePass(input: {
   // a failed tick. It is loud about failing, because a quarantine that
   // silently stops recording is a surface that silently resumes reminding.
   if (report) {
+    // TWO OPERATIONS, TWO CATCHES (#2213 r1 `4011674998`). A shared one told
+    // the operator that rows are "NOT withheld" when the marks had in fact
+    // committed and only the follow-up READ failed — sending them toward the
+    // opposite diagnosis, which is worse than saying nothing.
+    const nowSec = Math.floor(Date.now() / 1000);
     try {
-      const writes = quarantineStatements(env.DB, chainId, report, Math.floor(Date.now() / 1000));
+      const writes = quarantineStatements(env.DB, chainId, report, nowSec);
       if (writes.length > 0) await env.DB.batch(writes);
-      await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
     } catch (err) {
       console.error(
-        `[chainIndexer] quarantine bookkeeping failed for chain ${chainId} — ` +
-          `rows this pass could not settle are NOT withheld from reminders ` +
-          `until a later pass records them`,
+        `[chainIndexer] quarantine WRITE failed for chain ${chainId} — rows ` +
+          `this pass could not settle are NOT withheld from reminders until a ` +
+          `later pass records them`,
+        err,
+      );
+    }
+    try {
+      await reportStaleQuarantine(env.DB, chainId, nowSec);
+    } catch (err) {
+      // The marks are unaffected: this is the read that NAMES long-held rows.
+      // Withholding continues; what is lost is the operator being told.
+      console.error(
+        `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
+          `withholding is unaffected, but long-held rows are not being named`,
         err,
       );
     }
@@ -5342,6 +5357,21 @@ export function _closedLoanSideTableStatements(
     ).bind(chainId, loanId),
     env.DB.prepare(
       `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+    // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
+    //
+    // Without this the release could only ever come from the reconciliation
+    // pass's own report — and a loan quarantined after a transient read, whose
+    // ordinary terminal event then arrives before the rotation revisits it,
+    // leaves the live set for good. The pass never selects it again, so no
+    // report can name it, and the mark sits there being reported stale
+    // forever. A mark that cannot be released is the mirror image of the
+    // defect the quarantine fixes.
+    //
+    // Here rather than in the pass because this is the list every close-out
+    // already shares — which is exactly why the list exists.
+    env.DB.prepare(
+      `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
     ).bind(chainId, loanId),
   ];
 }

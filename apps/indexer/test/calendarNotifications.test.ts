@@ -6,7 +6,7 @@
  * get calendar rows despite having no oracle).
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CRON_LOG_INDEX,
   calendarWindowSql,
@@ -16,6 +16,7 @@ import {
   maxGraceSeconds,
   planCalendarRows,
   sweepCalendarNotifications,
+  _resetQuarantineTableProbe,
   type CalendarLoanRow,
   type GraceBucketJson,
 } from '../src/calendarNotifications';
@@ -337,6 +338,66 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     h.db.prepare('DELETE FROM loan_reconcile_quarantine WHERE loan_id = ?').run(23);
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([23]);
+  });
+
+  it('still reminds when migration 0049 has NOT been applied yet (#2213 r1)', async () => {
+    // THE DEPLOY WINDOW. `deploy-chain.sh` and `deploy-testnet.sh` push the
+    // Worker BEFORE applying D1 migrations, so this build runs against a
+    // database with no quarantine table — guaranteed, not hypothetical, and
+    // open indefinitely if the migration then fails.
+    //
+    // Referencing the table unconditionally fails the window query, and the
+    // sweep's fail-open catch turns that into EVERY reminder on EVERY chain
+    // suppressed — a far larger outage than the one the quarantine prevents.
+    // The right degradation is the prior behaviour: remind, and say so.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS.filter((m) => !m.includes('loan_reconcile_quarantine')));
+    seedGraceConfig(h);
+    seedLoan(h, 31, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([31]);
+    // NOT silently: this build is not doing what it believes it is doing.
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('migration 0049');
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
+  });
+
+  it('starts withholding the moment the migration lands, with no redeploy (#2213 r1)', async () => {
+    // The probe caches only a TRUE. Caching a false would be the quieter
+    // half of the same bug: the table appears, and this isolate goes on
+    // reminding about unsettled loans until it happens to recycle — which on
+    // a Worker can be hours, and nothing would say so.
+    //
+    // Deliberately no reset between the halves: this is ONE isolate seeing
+    // the schema change underneath it, which is exactly the deploy sequence.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS.filter((m) => !m.includes('loan_reconcile_quarantine')));
+    seedGraceConfig(h);
+    seedLoan(h, 41, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([41]);
+
+    // The migration lands, and the loan is quarantined.
+    const migration = ALL_MIGRATIONS.find((m) => m.includes('loan_reconcile_quarantine'));
+    for (const stmt of (migration ?? '').split(';')) {
+      if (stmt.trim()) h.db.prepare(stmt).run();
+    }
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'orphan', ?, ?)`,
+      )
+      .run(CHAIN, 42, NOW - 100, NOW - 100);
+    seedLoan(h, 42, NOW + 6 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    // 41 already had its reminder; 42 is withheld — so no NEW row for 42.
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([41]);
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
   });
 
   it('sweeps normally when nothing is withheld, including an empty exclusion', async () => {

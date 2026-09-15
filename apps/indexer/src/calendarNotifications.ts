@@ -288,7 +288,45 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * that index's definition — SQLite matches partial/expression indexes
  * structurally.
  */
-export function calendarWindowSql(graceCase: string): string {
+/**
+ * Has migration 0049 been applied to THIS database yet?
+ *
+ * The canonical deploy flows (`deploy-chain.sh`, `deploy-testnet.sh`) push the
+ * Worker BEFORE applying D1 migrations, so there is a guaranteed window in
+ * which this code is live and the quarantine table does not exist — and a
+ * migration that then fails leaves that window open indefinitely (#2213 r1
+ * `4011674980`). Referencing the table unconditionally makes the whole window
+ * query fail in there; the sweep's fail-open catch turns that into EVERY
+ * calendar reminder on EVERY chain being suppressed, which is a far larger
+ * outage than the one the quarantine prevents.
+ *
+ * A PROBE, NOT AN ERROR CLASSIFIER. "Does this table exist" has a definite
+ * answer, where "was that failure a missing table" is a guess about a message
+ * — and this repo has learned twice over that a failure classifier narrowed
+ * round after round cannot be sharpened into correctness.
+ *
+ * Cached only ONCE TRUE: a table does not un-exist, so the probe costs one
+ * read per isolate in the normal case. A `false` is never cached, so the
+ * sweep starts withholding the moment the migration lands, with no redeploy.
+ */
+let quarantineTableSeen = false;
+async function quarantineTableExists(db: D1Database): Promise<boolean> {
+  if (quarantineTableSeen) return true;
+  const row = await db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'loan_reconcile_quarantine'`,
+    )
+    .first<{ name: string }>();
+  if (row) quarantineTableSeen = true;
+  return Boolean(row);
+}
+
+/** Test seam: the probe caches across calls, which would leak between cases. */
+export function _resetQuarantineTableProbe(): void {
+  quarantineTableSeen = false;
+}
+
+export function calendarWindowSql(graceCase: string, withQuarantine = true): string {
   // The already-notified suppression legs (Codex #1298 r5, reworked r6)
   // drop loans whose CURRENT-stage rows all exist, so a saturated window
   // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
@@ -338,10 +376,14 @@ export function calendarWindowSql(graceCase: string): string {
             -- an emitting row behind it in the maturity order, which is the
             -- starvation the ORDER BY and the past-grace leg already exist
             -- to prevent.
-            AND NOT EXISTS (
+            ${
+              withQuarantine
+                ? `AND NOT EXISTS (
               SELECT 1 FROM loan_reconcile_quarantine q
               WHERE q.chain_id = loans.chain_id AND q.loan_id = loans.loan_id
-            )
+            )`
+                : ''
+            }
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
             AND (${maturity} + ${graceCase}) > ?
@@ -453,8 +495,22 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
+    const withQuarantine = await quarantineTableExists(db);
+    if (!withQuarantine) {
+      // LOUD, because the consequence is the opposite of the usual one: rows
+      // the reconciliation pass could not settle are reminded about this tick
+      // exactly as they were before #2212. That is the prior behaviour rather
+      // than a new harm — and far better than suppressing every reminder on
+      // every chain — but it is not what this build believes it is doing.
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: loan_reconcile_quarantine ` +
+          `is missing (migration 0049 not applied to this database). Reminders ` +
+          `are NOT being withheld for unsettled loans this tick. Apply the ` +
+          `migration; no redeploy is needed.`,
+      );
+    }
     const res = await db
-      .prepare(calendarWindowSql(graceCaseSql(graceBuckets)))
+      .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
       .bind(
         chainId,
         nowSec - maxGraceSeconds(graceBuckets),

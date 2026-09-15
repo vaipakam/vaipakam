@@ -44,6 +44,34 @@ could not settle — rather than from a list of releasable cases. A list would
 mean that a newly added kind of failure is released by default: marked by one
 half and cleared by the other on the same turn, with nothing appearing wrong.
 
+### Three things review caught, all of them quiet failures
+
+**A record ended the ordinary way would have stayed held back forever.** A
+record held after one unreadable moment, whose ending then arrives normally
+before the check comes round to it again, leaves the set the check draws from
+— so nothing could ever release it. It would have been held, and reported as
+stuck, for good. Releasing now also happens wherever a loan is closed out,
+which is the list every close-out already shares.
+
+**The platform would have stopped reminding anyone at all during a deploy.**
+The reminder query names the new memory, and the deploy sequence publishes the
+new code before the database change that creates it. In that window the query
+fails, and the surrounding safety net turns one failed query into *no reminders
+on any chain* — a far bigger outage than the one this closes, and open
+indefinitely if the database change then fails. The query now asks whether the
+memory exists and, when it does not, reminds exactly as it did before and says
+so. It starts holding records back the moment the change lands, with no
+redeploy.
+
+**The operator report claimed more than it knew.** It named at most twenty
+records, so on a chain with more than that the same twenty appeared every time
+and everything behind them stayed silent — while the note said anything held
+that long is reported. It now counts the total and says how many it left out.
+It also no longer asserts that a source "has not recovered": on a chain whose
+check takes longer than the threshold to come round, a record can pass it
+without having been looked at again, so the report gives when it was last
+examined and leaves the conclusion to the evidence.
+
 ### What this does not change
 
 Reminders for every record the platform *has* confirmed, which is nearly all

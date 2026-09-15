@@ -31,6 +31,16 @@ import type { ReconcileReport } from './loanReconcile';
  */
 export const QUARANTINE_STALE_SECONDS = 6 * 60 * 60;
 
+/**
+ * How many held rows to NAME in one warning.
+ *
+ * A cap is needed — a chain with hundreds of held rows must not emit a
+ * hundred-line log line — but the cap is why the TOTAL is counted separately.
+ * Naming twenty and saying nothing else would let everything behind them
+ * suppress reminders while never appearing anywhere.
+ */
+export const STALE_REPORT_LIMIT = 20;
+
 /** Which of the four ways a row failed to settle. Kept, not flattened. */
 export type QuarantineReason = 'unread' | 'write-failed' | 'orphan' | 'unknown-status';
 
@@ -141,32 +151,65 @@ export function quarantineStatements(
  * What must NOT be silent is a row that stays — that is a position the
  * platform is still publishing as open while the chain says otherwise, or
  * cannot say at all, and no amount of retrying will resolve it.
+ *
+ * TWO THINGS THIS DELIBERATELY DOES NOT CLAIM (#2213 r1 `4011674991`,
+ * `4011675003`):
+ *
+ * 1. **It does not say a source "has not recovered."** A row can cross the
+ *    threshold without having been looked at again: the rotation examines a
+ *    few rows a turn, so on a chain with more loans than a lap can cover in
+ *    six hours, `first_seen_at` being old says nothing about whether the
+ *    original failure persists. `last_seen_at` is what separates those, so
+ *    both are reported and the wording is left to the evidence.
+ * 2. **It does not imply that the rows it names are all of them.** A listing
+ *    capped at 20 and ordered oldest-first returns the SAME twenty every
+ *    time, so anything behind them would suppress reminders indefinitely
+ *    while never being named. The total is counted separately and the
+ *    overflow is stated, so "20 shown" can never read as "20 exist".
  */
 export async function reportStaleQuarantine(
   db: D1Database,
   chainId: number,
   nowSec: number,
 ): Promise<void> {
+  const cutoff = nowSec - QUARANTINE_STALE_SECONDS;
+  const total = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM loan_reconcile_quarantine
+        WHERE chain_id = ? AND first_seen_at <= ?`,
+    )
+    .bind(chainId, cutoff)
+    .first<{ n: number }>();
+  const n = total?.n ?? 0;
+  if (n === 0) return;
   const rows = await db
     .prepare(
-      `SELECT loan_id, reason, first_seen_at FROM loan_reconcile_quarantine
+      `SELECT loan_id, reason, first_seen_at, last_seen_at
+         FROM loan_reconcile_quarantine
         WHERE chain_id = ? AND first_seen_at <= ?
-        ORDER BY first_seen_at ASC LIMIT 20`,
+        ORDER BY first_seen_at ASC LIMIT ?`,
     )
-    .bind(chainId, nowSec - QUARANTINE_STALE_SECONDS)
-    .all<{ loan_id: number; reason: string; first_seen_at: number }>();
-  const stale = rows.results ?? [];
-  if (stale.length === 0) return;
+    .bind(chainId, cutoff, STALE_REPORT_LIMIT)
+    .all<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>();
+  const shown = rows.results ?? [];
+  const described = shown
+    .map((r) => {
+      const heldHours = Math.floor((nowSec - r.first_seen_at) / 3600);
+      // "Last confirmed unsettled" is the honest label for `last_seen_at`: it
+      // is when a pass last LOOKED, not when the problem last occurred.
+      const sinceSeen = Math.floor((nowSec - r.last_seen_at) / 3600);
+      return (
+        `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
+        `last examined ${sinceSeen}h ago)`
+      );
+    })
+    .join('; ');
+  const overflow = n > shown.length ? ` (+${n - shown.length} more not listed)` : '';
   console.warn(
-    `[loanQuarantine] chain ${chainId}: ${stale.length} loan(s) unsettled for ` +
-      `over ${QUARANTINE_STALE_SECONDS / 3600}h and withheld from reminders — ` +
-      stale
-        .map(
-          (r) =>
-            `loan ${r.loan_id} (${r.reason}, since ${new Date(r.first_seen_at * 1000).toISOString()})`,
-        )
-        .join('; ') +
-      `. An orphan needs a person; the others mean a source or a build that ` +
-      `has not recovered.`,
+    `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +
+      `for over ${QUARANTINE_STALE_SECONDS / 3600}h — ${described}${overflow}. ` +
+      `A row last examined recently is still failing; one last examined long ` +
+      `ago is waiting for the rotation to reach it, not necessarily still ` +
+      `broken. An orphan needs a person either way.`,
   );
 }
