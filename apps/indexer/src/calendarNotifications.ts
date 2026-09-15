@@ -359,6 +359,24 @@ export async function sweepCalendarNotifications(
   chainId: number,
   nowSec: number,
   headBlock: number,
+  /**
+   * Loans this tick's reconciliation could NOT establish — left out of the
+   * sweep entirely (#2211 r3 `4011279296`).
+   *
+   * A row the chain has never heard of, one whose status could not be read,
+   * one whose repair write failed, one carrying a status this build cannot
+   * project: each is still sitting at `status = 'active'`, and each is
+   * exactly what a missed terminal leaves behind. Reminding about one means
+   * telling a holder to repay a loan that may already have ended — once,
+   * unretractably.
+   *
+   * Per row rather than per tick on purpose. Deferring the whole sweep
+   * because one row could not be read would withhold every OTHER loan's
+   * reminder on that chain, and a persistently unreadable row would withhold
+   * them indefinitely. The rows the pass DID establish are established, and
+   * their holders should hear about them.
+   */
+  excludeLoanIds: ReadonlySet<number> = new Set(),
 ): Promise<CalendarSweepResult> {
   try {
     // The effective grace schedule — snapshotted governance buckets
@@ -445,7 +463,24 @@ export async function sweepCalendarNotifications(
       );
     }
     if (loans.length === 0) return EMPTY_SWEEP;
-    const rows = planCalendarRows(chainId, loans, nowSec, headBlock, graceBuckets);
+    // Withheld AFTER the window select, which is deliberate: these rows are
+    // a handful at most, and excluding them in SQL would mean threading a
+    // variable-length bind list through `calendarWindowSql` for a filter
+    // that changes nothing about which rows the window finds.
+    const eligible = excludeLoanIds.size === 0
+      ? loans
+      : loans.filter((l) => !excludeLoanIds.has(l.loan_id));
+    if (eligible.length !== loans.length) {
+      const held = loans.filter((l) => excludeLoanIds.has(l.loan_id)).map((l) => l.loan_id);
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: withholding reminders for ` +
+          `loan(s) ${held.join(', ')} — this tick could not establish their ` +
+          `state against the chain, and a reminder is never retracted. Every ` +
+          `other loan in the window is unaffected.`,
+      );
+    }
+    if (eligible.length === 0) return EMPTY_SWEEP;
+    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets);
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);
     if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new

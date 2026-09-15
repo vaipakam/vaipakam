@@ -82,6 +82,7 @@ import type { Env } from './env';
 import { getChainConfigs, getDeployedChainCount } from './env';
 import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
+import { resolveSettledHead, SAFE_FALLBACK_BUFFER } from './settledHead';
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
@@ -373,29 +374,57 @@ export async function captureBackingSnapshot(
   // published block number now resolves to different canonical state — so
   // the snapshot stops being reproducible by the reader it was published
   // for, and can serve an obsolete verdict for the whole staleness window.
-  // `chainIndexer` already avoids exactly this, with the same fallback for
-  // RPCs that do not support the safe tag.
+  // ONE resolver, shared with `chainIndexer` (#2201). This used to be a
+  // second copy of the same try/catch beside a second copy of the same
+  // buffer constant, commented "mirrors chainIndexer's" — which is a copy
+  // that has not drifted yet.
   const [observedChainId, head] = await Promise.all([
     client.getChainId(),
-    (async () => {
-      try {
-        const b = await client.getBlock({ blockTag: 'safe' });
-        return { number: b.number, timestamp: b.timestamp };
-      } catch {
-        const latest = await client.getBlockNumber();
-        const number =
-          latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
-        const b = await client.getBlock({ blockNumber: number });
-        return { number, timestamp: b.timestamp };
-      }
-    })(),
+    resolveSettledHead(client),
   ]);
-  const blockNumber = head.number;
+  const blockNumber = head.block;
+  // IDENTITY BEFORE PROVENANCE (#2211 r1 `4011103066`). This warning used to
+  // run first, so a secret pointed at the wrong network produced a line
+  // claiming THIS chain's snapshot was pinned to a guessed block — when the
+  // block belongs to another network entirely and the row is about to be
+  // refused. Two incident lines contradicting each other is worse than one,
+  // and the identity failure is the one an operator must act on.
   if (observedChainId !== chainId) {
     console.warn(
       `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
     );
     return;
+  }
+  if (!head.settled) {
+    // SAID, not silently published (#2201). The comment above states why
+    // this snapshot pins to a settled block: a reorg leaves the stored
+    // amounts describing an orphaned block while the published number
+    // resolves to different canonical state. A fixed step back from the tip
+    // is a guess at finality, so this branch re-opens exactly that hole — on
+    // a figure the recycling surface publishes and a reader is invited to
+    // check.
+    //
+    // Capturing anyway is still the better of the two: declining would age
+    // the snapshot into `snapshot-stale`, which tells a reader the CHAIN is
+    // quiet when the truth is that no settled block could be read. What must
+    // not happen is capturing quietly. The stored row does not yet carry the
+    // distinction — that needs a column, a migration and a word on the
+    // public surface, and is #2210.
+    //
+    // The provider's own reason is quoted rather than assumed: the settled
+    // read falls back on ANY failure, so a timeout on a provider that
+    // supports the tag reaches here too, and telling that operator to
+    // reconfigure their RPC would send them to fix something that works.
+    // That reason is built from bounded fields, never the error's message —
+    // the RPC URL carries an API key.
+    console.warn(
+      `[recycling] chain ${chainId} snapshot pinned to block ${blockNumber}, ` +
+        `which is NOT a block the chain confirmed as settled (no settled read ` +
+        `answered, so the block is latest - ${SAFE_FALLBACK_BUFFER}, a guess). ` +
+        `A reorg deeper than that margin would leave the published amounts ` +
+        `describing an orphaned block. The provider said: ` +
+        `${head.fallbackReason ?? 'no reason given'}`,
+    );
   }
   // PINNED TO ONE BLOCK. These two reads explain each other — the second
   // is what stops a released remittance rendering as a depleted reserve —
@@ -548,8 +577,6 @@ export async function captureBackingSnapshot(
  *
  * Two full cycles: one missed turn is a blip, not a wedged capture.
  */
-/** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
-const SAFE_FALLBACK_BUFFER = 32n;
 
 /**
  * How far the safe head may trail the wall clock before the CHAIN, rather

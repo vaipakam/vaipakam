@@ -169,7 +169,12 @@ describe('the join, not just the wording', () => {
     chain: { rpc: 'http://127.0.0.1:1/unused' } as unknown as ChainConfig,
     chainId: CHAIN,
     diamond: '0x0000000000000000000000000000000000000001' as `0x${string}`,
-    head: 100n,
+    // A head the CHAIN called settled. The pass refuses a guessed one
+    // outright (#2201), which the last case below pins.
+    head: { block: 100n, timestamp: 1_700_000_000n, settled: true },
+    // The tick's records reach exactly the head — the pass refuses any other
+    // relationship, so this is what "a pass that runs" looks like.
+    readThrough: 100n,
     budget: {},
   });
 
@@ -180,9 +185,9 @@ describe('the join, not just the wording', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     warn.mockClear();
     error.mockClear();
-    const ids = await _runLoanReconcilePass(passInput());
+    const outcome = await _runLoanReconcilePass(passInput());
     const out = [...warn.mock.calls, ...error.mock.calls].map((c) => c.join(' ')).join('\n');
-    return { out, ids };
+    return { out, outcome };
   }
 
   // A pass that noticed three different things it could not settle, and one
@@ -196,10 +201,17 @@ describe('the join, not just the wording', () => {
     });
 
   it('reports everything the pass noticed when it FINISHED', async () => {
-    const { out, ids } = await drive(async () => noticed());
+    const { out, outcome } = await drive(async () => noticed());
     expect(out).toContain('99');
     expect(out).toContain('loan 21 = 7');
-    expect(ids).toEqual([8]);
+    // The orphan, the unread row and the unprojectable status are named as
+    // UNESTABLISHED as well as logged — the reminder sweep withholds exactly
+    // those ids (#2211 r3 `4011279296`).
+    expect(outcome).toEqual({
+      established: true,
+      repairedLoanIds: [8],
+      unestablishedLoanIds: [13, 99, 21],
+    });
   });
 
   it('reports everything the pass noticed when it DIED on its cursor write', async () => {
@@ -207,15 +219,23 @@ describe('the join, not just the wording', () => {
     // so the orphan, the unread row and the unprojectable status all went
     // unsaid — and if only the lap-boundary write had failed, the rotation
     // had already moved past them.
-    const { out, ids } = await drive(async () => {
+    const { out, outcome } = await drive(async () => {
       throw new ReconcilePartialError(noticed(), new Error('pointer write failed'));
     });
     expect(out).toContain('99');
     expect(out.toLowerCase()).toContain('orphan');
     expect(out).toContain('13');
     expect(out).toContain('loan 21 = 7');
-    // The repairs committed, so they are still announced (#2190 r6).
-    expect(ids).toEqual([8]);
+    // The repairs committed, so they are still announced (#2190 r6) — and
+    // the tick counts as ESTABLISHED: those rows WERE checked against the
+    // chain at a settled head, so the calendar sweep it gates must not be
+    // deferred (#2211 r1) — but the rows it could not settle are still
+    // withheld from it individually.
+    expect(outcome).toEqual({
+      established: true,
+      repairedLoanIds: [8],
+      unestablishedLoanIds: [13, 99, 21],
+    });
   });
 
   it('says the SAME things either way, because one call says them', async () => {
@@ -235,13 +255,137 @@ describe('the join, not just the wording', () => {
     }
   });
 
+  it('refuses outright on a head the chain did not call settled', async () => {
+    // #2201. `latest - 32` is a finality GUESS, and this pass terminalizes
+    // rows it then never selects again — so a reorg deeper than the margin
+    // would publish an open position as closed, permanently, from the very
+    // code that exists to end ghost rows. The gate lives inside the pass
+    // rather than at its two call sites, so a third caller cannot be
+    // written without it.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({
+      ...passInput(),
+      head: {
+        block: 100n,
+        timestamp: 1_700_000_000n,
+        settled: false,
+        fallbackReason: 'TimeoutError',
+      },
+    });
+    // NOT an empty repair list. A refusal must be distinguishable from a
+    // clean pass, because what runs next mints unretractable reminders from
+    // the very rows this did not check (#2211 r1 `4011103056`).
+    expect(outcome.established).toBe(false);
+    const out = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // SAID, not silently skipped — a check that quietly declines to run
+    // reports perfect health while records stay wrong.
+    expect(out).toContain('NOT RUNNING');
+    // The PROVIDER'S reason, quoted. The fallback is taken on any failure of
+    // the settled read, so an asserted cause would send an operator whose
+    // RPC timed out to reconfigure an RPC that works.
+    expect(out).toContain('TimeoutError');
+  });
+
+  it('refuses when the records run PAST the head, and says that is abnormal', async () => {
+    // A provider swapped for one whose head trails our cursor would disable
+    // reconciliation on this chain indefinitely. Worth a line every tick:
+    // an operator seeing it repeatedly is seeing a stuck head, not weather.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({ ...passInput(), readThrough: 140n });
+    expect(outcome.established).toBe(false);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('SKIPPED');
+    expect(said).toContain('140');
+  });
+
+  it('refuses QUIETLY when the records fall short, because that is a backfill', async () => {
+    // Every catch-up tick is in this state and it resolves itself. Logging
+    // it would bury the two conditions that do need an operator.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({ ...passInput(), readThrough: 60n });
+    expect(outcome.established).toBe(false);
+    // Still refuses — the calendar sweep must wait either way.
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toBe('');
+  });
+
+  it('reports the SETTLED failure first when both conditions hold', async () => {
+    // THE ORDER IS THE FIX (#2211 r2 `4011201404`). A guessed head lands
+    // below the cursor, so the cursor test would fire first and blame a
+    // regressed RPC head — sending an operator to investigate a head that is
+    // behaving, when no settled block could be read at all.
+    scanBehaviour = async () => {
+      throw new Error('the pass must not have got this far');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await _runLoanReconcilePass({
+      ...passInput(),
+      head: { block: 60n, timestamp: 1n, settled: false, fallbackReason: 'TimeoutError' },
+      readThrough: 100n,
+    });
+    expect(outcome.established).toBe(false);
+    if (!outcome.established) expect(outcome.reason).toContain('TimeoutError');
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('NOT RUNNING');
+    expect(said).toContain('TimeoutError');
+    expect(said).not.toContain('regressed RPC head');
+  });
+
+  it('counts a healthy pass that died on its cursor write as ESTABLISHED', async () => {
+    // #2211 r4 `4011404507`. Nothing to repair is the ordinary state of a
+    // healthy chain. The rows WERE checked against the chain at a settled
+    // head; only the bookkeeping after them failed, and a report that
+    // travels with the error says exactly which rows those were.
+    const { out, outcome } = await drive(async () => {
+      throw new ReconcilePartialError(report({ unread: [13] }), new Error('pointer write failed'));
+    });
+    expect(outcome.established).toBe(true);
+    if (outcome.established) {
+      expect(outcome.repairedLoanIds).toEqual([]);
+      // The one row it could not settle is still withheld from reminders.
+      expect(outcome.unestablishedLoanIds).toEqual([13]);
+    }
+    // AND IT IS NOT SWALLOWED (#2211 r5 `4011464228`). Establishing the rows
+    // is the caller's answer; the failure is the operator's, and they are
+    // independent. A pointer write that keeps failing stalls the rotation on
+    // the same one or three rows forever, so silence here would report
+    // health while later loans are never reached.
+    expect(out).toContain('failed');
+  });
+
+  it('names a bookkeeping failure that repaired nothing and noticed nothing', async () => {
+    // The quietest possible version, and the one that was swallowed: no
+    // repairs, no row anomalies, so the reporter itself says nothing. If
+    // this branch is silent too, a stalled rotation is invisible.
+    const { out, outcome } = await drive(async () => {
+      throw new ReconcilePartialError(report(), new Error('pointer write failed'));
+    });
+    expect(outcome.established).toBe(true);
+    expect(out).toContain('rotation pointer did not advance');
+    expect(out).toContain('pointer write failed');
+  });
+
   it('still reports what it noticed when the failure is NOT a partial one', async () => {
     // No report to lift off an ordinary throw, so there is nothing to say —
     // but the pass must not wedge the tick, and must name the failure.
-    const { out, ids } = await drive(async () => {
+    const { out, outcome } = await drive(async () => {
       throw new Error('rpc exploded');
     });
-    expect(ids).toEqual([]);
+    // Nothing was established: the pass threw before any repair landed, so
+    // the live set is as unverified as if it had never run.
+    expect(outcome.established).toBe(false);
     expect(out).toContain('rpc exploded');
   });
 });

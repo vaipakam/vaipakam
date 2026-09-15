@@ -233,6 +233,43 @@ The app uses chain reads and indexed reads for different jobs.
   can tell a forced sale from an ordinary default where the chain's own
   status cannot — a record corrected from the chain may therefore name
   the ending less precisely than the event would have.
+- When no settled point can be read, the correction does not run at all,
+  and says which chain it is not running on. Guessing one — stepping back a
+  fixed distance from the newest block — answers the question with the
+  wrong kind of answer, and the whole reason for the rule above is that
+  being wrong here cannot be undone. Not running is the honest outcome;
+  running quietly on a guess is not, and neither is declining quietly,
+  because a check that silently skips itself reports perfect health while
+  records stay wrong. What the platform reports is the reason its source
+  gave, never a cause inferred from the failure: a source that supports the
+  question and merely timed out is indistinguishable at that moment from
+  one that cannot answer it, and an operator sent to replace a working
+  source has been told something false. A chain in that state keeps
+  whatever records it already had — nothing is corrected, nothing is
+  damaged — until the settled read succeeds.
+- Whenever the live set was not checked against the chain on a turn, the
+  reminders derived from that set wait for a turn that checked. Due-date
+  and grace reminders are read off the records the platform holds, they are
+  sent once, and they are never taken back — and a record wrongly showing a
+  position as open is exactly what the check exists to find. So a turn that
+  refuses to check, or cannot, must not also be the turn that reminds
+  someone about a position that may already have ended. This holds for every
+  reason a check does not run, not only an unreadable settled point: a turn
+  whose own reading has run ahead of the settled point, and one that has not
+  yet caught up to it, are equally turns that established nothing. Waiting
+  costs nothing a reminder needs — its window is hours to days — and the
+  platform already waits on the same surface when the grace schedule the
+  reminders depend on has not been read.
+- The same rule applies record by record, not only turn by turn. A turn that
+  checked may still have records it could not settle — one the chain has
+  never heard of, one whose state could not be read, one whose correction
+  failed to write, one in a state this build does not recognise — and each
+  of those is still recorded as open. Those records are left out of that
+  turn's reminders by name, while every record the turn did settle is
+  reminded about as usual. The alternative, withholding the whole chain's
+  reminders because one record could not be read, would punish every other
+  holder for it — and would do so indefinitely if that record stays
+  unreadable.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

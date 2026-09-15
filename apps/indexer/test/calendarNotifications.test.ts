@@ -277,6 +277,35 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(rowsInDb(h)).toHaveLength(1);
   });
 
+  it('withholds a reminder for a loan this tick could not establish (#2211 r3)', async () => {
+    // THE GHOST CASE. An orphaned row — one the chain has never heard of —
+    // is still sitting at `status = 'active'`, so the window selects it and
+    // would mint an unretractable "prepare to repay" for a loan that does
+    // not exist. The reconciliation pass names those ids; the sweep leaves
+    // them out.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 11, NOW + 6 * DAY - 30 * DAY, 30); // the ghost
+    seedLoan(h, 12, NOW + 6 * DAY - 30 * DAY, 30); // a healthy neighbour
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set([11]));
+    const rows = rowsInDb(h);
+    // PER ROW, not per tick: the neighbour's reminder is not collateral
+    // damage of the ghost's. Deferring the whole sweep would withhold every
+    // loan on the chain because one row could not be read, indefinitely if
+    // that row stays unreadable.
+    expect(rows.map((r) => r.loan_id)).toEqual([12]);
+  });
+
+  it('sweeps normally when nothing is withheld, including an empty exclusion', async () => {
+    // The default path must be untouched — this parameter is optional and
+    // most callers pass nothing.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 13, NOW + 6 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set());
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([13]);
+  });
+
   it('skips terminal loans, vehicles, and stubs', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedGraceConfig(h);

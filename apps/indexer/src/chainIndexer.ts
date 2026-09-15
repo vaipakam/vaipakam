@@ -54,6 +54,12 @@ import {
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import {
+  blockToNumber,
+  resolveSettledHead,
+  SAFE_FALLBACK_BUFFER,
+  type SettledHead,
+} from './settledHead';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -93,6 +99,7 @@ import {
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
+  type CalendarSweepResult,
 } from './calendarNotifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -184,7 +191,7 @@ async function stampNotifiedWatermark(
       .bind(
         chainId,
         NOTIFIED_CURSOR_KIND,
-        Number(block),
+        blockToNumber(block),
         Math.floor(Date.now() / 1000),
       )
       .run();
@@ -197,7 +204,6 @@ async function stampNotifiedWatermark(
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
  *  (Base / Arb / OP / Polygon zkEVM) settle well within ~10. 32 covers
  *  every chain we ship on with a comfortable margin. */
-const SAFE_FALLBACK_BUFFER = 32n;
 
 /** #1415 — how far the reported head may sit below the stored cursor
  *  before the caught-up path logs a loud stale/mis-pointed-RPC
@@ -959,6 +965,118 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
 }
 
 /**
+ * Every row this pass looked at and could not settle.
+ *
+ * The four buckets the report already keeps, read as one question: which
+ * rows are still recorded active WITHOUT this tick having confirmed that
+ * against the chain? `repaired` rows are not here (they are no longer
+ * active) and neither are `superseded` ones (another writer terminalized
+ * them, which is the better-informed write — the row is terminal either
+ * way).
+ *
+ * `unresolvable` belongs here even though the chain DID answer, because the
+ * answer was "no such loan" and the row is still published as open. It is
+ * the most alarming member of the set, not an edge of it.
+ */
+export function _unestablishedRows(report: ReconcileReport): number[] {
+  return [
+    ...report.unread,
+    ...report.writeFailed,
+    ...report.unresolvable,
+    ...report.unknownStatus.map((u) => u.loanId),
+  ];
+}
+
+/**
+ * What a tick learned about its live loan rows — and whether it learned
+ * anything at all (#2211 r1 `4011103056`).
+ *
+ * A bare `number[]` could not express the difference between "checked, and
+ * nothing was wrong" and "could not check", so every caller read a refusal
+ * as a clean bill of health. That mattered because of what runs NEXT: the
+ * calendar sweep derives one-shot maturity and grace reminders from the
+ * `status = 'active'` rows in D1, and those rows are exactly what a ghost
+ * loan leaves behind. Never retracted, either — so an unchecked tick could
+ * tell a user to prepare for the default of a loan that already ended.
+ */
+export type ReconcilePassOutcome =
+  | {
+      established: true;
+      repairedLoanIds: number[];
+      /**
+       * Rows the pass looked at and could NOT settle — an orphan the chain
+       * has never heard of, a status it could not read, a repair write that
+       * failed, a status this build cannot project (#2211 r3 `4011279296`).
+       *
+       * A pass that returns normally has still established only the rows it
+       * established. Each of these is sitting at `status = 'active'` and is
+       * exactly the shape a missed terminal leaves behind, so each is
+       * withheld from the reminder sweep BY ID — not by deferring the whole
+       * sweep, which would punish every healthy loan on the chain for one
+       * unreadable row.
+       */
+      unestablishedLoanIds: number[];
+    }
+  | { established: false; reason: string };
+
+/**
+ * Sweep the calendar ONLY on a tick that established the live set.
+ *
+ * ONE place decides, and it is not either call site. Both paths already
+ * computed a reason they might not reconcile, and both then swept anyway —
+ * including the pre-existing cursor-ahead-of-head skip, which has had this
+ * exposure since it was written.
+ *
+ * Deferring is the established answer to this shape rather than a new
+ * invention: `sweepCalendarNotifications` already defers itself when the
+ * grace schedule has not been snapshotted, on the same reasoning — a
+ * reminder derived from a prerequisite this tick could not establish is
+ * unretractable once minted, and the reminder's own window is hours to
+ * days, so waiting a tick costs nothing.
+ */
+export async function _sweepCalendarIfEstablished(
+  env: Env,
+  chainId: number,
+  nowSec: number,
+  headBlock: number,
+  outcome: ReconcilePassOutcome,
+): Promise<CalendarSweepResult> {
+  if (!outcome.established) {
+    console.warn(
+      `[chainIndexer] calendar sweep DEFERRED on chain ${chainId}: the live ` +
+        `loan set was not checked against the chain this tick (${outcome.reason}). ` +
+        `Reminders are derived from rows recorded active and are never ` +
+        `retracted, so an unchecked row could be reminded about a loan that ` +
+        `has already ended. Retried next tick.`,
+    );
+    return EMPTY_SWEEP;
+  }
+  // The tick established SOME rows; the ones it did not are named and held
+  // back individually (#2211 r3 `4011279296`).
+  //
+  // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT (#2212). The exclusion is
+  // derived from THIS tick's report, and the rotation examines one or three
+  // rows a turn — so on the next turn an unsettled row is simply not in the
+  // report, the set is empty for its id, and the sweep can remind about it.
+  // Closing it needs a quarantine that OUTLIVES the pass that found the row:
+  // a persisted marker, cleared when a later pass settles it, which is a
+  // table, a migration and a clearing lifecycle of its own.
+  //
+  // Recorded rather than quietly left: before this change the row was never
+  // excluded on any tick, so nothing regresses — but a reader must not take
+  // the exclusion for a guarantee. The same aliasing defeats the cruder
+  // remedy too (deferring the WHOLE sweep whenever the report is dirty): the
+  // next tick's report is clean because it looked at different rows.
+  return sweepCalendarNotifications(
+    env.DB,
+    chainId,
+    nowSec,
+    headBlock,
+    new Set(outcome.unestablishedLoanIds),
+  );
+}
+
+/**
  * One reconciliation pass: repair what the chain disagrees with, then say
  * what happened.
  *
@@ -973,11 +1091,108 @@ export async function _runLoanReconcilePass(input: {
   chain: ChainConfig;
   chainId: number;
   diamond: Address;
-  /** The SAFE head this path resolved. Every read pins to it. */
-  head: bigint;
+  /**
+   * The head this path resolved, WITH its provenance. Every read pins to
+   * its block; a head the chain did not call settled is refused here rather
+   * than at the call sites (#2201).
+   */
+  head: SettledHead;
+  /**
+   * The block this tick's stored records are current through — the cursor on
+   * a quiet tick, the scanned tail on a busy one.
+   *
+   * The pass refuses unless this EQUALS the head. Both call sites used to
+   * test their own version of that (`lastBlock > head`, `scanTo === head`),
+   * which is how the unsettled-head refusal ended up unreachable from one of
+   * them (#2211 r2 `4011201404`): a guessed head below the cursor took the
+   * cursor branch, and the operator was told the RPC head had regressed when
+   * the truth was that no settled block could be read at all. One
+   * precondition, checked in one order, in one place.
+   */
+  readThrough: bigint;
   budget: ReconcileOptions;
-}): Promise<number[]> {
-  const { env, chain, chainId, diamond, head, budget } = input;
+}): Promise<ReconcilePassOutcome> {
+  // `head` STAYS A BLOCK NUMBER inside this function (#2211 r2
+  // `4011201400`). Rebinding the name to the provenance-carrying object was
+  // how `Number(head)` — correct for years — silently became `NaN` and
+  // stamped every repaired terminal notification with a non-block value. The
+  // typechecker caught the uses that wanted a `bigint` and could not catch
+  // that one, because `Number()` accepts anything. Reverting the name to the
+  // number makes the whole class impossible rather than fixing the one site;
+  // anything wanting provenance names `settled` explicitly.
+  const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
+  const head = settled.block;
+  // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
+  //
+  // `latest - 32` is a heuristic finality margin, not the chain's statement
+  // about finality, and a reorg deeper than the margin presents a terminal
+  // state that later disappears. This pass selects only live rows, so a row
+  // it terminalizes leaves the live set and is never examined again: a wrong
+  // read publishes an OPEN position as closed, permanently, and the
+  // correction that exists to end ghost rows would be minting them.
+  //
+  // Refusing here is not a claim that the guess is safe for the scan — it is
+  // not, and #2201 stays open for that half. It is that this consumer's
+  // wrong record is the worse one and is the one its own mechanism cannot
+  // revisit.
+  //
+  // And the refusal is SAID. A chain that cannot supply a settled point has
+  // NO correction running at all; an operator must learn that from the log
+  // rather than from a divergence months later, because a check that quietly
+  // declines to run reports perfect health while records stay wrong — the
+  // whole argument of #2203.
+  //
+  // The MESSAGE NAMES THE PROVIDER'S OWN REASON rather than asserting one.
+  // The fallback is taken on any failure of the settled read, so a timeout on
+  // a provider that normally answers looks identical here to a provider that
+  // cannot; telling an operator to "configure an RPC that supports `safe`"
+  // when theirs does would send them to fix something that is not broken.
+  if (!settled.settled) {
+    console.warn(
+      `[chainIndexer] reconcile NOT RUNNING on chain ${chainId}: no settled ` +
+        `block could be read, so the only head available is a guess ` +
+        `(latest - ${SAFE_FALLBACK_BUFFER}). A correction may not act on ` +
+        `that — a row it closes is never re-examined. Loans whose terminal ` +
+        `event was missed stay published as open on this chain until the ` +
+        `settled read succeeds. The provider said: ` +
+        `${settled.fallbackReason ?? 'no reason given'}`,
+    );
+    return {
+      established: false,
+      reason: `no settled block could be read (${settled.fallbackReason ?? 'no reason given'})`,
+    };
+  }
+  // THE TICK'S RECORDS AND THE HEAD MUST DESCRIBE THE SAME BLOCK.
+  //
+  // The status read and the holder read have to agree on one block, and only
+  // the head is safe for the status — so when what we have stored runs past
+  // it, or has not yet reached it, there is no block that satisfies both.
+  //
+  // The two shapes are not the same event and must not read alike. Falling
+  // short is the ordinary backfill: every catch-up tick is in that state and
+  // it resolves itself, so it is not worth a line. Running PAST the head is
+  // not ordinary — a provider swapped for one whose head persistently trails
+  // our cursor would disable reconciliation on that chain indefinitely with
+  // every tick reporting health, which is the silent-skip failure this pass
+  // exists to end, pointed at the pass itself.
+  if (readThrough !== head) {
+    if (readThrough > head) {
+      console.warn(
+        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: records are ` +
+          `current through ${readThrough} but the head resolved to ${head}. ` +
+          `No block is safe for both the status read and the holder read ` +
+          `while those disagree; retried next tick. Every tick = a stuck or ` +
+          `regressed RPC head.`,
+      );
+    }
+    return {
+      established: false,
+      reason:
+        readThrough > head
+          ? `records are current through ${readThrough}, past the head ${head}`
+          : `records are current through ${readThrough}, short of the head ${head}`,
+    };
+  }
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1066,7 +1281,7 @@ export async function _runLoanReconcilePass(input: {
             env.DB,
             chainId,
             [{ loanId, to }],
-            Number(head),
+            blockToNumber(head),
             Math.floor(Date.now() / 1000),
             holders,
           );
@@ -1107,7 +1322,11 @@ export async function _runLoanReconcilePass(input: {
     // and does not mention the loan — and a repaired loan is old, so it is
     // never in `allLogs`. The holders of the position just corrected would
     // have been precisely the ones whose refetch was scoped away.
-    return report!.repaired.map((r) => r.loanId);
+    return {
+      established: true,
+      repairedLoanIds: report!.repaired.map((r) => r.loanId),
+      unestablishedLoanIds: _unestablishedRows(report!),
+    };
   }
 
   {
@@ -1123,17 +1342,55 @@ export async function _runLoanReconcilePass(input: {
     // `loan.updated` frame permanently: the corrections would be in D1 and
     // announced to nobody.
     const partial = report ? report.repaired.map((r) => r.loanId) : [];
-    if (partial.length > 0) {
-      console.error(
-        `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
-          `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
-          `broadcast; the rotation pointer may not have advanced`,
-        err,
-      );
-      return partial;
+    // ONE VARIABLE WAS ANSWERING TWO QUESTIONS, and that is the seam this
+    // block kept failing at — rounds 1, 4 and 5 of #2211 are all the same
+    // mistake in different clothes. `partial.length` is about REPAIRS, and
+    // it was being used to decide both what the operator hears and what the
+    // caller is told. Those are independent:
+    //
+    //   - the operator hears about the FAILURE, always. It happened.
+    //   - the caller is told what was ESTABLISHED, which is whatever the
+    //     carried report says, repairs or no repairs.
+    //
+    // Keyed on repairs, a healthy chain whose pointer write keeps failing
+    // produced NOTHING: no repairs, no row anomalies, so the reporter is
+    // silent, and this branch swallowed the error (#2211 r5 `4011464228`).
+    // The rotation re-examines the same one or three rows every tick, later
+    // loans are never reached, and every surface reports health — the exact
+    // silent stall this pass exists to end.
+    console.error(
+      partial.length > 0
+        ? `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
+            `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
+            `broadcast; the rotation pointer may not have advanced`
+        : `[chainIndexer] reconcile chain ${chainId} failed. If this is the ` +
+            `cursor write, the rotation pointer did not advance: the same rows ` +
+            `are re-examined every tick and later loans are never reached. ` +
+            `Every tick = a stalled rotation, not a passing blip`,
+      // THE CAUSE, not the wrapper. `ReconcilePartialError`'s own message
+      // says how many rows it repaired — which the line above already says,
+      // better — while the thing an operator has to act on is what actually
+      // threw underneath it.
+      err instanceof ReconcilePartialError ? err.cause : err,
+    );
+    // A CARRIED REPORT MEANS THE ROWS WERE CHECKED, REPAIRS OR NOT (#2211 r4
+    // `4011404507`). `ReconcilePartialError` carries the whole report, so a
+    // pass that examined only healthy rows and then failed its cursor write
+    // has established exactly as much as one that examined them and wrote
+    // its cursor. Keying this on `partial.length` instead treated the common
+    // case — a healthy chain, nothing to repair — as if nothing had been
+    // checked, so a recurring bookkeeping-write failure would have silenced
+    // that chain's reminders for as long as it lasted.
+    if (report) {
+      return {
+        established: true,
+        repairedLoanIds: partial,
+        unestablishedLoanIds: _unestablishedRows(report),
+      };
     }
-    console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
-    return [];
+    // No report at all: the pass threw before producing one, so nothing
+    // about the live set was established.
+    return { established: false, reason: 'the reconciliation pass failed' };
   }
 }
 
@@ -1184,16 +1441,21 @@ export async function runChainIndexerForChain(
   // block, leaving the stale row in D1 forever. Reading at the safe
   // head keeps the cursor reorg-proof — by the time a block is
   // safe-tagged its reorg horizon is past. Falls back to
-  // `latest - SAFE_FALLBACK_BUFFER` when the RPC doesn't support the
-  // safe tag (older nodes / some private RPCs).
-  let head: bigint;
-  try {
-    const safeBlock = await client.getBlock({ blockTag: 'safe' });
-    head = safeBlock.number;
-  } catch {
-    const latest = await client.getBlockNumber();
-    head = latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
-  }
+  // `latest - SAFE_FALLBACK_BUFFER` when the settled read does not answer —
+  // an old node or a private RPC that lacks the tag, and equally a timeout
+  // from one that has it, since the catch cannot tell those apart.
+  //
+  // THE FALLBACK IS NOT SAFE HERE EITHER, AND THIS PR DOES NOT FIX IT
+  // (#2201). Do not read the correction's refusal below as "the guess is
+  // fine for the scan": the cursor advances monotonically from
+  // `lastBlock + 1`, exactly as the paragraph above says, so a
+  // reorganised-out block is never revisited and its rows stay wrong for
+  // good. What differs is severity — the correction publishes an OPEN
+  // position as closed and cannot re-examine it — not recoverability.
+  // `_CodeVsDocsAudit.md` carries the retraction of the self-correcting
+  // claim, which has had to be made more than once.
+  const settledHead = await resolveSettledHead(client);
+  const head = settledHead.block;
 
   // Resume cursor: last block we successfully processed. On first
   // run, start from deployBlock — but cap the per-tick work at
@@ -1297,29 +1559,27 @@ export async function runChainIndexerForChain(
     // health. One transient regression is noise, so this is `warn` and names
     // both blocks — an operator seeing it every tick is seeing a stuck
     // provider, not a passing cloud.
-    let quietReconciledIds: number[] = [];
-    if (lastBlock > head) {
-      console.warn(
-        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: cursor is at ` +
-          `${lastBlock} but the safe head resolved to ${head}. No block is safe ` +
-          `for both the status read and the holder read while those disagree; ` +
-          `retried next tick. Every tick = a stuck or regressed RPC head.`,
-      );
-    } else {
-      quietReconciledIds = await _runLoanReconcilePass({
-        env,
-        chain,
-        chainId,
-        diamond,
-        head,
-        budget: reconcileBudget,
-      });
-    }
-    const quietCal = await sweepCalendarNotifications(
-      env.DB,
+    // No branch here any more (#2211 r2 `4011201404`). The cursor-vs-head
+    // test used to live at this call site, which meant a guessed head below
+    // the cursor never reached the pass and the operator was told the RPC
+    // head had regressed when no settled block could be read at all. The
+    // pass takes both facts and decides, in one order.
+    const quietOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+      env,
+      chain,
+      chainId,
+      diamond,
+      head: settledHead,
+      readThrough: lastBlock,
+      budget: reconcileBudget,
+    });
+    const quietReconciledIds = quietOutcome.established ? quietOutcome.repairedLoanIds : [];
+    const quietCal = await _sweepCalendarIfEstablished(
+      env,
       chainId,
       Math.floor(Date.now() / 1000),
-      Number(lastBlock),
+      blockToNumber(lastBlock),
+      quietOutcome,
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
@@ -1602,7 +1862,7 @@ export async function runChainIndexerForChain(
        updated_at = excluded.updated_at
      WHERE excluded.last_block > indexer_cursor.last_block`,
   )
-    .bind(chainId, CURSOR_KIND, Number(scanTo), now)
+    .bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now)
     .run();
 
   // #1270 — market_summary sweep: recompute discovery rows for every
@@ -1628,10 +1888,20 @@ export async function runChainIndexerForChain(
   // terminal question for this tick with the ghost still active. Ordering
   // is the whole fix for the first; the second is narrower and is answered
   // separately (see the reply on that thread).
-  const reconciledLoanIds =
-    scanTo === head
-      ? await _runLoanReconcilePass({ env, chain, chainId, diamond, head, budget: reconcileBudget })
-      : [];
+  // Likewise unconditional: `scanTo === head` was this path's copy of the
+  // same precondition, and the pass now owns it (#2211 r2 `4011201404`).
+  const reconcileOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+    env,
+    chain,
+    chainId,
+    diamond,
+    head: settledHead,
+    readThrough: scanTo,
+    budget: reconcileBudget,
+  });
+  const reconciledLoanIds = reconcileOutcome.established
+    ? reconcileOutcome.repairedLoanIds
+    : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
@@ -1669,10 +1939,17 @@ export async function runChainIndexerForChain(
   // chunk-capped busy scan just defers to the tick that catches up; the
   // caught-up quiet path above sweeps every tick thereafter (reminders
   // have hours-to-days of window, so a deferred tick costs nothing).
-  const cal =
-    scanTo === head
-      ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
-      : EMPTY_SWEEP;
+  // The full-catch-up gate is now expressed through the reconcile outcome
+  // rather than re-tested here: `scanTo !== head` is one of the ways a tick
+  // fails to establish the live set, and an unsettled head is another that
+  // this condition could not see (#2211 r1 `4011103056`).
+  const cal = await _sweepCalendarIfEstablished(
+    env,
+    chainId,
+    now,
+    blockToNumber(scanTo),
+    reconcileOutcome,
+  );
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
   // for OTHER writers of the notifications table (today: the keeper's
@@ -1710,7 +1987,7 @@ export async function runChainIndexerForChain(
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,
-        blocks: [Number(scanFrom), Number(scanTo)],
+        blocks: [blockToNumber(scanFrom), blockToNumber(scanTo)],
         loanIdCount: hintStats.loanIdCount,
         offerIdCount: hintStats.offerIdCount,
         linkCount: hintStats.linkCount,
@@ -4620,7 +4897,7 @@ export async function processLoanLogs(
       `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
-      .bind(terminal, Number(blockNumber), now, now, chainId, loanId)
+      .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     // CLEANUP RUNS WHETHER OR NOT THE UPDATE CHANGED A ROW (#2190 r4
