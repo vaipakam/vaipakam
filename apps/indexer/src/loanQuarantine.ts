@@ -150,7 +150,13 @@ export function quarantineStatements(
  * row is held back for a lap, the next lap settles it, nobody needs to know.
  * What must NOT be silent is a row that stays — that is a position the
  * platform is still publishing as open while the chain says otherwise, or
- * cannot say at all, and no amount of retrying will resolve it.
+ * cannot say at all.
+ *
+ * (An earlier version of this sentence said "and no amount of retrying will
+ * resolve it". That is the retired claim the report below is careful NOT to
+ * make, and it survived HERE while being corrected twice in the release note
+ * — the fourth place it lived. A row can cross the threshold without having
+ * been re-examined at all, and may settle the moment it is.)
  *
  * TWO THINGS THIS DELIBERATELY DOES NOT CLAIM (#2213 r1 `4011674991`,
  * `4011675003`):
