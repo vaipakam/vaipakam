@@ -179,6 +179,40 @@ export async function sendPush(
     void err;
     return 'not-requested';
   }
+  // THE SDK AND THE SIGNER MUST AGREE, and on the checked dependency set they
+  // do not (#2213 r29 `4016866267`). `@pushprotocol/restapi@0.0.1` signs the
+  // verification proof with `signer._signTypedData(...)` — an ethers **v5**
+  // method — in `payloads/helpers.js`, and it does so BEFORE the Axios POST.
+  // The workspace resolves ethers 6.16, whose `Wallet` exposes
+  // `signTypedData` without the underscore. So on this deployment every Push
+  // send throws inside the SDK having issued no request at all.
+  //
+  // Reported as `not-requested`, which is the fact: no request left. Before
+  // this it fell into the `failed` branch below, which charged the
+  // invocation's allowance for a request nobody made, counted the attempt as
+  // one whose fate is unknown — and, since r28, therefore BLOCKED the retry
+  // of a Telegram message the service had merely deferred. A rail that cannot
+  // issue anything was suppressing the retry of the rail that can.
+  //
+  // ASKED AS A CAPABILITY QUESTION, not inferred from the error text. "Does
+  // this object have the method the SDK will call" has a definite answer;
+  // "was that exception an ethers-version mismatch" is a guess about a
+  // message, and this PR has already argued once (see the quarantine table
+  // probe) that a failure classifier narrowed round after round cannot be
+  // sharpened into correctness. It also keeps working if the SDK is upgraded:
+  // a signer that HAS the method takes the normal path with no change here.
+  //
+  // RESTORING the rail is a dependency decision — upgrade the SDK or adapt
+  // the signer — and is deliberately not attempted here; this change only
+  // stops the lane claiming something it did not do. See the follow-up issue.
+  const signsTheWaySdkExpects =
+    typeof (signer as unknown as Record<string, unknown>)._signTypedData === 'function';
+  if (!signsTheWaySdkExpects) {
+    // Silent for the same reason the malformed-key branch above is: this is a
+    // property of the DEPLOYMENT and fails identically for every subscriber,
+    // so the caller discloses it once per chain per run with a count.
+    return 'not-requested';
+  }
   try {
     await PushAPI.payloads.sendNotification({
       signer,

@@ -649,8 +649,48 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * beats more rows and a terminal notice sent to somebody who exited the
  * position. The rotation still reaches every row; it takes more turns.
  */
+/**
+ * WHAT QUARANTINE MAINTENANCE COSTS A PASS, stated as a number because the
+ * reconcile allowance below is now sized around it (#2213 r29 `4016866252`).
+ *
+ * This PR added D1 work to every pass and did not put it in anybody's
+ * arithmetic — the same defect r27 `4016129218` found in the agent's lane,
+ * arriving here by the other door. Worst case per pass, with the r28
+ * pass-scoped probe already counted:
+ *
+ * - 1 — the `sqlite_master` probe, once per pass however many close-outs
+ * - 1 — `releaseTerminalQuarantine`
+ * - 2 — the stale report: its count, and the listing when there is one
+ * - 1 — the repair's own quarantine writes, when a repair happened
+ *
+ * The close-out statements themselves are folded into batches that already
+ * existed, so they add nothing.
+ */
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 5;
+
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
-export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, minRows: 1 };
+/**
+ * THREE CAME DOWN TO TWO for the quarantine maintenance above (#2213 r29
+ * `4016866252`), and it is the same trade the note above records, made again
+ * for the same reason.
+ *
+ * The DO invocation's arithmetic, worst case: the scan's own ~38, plus
+ * `1 + maxRows * 3` here, plus `QUARANTINE_MAINTENANCE_SUBREQUESTS`. At three
+ * rows that is 38 + 10 + 5 = 53, over the 50 this repository targets — and
+ * going over does not merely drop a repair, it aborts the pass before the
+ * scan cursor is recorded, which is the frozen chain this whole PR keeps
+ * working to avoid. At two rows it is 38 + 7 + 5 = 50.
+ *
+ * FIFTY IS THE CAP, NOT HEADROOM, and this note says so rather than reading
+ * as a fit: the scan's 38 is itself approximate, so a pass that grows by one
+ * request is over again. The durable answer is an explicit counter for this
+ * lane — the agent's lane got one in r27 and this one still reasons in
+ * comments — which is a diff of its own and is filed as a follow-up rather
+ * than attempted at round 29 of a review loop.
+ *
+ * The rotation still reaches every row; it takes more turns.
+ */
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 2, minRows: 1 };
 
 /**
  * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.

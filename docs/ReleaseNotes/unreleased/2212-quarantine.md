@@ -374,6 +374,42 @@ settles on one moment first and reads everything against it. That costs one
 extra question on a network with nothing due, where the run used to stop
 earlier; it is the honest price of every answer describing one moment.
 
+**A missing bookmark is not a fresh start.** The freshness check compares the
+network's head against how far the platform's own records have been brought
+up to date, and that position is read from a single stored row. A missing row
+used to mean "nothing has been indexed, so there is nothing to be behind", and
+the run went on to send. That reading is only safe where the absence explains
+itself — a network the reader has never run for has no stored positions
+either, so nothing would be sent regardless. Where it does not explain itself,
+a partial restore or a deleted row, stored positions exist whose freshness
+cannot be established, and a lagging source will report one of them as running
+at an older point. That is the very message the check exists to withhold. A
+missing row now stops the run exactly as an unreadable one does — and is still
+reported as its own thing, because a read that failed clears on its own and a
+row that is gone does not.
+
+**One of the two notification channels cannot send at all, and the platform
+now says so instead of counting it.** The library the platform uses for its
+app-notification channel signs each message using a method from an older major
+version of its cryptography dependency than the one installed. The signing
+happens before any request is made, so every notification on that channel
+fails having sent nothing. This is not new and is not caused by this change —
+but the run was charging its request allowance for those attempts and filing
+them as messages whose fate is unknown, which since the change above also
+means they SUPPRESSED the retry of a message the other channel had merely
+deferred. A channel that cannot send anything was blocking the retries of the
+one that can.
+
+The platform now checks, before entering that library, whether the signer it
+holds offers what the library will ask for. If not, no request is attempted,
+nothing is charged, and the channel is reported as unusable for the whole
+deployment — alongside the two configuration causes that produce the same
+outcome, because the remedy differs for each and an operator sent to look for
+a missing setting will not find a version mismatch. It is asked as a
+capability question rather than guessed from the error, so the day the
+dependency pair is fixed the channel resumes with no further change. Making it
+send again is a dependency decision and is tracked separately.
+
 **And a source can be the right network and still be behind.** The chain is
 consulted through whichever source the platform is configured to use, and that
 source can lag behind what the platform has already recorded. Asked about a

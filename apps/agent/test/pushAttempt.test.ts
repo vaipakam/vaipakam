@@ -35,8 +35,28 @@ const payload = {
   body: 'Pay before the deadline',
 };
 
+/**
+ * Give the wallet the method the pinned SDK actually calls.
+ *
+ * `@pushprotocol/restapi@0.0.1` signs with the ethers-v5 `_signTypedData`,
+ * and the workspace resolves ethers 6, whose `Wallet` has `signTypedData`
+ * without the underscore — so a stock v6 wallet cannot drive that SDK at all
+ * (#2213 r29 `4016866267`). The cases below that mean to exercise a WORKING
+ * rail have to say so explicitly; before r29 they were silently exercising a
+ * rail that cannot work in production, because the SDK is mocked here and the
+ * mock does not sign.
+ */
+function withCompatibleSigner() {
+  (Wallet.prototype as unknown as Record<string, unknown>)._signTypedData =
+    async () => '0xsignature';
+}
+function removeCompatibleSigner() {
+  delete (Wallet.prototype as unknown as Record<string, unknown>)._signTypedData;
+}
+
 afterEach(() => {
   sdkThrows = false;
+  removeCompatibleSigner();
   vi.restoreAllMocks();
 });
 
@@ -64,6 +84,7 @@ describe('what sendPush says it did', () => {
   });
 
   it('reports a request it made and the provider accepted', async () => {
+    withCompatibleSigner();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await sendPush(usableKey, payload)).toBe('accepted');
   });
@@ -73,9 +94,50 @@ describe('what sendPush says it did', () => {
     // out, so the allowance is spent, and nobody can say the message arrived,
     // so it is not a reminder. Folding this into either neighbour is what let
     // a run claim deliveries it had no evidence for.
+    withCompatibleSigner();
     sdkThrows = true;
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await sendPush(usableKey, payload)).toBe('failed');
+  });
+
+  it('makes no request when the SDK and the wallet disagree about signing', async () => {
+    // #2213 r29 `4016866267`, and the finding is about the CHECKED dependency
+    // set rather than a hypothetical: `@pushprotocol/restapi@0.0.1` calls the
+    // ethers-v5 `signer._signTypedData` in `payloads/helpers.js`, before its
+    // POST, and `pnpm-lock.yaml` resolves it against ethers 6.16, whose
+    // `Wallet` exposes `signTypedData` instead. Every Push send on this
+    // deployment therefore throws inside the SDK having issued nothing.
+    //
+    // It used to land in the `failed` branch, which charged the invocation's
+    // allowance for a request nobody made and called the attempt one whose
+    // fate is unknown — and since r28 an unknown BLOCKS the retry of a
+    // Telegram message the service merely deferred. A rail that cannot issue
+    // anything was suppressing the retry of the rail that can.
+    //
+    // No `withCompatibleSigner()` here: this is the stock v6 wallet, which is
+    // what production has.
+    const sdk = await import('@pushprotocol/restapi');
+    const send = vi.mocked(sdk.payloads.sendNotification);
+    send.mockClear();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await sendPush(usableKey, payload)).toBe('not-requested');
+    // The SDK was never entered, so nothing could have gone out...
+    expect(send).not.toHaveBeenCalled();
+    // ...and it is silent, like the other deployment-wide branches: the
+    // caller discloses it once per chain per run with a count, rather than
+    // once per recipient.
+    expect(err).not.toHaveBeenCalled();
+  });
+
+  it('takes the normal path again if the SDK is ever made compatible', async () => {
+    // The check asks a CAPABILITY question rather than matching an error
+    // message, so an upgrade that fixes the pair needs no change here. Stated
+    // as a test because the alternative — a classifier over exception text —
+    // is what this PR has argued against twice, and it would silently keep
+    // refusing after the upgrade.
+    withCompatibleSigner();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await sendPush(usableKey, payload)).toBe('accepted');
   });
 
   it('does not put the key in the log when it is the thing that is wrong', async () => {

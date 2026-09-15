@@ -753,13 +753,47 @@ describe('a head that cannot confirm anything', () => {
     expect(said).toContain('could not read the indexer cursor');
   });
 
-  it('proceeds when the platform has no cursor for this chain at all', async () => {
-    // A chain the indexer has never scanned has no cursor to be behind.
-    // Blocking on its absence would silence the lane on a fresh deployment
-    // for a comparison that could not have said anything.
+  it('sends NOTHING when there is no cursor row for this chain at all', async () => {
+    // INVERTED IN r29 (`4016866279`), and the old reasoning is worth keeping
+    // because it is half right. It said a chain the indexer has never scanned
+    // has no cursor to be behind, so blocking would silence a fresh
+    // deployment for a comparison that could say nothing. True — and it
+    // proves too much: on that chain there are no stored loans either, so
+    // nothing would be sent whatever this returns. The absence costs nothing
+    // to respect.
+    //
+    // Where the absence does NOT explain itself — a partial restore, a
+    // deleted row — stored loans exist whose freshness cannot be
+    // established, and a lagging RPC will report one of them active at an
+    // older head. That is the send this comparison exists to stop, and the
+    // cheap reading of "no row" was permission to make it.
+    //
+    // This case is exactly that shape: a stored loan AND no cursor. Nothing
+    // goes out.
     indexedBlock = null;
-    const { stamped } = await run();
-    expect(stamped).toEqual([7]);
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(said).toContain('no indexer cursor row');
+  });
+
+  it('still says WHICH of the two happened — absent is not unreadable', async () => {
+    // r12 `4013387361` established that these must not collapse, and r29 did
+    // not retire it: the two now take the same ACTION and keep different
+    // DIAGNOSES, because a failed read clears on its own and a row that is
+    // gone does not. Folding them into one message would rediscover r12's
+    // defect through the opposite door.
+    indexedBlock = null;
+    const absent = await run();
+    cursorReadFails = true;
+    const unreadable = await run();
+    expect(absent.said).toContain('no indexer cursor row');
+    expect(absent.said).toContain('does not clear on its own');
+    expect(unreadable.said).toContain('could not read the indexer cursor');
+    expect(unreadable.said).not.toContain('no indexer cursor row');
+    // Same action either way: nothing sent, nothing stamped.
+    expect(absent.stamped).toEqual([]);
+    expect(unreadable.stamped).toEqual([]);
   });
 });
 
@@ -1731,7 +1765,14 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run({ PUSH_CHANNEL_PK: undefined });
     // "missing or unusable", because this disclosure covers both (#2213 r25
     // `4015755007`) — an unset binding and a present-but-malformed value.
-    expect(said).toContain('PUSH_CHANNEL_PK is missing or unusable');
+    // r29 `4016866267` widened this: the signer being unset or malformed is no
+    // longer the only way a deployment cannot send Push — the installed SDK
+    // and ethers major can also disagree about how to sign. The line names
+    // all three, because the fix differs and an operator sent to look for an
+    // unset secret will not find a dependency mismatch.
+    expect(said).toContain('deployment cannot send Push at all');
+    expect(said).toContain('PUSH_CHANNEL_PK is unset');
+    expect(said).toContain('disagree about how to sign');
     // Telegram still worked, so this is a disclosure and not an outage.
     expect(sends.some((x) => x.startsWith('tg:'))).toBe(true);
     expect(sends.some((x) => x.startsWith('push:'))).toBe(false);

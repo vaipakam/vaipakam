@@ -440,7 +440,22 @@ async function preNotifyChain(
     );
     return;
   }
-  if (indexed !== null && head < indexed) {
+  if (indexed === 'absent') {
+    // SAME ACTION, DIFFERENT DIAGNOSIS from the unreadable case above (#2213
+    // r29 `4016866279`). Both stop the tick; only this one may need somebody.
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: there is no indexer cursor ` +
+        `row for this chain, so whether this head is current cannot be ` +
+        `established — no reminder is sent this tick, and nothing is ` +
+        `stamped. This is expected only on a chain the indexer has never run ` +
+        `for, which has no stored loans to send about either. If this chain ` +
+        `DOES have stored loans, the row is gone — a partial restore, a ` +
+        `deletion — and those rows' freshness cannot be established until it ` +
+        `is back. Unlike a failed read, this does not clear on its own.`,
+    );
+    return;
+  }
+  if (head < indexed) {
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: the RPC head ${head} is behind ` +
         `the indexed cursor ${indexed}, so its answers describe a past the ` +
@@ -809,10 +824,14 @@ async function preNotifyChain(
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured.size} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
-        `deployment's PUSH_CHANNEL_PK is missing or unusable, so no Push was ` +
-        `sent to them and none can be. They were reached on Telegram or not ` +
-        `at all. Check that the signer is set AND that it is a valid key — ` +
-        `either way the Push channel on those subscriptions is inert.`,
+        `deployment cannot send Push at all, so no Push was sent to them and ` +
+        `none can be. They were reached on Telegram or not at all. Three ` +
+        `things produce this and the fix differs: PUSH_CHANNEL_PK is unset, ` +
+        `it is set but not a valid key, or the installed Push SDK and the ` +
+        `installed ethers major disagree about how to sign (the SDK calls ` +
+        `the v5 '_signTypedData', which an ethers v6 wallet does not have). ` +
+        `Check the secret first, then the dependency pair — either way the ` +
+        `Push channel on those subscriptions is inert.`,
     );
   }
   // THE SAME DISCLOSURE FOR THE OTHER RAIL (#2213 r22 `4015173418`). r19 fixed
@@ -1334,7 +1353,7 @@ async function indexedThrough(
   env: Env,
   chainId: number,
   budget: TickBudget,
-): Promise<bigint | null | 'unknown'> {
+): Promise<bigint | 'absent' | 'unknown'> {
   budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     const row = await env.DB.prepare(
@@ -1342,7 +1361,32 @@ async function indexedThrough(
     )
       .bind(chainId, INDEXER_SCAN_KIND)
       .first<{ last_block: number }>();
-    return row ? BigInt(row.last_block) : null;
+    // A MISSING ROW IS NOT A FRESH DATABASE (#2213 r29 `4016866279`). `null`
+    // used to mean "no cursor, so there is nothing to be behind", and the
+    // caller went on to send. That reading is only safe where the absence
+    // explains itself — a chain the indexer has never run for has no stored
+    // loans either, so nothing would be sent regardless.
+    //
+    // Where it does NOT explain itself the answer is the opposite: a partial
+    // restore, a deleted cursor row, corruption. Stored loans then exist
+    // whose freshness cannot be established, and a lagging RPC will happily
+    // report one of them active at an older head — which is exactly the send
+    // this comparison exists to stop. There is no way to tell the two apart
+    // from here without another read, and the cheap reading is the unsafe
+    // one.
+    //
+    // So a missing row now DEFERS, exactly as an unreadable one does. It is
+    // still reported as its own value rather than folded into `'unknown'`:
+    // r12 `4013387361` established that these two must not collapse, and that
+    // finding is about what the OPERATOR is told, which is unchanged. A
+    // database hiccup clears on its own; a cursor row that is gone while
+    // loans remain needs a person. They agree on the action and differ on the
+    // diagnosis, so the value carries both.
+    //
+    // The cost where the absence was innocent is that a chain the indexer has
+    // not yet reached stays quiet for a tick or two — on a window measured in
+    // days, and with nothing worth sending on such a chain anyway.
+    return row ? BigInt(row.last_block) : 'absent';
   } catch {
     // NOT `null`, and the difference is the whole point (#2213 r12
     // `4013387361`). `null` means "there is no cursor, so there is nothing to

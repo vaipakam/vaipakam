@@ -387,8 +387,22 @@ The app uses chain reads and indexed reads for different jobs.
   cannot send for, up to a stated limit of its own, reaches the ones behind
   them in the same run, and — because its remembered place advances past them
   — does not pay for the same prefix on the next run either.
+- A run establishes how far the platform's own records have been brought up to
+  date before trusting them against the network's head. If that position
+  cannot be READ, or if there is NO stored position for the network at all,
+  the run sends nothing — an absent position is only harmless where it
+  explains itself, and on a network with stored positions it means they are
+  there without the bookkeeping that says how current they are. The two are
+  reported distinctly even though they stop the run alike: a failed read
+  clears on its own, a position that is gone needs somebody.
 - Where the deployment's own configuration prevents a channel from working at
-  all, a run says so rather than silently not using it. A subscriber who has
+  all, a run says so rather than silently not using it. "Cannot work" includes
+  the libraries the deployment is built from disagreeing with each other about
+  how to sign, not only a setting being absent or invalid — the disclosure
+  names each possible cause, because the remedy differs and they are not
+  distinguishable from the symptom. A channel established as unable to send is
+  never charged against the run's request allowance and never counted as an
+  attempt of unknown fate, because no request was made. A subscriber who has
   asked for a channel the deployment cannot sign for can never be reached on
   it, and a run that marks such records as handled while delivering nothing is
   the hardest failure for an operator to notice. The count is reported once per
