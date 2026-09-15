@@ -59,6 +59,14 @@ export interface SettledHead {
    * Carried rather than inferred: "unsupported tag" and "the provider timed
    * out" send an operator to different remedies, and the caller cannot tell
    * them apart from a boolean.
+   *
+   * **Built from bounded fields, never from the error's message** — see
+   * `describeFailure`. The RPC URLs carry API keys, and viem puts the whole
+   * request URL in `HttpRequestError.message`, so carrying that text would
+   * have printed a credential into the operator log on every tick of a
+   * provider that rejects the tag. The bounded fields say as much: a
+   * `TimeoutError` and an `RpcRequestError` with code -32601 are exactly the
+   * two cases an operator needs to tell apart.
    */
   fallbackReason?: string;
 }
@@ -72,6 +80,38 @@ interface HeadReader {
   getBlock(args: { blockTag: 'safe' }): Promise<{ number: bigint | null; timestamp: bigint }>;
   getBlock(args: { blockNumber: bigint }): Promise<{ number: bigint | null; timestamp: bigint }>;
   getBlockNumber(): Promise<bigint>;
+}
+
+/**
+ * A bounded description of a failed settled read, safe to print.
+ *
+ * NOT the error's message. `chain.rpc` embeds an API key on every hosted
+ * provider this deploys against, and viem's `HttpRequestError` /
+ * `RpcRequestError` carry the full request URL inside `.message` — so
+ * quoting it would leak that key into the operator log, repeatedly, exactly
+ * on the providers whose settled read is failing (#2211 r1 `4011103040`).
+ *
+ * The fields taken instead are a class name and two numbers. That is not a
+ * reduced version of the message, it is the identifying part of it: a
+ * `TimeoutError` and an `RpcRequestError` carrying -32601 are the two cases
+ * worth telling apart, and neither number can contain a secret.
+ *
+ * The name is still truncated and URL-stripped rather than trusted. It is
+ * conventionally a bare identifier, and "conventionally" is not a property
+ * of a value arriving from a dependency.
+ */
+function describeFailure(err: unknown): string {
+  if (!(err instanceof Error)) return 'a non-Error value was thrown';
+  const e = err as Error & { code?: unknown; status?: unknown };
+  const parts = [redactAndBound(e.name || 'Error')];
+  if (typeof e.code === 'number') parts.push(`rpc code ${e.code}`);
+  if (typeof e.status === 'number') parts.push(`HTTP ${e.status}`);
+  return parts.join(', ');
+}
+
+/** Strip anything URL-shaped and cap the length. Belt and braces for the above. */
+function redactAndBound(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>').slice(0, 80);
 }
 
 /**
@@ -95,7 +135,7 @@ export async function resolveSettledHead(client: HeadReader): Promise<SettledHea
     // worse than falling back.
     reason = 'the provider returned a safe block with no number';
   } catch (err) {
-    reason = err instanceof Error ? err.message : String(err);
+    reason = describeFailure(err);
   }
   const latest = await client.getBlockNumber();
   const block = latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;

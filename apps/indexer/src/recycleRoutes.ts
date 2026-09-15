@@ -82,7 +82,7 @@ import type { Env } from './env';
 import { getChainConfigs, getDeployedChainCount } from './env';
 import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
-import { resolveSettledHead } from './settledHead';
+import { resolveSettledHead, SAFE_FALLBACK_BUFFER } from './settledHead';
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
@@ -383,13 +383,26 @@ export async function captureBackingSnapshot(
     resolveSettledHead(client),
   ]);
   const blockNumber = head.block;
+  // IDENTITY BEFORE PROVENANCE (#2211 r1 `4011103066`). This warning used to
+  // run first, so a secret pointed at the wrong network produced a line
+  // claiming THIS chain's snapshot was pinned to a guessed block — when the
+  // block belongs to another network entirely and the row is about to be
+  // refused. Two incident lines contradicting each other is worse than one,
+  // and the identity failure is the one an operator must act on.
+  if (observedChainId !== chainId) {
+    console.warn(
+      `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
+    );
+    return;
+  }
   if (!head.settled) {
     // SAID, not silently published (#2201). The comment above states why
     // this snapshot pins to a settled block: a reorg leaves the stored
     // amounts describing an orphaned block while the published number
-    // resolves to different canonical state. `latest - 32` is a guess at
-    // finality, so this branch re-opens exactly that hole — on a figure the
-    // recycling surface publishes and a reader is invited to check.
+    // resolves to different canonical state. A fixed step back from the tip
+    // is a guess at finality, so this branch re-opens exactly that hole — on
+    // a figure the recycling surface publishes and a reader is invited to
+    // check.
     //
     // Capturing anyway is still the better of the two: declining would age
     // the snapshot into `snapshot-stale`, which tells a reader the CHAIN is
@@ -402,19 +415,16 @@ export async function captureBackingSnapshot(
     // read falls back on ANY failure, so a timeout on a provider that
     // supports the tag reaches here too, and telling that operator to
     // reconfigure their RPC would send them to fix something that works.
+    // That reason is built from bounded fields, never the error's message —
+    // the RPC URL carries an API key.
     console.warn(
       `[recycling] chain ${chainId} snapshot pinned to block ${blockNumber}, ` +
         `which is NOT a block the chain confirmed as settled (no settled read ` +
-        `answered, so the block is latest - 32, a guess). A reorg deeper than ` +
-        `that margin would leave the published amounts describing an orphaned ` +
-        `block. The provider said: ${head.fallbackReason ?? 'no reason given'}`,
+        `answered, so the block is latest - ${SAFE_FALLBACK_BUFFER}, a guess). ` +
+        `A reorg deeper than that margin would leave the published amounts ` +
+        `describing an orphaned block. The provider said: ` +
+        `${head.fallbackReason ?? 'no reason given'}`,
     );
-  }
-  if (observedChainId !== chainId) {
-    console.warn(
-      `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
-    );
-    return;
   }
   // PINNED TO ONE BLOCK. These two reads explain each other — the second
   // is what stops a released remittance rendering as a depleted reserve —

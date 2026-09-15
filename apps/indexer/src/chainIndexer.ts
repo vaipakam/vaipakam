@@ -94,6 +94,7 @@ import {
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
+  type CalendarSweepResult,
 } from './calendarNotifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -959,6 +960,57 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
 }
 
 /**
+ * What a tick learned about its live loan rows — and whether it learned
+ * anything at all (#2211 r1 `4011103056`).
+ *
+ * A bare `number[]` could not express the difference between "checked, and
+ * nothing was wrong" and "could not check", so every caller read a refusal
+ * as a clean bill of health. That mattered because of what runs NEXT: the
+ * calendar sweep derives one-shot maturity and grace reminders from the
+ * `status = 'active'` rows in D1, and those rows are exactly what a ghost
+ * loan leaves behind. Never retracted, either — so an unchecked tick could
+ * tell a user to prepare for the default of a loan that already ended.
+ */
+export type ReconcilePassOutcome =
+  | { established: true; repairedLoanIds: number[] }
+  | { established: false; reason: string };
+
+/**
+ * Sweep the calendar ONLY on a tick that established the live set.
+ *
+ * ONE place decides, and it is not either call site. Both paths already
+ * computed a reason they might not reconcile, and both then swept anyway —
+ * including the pre-existing cursor-ahead-of-head skip, which has had this
+ * exposure since it was written.
+ *
+ * Deferring is the established answer to this shape rather than a new
+ * invention: `sweepCalendarNotifications` already defers itself when the
+ * grace schedule has not been snapshotted, on the same reasoning — a
+ * reminder derived from a prerequisite this tick could not establish is
+ * unretractable once minted, and the reminder's own window is hours to
+ * days, so waiting a tick costs nothing.
+ */
+export async function _sweepCalendarIfEstablished(
+  env: Env,
+  chainId: number,
+  nowSec: number,
+  headBlock: number,
+  outcome: ReconcilePassOutcome,
+): Promise<CalendarSweepResult> {
+  if (!outcome.established) {
+    console.warn(
+      `[chainIndexer] calendar sweep DEFERRED on chain ${chainId}: the live ` +
+        `loan set was not checked against the chain this tick (${outcome.reason}). ` +
+        `Reminders are derived from rows recorded active and are never ` +
+        `retracted, so an unchecked row could be reminded about a loan that ` +
+        `has already ended. Retried next tick.`,
+    );
+    return EMPTY_SWEEP;
+  }
+  return sweepCalendarNotifications(env.DB, chainId, nowSec, headBlock);
+}
+
+/**
  * One reconciliation pass: repair what the chain disagrees with, then say
  * what happened.
  *
@@ -980,7 +1032,7 @@ export async function _runLoanReconcilePass(input: {
    */
   head: SettledHead;
   budget: ReconcileOptions;
-}): Promise<number[]> {
+}): Promise<ReconcilePassOutcome> {
   const { env, chain, chainId, diamond, head, budget } = input;
   // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
   //
@@ -1017,7 +1069,10 @@ export async function _runLoanReconcilePass(input: {
         `settled read succeeds. The provider said: ` +
         `${head.fallbackReason ?? 'no reason given'}`,
     );
-    return [];
+    return {
+      established: false,
+      reason: `no settled block could be read (${head.fallbackReason ?? 'no reason given'})`,
+    };
   }
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
@@ -1148,7 +1203,7 @@ export async function _runLoanReconcilePass(input: {
     // and does not mention the loan — and a repaired loan is old, so it is
     // never in `allLogs`. The holders of the position just corrected would
     // have been precisely the ones whose refetch was scoped away.
-    return report!.repaired.map((r) => r.loanId);
+    return { established: true, repairedLoanIds: report!.repaired.map((r) => r.loanId) };
   }
 
   {
@@ -1171,10 +1226,16 @@ export async function _runLoanReconcilePass(input: {
           `broadcast; the rotation pointer may not have advanced`,
         err,
       );
-      return partial;
+      // ESTABLISHED, despite the failure. The rows it examined WERE checked
+      // against the chain at a settled head; what failed was the cursor
+      // write. Reporting this as unchecked would defer the calendar sweep on
+      // a tick that did the very work the sweep depends on.
+      return { established: true, repairedLoanIds: partial };
     }
     console.error(`[chainIndexer] loan reconcile failed for chain ${chainId}:`, err);
-    return [];
+    // A failure BEFORE any repair landed leaves the live set unverified —
+    // the reconcile threw, so nothing was established.
+    return { established: false, reason: 'the reconciliation pass failed' };
   }
 }
 
@@ -1343,16 +1404,20 @@ export async function runChainIndexerForChain(
     // health. One transient regression is noise, so this is `warn` and names
     // both blocks — an operator seeing it every tick is seeing a stuck
     // provider, not a passing cloud.
-    let quietReconciledIds: number[] = [];
+    let quietOutcome: ReconcilePassOutcome;
     if (lastBlock > head) {
       console.warn(
         `[chainIndexer] reconcile SKIPPED on chain ${chainId}: cursor is at ` +
-          `${lastBlock} but the safe head resolved to ${head}. No block is safe ` +
+          `${lastBlock} but the head resolved to ${head}. No block is safe ` +
           `for both the status read and the holder read while those disagree; ` +
           `retried next tick. Every tick = a stuck or regressed RPC head.`,
       );
+      quietOutcome = {
+        established: false,
+        reason: `the cursor (${lastBlock}) is ahead of the resolved head (${head})`,
+      };
     } else {
-      quietReconciledIds = await _runLoanReconcilePass({
+      quietOutcome = await _runLoanReconcilePass({
         env,
         chain,
         chainId,
@@ -1361,11 +1426,13 @@ export async function runChainIndexerForChain(
         budget: reconcileBudget,
       });
     }
-    const quietCal = await sweepCalendarNotifications(
-      env.DB,
+    const quietReconciledIds = quietOutcome.established ? quietOutcome.repairedLoanIds : [];
+    const quietCal = await _sweepCalendarIfEstablished(
+      env,
       chainId,
       Math.floor(Date.now() / 1000),
       Number(lastBlock),
+      quietOutcome,
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
@@ -1674,7 +1741,7 @@ export async function runChainIndexerForChain(
   // terminal question for this tick with the ghost still active. Ordering
   // is the whole fix for the first; the second is narrower and is answered
   // separately (see the reply on that thread).
-  const reconciledLoanIds =
+  const reconcileOutcome: ReconcilePassOutcome =
     scanTo === head
       ? await _runLoanReconcilePass({
           env,
@@ -1684,7 +1751,13 @@ export async function runChainIndexerForChain(
           head: settledHead,
           budget: reconcileBudget,
         })
-      : [];
+      : {
+          established: false,
+          reason: `the scan reached ${scanTo}, short of the head ${head}`,
+        };
+  const reconciledLoanIds = reconcileOutcome.established
+    ? reconcileOutcome.repairedLoanIds
+    : [];
 
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
@@ -1722,10 +1795,11 @@ export async function runChainIndexerForChain(
   // chunk-capped busy scan just defers to the tick that catches up; the
   // caught-up quiet path above sweeps every tick thereafter (reminders
   // have hours-to-days of window, so a deferred tick costs nothing).
-  const cal =
-    scanTo === head
-      ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
-      : EMPTY_SWEEP;
+  // The full-catch-up gate is now expressed through the reconcile outcome
+  // rather than re-tested here: `scanTo !== head` is one of the ways a tick
+  // fails to establish the live set, and an unsettled head is another that
+  // this condition could not see (#2211 r1 `4011103056`).
+  const cal = await _sweepCalendarIfEstablished(env, chainId, now, Number(scanTo), reconcileOutcome);
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
   // for OTHER writers of the notifications table (today: the keeper's

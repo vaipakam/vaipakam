@@ -44,6 +44,34 @@ The same resolution also backs the recycling backing snapshot, which had its
 own copy of it — the same constant, the same fallback, commented as mirroring
 the other. A mirror is a copy that has not drifted yet.
 
+### Two things review found that were worse than the defect being fixed
+
+**A reminder could have been sent about a loan that had already ended.** The
+check that compares the platform's records against the chain is followed, on
+the same turn, by the one that derives due-date and grace-period reminders
+from those records. Those reminders fire once and are never taken back. When
+the check refused to run, it reported the same "nothing to correct" as a check
+that had run and found everything in order — so the reminders were derived
+anyway, from exactly the records nobody had verified. A record left wrongly
+open is what this whole area exists to catch, and it is precisely the record
+that would have been reminded about.
+
+The two turns now share one answer, which distinguishes *checked, and nothing
+was wrong* from *could not check*. Reminders wait for a turn that checked.
+This closes a case that predates the change: a turn whose cursor had run ahead
+of the chain's settled point already skipped the check and swept anyway.
+Waiting costs nothing — a reminder's own window is hours to days — and the
+same surface already waits, for the same reason, when the grace schedule it
+depends on has not been read.
+
+**The operator log would have carried the provider's API key.** The message
+explaining why no settled point could be read quoted what the provider said,
+and providers put the whole request address — key included — inside that text.
+On a provider whose settled read keeps failing, that is the credential printed
+on every turn. What is reported now is built from bounded fields that cannot
+contain a secret, and still tells apart the two cases an operator has to act
+on differently.
+
 ### What this does not change, and one thing it does not fix
 
 Nothing about which positions are corrected, or when, on any deployment whose

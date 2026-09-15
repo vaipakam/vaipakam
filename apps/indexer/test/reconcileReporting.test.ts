@@ -182,9 +182,9 @@ describe('the join, not just the wording', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     warn.mockClear();
     error.mockClear();
-    const ids = await _runLoanReconcilePass(passInput());
+    const outcome = await _runLoanReconcilePass(passInput());
     const out = [...warn.mock.calls, ...error.mock.calls].map((c) => c.join(' ')).join('\n');
-    return { out, ids };
+    return { out, outcome };
   }
 
   // A pass that noticed three different things it could not settle, and one
@@ -198,10 +198,10 @@ describe('the join, not just the wording', () => {
     });
 
   it('reports everything the pass noticed when it FINISHED', async () => {
-    const { out, ids } = await drive(async () => noticed());
+    const { out, outcome } = await drive(async () => noticed());
     expect(out).toContain('99');
     expect(out).toContain('loan 21 = 7');
-    expect(ids).toEqual([8]);
+    expect(outcome).toEqual({ established: true, repairedLoanIds: [8] });
   });
 
   it('reports everything the pass noticed when it DIED on its cursor write', async () => {
@@ -209,15 +209,18 @@ describe('the join, not just the wording', () => {
     // so the orphan, the unread row and the unprojectable status all went
     // unsaid — and if only the lap-boundary write had failed, the rotation
     // had already moved past them.
-    const { out, ids } = await drive(async () => {
+    const { out, outcome } = await drive(async () => {
       throw new ReconcilePartialError(noticed(), new Error('pointer write failed'));
     });
     expect(out).toContain('99');
     expect(out.toLowerCase()).toContain('orphan');
     expect(out).toContain('13');
     expect(out).toContain('loan 21 = 7');
-    // The repairs committed, so they are still announced (#2190 r6).
-    expect(ids).toEqual([8]);
+    // The repairs committed, so they are still announced (#2190 r6) — and
+    // the tick counts as ESTABLISHED: those rows WERE checked against the
+    // chain at a settled head, so the calendar sweep it gates must not be
+    // deferred (#2211 r1).
+    expect(outcome).toEqual({ established: true, repairedLoanIds: [8] });
   });
 
   it('says the SAME things either way, because one call says them', async () => {
@@ -249,16 +252,19 @@ describe('the join, not just the wording', () => {
     };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    const ids = await _runLoanReconcilePass({
+    const outcome = await _runLoanReconcilePass({
       ...passInput(),
       head: {
         block: 100n,
         timestamp: 1_700_000_000n,
         settled: false,
-        fallbackReason: 'unsupported block tag: safe',
+        fallbackReason: 'TimeoutError',
       },
     });
-    expect(ids).toEqual([]);
+    // NOT an empty repair list. A refusal must be distinguishable from a
+    // clean pass, because what runs next mints unretractable reminders from
+    // the very rows this did not check (#2211 r1 `4011103056`).
+    expect(outcome.established).toBe(false);
     const out = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // SAID, not silently skipped — a check that quietly declines to run
     // reports perfect health while records stay wrong.
@@ -266,16 +272,18 @@ describe('the join, not just the wording', () => {
     // The PROVIDER'S reason, quoted. The fallback is taken on any failure of
     // the settled read, so an asserted cause would send an operator whose
     // RPC timed out to reconfigure an RPC that works.
-    expect(out).toContain('unsupported block tag: safe');
+    expect(out).toContain('TimeoutError');
   });
 
   it('still reports what it noticed when the failure is NOT a partial one', async () => {
     // No report to lift off an ordinary throw, so there is nothing to say —
     // but the pass must not wedge the tick, and must name the failure.
-    const { out, ids } = await drive(async () => {
+    const { out, outcome } = await drive(async () => {
       throw new Error('rpc exploded');
     });
-    expect(ids).toEqual([]);
+    // Nothing was established: the pass threw before any repair landed, so
+    // the live set is as unverified as if it had never run.
+    expect(outcome.established).toBe(false);
     expect(out).toContain('rpc exploded');
   });
 });

@@ -247,6 +247,19 @@ The app uses chain reads and indexed reads for different jobs.
   source has been told something false. A chain in that state keeps
   whatever records it already had — nothing is corrected, nothing is
   damaged — until the settled read succeeds.
+- Whenever the live set was not checked against the chain on a turn, the
+  reminders derived from that set wait for a turn that checked. Due-date
+  and grace reminders are read off the records the platform holds, they are
+  sent once, and they are never taken back — and a record wrongly showing a
+  position as open is exactly what the check exists to find. So a turn that
+  refuses to check, or cannot, must not also be the turn that reminds
+  someone about a position that may already have ended. This holds for every
+  reason a check does not run, not only an unreadable settled point: a turn
+  whose own reading has run ahead of the settled point, and one that has not
+  yet caught up to it, are equally turns that established nothing. Waiting
+  costs nothing a reminder needs — its window is hours to days — and the
+  platform already waits on the same surface when the grace schedule the
+  reminders depend on has not been read.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a
