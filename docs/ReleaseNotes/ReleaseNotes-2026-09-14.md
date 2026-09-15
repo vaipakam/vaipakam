@@ -1261,8 +1261,13 @@ the message id the transport itself supplies at delivery, or, where the
 transport supplies none, one the platform's own ingress allocates in
 sequence per source. That message id is what the cross-chain adapter now
 passes through to every recipient, which is a change to that shared
-interface, so the adapter and all its recipients are upgraded
-together by the same generation probe the refresh already uses — each
+interface, so the adapter and all its recipients are upgraded in the
+same refresh run by the same generation probe the refresh already uses —
+in separate transactions, the recipients first and the adapter after, so
+a delivery that lands between two of them meets a mismatched shape,
+reverts, and is retained by the transport for re-execution once the run
+completes; nothing is lost, and the run's simulate-everything-first
+discipline keeps that window to the broadcast itself — each
 resolved from the live configuration as well as the deployment record,
 the adapter and the buyback receiver live-first, so a missing or stale
 record cannot leave a live contract unprobed. One order is the other way
