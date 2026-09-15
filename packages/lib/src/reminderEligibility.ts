@@ -184,7 +184,28 @@ export type PeriodicEligibility =
   | 'no-such-loan'
   | 'ended'
   | 'no-cadence'
-  | 'checkpoint-advanced';
+  /**
+   * The CHAIN has settled past the period this reminder is about.
+   *
+   * Ordinary index lag: the borrower paid and our copy has not caught up.
+   * Self-healing, and nothing should be done about it.
+   */
+  | 'chain-ahead'
+  /**
+   * OUR ROW expects a period the chain has not reached.
+   *
+   * The opposite direction, and it is not the same problem (#2213 r21
+   * `4015014110`). A settlement indexed and then reorged out, or a corrupted
+   * row, leaves the stored checkpoint ahead of the chain — and the
+   * active-loan reconciliation path does not repair a checkpoint, so nothing
+   * heals this. Waiting for it to resolve suppresses that loan's reminders
+   * indefinitely while the operator is told to wait.
+   *
+   * Both directions are equally disqualifying for SENDING, which is why the
+   * check is a strict equality. They are not equally diagnosable, which is
+   * why they are two verdicts.
+   */
+  | 'row-ahead';
 
 /**
  * Whether the chain's answer justifies a PERIODIC-INTEREST reminder for the
@@ -236,8 +257,14 @@ export function periodicInterestEligibility(
   const onChain = Number(loan.lastPeriodicInterestSettledAt) + days * 86_400;
   // STRICT EQUALITY, not "the chain is not behind". A stored checkpoint AHEAD
   // of the chain's is just as wrong — it would be a reminder about a period
-  // that has not begun — and both directions mean the same thing: the row and
-  // the chain disagree, so nothing here justifies an unretractable message.
-  if (onChain !== expectedCheckpoint) return 'checkpoint-advanced';
+  // that has not begun — so neither direction justifies an unretractable
+  // message.
+  //
+  // But they are REPORTED apart (#2213 r21 `4015014110`). Equally
+  // disqualifying is not equally diagnosable: one is index lag that heals
+  // itself, the other is a stored row nothing repairs. Collapsing them told
+  // an operator to wait for a condition that never resolves.
+  if (onChain > expectedCheckpoint) return 'chain-ahead';
+  if (onChain < expectedCheckpoint) return 'row-ahead';
   return 'ok';
 }

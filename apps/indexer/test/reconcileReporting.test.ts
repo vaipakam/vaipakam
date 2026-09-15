@@ -383,6 +383,42 @@ describe('the join, not just the wording', () => {
     expect(said).not.toContain('5 row(s) it settled stay withheld');
   });
 
+  it('says WHEN a failed mark loses its protection, not that it already has', async () => {
+    // #2213 r21 `4015014122`. The old line said the rows this pass could not
+    // settle "are NOT withheld" — true of later ticks, false of this one. The
+    // same ids still go to `_sweepCalendarIfEstablished` through
+    // `unestablishedLoanIds`, which holds them back from memory and needs no
+    // write to have succeeded; that in-memory set exists precisely for a
+    // failed quarantine write. Saying they are unprotected NOW sends an
+    // operator hunting for reminders that cannot have escaped yet, and
+    // understates the real risk, which starts quietly on the NEXT tick.
+    _resetQuarantineWriteProbe();
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }),
+          first: async () => ({ name: 'loan_reconcile_quarantine' }),
+        }),
+        batch: async () => {
+          throw new Error('d1 batch failed');
+        },
+      },
+    } as unknown as Env;
+    scanBehaviour = async () => report({ unread: [13, 21] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await _runLoanReconcilePass({ ...passInput(), env });
+    // The in-memory protection this tick is real, and is what the message
+    // must not contradict.
+    expect(outcome.established).toBe(true);
+    if (outcome.established) expect(outcome.unestablishedLoanIds).toEqual([13, 21]);
+    const said = error.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('still withheld');
+    expect(said).toContain('THIS tick');
+    expect(said).toContain('a later tick');
+    // The absolute claim is gone.
+    expect(said).not.toContain('are NOT withheld');
+  });
+
   it('refuses outright on a head the chain did not call settled', async () => {
     // #2201. `latest - 32` is a finality GUESS, and this pass terminalizes
     // rows it then never selects again — so a reorg deeper than the margin

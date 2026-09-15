@@ -1428,7 +1428,21 @@ export async function _runLoanReconcilePass(input: {
         // keys on the row's own state rather than on remembering this failure.
         const effects = [
           marks > 0
-            ? `${marks} row(s) this pass could not settle are NOT withheld until a later pass records them`
+            ? // THE BOUNDARY, not just the outcome (#2213 r21 `4015014122`).
+              // "NOT withheld" was true of later ticks and false of this one.
+              // This tick still hands the same ids to
+              // `_sweepCalendarIfEstablished` through
+              // `ReconcilePassOutcome.unestablishedLoanIds`, which holds them
+              // back from memory and needs no write to have succeeded — the
+              // belt-and-braces this failure is exactly why the code carries.
+              // Saying they are unprotected NOW would send an operator
+              // hunting for reminders that cannot have escaped yet, and would
+              // understate the real risk, which starts quietly on the next
+              // tick.
+              `${marks} row(s) this pass could not settle are still withheld ` +
+              `THIS tick from the report in memory, but nothing durable ` +
+              `records them — so a later tick that does not re-examine them ` +
+              `can remind about them, until a pass records them or settles them`
             : null,
           releases > 0
             ? `the quarantine state of ${releases} row(s) it settled could not be ` +

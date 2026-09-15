@@ -283,6 +283,21 @@ different problems with different remedies — a run that keeps reporting
 hundreds of rejections is reporting stuck records, not load — and flattening
 them into "deferred" would hide the one that needs a person.
 
+**A record can disagree with the chain in two directions, and only one of
+them fixes itself.** The platform compares the period a reminder is about
+against the period the chain is on, and any disagreement disqualifies the
+reminder — that part is right in both directions, since neither justifies a
+message that cannot be taken back. But the two are not the same problem. When
+the CHAIN is further along, the borrower has paid and the platform's records
+are catching up; nothing needs doing. When the platform's OWN record is
+further along — a payment recorded and then undone by the chain reorganising,
+or a damaged record — nothing catches up, because the correction pass does not
+revisit that field. Reporting both as "the records are catching up" told
+whoever read it to wait for something that never arrives, while that
+position's reminders stayed suppressed indefinitely. The two are now separate
+verdicts with separate totals, and the second says plainly that it needs a
+person.
+
 **Two of those totals were the same total until review separated them.** A
 borrower who has just paid leaves the chain's record of the period ahead of
 the platform's for a few moments. The per-record line already called that
@@ -294,6 +309,16 @@ the summary is what someone acts on. Both the wording and the total are now
 decided in one place, so they cannot describe a record one way and count it
 another, and a new kind of verdict cannot quietly inherit an existing total —
 it has to be given one deliberately.
+
+**And when recording that a record could not be settled fails, the platform
+now says WHEN that record loses its protection rather than that it already
+has.** The turn that noticed it still holds it back from its own findings,
+which needs no write to have succeeded — that is exactly why the in-memory
+half exists alongside the durable one. What is lost is protection on *later*
+turns that do not examine the record again. Saying it was unprotected
+immediately sent whoever read it looking for reminders that could not yet
+have escaped, and understated the real risk, which begins quietly on the
+following turn.
 
 **A failure at the very last step could erase everything the run had just
 done.** Marking a record as told is the final act for that record, and it

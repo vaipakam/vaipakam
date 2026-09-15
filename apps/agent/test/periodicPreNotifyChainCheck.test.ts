@@ -758,7 +758,41 @@ describe('what counts as a send, and what only looks like one', () => {
     const { stamped, said } = await run();
     expect(stamped).toEqual([]);
     expect(sends).toEqual([]);
-    expect(said).toContain('not the one the chain is on');
+    // Named as the chain being AHEAD, which is what makes it self-healing.
+    expect(said).toContain('has settled PAST it');
+    expect(said).toContain('indexer has not caught up');
+  });
+
+  it('separates a checkpoint AHEAD of the chain from the indexer being behind', async () => {
+    // #2213 r21 `4015014110`. `periodicInterestEligibility` is a strict
+    // equality, so it disqualified both directions — correctly, since neither
+    // justifies an unretractable message — but it returned ONE verdict, and
+    // the wording and the tally then diagnosed both as index lag.
+    //
+    // The reverse direction is not lag and does not heal: a settlement indexed
+    // and then reorged out, or a corrupted row, leaves the stored checkpoint
+    // ahead of the chain, and the active-loan reconciliation does not repair a
+    // checkpoint. Telling an operator to wait suppresses that loan's reminders
+    // indefinitely while pointing them away from the row that needs them.
+    answer = (id) => ({
+      id: BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      // One period BEHIND what the stored row believes.
+      lastPeriodicInterestSettledAt: (settledAtOf.get(id) ?? 0) - 30 * DAY,
+    });
+    loanRows = tenLoans().slice(-3);
+    const { stamped, said } = await run();
+    // Still disqualifying — nothing is sent either way.
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    // ...but diagnosed as its own thing, with the consequence stated.
+    expect(said).toContain('AHEAD of the chain');
+    expect(said).toContain('does not heal on its own');
+    // And NOT filed as lag, which would say "wait" for something that never
+    // resolves.
+    expect(said).not.toContain('indexer has not caught up');
+    expect(said).toContain('3 with a checkpoint ahead of the chain');
   });
 
   it('does not call a rejected delivery a reminder', async () => {

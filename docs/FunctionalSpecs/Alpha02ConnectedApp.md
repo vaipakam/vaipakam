@@ -316,6 +316,15 @@ The app uses chain reads and indexed reads for different jobs.
   themselves when it is turned back on. A run that cannot READ the setting also
   sends nothing: not knowing whether a payment can be made is not permission to
   demand one.
+- A disagreement about WHICH period is current withholds the reminder in
+  either direction, but the two directions are reported apart. The chain being
+  further along means the borrower has paid and the platform's records are
+  catching up, and nothing needs doing. The platform's own record being
+  further along — a payment recorded and then undone by the chain
+  reorganising, or a damaged record — does not catch up, because the
+  correction pass does not revisit that field, so that position's reminders
+  stay withheld until a person fixes the record. Reporting the second as the
+  first would tell the reader to wait for something that never arrives.
 - Confirmation is only accepted from a source that has first proved it is the
   network it is configured to be. A source pointed at a different network —
   by a swapped setting, say — answers every question confidently and about

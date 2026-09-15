@@ -533,6 +533,7 @@ async function preNotifyChain(
   let failedRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
+  let staleCheckpoint = 0;
   let unreadable = 0;
   let pushUnconfigured = 0;
   let batches = 0;
@@ -575,6 +576,7 @@ async function preNotifyChain(
     failedRails += outcome.failedRails;
     rejected += outcome.rejected;
     checkpointLag += outcome.checkpointLag;
+    staleCheckpoint += outcome.staleCheckpoint;
     unreadable += outcome.unreadable;
     pushUnconfigured += outcome.pushUnconfigured;
     cursor += outcome.consumed;
@@ -615,16 +617,22 @@ async function preNotifyChain(
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
         `${failedRails} rail(s) unconfirmed, ` +
         `${rejected} rejected by the chain, ${checkpointLag} awaiting the ` +
-        `indexer, ${unreadable} unreadable — ` +
+        `indexer, ${staleCheckpoint} with a checkpoint ahead of the chain, ` +
+        `${unreadable} unreadable — ` +
         `${failed ?? capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and the ` +
         `next tick RESUMES from ${cursor < due.length ? cursor : 0} rather ` +
         `than re-reading this prefix. A tick that reports the read cap with ` +
         `hundreds rejected is reporting orphaned rows, not load — whereas ` +
         `hundreds awaiting the indexer is the indexer being behind, which ` +
-        `needs nothing done to the rows themselves.`,
+        `needs nothing done to the rows themselves — and anything at all ` +
+        `with a checkpoint ahead of the chain needs a person, because nothing ` +
+        `repairs that on its own.`,
     );
-  } else if (noRoute + unreached + failedRails + rejected + checkpointLag + unreadable > 0) {
+  } else if (
+    noRoute + unreached + failedRails + rejected + checkpointLag + staleCheckpoint + unreadable >
+    0
+  ) {
     // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
     // r19 `4014677438`). The summary above only fires on an early stop, on the
     // reasoning that a finished window needs no explanation — which is true of
@@ -641,7 +649,8 @@ async function preNotifyChain(
         `${examined} examined, ${reminded} reminded, ${unreached} reached ` +
         `nobody, ${noRoute} with nobody to tell, ${failedRails} rail(s) ` +
         `unconfirmed, ${rejected} rejected by the chain, ${checkpointLag} ` +
-        `awaiting the indexer, ${unreadable} unreadable.`,
+        `awaiting the indexer, ${staleCheckpoint} with a checkpoint ahead of ` +
+        `the chain, ${unreadable} unreadable.`,
     );
   }
 
@@ -695,6 +704,7 @@ async function messageBatch(
   failedRails: number;
   rejected: number;
   checkpointLag: number;
+  staleCheckpoint: number;
   unreadable: number;
   pushUnconfigured: number;
 }> {
@@ -704,6 +714,7 @@ async function messageBatch(
   let failedRails = 0;
   let rejected = 0;
   let checkpointLag = 0;
+  let staleCheckpoint = 0;
   let unreadable = 0;
   let pushUnconfigured = 0;
   for (let i = 0; i < batch.length; i++) {
@@ -712,7 +723,7 @@ async function messageBatch(
     if (budget.remaining < MAX_SENDS_PER_LOAN) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
-        rejected, checkpointLag, unreadable, pushUnconfigured,
+        rejected, checkpointLag, staleCheckpoint, unreadable, pushUnconfigured,
       };
     }
     const { row, nextCheckpoint, secsUntil } = batch[i]!;
@@ -790,6 +801,7 @@ async function messageBatch(
           `later tick reconsiders.`,
       );
       if (explained.bucket === 'checkpoint-lag') checkpointLag += 1;
+      else if (explained.bucket === 'stale-checkpoint') staleCheckpoint += 1;
       else rejected += 1;
       continue;
     }
@@ -909,6 +921,7 @@ async function messageBatch(
     failedRails,
     rejected,
     checkpointLag,
+    staleCheckpoint,
     unreadable,
     pushUnconfigured,
   };
@@ -1162,7 +1175,7 @@ function explainVerdict(
   verdict: Exclude<PeriodicEligibility, 'ok'>,
   detail: LoanState,
   expected: number,
-): { text: string; bucket: 'rejected' | 'checkpoint-lag' } {
+): { text: string; bucket: 'rejected' | 'checkpoint-lag' | 'stale-checkpoint' } {
   switch (verdict) {
     case 'no-such-loan':
       return {
@@ -1182,19 +1195,34 @@ function explainVerdict(
           `turn into a payment date`,
         bucket: 'rejected',
       };
-    case 'checkpoint-advanced':
+    case 'chain-ahead':
       return {
         text:
           `the stored row still points at the checkpoint ${expected}, and the ` +
-          `chain settled its last period at ` +
-          `${Number(detail.lastPeriodicInterestSettledAt)} — the period this ` +
-          `reminder is about is not the one the chain is on, most likely a ` +
+          `chain has settled PAST it (last period at ` +
+          `${Number(detail.lastPeriodicInterestSettledAt)}) — most likely a ` +
           `payment the indexer has not caught up with`,
         // NOT a rejection. The chain knows this loan and is happy with it; our
         // copy is a few blocks behind and heals itself on the next indexer
         // pass. Filing it with the ghost rows would send an operator to repair
         // something that is already correct.
         bucket: 'checkpoint-lag',
+      };
+    case 'row-ahead':
+      return {
+        text:
+          `the stored row points at the checkpoint ${expected}, which is ` +
+          `AHEAD of the chain (last period at ` +
+          `${Number(detail.lastPeriodicInterestSettledAt)}) — a settlement ` +
+          `indexed and then reorged out, or a corrupted row. The active-loan ` +
+          `reconciliation does not repair a checkpoint, so this does not heal ` +
+          `on its own and this loan's reminders stay suppressed until someone ` +
+          `corrects the row`,
+        // ITS OWN BUCKET (#2213 r21 `4015014110`). Filing it under lag told an
+        // operator to wait for a condition that never resolves, and filing it
+        // under "rejected by the chain" would be wrong too — the chain has no
+        // quarrel with this loan, our copy of one field is wrong.
+        bucket: 'stale-checkpoint',
       };
   }
 }
