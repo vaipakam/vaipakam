@@ -6803,8 +6803,14 @@ on the live era alone.
   note above records (review r3 — and the contradiction survived in THIS
   paragraph after the other was fixed, Codex #2224 r1). A d5 packet's
   components are typed and credited at ingress, so it holds no untyped
-  batch balance and the gate does not concern it; its day list still
-  passes the compact admission above.
+  batch balance and the gate does not concern it. Nor is it admitted:
+  it takes no batch, no per-day index and no cursor (the rule above), and
+  the only thing 3a records for it is its day-list COMMITMENT — a hash
+  beside the packet, read by nothing, kept because a record of what a
+  delivery claimed costs one hash and answers later questions the chain
+  could not otherwise answer (Codex #2224 r2: an earlier revision said its
+  day list "passes the compact admission", which contradicted the
+  one-accounting-path rule outright).
 - The deterministic per-day allocation pass — matching transport drawn
   first per component, scarce transport split by system-wide typed
   shortfall (fresh first on ties), the unarrived-day necessity constraint

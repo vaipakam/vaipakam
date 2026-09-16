@@ -1061,8 +1061,31 @@ library LibRewardCustody {
     ///         figure alone — zero for every wire that carried no split — and
     ///         an attestation lifts no bound by itself.
     function authenticatedFresh(LibVaipakam.IngressPacket storage p) internal view returns (uint256) {
-        if (p.attested && packetBatchReleased(p)) return p.freshAttested;
+        if (p.attested && packetBatchReleased(p)) {
+            // NET of what the packet's own transport draws already spent of
+            // its fresh component (Codex #2224 r2): the cap is what the source
+            // recorded, not what is left, and classifying the gross figure
+            // would republish fresh value the batch already paid listed
+            // obligations with. Both seams are 3b's to fill, and they are two
+            // so that flipping the release predicate alone can never expose
+            // the gross cap.
+            uint256 drawn = transportConsumedFresh(p);
+            return p.freshAttested > drawn ? p.freshAttested - drawn : 0;
+        }
         return p.freshAuthenticated;
+    }
+
+    /// @notice What a packet's own transport draws have already spent of its
+    ///         FRESH component.
+    /// @dev    #1566 transport epochs PR 3a — the transport epochs' leg
+    ///         counters (3b) are what make this answerable; until they land no
+    ///         draw exists and the answer is zero. The second half of the
+    ///         seam {authenticatedFresh} reads, kept separate from
+    ///         {packetBatchReleased} deliberately: one predicate deciding both
+    ///         "may this be classified" and "how much of it" is how a later
+    ///         change exposes a gross figure by flipping a boolean.
+    function transportConsumedFresh(LibVaipakam.IngressPacket storage) internal pure returns (uint256) {
+        return 0;
     }
 
     /// @notice Whether a packet's batch has been parked with its
@@ -1077,6 +1100,21 @@ library LibRewardCustody {
     ///         of the delivery that opened it.
     function packetBatchReleased(LibVaipakam.IngressPacket storage) internal pure returns (bool) {
         return false;
+    }
+
+    /// @notice #1566 transport epochs PR 3a — mark a reservation as dispatched
+    ///         on a wire that CARRIES ITS SPLIT, so the mirror types its packet
+    ///         at ingress and a split attestation for it can never land.
+    /// @dev    Every path that creates a reservation calls this: the budget
+    ///         remittance and both compensation dispatches (Codex #2224 r2 —
+    ///         the compensation rows went unmarked when only the budget path
+    ///         set the flag, and the eligibility rule then admitted an
+    ///         attestation the destination had to reject). One helper rather
+    ///         than three assignments so the rule has one name to grep for,
+    ///         and `RewardRemittanceAttestEligibilityTest` drives all three
+    ///         paths so a fourth that forgets is loud rather than silent.
+    function markReservationSplitOnWire(LibVaipakam.RemitReservation storage r) internal {
+        r.splitOnWire = true;
     }
 
     /// @notice #1566 transport epochs PR 3a — whether a reservation can be
@@ -1149,12 +1187,25 @@ library LibRewardCustody {
         if (h == bytes32(0)) revert IVaipakamErrors.IngressReceiptHasNoPacket(remitId);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.freshShare + p.recycledShare != 0) revert IVaipakamErrors.IngressPacketAlreadyTyped(h);
-        if (p.attested) revert IVaipakamErrors.IngressPacketAlreadyAttested(h);
         uint256 total = fresh + recycled;
         if (total == 0) revert IVaipakamErrors.SplitAttestationEmpty(remitId);
         uint256 actual = p.actualReceived;
         freshAttested = (fresh * actual) / total;
         recycledAttested = (recycled * actual) / total;
+        if (p.attested) {
+            // An IDENTICAL retry is a no-op, not a failure (Codex #2224 r2).
+            // The source entry is deliberately re-sendable — a caller who
+            // cannot tell whether the first message landed retries it — and
+            // the transport fee is paid up front and never refunded, so
+            // rejecting a repeat of the same record would make the retry lever
+            // a fee-burning trap. What stays refused is a DIVERGENT second
+            // record: the first attestation is the source's, and a differing
+            // one is a faulty or compromised source, never a correction.
+            if (p.freshAttested != freshAttested || p.recycledAttested != recycledAttested) {
+                revert IVaipakamErrors.IngressPacketAlreadyAttested(h);
+            }
+            return (h, freshAttested, recycledAttested);
+        }
         p.freshAttested = freshAttested;
         p.recycledAttested = recycledAttested;
         p.attested = true;

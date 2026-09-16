@@ -320,6 +320,12 @@ contract RewardCompensationDispatchFacet is
             r.sentAt = uint64(block.timestamp);
             r.total = amount;
             r.fresh = amount;
+            // #1566 transport epochs PR 3a — a compensation is dispatched
+            // fresh-only and the mirror's ingress records its packet TYPED
+            // (`freshShare == amount`), so a split attestation for it has
+            // nothing to add and the canonical side refuses one before a fee
+            // is paid (Codex #2224 r2).
+            LibRewardCustody.markReservationSplitOnWire(r);
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;
@@ -542,6 +548,12 @@ contract RewardCompensationDispatchFacet is
             r.sentAt = uint64(block.timestamp);
             r.total = amount;
             r.fresh = amount;
+            // #1566 transport epochs PR 3a — a compensation is dispatched
+            // fresh-only and the mirror's ingress records its packet TYPED
+            // (`freshShare == amount`), so a split attestation for it has
+            // nothing to add and the canonical side refuses one before a fee
+            // is paid (Codex #2224 r2).
+            LibRewardCustody.markReservationSplitOnWire(r);
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;

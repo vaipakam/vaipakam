@@ -547,10 +547,8 @@ contract RewardRemittanceFacet is
             // builds is the d5 shape, which carries the split, so the mirror
             // types this packet at ingress and a split attestation for it can
             // never land. Recorded on the row so the canonical side refuses
-            // one before a fee is paid; reservations dispatched on the older
-            // shapes predate this field and read false, which is exactly the
-            // set an attestation is for.
-            r.splitOnWire = true;
+            // one before a fee is paid.
+            LibRewardCustody.markReservationSplitOnWire(r);
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
             } else {

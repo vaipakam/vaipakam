@@ -185,6 +185,44 @@ contract RewardRemitLedgerTest is SetupTest {
         rlens.quoteSplitAttestationFee(77);
     }
 
+    /// Codex #2224 r2 — EVERY path that creates a reservation marks it as
+    /// dispatched on a wire that carries its split, because every payload
+    /// this deployment builds does. The budget remittance marked its rows
+    /// from round 1; the two manual-compensation dispatches did not, and the
+    /// eligibility rule then admitted an attestation the mirror had to reject
+    /// after the caller had paid for it. This drives all three paths, so a
+    /// fourth block that forgets the marker fails here rather than in
+    /// production. Three blocks cover four public entries: both
+    /// from-recovery entries route through the block their sibling uses.
+    function test_EveryDispatchPathMarksTheReservationsWire() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        assertTrue(rlens.getRemitReservation(1).splitOnWire, "the budget remittance");
+
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 2e18);
+        assertTrue(rlens.getRemitReservation(2).splitOnWire, "the manual compensation dispatch");
+
+        // The third block: the supplemental dispatch, which writes its own
+        // reservation rather than sharing the manual one's. (The two
+        // from-recovery entries route through the blocks their siblings use,
+        // so three blocks cover all four public entries.)
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 2, 4e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 0);
+        assertTrue(rlens.getRemitReservation(3).splitOnWire, "the supplemental dispatch");
+
+        uint256 created = rlens.getRemitReservationNonce();
+        assertEq(created, 3, "fixture: every creating block drove once");
+        for (uint256 id = 1; id <= created; ++id) {
+            assertTrue(
+                rlens.getRemitReservation(id).splitOnWire,
+                "no reservation this deployment creates is attestable"
+            );
+        }
+    }
+
     /// Codex #2224 r1 — the send refuses, BEFORE any fee is paid, every
     /// reservation whose attestation could only revert at the destination:
     /// one whose own wire carried the split (the mirror typed its packet at

@@ -2762,8 +2762,21 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, h, 1e18, 0));
         _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
         _admin().unpause();
-        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
+        // Codex #2224 r2 — the source entry is deliberately re-sendable, so an
+        // IDENTICAL retry (a caller who cannot tell whether the first landed)
+        // is a no-op and changes nothing. Only a DIVERGENT second record is
+        // refused: the first attestation is the source's, and a differing one
+        // is a faulty source, never a correction.
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 60e18, 40e18);
+        p = _pkt(id);
+        assertEq(p.freshAttested, 6e18, "the identical retry changed nothing");
+        assertEq(p.recycledAttested, 4e18);
+        assertTrue(p.attested);
+        // The same ratio expressed differently is the SAME record, and lands.
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 6e18, 4e18);
+        assertEq(_pkt(id).freshAttested, 6e18, "an equivalent record is the same record");
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 50e18, 50e18);
     }
 
     /// PR 3a — a short delivery shrinks BOTH caps and neither underflows:

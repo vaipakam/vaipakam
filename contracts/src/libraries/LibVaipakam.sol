@@ -8009,15 +8009,6 @@ library LibVaipakam {
         // subtract the same contribution twice and erase a replacement's
         // funding.
         bool declaredUnwound;
-        /// @dev #1566 transport epochs PR 3a — whether this reservation's own
-        ///      wire carried its fresh/recycled split (the d5 shape and every
-        ///      shape after it). The mirror types such a packet at ingress, so
-        ///      a split ATTESTATION for it has nothing to add and is refused
-        ///      there; recording the wire here lets the canonical side refuse
-        ///      it before the caller pays a transport fee (Codex #2224 r1).
-        ///      Appended, so every reservation dispatched on an older shape
-        ///      reads FALSE — which is exactly the attestable set.
-        bool splitOnWire;
         // #1660 r5 - the ack specifically attested classification
         // QUARANTINED: the B1 return's eligibility evidence. Distinct
         // from the absence of `consumedAcked` - a non-consumed ack can
@@ -8039,6 +8030,35 @@ library LibVaipakam {
         // (Codex #2206 r7). Cleared by the release.
         uint256 classifiedTake;
         uint256[] classifiedTakes;
+        /// @dev #1566 transport epochs PR 3a — whether this reservation's own
+        ///      wire carried its fresh/recycled split (the d5 shape, the
+        ///      compensation shape, and every shape after them). The mirror
+        ///      types such a packet at ingress, so a split ATTESTATION for it
+        ///      has nothing to add and is refused there; recording the wire
+        ///      here lets the canonical side refuse it before the caller pays
+        ///      a transport fee (Codex #2224 r1).
+        ///
+        ///      APPENDED AFTER EVERY EXISTING MEMBER, and that placement is
+        ///      load-bearing (Codex #2224 r2): an earlier revision put it
+        ///      among the bools, which shifts the packed byte offsets of
+        ///      `quarantineAcked` and `conflictClawed` for every reservation
+        ///      already in storage — an old quarantine stamp would be read as
+        ///      this flag, an old conflict stamp as the quarantine stamp, and
+        ///      the evidence behind stranded-return eligibility and
+        ///      classification-conflict handling would be corrupted by the
+        ///      upgrade itself. A new member goes at the END of a struct,
+        ///      never among it.
+        ///
+        ///      It reads FALSE for every reservation dispatched before it
+        ///      existed. The canonical side can therefore prove the wire only
+        ///      for rows it dispatched from here on; for older rows the
+        ///      destination stays the authority and a caller may still pay for
+        ///      a message the mirror refuses. That residual is accepted rather
+        ///      than papered over with an operator-set watermark: the platform
+        ///      is pre-live, so there are no older rows in practice, and a
+        ///      watermark that guessed wrong would refuse a legitimate
+        ///      attestation for good — a worse failure than a wasted fee.
+        bool splitOnWire;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

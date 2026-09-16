@@ -736,11 +736,6 @@
             "internalType": "bool"
           },
           {
-            "name": "splitOnWire",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
             "name": "quarantineAcked",
             "type": "bool",
             "internalType": "bool"
@@ -759,6 +754,11 @@
             "name": "classifiedTakes",
             "type": "uint256[]",
             "internalType": "uint256[]"
+          },
+          {
+            "name": "splitOnWire",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
