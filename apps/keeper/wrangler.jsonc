@@ -436,21 +436,52 @@
     { "binding": "KEEPER_PRIVATE_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "KEEPER_PRIVATE_KEY" },
   ],
 
-  // Operator-managed vars (non-secret config — plain `vars`):
+  // Operator-managed config. TWO CLASSES, and this block used to state
+  // only one — it described all of the below as "non-secret config — plain
+  // `vars`", which is wrong for the three arming flags and is the wording
+  // `docs/ops/OffChainRestore.md` §6 names as the incorrect description.
+  // Four other places already have it right (`src/env.ts`, that runbook,
+  // `README.md`, the root `CLAUDE.md`); this file — the one an operator
+  // edits — was the last holdout.
+  //
+  // (a) ARMING FLAGS — `secret_text`, set with `wrangler secret put`, NOT
+  //     entries in the `vars` block below. Verified against the live
+  //     `vaipakam-keeper` deployment on 2026-07-30 for KEEPER_ENABLED; the
+  //     two REWARD_* flags are ABSENT there (both reward passes are dark)
+  //     and are held the same way once armed. Their VALUES cannot be read
+  //     back from the API or dashboard, which is why each gated pass
+  //     reports how it resolved them (#1475).
+  //
+  //     DO NOT move these into `vars` to make the arming state reviewable.
+  //     It is a real temptation — the live value is otherwise invisible —
+  //     but it changes deployment semantics: a committed var arms (or
+  //     disarms) the keeper from any clean checkout, and a var and a
+  //     secret of the same name are two different bindings. `src/env.ts`
+  //     records that decision; argue with it there, not around it here.
+  //
   //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
-  //                        matcher / liquidity-confidence submit paths.
-  //   - TG_BOT_USERNAME  — public Telegram bot handle.
+  //                        matcher / liquidity-confidence submit paths,
+  //                        and gates the two flags below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
   //     (only after the keeper EOA is authorized on-chain) AND the #1222
   //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
-  //     migration 0044 applied first). Optional knobs:
-  //     REWARD_REMIT_LOOKBACK_DAYS (default 45),
-  //     REWARD_REMIT_LANE_CAP (wei, default 50000e18 = the on-chain lane default; see #918).
+  //     migration 0044 applied first).
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
-  //     KEEPER_ROLE). Optional: REWARD_COMMIT_LOOKBACK_DAYS (default 14).
+  //     KEEPER_ROLE).
+  //
+  // (b) GENUINE PLAIN VARS — dashboard-managed, preserved across deploys by
+  //     the `keep_vars: true` above. Unlike (a) these have safe defaults, so
+  //     losing one degrades tuning rather than turning a duty off.
+  //
+  //   - TG_BOT_USERNAME  — public Telegram bot handle (the only one this
+  //                        config commits a value for).
   //   - FRONTEND_ORIGIN, LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs
   //     (see src/env.ts) — all optional, sensible defaults.
+  //   - REWARD_REMIT_LOOKBACK_DAYS (default 45), REWARD_REMIT_LANE_CAP
+  //     (wei, default 50000e18 = the on-chain lane default; see #918),
+  //     REWARD_COMMIT_LOOKBACK_DAYS (default 14) — knobs for (a)'s passes,
+  //     but plain vars themselves.
   "vars": {
     // Public Telegram bot handle (the @-name from BotFather). Filled
     // post-provision; the worker accepts an empty string and returns
