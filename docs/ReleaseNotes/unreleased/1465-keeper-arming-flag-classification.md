@@ -10,12 +10,19 @@ are provisioned the same way when they are armed. The distinction matters for
 anyone reconstructing deployment posture: two of the three are not unreadable
 live state, they are simply not set.
 
-Their absence leaves three scheduled duties dark rather than two, which is
-worth stating precisely because the flags and the duties are not one-to-one:
+Their absence would leave three scheduled duties dark rather than two, which
+is worth stating precisely because the flags and the duties are not one-to-one:
 the reward-budget remittance pass and the remittance-acknowledgement pass are
 both gated by the remit flag, and the commitment-report pass by the commit
 flag. An operator reconstructing what is running from the flag names alone
 would otherwise miss the acknowledgement duty entirely.
+
+That "would" is doing real work. The deployed keeper currently has **no cron
+schedule at all** — it was deliberately unscheduled after nearly every
+invocation exceeded its CPU ceiling — and this Worker has no HTTP surface, so
+every pass is dark right now regardless of any flag. The flag-by-flag account
+above describes what gates what *once the schedule is restored*; read as a
+description of today it would wrongly imply the non-reward passes are running.
 
 The Worker's own environment module and the off-chain restore runbook already
 recorded the classification correctly, and the runbook went as far as naming
@@ -41,8 +48,14 @@ a sentence classifies a binding is the same unbounded guess this repository
 has been bitten by before. The list above instead comes from reading **every**
 mention of the three flag names outside dated changelogs and tests — a fixed
 set of exact strings, small enough to read in full. That is a bounded check,
-and it is what turned up the last two entries, which no review round had
-named.
+and it is what turned up several entries no review round had named.
+
+What this deliberately does not claim is completeness. Each of three review
+rounds found one more document saying something looser than the code does,
+and "no prose anywhere could mislead a reader about this" is not a property
+anyone can check. The corrected sites are the ones that were found; the
+Worker's own environment module is the authority if some other source
+disagrees.
 
 The consequence was not cosmetic. Reading that heading, the reasonable next
 step is to commit an arming value into the config so the live state is
@@ -66,9 +79,15 @@ That preservation promise is itself narrower than it reads, and the config now
 says so: it protects variables the configuration does not declare, because a
 declared one is uploaded on every deploy like any other setting. The bot
 handle is the one variable this configuration does declare, so a dashboard
-edit to it is overwritten rather than kept — it has to be changed in the
-configuration. Nothing else in the plain-variable class is declared, so
-everything else in it is genuinely preserved.
+edit to it is overwritten rather than kept. Nothing else in the plain-variable
+class is declared, so everything else in it is genuinely preserved.
+
+The bot handle is a weak example of its own rule, and the documentation now
+says so rather than leaving an operator to discover it: no keeper code reads
+that value at all — the Telegram link that uses the handle is built by a
+different Worker from its own binding — so setting it either way changes
+nothing the keeper does. It is kept because the declaration is what makes the
+overwrite behaviour visible, not because the Worker needs it.
 
 One thing this change does not establish is whether the deployed keeper is
 currently armed. For the kill-switch the value exists but cannot be read back,

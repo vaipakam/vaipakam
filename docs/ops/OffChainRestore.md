@@ -437,14 +437,14 @@ then deploy.
       committed — so a restore that follows only the steps above completes
       with the signing key present and every autonomous path dark,
       indefinitely and silently.
-      `apps/keeper/wrangler.jsonc` describes them as "operator-managed vars
-      (non-secret config — plain `vars`)" and its committed `vars` block
-      carries only `TG_BOT_USERNAME`. **That description is wrong and this
-      matters for capture, not just for tidiness.** Verified against the live
+      `apps/keeper/wrangler.jsonc` used to describe them as
+      "operator-managed vars (non-secret config — plain `vars`)" while its
+      committed `vars` block carried only `TG_BOT_USERNAME`. **That mattered
+      for capture, not just for tidiness** — #2223 corrected it (closing
+      #1465) and it now names them as secrets. Verified against the live
       deployment (2026-07-30): `KEEPER_ENABLED` is a per-Worker
       **`secret_text`** binding, and §7a step 3 restores it with
-      `wrangler secret put` accordingly. Correcting the config comment is
-      #1465.
+      `wrangler secret put` accordingly.
       The consequence here: a `secret_text` value **cannot be read back**,
       from the API or the dashboard. So capturing these offline is not
       optional convenience — it is the only record that will exist, and an
@@ -1968,9 +1968,10 @@ caught at the cheapest stage.
    >
    > An earlier revision of this step recommended precisely that, on the
    > strength of the config comment rather than the deployment. Whether these
-   > flags *should* be committed vars — reviewable, but then needing
-   > `--keep-vars` discipline — is a real question, and it is #1465's, not a
-   > decision to take mid-restore.
+   > flags *should* be committed vars was #1465's question, and #2223
+   > answered it **no**: a committed var arms or disarms the keeper from any
+   > clean checkout, and a var and a secret of the same name are two distinct
+   > bindings. Either way it was never a decision to take mid-restore.
 
 4. **Confirm the flags from a tick — and note what the settings readback
    can and cannot tell you.**

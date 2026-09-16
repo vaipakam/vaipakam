@@ -258,9 +258,15 @@ remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
 synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
-   (dedicated flag). Both are per-Worker `secret_text` — set them with
-   `wrangler secret put`, **not** in the committed `vars` block, which this
-   step named until #2223. §"the claim was" below records why that matters.
+   (dedicated flag). Both are per-Worker `secret_text`, **not** entries in
+   the committed `vars` block, which this step named until #2223. Set them
+   scoped to the keeper — from the repo root there is no Wrangler config, so
+   a bare command fails or targets whichever Worker's directory you happen to
+   be in:
+   ```bash
+   ( cd apps/keeper && wrangler secret put KEEPER_ENABLED )      # enter: true
+   ( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
+   ```
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
@@ -979,12 +985,12 @@ would have converted a binding that is currently safe into one that a later
 bare deploy really would delete. It was the one change that could have made
 the documented failure possible.
 
-What the source of the confusion is, and it is worth knowing:
-`apps/keeper/wrangler.jsonc` describes all three flags as
-"operator-managed vars (non-secret config — plain `vars`)". The deployment
-does not match that comment. **The comment is wrong, not the deployment** —
-correcting it is #1465, which is now a comment fix rather than a config
-change.
+What the source of the confusion was, and it is worth knowing:
+`apps/keeper/wrangler.jsonc` described all three flags as
+"operator-managed vars (non-secret config — plain `vars`)" while the
+deployment held them as secrets. **The comment was wrong, not the
+deployment** — #2223 fixed it (closing #1465), so the config now agrees with
+this section rather than contradicting it.
 
 `--keep-vars` is left on the rotation steps above. It is harmless, it is
 correct for `TG_BOT_USERNAME`, and a deploy flag that preserves state is

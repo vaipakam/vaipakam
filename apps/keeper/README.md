@@ -78,10 +78,14 @@ secrets — they sat in the secrets table above until #2223, where the
 `wrangler secret put` instruction would have provisioned them as unreadable
 values for no benefit.
 
-`TG_BOT_USERNAME` is a plain var too, but a **config-owned** one and so the
-exception to the preservation note above: this config declares it, so every
-deploy uploads the declared value and a dashboard edit to it is overwritten
-rather than preserved. Change it in `wrangler.jsonc`.
+`TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
+note above: this config **declares** it, so every deploy uploads the declared
+value and a dashboard edit is overwritten rather than preserved. Note though
+that setting it here changes nothing observable — as §"What the kill-switch
+does and does not stop" records below, no keeper code reads it; the Telegram
+deep link that uses the handle is built by `apps/agent` from its own binding.
+It is a legacy config-owned value, kept because the declaration is what makes
+the overwrite behaviour visible, not because the keeper needs it.
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 

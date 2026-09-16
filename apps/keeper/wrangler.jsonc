@@ -440,13 +440,17 @@
   // only one — it described all of the below as "non-secret config — plain
   // `vars`", which is wrong for the three arming flags and is the wording
   // `docs/ops/OffChainRestore.md` §6 names as the incorrect description.
-  // `src/env.ts` and that runbook state it correctly and always did. The
-  // other two inventories were each wrong in their own way until #2223 fixed
-  // them alongside this block: `README.md` filed the REWARD_* LOOKBACK /
-  // LANE_CAP knobs under "set via wrangler secret put" though they are plain
-  // vars, and the root `CLAUDE.md` omitted both REWARD_* arming flags from
-  // the keeper secret list. So this was not simply the last holdout — three
-  // sites disagreed, in two different directions.
+  // #2223 corrected this block and every other site it found saying
+  // otherwise — the README, the root `CLAUDE.md`, `src/env.ts`'s own
+  // passthrough label, `SecretsStoreMigration.md`, the incident runbook's
+  // remittance prerequisite, and several now-stale warnings that this
+  // comment could not be trusted.
+  //
+  // That list is what was found and fixed. It is deliberately NOT a claim
+  // that no other prose anywhere says something looser: three review rounds
+  // each produced one more, because "no document could mislead a reader
+  // about this" is not a checkable property. `src/env.ts` is the authority
+  // if another source disagrees.
   //
   // (a) ARMING FLAGS — `secret_text`, set with `wrangler secret put`, NOT
   //     entries in the `vars` block below. Verified against the live
