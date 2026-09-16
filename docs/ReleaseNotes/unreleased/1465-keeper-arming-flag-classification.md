@@ -60,11 +60,15 @@ disagrees.
 The consequence was not cosmetic. Reading that heading, the reasonable next
 step is to commit an arming value into the config so the live state is
 visible in review — which is exactly what the tracking issue for this
-proposed. Doing it would change deployment semantics: a committed variable
-arms or disarms the keeper from any clean checkout, and a variable and a
-secret sharing a name are two different bindings, not one. The environment
-module already recorded the decision not to do this; the config now points at
-that decision instead of quietly inviting the opposite.
+proposed. Doing it would change deployment semantics twice over. A committed
+variable arms or disarms the keeper from any clean checkout. And a variable of
+the same name does not sit beside the secret — the deployment tool's own
+collision warning says it replaces the remote secret with the configured
+value, so committing the flag destroys the binding it was meant to document,
+with no fallback and no rollback short of setting the secret again after
+removing the variable. The environment module already recorded the decision
+not to do this; the config now points at that decision, and at the mechanism,
+instead of quietly inviting the opposite.
 
 The same tracking issue also reported that every plain deploy silently
 cleared these flags. That was true of genuine dashboard-managed variables and

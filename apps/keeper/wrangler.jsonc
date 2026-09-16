@@ -464,10 +464,14 @@
   //
   //     DO NOT move these into `vars` to make the arming state reviewable.
   //     It is a real temptation — the live value is otherwise invisible —
-  //     but it changes deployment semantics: a committed var arms (or
-  //     disarms) the keeper from any clean checkout, and a var and a
-  //     secret of the same name are two different bindings. `src/env.ts`
-  //     records that decision; argue with it there, not around it here.
+  //     but it changes deployment semantics twice over. A committed var arms
+  //     (or disarms) the keeper from any clean checkout. And the var does not
+  //     sit BESIDE the secret: wrangler's collision check warns it "will
+  //     replace these remote secrets with the configuration values", so the
+  //     commit CONVERTS the binding and the secret is gone — there is no
+  //     second binding to fall back to, and no rollback short of setting the
+  //     secret again after deleting the var. `src/env.ts` records the
+  //     decision; argue with it there, not around it here.
   //
   //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
   //                        matcher / liquidity-confidence submit paths,
@@ -502,8 +506,15 @@
   //
   //     CONFIG-OWNED (declared below, therefore NOT preserved — every deploy
   //     uploads the declared value and overwrites a dashboard edit):
-  //   - TG_BOT_USERNAME  — public Telegram bot handle. Change it here, not
-  //                        in the dashboard.
+  //   - TG_BOT_USERNAME  — public Telegram bot handle, and LEGACY: no code
+  //                        on this Worker reads it (it is declared, typed and
+  //                        passed through, and nothing consumes it). The
+  //                        Telegram link that uses the handle is built by
+  //                        apps/agent from ITS binding, which a keeper deploy
+  //                        does not touch — so changing this value here
+  //                        changes nothing observable. It stays because the
+  //                        declaration is what makes the config-owned vs
+  //                        dashboard-owned split above concrete.
   "vars": {
     // Public Telegram bot handle (the @-name from BotFather). Filled
     // post-provision; the worker accepts an empty string and returns

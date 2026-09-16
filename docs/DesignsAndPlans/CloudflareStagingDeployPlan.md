@@ -527,8 +527,10 @@ from the owning Worker's directory:
 > this document previously guessed, and guessed wrong"). The separate
 > question #1465 also raised — whether the flags should be committed so the
 > arming state is reviewable — was answered **no**: a committed var arms or
-> disarms the keeper from any clean checkout, and a var and a secret of the
-> same name are two distinct bindings.
+> disarms the keeper from any clean checkout, and a var of the same name
+> **replaces** the remote secret rather than sitting beside it (wrangler's
+> own collision warning), so the commit would destroy the binding this plan
+> provisions at step 4.
 
 ## 5. Wrangler config layout
 

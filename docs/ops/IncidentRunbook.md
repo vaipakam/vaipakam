@@ -259,14 +259,9 @@ synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
    (dedicated flag). Both are per-Worker `secret_text`, **not** entries in
-   the committed `vars` block, which this step named until #2223. Set them
-   scoped to the keeper — from the repo root there is no Wrangler config, so
-   a bare command fails or targets whichever Worker's directory you happen to
-   be in:
-   ```bash
-   ( cd apps/keeper && wrangler secret put KEEPER_ENABLED )      # enter: true
-   ( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
-   ```
+   the committed `vars` block, which this step named until #2223. **Do not
+   set them yet** — they are the LAST step, not the first; see the arming
+   note after item 4.
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
@@ -280,6 +275,20 @@ default** and requires all of:
    `vpfi-reward-budget` channel + calls the Diamond's `setRewardRemittanceReceiver`
    for each mirror; the lane's rate limits are set per the mainnet-deploy gates in
    CLAUDE.md § "Cross-Chain Security Policy".
+
+**Arm last, and scoped to the keeper.** Items 2-4 are what make a remit
+succeed rather than fail on-chain; `runRewardBudgetRemit` checks only the flags
+and the key before heading for `writeContract`, so arming while the EOA is
+unauthorized, the receiver unregistered or the lane unprovisioned produces
+failed or unintended attempts against half-configured infrastructure. Set the
+two secrets only once 2-4 are verified. Scope each command to the keeper —
+from the repository root there is no Wrangler config, so a bare command fails
+or targets whichever Worker's directory you happen to be in:
+
+```bash
+( cd apps/keeper && wrangler secret put KEEPER_ENABLED )       # enter: true
+( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
+```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
 `REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
