@@ -1970,8 +1970,12 @@ caught at the cheapest stage.
    > strength of the config comment rather than the deployment. Whether these
    > flags *should* be committed vars was #1465's question, and #2223
    > answered it **no**: a committed var arms or disarms the keeper from any
-   > clean checkout, and a var and a secret of the same name are two distinct
-   > bindings. Either way it was never a decision to take mid-restore.
+   > clean checkout, and a var of the same name does not sit beside the
+   > secret — wrangler warns it "will replace these remote secrets with the
+   > configuration values", so the commit CONVERTS the binding. That matters
+   > here specifically: removing the var later does not hand the secret back,
+   > it leaves the name unset until you set the secret again. Either way it
+   > was never a decision to take mid-restore.
 
 4. **Confirm the flags from a tick — and note what the settings readback
    can and cannot tell you.**

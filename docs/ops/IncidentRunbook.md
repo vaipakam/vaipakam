@@ -281,13 +281,29 @@ succeed rather than fail on-chain; `runRewardBudgetRemit` checks only the flags
 and the key before heading for `writeContract`, so arming while the EOA is
 unauthorized, the receiver unregistered or the lane unprovisioned produces
 failed or unintended attempts against half-configured infrastructure. Set the
-two secrets only once 2-4 are verified. Scope each command to the keeper —
-from the repository root there is no Wrangler config, so a bare command fails
-or targets whichever Worker's directory you happen to be in:
+two secrets only once 2-4 are verified.
+
+**`KEEPER_ENABLED` is not a remittance switch.** If it is currently `false`,
+setting it `true` here re-enables all six gated passes at once — `matcher`,
+`liquidator`, `autoLifecycle` and any reward pass whose own secret is already
+`true` — and items 2-4 above validate only the remittance path. Do not flip it
+from this procedure to turn remittance on. Either it is already `true`
+(the normal case: remittance is being added to a running keeper, so set only
+the dedicated flag), or arming the whole keeper is its own decision with its
+own prerequisites — §"What the kill-switch does and does not stop" in
+`apps/keeper/README.md` lists what else restarts.
+
+Scope each command to the keeper — from the repository root there is no
+Wrangler config, so a bare command fails or targets whichever Worker's
+directory you happen to be in:
 
 ```bash
-( cd apps/keeper && wrangler secret put KEEPER_ENABLED )       # enter: true
+# The dedicated flag. This is the one this procedure is about:
 ( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
+
+# Only if the keeper as a whole is meant to be armed, and only having
+# checked what else that restarts:
+( cd apps/keeper && wrangler secret put KEEPER_ENABLED )       # enter: true
 ```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and

@@ -489,11 +489,18 @@
   //     the config, and declared vars are still uploaded normally (see the
   //     deployment-mechanics comment above). So the promise is scoped:
   //
-  //     DASHBOARD-OWNED (omitted here, therefore preserved). Unlike (a)
-  //     these have safe defaults, so losing one degrades tuning rather than
-  //     turning a duty off:
+  //     DASHBOARD-OWNED (omitted here, therefore preserved). Losing one does
+  //     not turn a duty off the way (a) does — but do NOT read that as "any
+  //     default is fine", which this comment said until #2223:
   //   - LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs (see src/env.ts) —
-  //     all optional, sensible defaults.
+  //     all optional, sensible defaults. These are the ones that genuinely
+  //     just degrade tuning.
+  //   - The REWARD_* knobs below are NOT in that class on a deployment that
+  //     has tuned them. A reset REWARD_REMIT_LANE_CAP can exceed the
+  //     separately configured on-chain lane bucket and make sends revert; a
+  //     reset REWARD_REMIT_LOOKBACK_DAYS can drop an old un-remitted day out
+  //     of the re-scan window, which then needs a widened window or the
+  //     manual remit procedure (IncidentRunbook §2b).
   //   - FRONTEND_ORIGIN — optional but WITHOUT a usable default, so it does
   //     not belong with the knobs above: unset, consumers fall back to the
   //     empty string and a notification deep link renders as the relative
