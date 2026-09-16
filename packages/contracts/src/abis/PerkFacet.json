@@ -2666,6 +2666,17 @@
   },
   {
     "type": "error",
+    "name": "RemitReservationCarriesNoSplit",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitReservationNotPending",
     "inputs": [
       {
@@ -2678,6 +2689,17 @@
   {
     "type": "error",
     "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitSplitAlreadyOnWire",
     "inputs": [
       {
         "name": "remitId",

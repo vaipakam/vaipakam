@@ -736,6 +736,11 @@
             "internalType": "bool"
           },
           {
+            "name": "splitOnWire",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "quarantineAcked",
             "type": "bool",
             "internalType": "bool"
@@ -1090,7 +1095,29 @@
   },
   {
     "type": "error",
+    "name": "RemitReservationCarriesNoSplit",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitSplitAlreadyOnWire",
     "inputs": [
       {
         "name": "remitId",
