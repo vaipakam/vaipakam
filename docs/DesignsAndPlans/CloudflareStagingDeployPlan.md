@@ -507,9 +507,11 @@ from the owning Worker's directory:
   (#1475).
 - `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` (keeper) — same
   mechanism, optional. Both were **absent** on the live Worker as of the
-  2026-07-30 readback (the reward passes are dark). Set them only if
-  the rollout intends to arm those passes, and only after the keeper EOA
-  is authorized on-chain.
+  2026-07-30 readback, which leaves THREE scheduled passes dark rather than
+  two — `rewardBudgetRemit` and `remitAck` both gate on
+  `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`. Set
+  them only if the rollout intends to arm those passes, and only after the
+  keeper EOA is authorized on-chain.
 
 > **`apps/keeper/wrangler.jsonc`'s comment on these three is now correct**
 > (#2223, closing #1465). It described them as "operator-managed vars

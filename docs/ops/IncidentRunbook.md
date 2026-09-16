@@ -258,7 +258,9 @@ remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
 synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
-   (dedicated flag) in the keeper Worker's vars.
+   (dedicated flag). Both are per-Worker `secret_text` — set them with
+   `wrangler secret put`, **not** in the committed `vars` block, which this
+   step named until #2223. §"the claim was" below records why that matters.
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass

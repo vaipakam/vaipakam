@@ -19,13 +19,30 @@ would otherwise miss the acknowledgement duty entirely.
 
 The Worker's own environment module and the off-chain restore runbook already
 recorded the classification correctly, and the runbook went as far as naming
-this config file as the one carrying the wrong description. The other two
-inventories were each wrong in a different direction, and are corrected here
-too: the keeper README filed the reward passes' lookback and lane-cap knobs
-under "set via wrangler secret put" although they are ordinary variables, and
-the root contributor guide left both reward arming flags out of the keeper
-secret list entirely. So this was not one stale file against four correct
-ones — three sites disagreed, and an operator could land on any of them.
+this config file as the one carrying the wrong description. Several other
+places did not, and are corrected alongside it: the keeper README filed the
+reward passes' lookback and lane-cap knobs under "set with `wrangler secret
+put`" although they are ordinary variables; the root contributor guide left
+both reward arming flags out of the keeper secret list; the Secrets Store
+migration plan listed the kill-switch as non-secret configuration; the
+environment module's own passthrough label said "non-secret" while covering
+all three flags, contradicting a correction recorded twenty lines above it;
+the incident runbook's reward-remittance prerequisite told operators the flags
+live in the Worker's variables; and two design and restore documents carried
+warnings that the configuration comment could not be trusted, which were true
+until this change and are now stale.
+
+The way that list was arrived at is worth recording, because the first attempt
+was wrong. Sites were initially found by searching for classification
+*language* near a flag name — and that search missed the incident runbook,
+whose sentence says only "in the keeper Worker's vars": no "plain", no
+"non-secret", nothing the pattern was looking for. Deciding from prose whether
+a sentence classifies a binding is the same unbounded guess this repository
+has been bitten by before. The list above instead comes from reading **every**
+mention of the three flag names outside dated changelogs and tests — a fixed
+set of exact strings, small enough to read in full. That is a bounded check,
+and it is what turned up the last two entries, which no review round had
+named.
 
 The consequence was not cosmetic. Reading that heading, the reasonable next
 step is to commit an arming value into the config so the live state is

@@ -1860,12 +1860,18 @@ caught at the cheapest stage.
    binding (a per-Worker secret, set with `wrangler secret put`), NOT a var.
    `KEEPER_PRIVATE_KEY` is a `secrets_store_secret`. `TG_BOT_USERNAME` is the
    only genuine `plain_text` var. `REWARD_REMIT_ENABLED` and
-   `REWARD_COMMIT_ENABLED` are **absent** — the reward passes are dark.
+   `REWARD_COMMIT_ENABLED` are **absent** — which leaves THREE scheduled
+   passes dark, not two: `rewardBudgetRemit` and `remitAck` both gate on
+   `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`.
+   Reading the two flag names as two duties misses the remit-ACK one.
 
-   `apps/keeper/wrangler.jsonc` describes all three flags as
-   "operator-managed vars (non-secret config — plain `vars`)". The deployment
-   does not match that comment. Trust the readback in step 4, not the comment
-   (correcting it is #1465).
+   `apps/keeper/wrangler.jsonc` used to describe all three flags as
+   "operator-managed vars (non-secret config — plain `vars`)", and this
+   section warned against trusting that comment. **#2223 corrected it**
+   (closing #1465): it now names them as `secret_text` and carries the
+   decision not to move them into `vars`. The readback in step 4 remains the
+   authority for what is actually set — a comment states the mechanism, never
+   the live value.
 
    They are restored **the way they are held** — `wrangler secret put`, not
    `--var` and not the committed `vars` block. The commands are below, at
