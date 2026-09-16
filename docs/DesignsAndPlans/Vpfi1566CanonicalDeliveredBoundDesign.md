@@ -2706,8 +2706,17 @@ revision unimplementable:
      `(tag, dayIds, total, remitId, remitter, recycledShare)` and
      carries neither root nor extent, so reusing its tag would fail
      in-flight d5 packets forever or leave them page-unauthenticated;
-     **existing d5 packets are admitted through the compact flat-hash
-     path exactly as the older wires are**) embeds a **Merkle root over
+     **a d5 packet is never admitted as a batch in any case** — its
+     components are typed on the wire and credited to the shared
+     live/bucket ledgers at ingress, so it holds no batch balance to
+     index and the admission question does not arise for it, per the
+     one-accounting-path rule in §5d's transport-epoch plan. An earlier
+     revision of this parenthetical said d5 packets take the compact
+     flat-hash path "exactly as the older wires are", which would have
+     made one delivery spendable through both the batch and the ledgers
+     it was already credited to (Codex #2224 r2, r3). The compact path is
+     for the UNTYPED pre-d6 wires, whose value is in no shared ledger)
+     embeds a **Merkle root over
      fixed-size chunks TOGETHER WITH the authenticated EXTENT — element
      count, chunk count, and the indexed-leaf encoding** (a root alone proves a
      submitted chunk belongs to SOME tree, never that every member day

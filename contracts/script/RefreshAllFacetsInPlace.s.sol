@@ -1612,10 +1612,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new RewardRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
-                gen,
-                "-> 4) impl:",
+                string.concat(
+                    "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1634,10 +1643,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VaipakamRewardMessenger());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".rewardMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
-                gen,
-                "-> 4) impl:",
+                string.concat(
+                    "P2-w4/w5: upgraded VaipakamRewardMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REWARD_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1658,10 +1676,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnSender());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnSenderImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnSender (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnSend (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_SENDER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1679,10 +1706,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnReceiver (wire gen",
-                gen,
-                "-> 3) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1704,10 +1740,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new CcipMessenger(router));
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".ccipMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "cutover PR 1: upgraded CcipMessenger (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "cutover PR 1: upgraded CcipMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(CCIP_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1725,10 +1770,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new BuybackRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeBuybackRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "cutover PR 1: upgraded BuybackRemittanceReceiver (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "cutover PR 1: upgraded BuybackRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(BUYBACK_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
