@@ -1079,6 +1079,30 @@ library LibRewardCustody {
         return false;
     }
 
+    /// @notice #1566 transport epochs PR 3a — whether a reservation can be
+    ///         attested at all. ONE rule, read by the canonical send and by
+    ///         its fee quote alike, so the figure a caller is quoted and the
+    ///         message that goes out can never disagree about eligibility
+    ///         (Codex #2224 r1).
+    /// @dev    A status-only check was not enough. A close-only remittance is
+    ///         born terminal with no value, so it dispatches no packet and
+    ///         writes no receipt — an attestation for it can only revert at
+    ///         the destination for want of a receipt. A reservation whose own
+    ///         wire carried the split produced a packet the mirror typed at
+    ///         ingress, which the mirror refuses as already typed. Both are
+    ///         refused HERE, because the transport fee is paid by the caller
+    ///         up front and is not refunded by a destination revert: a
+    ///         re-sendable message is a retry lever only while the retry can
+    ///         one day land.
+    function requireAttestableReservation(
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId
+    ) internal view {
+        if (r.status == 0) revert IVaipakamErrors.RemitReservationUnknown(remitId);
+        if (r.fresh + r.recycled == 0) revert IVaipakamErrors.RemitReservationCarriesNoSplit(remitId);
+        if (r.splitOnWire) revert IVaipakamErrors.RemitSplitAlreadyOnWire(remitId);
+    }
+
     /// @notice #1566 transport epochs PR 3a — the day-list commitment of a
     ///         just-recorded packet: the flat hash of the days its payload
     ///         named and their count, written ONCE by the mirror ingress in

@@ -556,7 +556,7 @@ contract RewardRemittanceLensFacet {
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status == 0) revert IVaipakamErrors.RemitReservationUnknown(remitId);
+        LibRewardCustody.requireAttestableReservation(r, remitId);
         fee = IRewardMessenger(messenger).quoteSendSplitAttestation(
             r.dstChainId, address(this), remitId, r.fresh, r.recycled
         );

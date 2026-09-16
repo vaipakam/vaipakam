@@ -8009,6 +8009,15 @@ library LibVaipakam {
         // subtract the same contribution twice and erase a replacement's
         // funding.
         bool declaredUnwound;
+        /// @dev #1566 transport epochs PR 3a — whether this reservation's own
+        ///      wire carried its fresh/recycled split (the d5 shape and every
+        ///      shape after it). The mirror types such a packet at ingress, so
+        ///      a split ATTESTATION for it has nothing to add and is refused
+        ///      there; recording the wire here lets the canonical side refuse
+        ///      it before the caller pays a transport fee (Codex #2224 r1).
+        ///      Appended, so every reservation dispatched on an older shape
+        ///      reads FALSE — which is exactly the attestable set.
+        bool splitOnWire;
         // #1660 r5 - the ack specifically attested classification
         // QUARANTINED: the B1 return's eligibility evidence. Distinct
         // from the absence of `consumedAcked` - a non-consumed ack can

@@ -6795,8 +6795,13 @@ on the live era alone.
   the only route is the acknowledged parked-remainder path). The cutover's
   classification entry refuses a packet whose batch still lists an
   outstanding obligation and admits it once the remainder is parked with
-  its acknowledgment — at which point `freshAuthenticated` is written from
-  3a's attested caps net of the packet's transport legs. A d5 packet's
+  its acknowledgment — at which point `packetBatchReleased` starts
+  answering yes for it and `authenticatedFresh` derives the bound from the
+  immutable caps NET of the packet's fresh transport leg. **Nothing writes
+  `freshAuthenticated` for an attested packet**, here or anywhere: an
+  earlier revision had parking write it, which is the ordering defect 3a's
+  note above records (review r3 — and the contradiction survived in THIS
+  paragraph after the other was fixed, Codex #2224 r1). A d5 packet's
   components are typed and credited at ingress, so it holds no untyped
   batch balance and the gate does not concern it; its day list still
   passes the compact admission above.

@@ -154,9 +154,16 @@ contract RewardRemitLedgerTest is SetupTest {
     /// the chain it was sent to, under this deployment's own identity as the
     /// remit wire carries it; the lens quotes it through the messenger; it is
     /// re-sendable; an unknown reservation refuses on both entries.
+    ///
+    /// The fixture stands the reservation in for one an OLDER WIRE dispatched
+    /// (Codex #2224 r1): every payload this deployment builds carries the
+    /// split, so every reservation it creates is refused — the attestable set
+    /// is exactly the rows that predate that wire, which is what this entry
+    /// exists for.
     function test_AttestRemitSplit_CarriesTheReservationsRecordedSplit() public {
         _finalizeDay(1);
         _remitDay1ToArb();
+        mutator.setRemitSplitOnWireRaw(1, false);
         LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertGt(r.total, 0, "fixture: a reservation exists");
         rewardMessenger.setQuoteNative(0.003 ether);
@@ -176,6 +183,37 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.attestRemitSplit(77, payable(address(this)));
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationUnknown.selector, 77));
         rlens.quoteSplitAttestationFee(77);
+    }
+
+    /// Codex #2224 r1 — the send refuses, BEFORE any fee is paid, every
+    /// reservation whose attestation could only revert at the destination:
+    /// one whose own wire carried the split (the mirror typed its packet at
+    /// ingress) and one that moved no value (it dispatched no packet and
+    /// wrote no receipt). The fee quote refuses exactly the same set, because
+    /// both read one rule — a caller can never be quoted for a message the
+    /// send would refuse, or vice versa.
+    function test_AttestRemitSplit_RefusesWhatTheMirrorCouldOnlyReject() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        rewardMessenger.setQuoteNative(0.003 ether);
+        uint256 sendsBefore = rewardMessenger.attestSendCount();
+
+        // As dispatched: the d5 wire carried the split.
+        assertTrue(rlens.getRemitReservation(1).splitOnWire, "every payload this deployment builds is d5");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
+        rlens.quoteSplitAttestationFee(1);
+
+        // A row that moved no value: no packet, no receipt to name.
+        mutator.setRemitSplitOnWireRaw(1, false);
+        mutator.setRemitReservationSplitRaw(1, 0, 0);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
+        rlens.quoteSplitAttestationFee(1);
+
+        assertEq(rewardMessenger.attestSendCount(), sendsBefore, "no message left, so no fee was spent");
     }
 
     function _outstanding()

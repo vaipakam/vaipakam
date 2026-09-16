@@ -543,6 +543,14 @@ contract RewardRemittanceFacet is
             r.armedFreshFull = st.armedFresh;
             r.recycledFull = st.recycledFull;
             r.dayIds = dl.closedDays;
+            // #1566 transport epochs PR 3a — every payload this deployment
+            // builds is the d5 shape, which carries the split, so the mirror
+            // types this packet at ingress and a split attestation for it can
+            // never land. Recorded on the row so the canonical side refuses
+            // one before a fee is paid; reservations dispatched on the older
+            // shapes predate this field and read false, which is exactly the
+            // set an attestation is for.
+            r.splitOnWire = true;
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
             } else {
@@ -817,9 +825,12 @@ contract RewardRemittanceFacet is
      *         pays the transport fee — so a repeat send is a fee-payer's retry
      *         lever for a lost message, not a grief. Quote first via
      *         {RewardRemittanceLensFacet.quoteSplitAttestationFee}; the
-     *         messenger refunds any surplus to `refundAddress`. A reservation
-     *         whose wire already carried the split (d5) may be attested
-     *         harmlessly — the mirror refuses it as already typed.
+     *         messenger refunds any surplus to `refundAddress`. Refused here,
+     *         before any fee is paid, for a reservation the destination could
+     *         only reject: one whose own wire carried the split, and one that
+     *         moved no value and so wrote no receipt
+     *         ({LibRewardCustody.requireAttestableReservation}, the same rule
+     *         the fee quote reads).
      */
     function attestRemitSplit(
         uint256 remitId,
@@ -836,7 +847,7 @@ contract RewardRemittanceFacet is
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status == 0) revert RemitReservationUnknown(remitId);
+        LibRewardCustody.requireAttestableReservation(r, remitId);
         messageId = IRewardMessenger(messenger).sendSplitAttestation{value: msg.value}(
             r.dstChainId, address(this), remitId, r.fresh, r.recycled, refundAddress
         );

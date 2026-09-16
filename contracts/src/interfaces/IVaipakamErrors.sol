@@ -521,6 +521,16 @@ interface IVaipakamErrors {
     error SplitAttestationEmpty(uint256 remitId);
     /// @notice No reservation was ever issued under this id.
     error RemitReservationUnknown(uint256 remitId);
+    /// @notice This reservation's own wire carried its split, so the mirror
+    ///         typed its packet at ingress and an attestation has nothing to
+    ///         add. Refused on the canonical side rather than after the
+    ///         caller has paid a transport fee for a message the destination
+    ///         must reject.
+    error RemitSplitAlreadyOnWire(uint256 remitId);
+    /// @notice This reservation moved no value, so it dispatched no packet and
+    ///         wrote no receipt on the destination — there is nothing for an
+    ///         attestation to name.
+    error RemitReservationCarriesNoSplit(uint256 remitId);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
     ///         fresh credit a correction may move with its tokens is bounded
     ///         by the live row net of the outstanding fresh commitments, the

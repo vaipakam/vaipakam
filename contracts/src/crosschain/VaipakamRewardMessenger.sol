@@ -167,7 +167,15 @@ interface IRepatriationInstructionIngress {
 ///      the day-pool halves, and the 5-word consumption-attested ACK. A
 ///      proxy without the selector is generation 1 and predates all
 ///      three.
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 4;
+///      Generation 5 (#1566 transport epochs PR 3a) = generation 4 plus the
+///      kind-12 SPLIT ATTESTATION, Base → mirror. The constant MUST advance
+///      with every wire change: `RefreshAllFacetsInPlace._probeUpgradeRewardMessenger`
+///      upgrades a satellite only while its published generation is BELOW
+///      this one, so leaving it put means the documented full refresh does
+///      not install the implementation that speaks the new kind — the send
+///      selector would be missing on the proxy and inbound attestations
+///      would bounce as an unknown kind (Codex #2224 r1).
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 5;
 
 contract VaipakamRewardMessenger is
     Initializable,
