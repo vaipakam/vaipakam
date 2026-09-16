@@ -597,8 +597,13 @@ artifacts and stay in their respective env / config:
   `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
-  `KEEPER_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
-  `ZEROEX_API_KEY`, `ONEINCH_API_KEY`.
+  `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+  `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
+  `ONEINCH_API_KEY`. All three arming flags are `secret_text`, not
+  entries in `wrangler.jsonc`'s `vars` — the two `REWARD_*` ones are
+  **absent** on the live Worker (both reward passes dark) and are
+  provisioned the same way when armed. Their `*_LOOKBACK_DAYS` /
+  `*_LANE_CAP` knobs are plain vars, not secrets.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
   `TG_BOT_TOKEN`) — see "Two Telegram bots" below.

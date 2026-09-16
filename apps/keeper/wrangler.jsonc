@@ -440,9 +440,13 @@
   // only one — it described all of the below as "non-secret config — plain
   // `vars`", which is wrong for the three arming flags and is the wording
   // `docs/ops/OffChainRestore.md` §6 names as the incorrect description.
-  // Four other places already have it right (`src/env.ts`, that runbook,
-  // `README.md`, the root `CLAUDE.md`); this file — the one an operator
-  // edits — was the last holdout.
+  // `src/env.ts` and that runbook state it correctly and always did. The
+  // other two inventories were each wrong in their own way until #2223 fixed
+  // them alongside this block: `README.md` filed the REWARD_* LOOKBACK /
+  // LANE_CAP knobs under "set via wrangler secret put" though they are plain
+  // vars, and the root `CLAUDE.md` omitted both REWARD_* arming flags from
+  // the keeper secret list. So this was not simply the last holdout — three
+  // sites disagreed, in two different directions.
   //
   // (a) ARMING FLAGS — `secret_text`, set with `wrangler secret put`, NOT
   //     entries in the `vars` block below. Verified against the live
@@ -470,18 +474,25 @@
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
   //
-  // (b) GENUINE PLAIN VARS — dashboard-managed, preserved across deploys by
-  //     the `keep_vars: true` above. Unlike (a) these have safe defaults, so
-  //     losing one degrades tuning rather than turning a duty off.
+  // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
+  //     does NOT declare — it suppresses the delete of bindings absent from
+  //     the config, and declared vars are still uploaded normally (see the
+  //     deployment-mechanics comment above). So the promise is scoped:
   //
-  //   - TG_BOT_USERNAME  — public Telegram bot handle (the only one this
-  //                        config commits a value for).
+  //     DASHBOARD-OWNED (omitted here, therefore preserved). Unlike (a)
+  //     these have safe defaults, so losing one degrades tuning rather than
+  //     turning a duty off:
   //   - FRONTEND_ORIGIN, LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs
   //     (see src/env.ts) — all optional, sensible defaults.
   //   - REWARD_REMIT_LOOKBACK_DAYS (default 45), REWARD_REMIT_LANE_CAP
   //     (wei, default 50000e18 = the on-chain lane default; see #918),
   //     REWARD_COMMIT_LOOKBACK_DAYS (default 14) — knobs for (a)'s passes,
   //     but plain vars themselves.
+  //
+  //     CONFIG-OWNED (declared below, therefore NOT preserved — every deploy
+  //     uploads the declared value and overwrites a dashboard edit):
+  //   - TG_BOT_USERNAME  — public Telegram bot handle. Change it here, not
+  //                        in the dashboard.
   "vars": {
     // Public Telegram bot handle (the @-name from BotFather). Filled
     // post-provision; the worker accepts an empty string and returns
