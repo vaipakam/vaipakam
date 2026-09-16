@@ -482,8 +482,13 @@
   //     DASHBOARD-OWNED (omitted here, therefore preserved). Unlike (a)
   //     these have safe defaults, so losing one degrades tuning rather than
   //     turning a duty off:
-  //   - FRONTEND_ORIGIN, LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs
-  //     (see src/env.ts) — all optional, sensible defaults.
+  //   - LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs (see src/env.ts) —
+  //     all optional, sensible defaults.
+  //   - FRONTEND_ORIGIN — optional but WITHOUT a usable default, so it does
+  //     not belong with the knobs above: unset, consumers fall back to the
+  //     empty string and a notification deep link renders as the relative
+  //     `/loans/{id}`, which is not clickable from Telegram or Push. Set it
+  //     on any deploy whose notifications are meant to be followed.
   //   - REWARD_REMIT_LOOKBACK_DAYS (default 45), REWARD_REMIT_LANE_CAP
   //     (wei, default 50000e18 = the on-chain lane default; see #918),
   //     REWARD_COMMIT_LOOKBACK_DAYS (default 14) — knobs for (a)'s passes,
