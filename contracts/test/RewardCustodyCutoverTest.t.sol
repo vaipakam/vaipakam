@@ -15,6 +15,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -103,6 +104,9 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
     function _remit() internal view returns (RewardRemittanceFacet) {
         return RewardRemittanceFacet(address(diamond));
+    }
+    function _ingress() internal view returns (RewardIngressFacet) {
+        return RewardIngressFacet(address(diamond));
     }
     function _rlens() internal view returns (RewardRemittanceLensFacet) {
         return RewardRemittanceLensFacet(address(diamond));
@@ -193,7 +197,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _remit().onRewardBudgetReceived(
+        _ingress().onRewardBudgetReceived(
             address(vpfi), amount, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, id
         );
     }
@@ -202,7 +206,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     ///      `finalizedAt == 0` quarantines (state unknown), a live clock
     ///      credits provisionally.
     function _deliverCompensation(uint256 amount, uint256 remitId, uint64 finalizedAt, bytes32 id) internal {
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfi), amount, 3, CHAIN_BASE, remitId, REMITTER, amount / 2, amount / 2, finalizedAt, 1,
             uint64(7 days), uint64(24 hours), id
         );
@@ -1078,7 +1082,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
 
         vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
-        _remit().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
+        _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
         assertEq(_live(), 0, "the credit left the live row");
         assertEq(_unclassified(), 5e18, "and is re-attributed in the holder");
         assertEq(_held(), 5e18, "the holder's balance did not move");
@@ -2689,6 +2693,128 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _recon().getFreshQueueState(1);
         (uint256 frontier, , , , , , , , , ) = _recon().getFreshQueueState(0); // the known era answers
         assertEq(frontier, 0);
+    }
+
+    // ─── 9. the attested split + the day-list commitment (#1566 epochs 3a) ───
+
+    /// A mock messenger installed as this Diamond's reward messenger, so a
+    /// split attestation can be delivered exactly as the transport delivers it.
+    function _attestMessenger() internal returns (MockRewardMessenger m) {
+        m = new MockRewardMessenger(address(diamond));
+        _rep().setRewardMessenger(address(m));
+    }
+    function _dayCommitment(uint256 day) internal pure returns (bytes32) {
+        uint256[] memory one = new uint256[](1);
+        one[0] = day;
+        return keccak256(abi.encode(one));
+    }
+    function _pkt(bytes32 id) internal view returns (LibVaipakam.IngressPacket memory) {
+        return _rlens().getIngressPacket(_packetHash(id));
+    }
+
+    /// PR 3a — every arrival on a wire older than d6 commits to its day list
+    /// in the same transaction as the record: a budget delivery's list, and a
+    /// compensation's one day. An arrival attests nothing by itself.
+    function test_Ingress_CommitsToItsDayList() public {
+        _activatedMirror();
+        _seedDiamond(14e18); // the 10 budget delivery below, then the 4 compensation
+        bytes32 id = keccak256("dl");
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibRewardCustody.IngressPacketDayListRecorded(_packetHash(id), _dayCommitment(1), 1);
+        _untyped(10e18, 200, id);
+        LibVaipakam.IngressPacket memory p = _pkt(id);
+        assertEq(p.dayListHash, _dayCommitment(1), "the budget delivery's day list");
+        assertEq(p.dayCount, 1);
+        assertFalse(p.attested);
+        assertEq(p.freshAttested + p.recycledAttested, 0);
+        bytes32 cid = keccak256("dl-comp");
+        _deliverCompensation(4e18, 201, 0, cid);
+        p = _pkt(cid);
+        assertEq(p.dayListHash, _dayCommitment(3), "the compensation's one day");
+        assertEq(p.dayCount, 1);
+    }
+
+    /// PR 3a — the attestation persists BOTH caps, scaled to what landed by
+    /// the same proportional flooring the d5 receiver applies, once. It is
+    /// DARK: the bound a classification reads is unchanged, so a fresh
+    /// classification still refuses, and — Codex #2217 r3 — nothing is
+    /// SNAPSHOTTED into the packet's authenticated figure: the caps stay
+    /// immutable and the bound is derived from them at use time, so a late
+    /// attestation is effective whenever the batch lifecycle admits it.
+    function test_Attest_ScalesBothCaps_StaysDark_AndSnapshotsNothing() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        MockRewardMessenger m = _attestMessenger();
+        bytes32 id = keccak256("att");
+        _untyped(10e18, 210, id); // a d2-shaped arrival: a receipt, no split on the wire
+        bytes32 h = _packetHash(id);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit LibRewardCustody.IngressPacketSplitAttested(h, REMITTER, 210, 6e18, 4e18);
+        // The source's record: 60/40 of the 100 it sent; 10 landed here.
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 60e18, 40e18);
+        LibVaipakam.IngressPacket memory p = _pkt(id);
+        assertTrue(p.attested);
+        assertEq(p.freshAttested, 6e18, "fresh, scaled to what landed");
+        assertEq(p.recycledAttested, 4e18, "recycled, scaled to what landed");
+        assertEq(p.freshAuthenticated, 0, "nothing snapshotted: the bound is derived, not written");
+        assertEq(_authenticated(h), 0, "dark: the derived bound is unchanged");
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, h, 1e18, 0));
+        _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
+        _admin().unpause();
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 60e18, 40e18);
+    }
+
+    /// PR 3a — a short delivery shrinks BOTH caps and neither underflows:
+    /// 7 landed of a 30 sent as 20 fresh / 10 recycled floors to 4.66 / 2.33.
+    function test_Attest_FloorsBothCapsOnAShortDelivery() public {
+        _activatedMirror();
+        _seedDiamond(7e18);
+        MockRewardMessenger m = _attestMessenger();
+        bytes32 id = keccak256("att-short");
+        _untyped(7e18, 211, id);
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 211, 20e18, 10e18);
+        LibVaipakam.IngressPacket memory p = _pkt(id);
+        assertEq(p.freshAttested, (uint256(7e18) * 20) / 30);
+        assertEq(p.recycledAttested, (uint256(7e18) * 10) / 30);
+        assertLe(p.freshAttested + p.recycledAttested, 7e18, "the caps never exceed what landed");
+    }
+
+    /// PR 3a — the refusals, each re-executable and writing nothing: a packet
+    /// whose own wire carried its split; an unknown receipt; a receipt whose
+    /// delivery came from another chain; an empty split; a caller other than
+    /// the messenger; and the canonical send refused on a mirror.
+    function test_Attest_RefusesWhatItCannotAttest() public {
+        _activatedMirror();
+        _seedDiamond(30e18);
+        MockRewardMessenger m = _attestMessenger();
+        bytes32 typed = keccak256("typed");
+        _deliverStamped(10e18, 6e18, 4e18, 220, typed); // d5: the wire carried the split
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyTyped.selector, _packetHash(typed)));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 220, 6e18, 4e18);
+        vm.expectRevert(abi.encodeWithSelector(ReceivedRemitNotFound.selector, 999));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 999, 1, 1);
+        bytes32 id = keccak256("att-2");
+        _untyped(10e18, 221, id);
+        vm.expectRevert(abi.encodeWithSelector(ReceivedRemitStale.selector, 221, uint32(CHAIN_BASE)));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE) + 1, REMITTER, 221, 1, 1);
+        vm.expectRevert(abi.encodeWithSelector(SplitAttestationEmpty.selector, 221));
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 221, 0, 0);
+        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
+        _ingress().onRemitSplitAttested(uint32(CHAIN_BASE), REMITTER, 221, 1, 1);
+        vm.expectRevert(NotCanonicalRewardChain.selector);
+        _remit().attestRemitSplit(221, payable(address(this)));
+        assertFalse(_pkt(id).attested, "a refusal wrote nothing");
+    }
+
+    /// PR 3a — attestations flow toward a mirror only: the canonical chain's
+    /// own ingress refuses one.
+    function test_Attest_OnlyAMirrorAcceptsIt() public {
+        _becomeCanonical();
+        MockRewardMessenger m = _attestMessenger();
+        vm.expectRevert(OnlyMirrorRewardChain.selector);
+        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 1, 1, 1);
     }
 
     // ─── 6. the transports ───────────────────────────────────────────────────

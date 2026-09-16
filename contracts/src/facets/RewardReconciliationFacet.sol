@@ -165,7 +165,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];
             if (sr.amount != 0 || sr.held != 0) revert ReconciliationPacketReserved(packetHash, sr.amount);
         }
-        if (freshShare != 0) _requireEvidence(packetHash, p.classifiedFresh + freshShare, p.freshAuthenticated);
+        if (freshShare != 0) {
+            _requireEvidence(packetHash, p.classifiedFresh + freshShare, LibRewardCustody.authenticatedFresh(p));
+        }
         // The three effects, atomically: the step-down (packet remainder,
         // row figure, global aggregate — each exact), the fresh credit under
         // the split, the bucket credit as relocated custody. The credits are
@@ -461,7 +463,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             p.classifiedFresh,
             p.classifiedRecycled,
             p.disposed,
-            p.freshAuthenticated
+            LibRewardCustody.authenticatedFresh(p)
         );
     }
 
@@ -642,7 +644,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ) private view returns (uint256 current, uint256 authenticated) {
         if (e.envelope) return (e.freshCredit, s.legacyEnvelopes[e.key].replacedFresh);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[e.key];
-        return (p.classifiedFresh, p.freshAuthenticated);
+        return (p.classifiedFresh, LibRewardCustody.authenticatedFresh(p));
     }
 
     /// @notice An entry's figures, per side, read from its own records.

@@ -357,6 +357,31 @@
             "name": "freshAuthenticated",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "dayListHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dayCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "attested",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -993,6 +1018,25 @@
   },
   {
     "type": "function",
+    "name": "quoteSplitAttestationFee",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "recoveryAttributionArmed",
     "inputs": [],
     "outputs": [
@@ -1041,6 +1085,17 @@
         "name": "srcChainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

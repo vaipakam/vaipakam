@@ -2,6 +2,8 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
@@ -18,16 +20,6 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *         the mutating facet's private helpers stay behind.
  */
 contract RewardRemittanceLensFacet {
-    /// @dev The receipt key derivation — MUST stay byte-identical to
-    ///      {RewardRemittanceFacet._receiptKey} (receipts are written
-    ///      there and read here through the same mapping).
-    function _receiptKey(
-        address remitter,
-        uint256 remitId
-    ) private pure returns (bytes32) {
-        return keccak256(abi.encode(remitter, remitId));
-    }
-
     /// @notice #1434 P2-w2 — a day's compensation state (pools payable at
     ///         w3's repricing; `provisional` = awaiting its V3 broadcast).
     function getDayCompensation(uint256 dayId)
@@ -51,7 +43,7 @@ contract RewardRemittanceLensFacet {
         uint256 remitId
     ) external view returns (LibVaipakam.StrandedRecovery memory) {
         return LibVaipakam.storageSlot().strandedRecoveries[
-            _receiptKey(remitter, remitId)
+            LibRewardCustody.remitReceiptKey(remitter, remitId)
         ];
     }
 
@@ -248,7 +240,7 @@ contract RewardRemittanceLensFacet {
         uint256 remitId
     ) external view returns (LibVaipakam.ReceivedRemit memory) {
         return LibVaipakam.storageSlot().receivedRemits[
-            _receiptKey(remitter, remitId)
+            LibRewardCustody.remitReceiptKey(remitter, remitId)
         ];
     }
 
@@ -546,13 +538,27 @@ contract RewardRemittanceLensFacet {
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.ReceivedRemit storage rec =
-            s.receivedRemits[_receiptKey(remitter, remitId)];
+            s.receivedRemits[LibRewardCustody.remitReceiptKey(remitter, remitId)];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
         if (rec.srcChainId != s.baseChainId) {
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
             remitId, rec.amount, rec.remitter
+        );
+    }
+
+    /// @notice #1566 transport epochs PR 3a — quote the native transport fee
+    ///         for {RewardRemittanceFacet.attestRemitSplit} on `remitId`: this
+    ///         reservation's recorded split, toward the mirror it was sent to.
+    function quoteSplitAttestationFee(uint256 remitId) external view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (r.status == 0) revert IVaipakamErrors.RemitReservationUnknown(remitId);
+        fee = IRewardMessenger(messenger).quoteSendSplitAttestation(
+            r.dstChainId, address(this), remitId, r.fresh, r.recycled
         );
     }
 

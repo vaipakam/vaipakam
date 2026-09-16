@@ -1,108 +1,36 @@
 [
   {
     "type": "function",
+    "name": "attestRemitSplit",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "finalizeRemitReservation",
     "inputs": [
       {
         "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onCompensationBudgetReceived",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lenderShare18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerShare18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "finalizedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "lapseScheduleVersion",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "lapseWindowSeconds",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "transportMessageId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onCompensationDayBroadcastArrived",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "baseDeployment",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "zeroedForDest",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -136,59 +64,6 @@
         "name": "classification",
         "type": "uint8",
         "internalType": "uint8"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onRewardBudgetReceived",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "sourceChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "recycledShare",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "freshShare",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "transportMessageId",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -367,124 +242,6 @@
   },
   {
     "type": "event",
-    "name": "CompensationConfirmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "era",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CompensationCredited",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderShare18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerShare18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "provisional",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
-        "name": "era",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CompensationDemoted",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CompensationQuarantined",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitter",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RemitAckAfterForcedFinalize",
     "inputs": [
       {
@@ -647,46 +404,34 @@
   },
   {
     "type": "event",
-    "name": "RewardBudgetReceived",
+    "name": "RemitSplitAttestationDispatched",
     "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayIds",
-        "type": "uint256[]",
-        "indexed": false,
-        "internalType": "uint256[]"
-      },
       {
         "name": "remitId",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "recycledShare",
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "fresh",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "freshShare",
+        "name": "recycled",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -778,37 +523,6 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VpfiCustodyRelocated",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1813,7 +1527,51 @@
   },
   {
     "type": "error",
+    "name": "IngressPacketAlreadyAttested",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IngressPacketAlreadyTyped",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IngressPacketDayListStamped",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IngressPacketReplayed",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IngressPacketUnknown",
     "inputs": [
       {
         "name": "packetHash",
@@ -1830,6 +1588,17 @@
         "name": "receiptKey",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IngressReceiptHasNoPacket",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1853,22 +1622,6 @@
     "type": "error",
     "name": "InsufficientProceeds",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientRecycleBacking",
-    "inputs": [
-      {
-        "name": "needed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2351,17 +2104,6 @@
     "type": "error",
     "name": "NotOfferCreator",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotRewardRemittanceReceiver",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3155,6 +2897,17 @@
   },
   {
     "type": "error",
+    "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemittanceExceedsCap",
     "inputs": [
       {
@@ -3220,22 +2973,6 @@
     "type": "error",
     "name": "RewardBudgetMessengerNotSet",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RewardBudgetTokenMismatch",
-    "inputs": [
-      {
-        "name": "expected",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "delivered",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3830,22 +3567,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {
@@ -3971,6 +3692,17 @@
     "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SplitAttestationEmpty",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

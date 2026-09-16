@@ -18,6 +18,29 @@ import {
 
 /// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
 contract MockRewardDiamond {
+    // #1566 transport epochs PR 3a — split attestation spies.
+    uint32 public lastAttestSrc;
+    address public lastAttestRemitter;
+    uint256 public lastAttestRemitId;
+    uint256 public lastAttestFresh;
+    uint256 public lastAttestRecycled;
+    uint256 public attestCount;
+
+    function onRemitSplitAttested(
+        uint32 src,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled
+    ) external {
+        lastAttestSrc = src;
+        lastAttestRemitter = remitter;
+        lastAttestRemitId = remitId;
+        lastAttestFresh = fresh;
+        lastAttestRecycled = recycled;
+        attestCount += 1;
+    }
+
     uint32 public lastReportChain;
     uint256 public lastReportDay;
     uint256 public lastReportLender;
@@ -727,6 +750,59 @@ contract VaipakamRewardFlowTest is Test {
         );
     }
 
+    // ─── #1566 transport epochs PR 3a — the split attestation wire (kind 12) ──
+
+    function test_Receive_SplitAttestation_ForwardsToTheMirrorIngress() public {
+        vm.prank(address(messengerMirror));
+        rewardMirror.onCrossChainMessage(
+            BASE,
+            address(rewardBase),
+            abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60), uint256(40)),
+            _empty()
+        , bytes32(0));
+        assertEq(diamondMirror.attestCount(), 1);
+        assertEq(uint256(diamondMirror.lastAttestSrc()), uint256(BASE));
+        assertEq(diamondMirror.lastAttestRemitter(), address(0xBA5E));
+        assertEq(diamondMirror.lastAttestRemitId(), 7);
+        assertEq(diamondMirror.lastAttestFresh(), 60);
+        assertEq(diamondMirror.lastAttestRecycled(), 40);
+    }
+
+    function test_Receive_SplitAttestation_RevertOnCanonical() public {
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.AttestationOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60), uint256(40)),
+            _empty()
+        , bytes32(0));
+    }
+
+    function test_Receive_SplitAttestation_WrongSize_Rejected() public {
+        bytes memory four = abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60));
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                4 * 32,
+                5 * 32
+            )
+        );
+        rewardMirror.onCrossChainMessage(BASE, address(rewardBase), four, _empty(), bytes32(0));
+    }
+
+    function test_Send_SplitAttestation_EncodesTheKindAndFigures() public {
+        uint256 fee = rewardBase.quoteSendSplitAttestation(uint32(MIRROR), address(diamondBase), 7, 60, 40);
+        vm.deal(address(diamondBase), fee + 1 ether);
+        vm.prank(address(diamondBase));
+        vm.expectEmit(false, true, false, true, address(rewardBase));
+        emit VaipakamRewardMessenger.SplitAttestationSent(bytes32(0), 7, uint32(MIRROR), 60, 40);
+        rewardBase.sendSplitAttestation{value: fee}(
+            uint32(MIRROR), address(diamondBase), 7, 60, 40, payable(owner)
+        );
+    }
+
     function test_Receive_BroadcastV2_RevertOnCanonical() public {
         RewardBroadcastV2 memory b;
         b.dayId = 1;
@@ -1081,20 +1157,25 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertWhen_UnknownMessageType() public {
-        // Kind 12 is the lowest unassigned kind (9 became the repatriation
-        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1, 11 the
-        // compensation quote in #1434 P2-w3 — this test must track the
-        // next free constant).
+        // The tag allocation reaches LAST, not the lowest free one. Kinds are
+        // handed out upward from 1, so 255 is the only tag a future kind
+        // cannot quietly claim — and quietly claiming it is exactly what
+        // happened here: this test named kind 12 with a comment telling the
+        // next author to re-point it, #1566 transport epochs PR 3a took 12
+        // for the split attestation, and the test silently stopped asserting
+        // the default branch (it began asserting that kind's payload-size
+        // check instead). A test of "no handler matched" must name a tag no
+        // handler will ever match.
         vm.prank(address(messengerBase));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(12)
+                VaipakamRewardMessenger.UnknownMessageType.selector, type(uint8).max
             )
         );
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(uint8(12), uint256(1), uint256(0), uint256(0)),
+            abi.encode(type(uint8).max, uint256(1), uint256(0), uint256(0)),
             _empty()
         , bytes32(0));
     }

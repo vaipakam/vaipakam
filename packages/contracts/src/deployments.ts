@@ -90,6 +90,8 @@ export interface DeploymentFacets {
   rewardCustodyFacet?: HexAddress;
   /** #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch. */
   rewardReconciliationFacet?: HexAddress;
+  /** #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet. */
+  rewardIngressFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

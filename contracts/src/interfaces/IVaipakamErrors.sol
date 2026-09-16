@@ -500,6 +500,27 @@ interface IVaipakamErrors {
     ///         other era refuses rather than pairing an empty era-specific
     ///         queue with the global custody figures (Codex #2206 r9).
     error ReconciliationUnknownEra(uint64 era);
+    // ─── #1566 transport epochs PR 3a — the day list, the attested split ────
+    /// @notice No packet is recorded under this stamp.
+    error IngressPacketUnknown(bytes32 packetHash);
+    /// @notice The packet's day-list commitment is already written — it is
+    ///         recorded once, with the record, by the ingress itself.
+    error IngressPacketDayListStamped(bytes32 packetHash);
+    /// @notice The receipt predates packet stamping, so there is no packet to
+    ///         attest a split for.
+    error IngressReceiptHasNoPacket(uint256 remitId);
+    /// @notice The packet's own wire carried its split; an attestation has
+    ///         nothing to add and is refused rather than silently ignored.
+    error IngressPacketAlreadyTyped(bytes32 packetHash);
+    /// @notice The packet's split is already attested. The first attestation
+    ///         is the source's record; a differing second one is a faulty
+    ///         source, not a correction.
+    error IngressPacketAlreadyAttested(bytes32 packetHash);
+    /// @notice A split attestation carrying neither a fresh nor a recycled
+    ///         figure — nothing to scale, and nothing it could authenticate.
+    error SplitAttestationEmpty(uint256 remitId);
+    /// @notice No reservation was ever issued under this id.
+    error RemitReservationUnknown(uint256 remitId);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
     ///         fresh credit a correction may move with its tokens is bounded
     ///         by the live row net of the outstanding fresh commitments, the

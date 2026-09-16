@@ -978,6 +978,22 @@ library LibRewardCustody {
     ///         holder's `Unclassified` row for a packet.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyUnclassifiedCredited(bytes32 indexed packetHash, uint8 kind, uint256 amount);
+    /// @notice #1566 transport epochs PR 3a — a packet's day-list commitment
+    ///         (the flat hash of the days its payload named, and their count)
+    ///         was recorded at ingress, with the record.
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketDayListRecorded(bytes32 indexed packetHash, bytes32 dayListHash, uint256 dayCount);
+    /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
+    ///         split of a d2 remittance was attested for the packet that
+    ///         delivered it, both caps scaled to what actually landed.
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketSplitAttested(
+        bytes32 indexed packetHash,
+        address indexed remitter,
+        uint256 indexed remitId,
+        uint256 freshAttested,
+        uint256 recycledAttested
+    );
     /// @notice A stranded record's held value left the `Unclassified` row
     ///         for the return sender.
     /// @custom:event-category state-change/reward-custody
@@ -997,6 +1013,128 @@ library LibRewardCustody {
             return keccak256(abi.encode(sourceChainId, transportMessageId));
         }
         return keccak256(abi.encode(sourceChainId, ++s.ingressSequence[sourceChainId], "seq"));
+    }
+
+    /// @notice The receipt key — ONE derivation (#1566 transport epochs PR 3a:
+    ///         four byte-identical private copies collapsed here): a mirror's
+    ///         receipt of `remitId` from the canonical deployment `remitter`,
+    ///         written at the delivery, read by the ack send, the lens and the
+    ///         attestation.
+    function remitReceiptKey(address remitter, uint256 remitId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(remitter, remitId));
+    }
+
+    /// @notice #1566 transport epochs PR 3a — the EVIDENCE bounding a
+    ///         packet's fresh side (§5c: a fresh classification requires
+    ///         authenticated source evidence; absent it, value classifies
+    ///         recycled or stays), DERIVED here at use time.
+    /// @dev    Derived, never snapshotted into a field by an earlier step
+    ///         (Codex #2217 r3). The split attestation is permissionless and
+    ///         can land after the batch it describes has been parked, so a
+    ///         bound written at parking from the caps as they stood then would
+    ///         read zero forever for exactly the packets the attestation was
+    ///         sent to evidence — permanently unusable fresh value, with the
+    ///         attestation one-shot and no second parking transition to fix
+    ///         it. Reading the immutable caps HERE makes a late attestation
+    ///         effective the moment it lands, in whatever order the two
+    ///         permissionless steps happen to occur.
+    ///
+    ///         WHY THE ATTESTED CAP AND THE BOUND ARE DIFFERENT FIELDS: the
+    ///         caps are the SOURCE's record — both sides, immutable, and 3b
+    ///         reconciles its transport legs against them — while the bound is
+    ///         what a classification may spend, which 3b computes as the cap
+    ///         NET of the fresh leg already drawn. Overwriting
+    ///         `freshAuthenticated` with the cap would make the evidence
+    ///         figure something 3b then has to mutate as legs are consumed:
+    ///         an "authenticated" number edited by ordinary operation, which
+    ///         is the shape §5c exists to avoid. Kept apart, the source's
+    ///         record is written once and never touched, and everything
+    ///         derived from it is derived here.
+    ///
+    ///         The gate that admits an attested cap as evidence is the
+    ///         batch's ACKNOWLEDGED PARKED REMAINDER (§5c: a batch with
+    ///         outstanding listed obligations is not classifiable at all, or
+    ///         classifying it would let an unrelated claim spend what the
+    ///         packet was delivered to pay specific days with), and the batch
+    ///         lifecycle is the transport epochs' 3b. Until it lands no packet
+    ///         can pass {packetBatchReleased}, so this reads the wire-typed
+    ///         figure alone — zero for every wire that carried no split — and
+    ///         an attestation lifts no bound by itself.
+    function authenticatedFresh(LibVaipakam.IngressPacket storage p) internal view returns (uint256) {
+        if (p.attested && packetBatchReleased(p)) return p.freshAttested;
+        return p.freshAuthenticated;
+    }
+
+    /// @notice Whether a packet's batch has been parked with its
+    ///         acknowledgment, so what remains of it is classifiable.
+    /// @dev    #1566 transport epochs PR 3a — the transport epochs' batch
+    ///         lifecycle (3b) is what makes this answerable; until it lands
+    ///         there are no batches and the answer is NO for every packet.
+    ///         3b replaces this body, and nothing else about the evidence rule
+    ///         moves with it. Deliberately a predicate rather than a flag on
+    ///         the packet: a batch is released by its obligations terminating
+    ///         or being dispositioned, which is a property of the batch, not
+    ///         of the delivery that opened it.
+    function packetBatchReleased(LibVaipakam.IngressPacket storage) internal pure returns (bool) {
+        return false;
+    }
+
+    /// @notice #1566 transport epochs PR 3a — the day-list commitment of a
+    ///         just-recorded packet: the flat hash of the days its payload
+    ///         named and their count, written ONCE by the mirror ingress in
+    ///         the same transaction as the record, so every arrival on a wire
+    ///         older than d6 carries authenticated membership for 3b's compact
+    ///         admission to materialize against — never taken from an event.
+    function stampPacketDayList(LibVaipakam.Storage storage s, bytes32 h, uint256[] memory dayIds) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.dayListHash != bytes32(0)) revert IVaipakamErrors.IngressPacketDayListStamped(h);
+        bytes32 commitment = keccak256(abi.encode(dayIds));
+        p.dayListHash = commitment;
+        p.dayCount = dayIds.length;
+        emit IngressPacketDayListRecorded(h, commitment, dayIds.length);
+    }
+
+    /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
+    ///         split of a d2 remittance, carried by the transport's SPLIT
+    ///         ATTESTATION and persisted ONCE as the packet's two attested
+    ///         caps, scaled to what actually landed by the same proportional
+    ///         flooring the d5 receiver applies (§5c: the caps are denominated
+    ///         in the destination-observed basis, so a short delivery shrinks
+    ///         both and can never leave one larger than the whole).
+    /// @dev    The packet is resolved through the receipt its delivery wrote.
+    ///         Refused, each refusal re-executable and writing nothing: an
+    ///         unknown receipt, a receipt whose delivery came from a chain
+    ///         other than the attesting one, a receipt with no packet (the
+    ///         delivery predates packet stamping), a packet whose own wire
+    ///         carried the split, an empty split, and a second attestation.
+    ///         Nothing here touches `freshAuthenticated` — the bound a
+    ///         classification reads is derived by {authenticatedFresh}.
+    function attestPacketSplit(
+        LibVaipakam.Storage storage s,
+        uint32 sourceChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled
+    ) internal returns (bytes32 h, uint256 freshAttested, uint256 recycledAttested) {
+        LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitReceiptKey(remitter, remitId)];
+        if (rec.receivedAt == 0) revert IVaipakamErrors.ReceivedRemitNotFound(remitId);
+        if (rec.srcChainId != sourceChainId) revert IVaipakamErrors.ReceivedRemitStale(remitId, rec.srcChainId);
+        h = rec.packetHash;
+        if (h == bytes32(0)) revert IVaipakamErrors.IngressReceiptHasNoPacket(remitId);
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.freshShare + p.recycledShare != 0) revert IVaipakamErrors.IngressPacketAlreadyTyped(h);
+        if (p.attested) revert IVaipakamErrors.IngressPacketAlreadyAttested(h);
+        uint256 total = fresh + recycled;
+        if (total == 0) revert IVaipakamErrors.SplitAttestationEmpty(remitId);
+        uint256 actual = p.actualReceived;
+        freshAttested = (fresh * actual) / total;
+        recycledAttested = (recycled * actual) / total;
+        p.freshAttested = freshAttested;
+        p.recycledAttested = recycledAttested;
+        p.attested = true;
+        emit IngressPacketSplitAttested(h, remitter, remitId, freshAttested, recycledAttested);
     }
 
     /// @notice Record a packet as it LANDED (one record per stamp; a second
@@ -1043,9 +1181,9 @@ library LibRewardCustody {
         // case and this guard covers the remitter.) A stranded return
         // (kind 3) lands on the canonical chain and creates no receipt.
         if (remitId != 0 && remitter != address(0) && kind <= PACKET_KIND_COMPENSATION) {
-            bytes32 receiptKey = keccak256(abi.encode(remitter, remitId));
-            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[receiptKey];
-            if (rec.receivedAt != 0) revert IVaipakamErrors.IngressReceiptAlreadyDelivered(receiptKey);
+            bytes32 key = remitReceiptKey(remitter, remitId);
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
+            if (rec.receivedAt != 0) revert IVaipakamErrors.IngressReceiptAlreadyDelivered(key);
             rec.srcChainId = p.sourceChainId;
             rec.receivedAt = uint64(block.timestamp);
             rec.amount = actualReceived;

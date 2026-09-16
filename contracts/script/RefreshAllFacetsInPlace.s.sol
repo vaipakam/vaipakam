@@ -88,6 +88,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -225,7 +226,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 79;
+    uint256 public constant EXPECTED_FACETS = 80;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1407,6 +1408,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address(new RewardReconciliationFacet()),
             _getRewardReconciliationSelectors()
         );
+        // Slot 79: #1566 transport epochs PR 3a — the mirror-side ingress facet,
+        // split out of the remittance facet. Its three selectors are ROUTED
+        // already (to the old remittance bytecode), so the partition cuts them
+        // as Replace toward this facet and the remittance item no longer lists
+        // them: one refresh moves both halves.
+        items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

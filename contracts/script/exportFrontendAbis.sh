@@ -296,6 +296,7 @@ FACETS=(
   "RewardCommitmentFacet"
   "RewardCustodyFacet"
   "RewardReconciliationFacet"
+  "RewardIngressFacet"
   "RepatriationFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"

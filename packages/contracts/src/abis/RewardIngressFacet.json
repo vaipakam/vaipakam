@@ -1,49 +1,72 @@
 [
   {
     "type": "function",
-    "name": "modifyOffer",
+    "name": "onCompensationBudgetReceived",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.OfferModifyParams",
-        "components": [
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBpsMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lenderShare18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerShare18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "finalizedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lapseScheduleVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "lapseWindowSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "transportMessageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -51,20 +74,53 @@
   },
   {
     "type": "function",
-    "name": "setOfferAmount",
+    "name": "onCompensationDayBroadcastArrived",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newAmount",
+        "name": "baseDeployment",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "zeroedForDest",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onRemitSplitAttested",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newAmountMax",
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -74,45 +130,52 @@
   },
   {
     "type": "function",
-    "name": "setOfferCollateral",
+    "name": "onRewardBudgetReceived",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newCollateralAmount",
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "sourceChainId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newCollateralAmountMax",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setOfferRate",
-    "inputs": [
-      {
-        "name": "offerId",
+        "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newRateBps",
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recycledShare",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newRateBpsMax",
+        "name": "freshShare",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "transportMessageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -120,16 +183,196 @@
   },
   {
     "type": "event",
-    "name": "OfferModified",
+    "name": "CompensationConfirmed",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "dayId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "creator",
+        "name": "era",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompensationCredited",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderShare18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerShare18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "provisional",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "era",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompensationDemoted",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompensationQuarantined",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IngressPacketDayListRecorded",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayListHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IngressPacketSplitAttested",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshAttested",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledAttested",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardBudgetReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -141,31 +384,25 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountMax",
+        "name": "dayIds",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "remitId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "interestRateBps",
+        "name": "recycledShare",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "interestRateBpsMax",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmountMax",
+        "name": "freshShare",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -174,19 +411,35 @@
     "anonymous": false
   },
   {
-    "type": "error",
-    "name": "AmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMutationUnsupportedForShape",
-    "inputs": []
+    "type": "event",
+    "name": "VpfiCustodyRelocated",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "error",
@@ -503,21 +756,6 @@
   {
     "type": "error",
     "name": "ChainDayAlreadyReported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralAmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMutationUnsupportedForShape",
     "inputs": []
   },
   {
@@ -1053,11 +1291,6 @@
   },
   {
     "type": "error",
-    "name": "EnforcedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FeeEntitlementChargeFailed",
     "inputs": []
   },
@@ -1261,6 +1494,22 @@
   },
   {
     "type": "error",
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
@@ -1309,11 +1558,6 @@
   },
   {
     "type": "error",
-    "name": "InterestRateAboveCeiling",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -1324,17 +1568,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidAmountRange",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAsset",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidCollateralAmountRange",
     "inputs": []
   },
   {
@@ -1345,16 +1579,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRateRange",
     "inputs": []
   },
   {
@@ -1604,11 +1828,6 @@
   },
   {
     "type": "error",
-    "name": "LenderCollateralRangeNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },
@@ -1661,56 +1880,8 @@
   },
   {
     "type": "error",
-    "name": "MaxLendingAboveCeiling",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ceiling",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MinCollateralBelowFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ModifyBelowFilledFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "alreadyFilled",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1784,6 +1955,17 @@
   },
   {
     "type": "error",
+    "name": "NotRewardRemittanceReceiver",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },
@@ -1794,27 +1976,7 @@
   },
   {
     "type": "error",
-    "name": "OfferAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferAlreadyConsumedBySaleMutate",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OfferCreationFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferLockedByParallelSale",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetVehicleImmutable",
     "inputs": []
   },
   {
@@ -2626,6 +2788,22 @@
   },
   {
     "type": "error",
+    "name": "RewardBudgetTokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "delivered",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationDetachedNotSupported",
     "inputs": []
   },
@@ -3179,6 +3357,22 @@
   },
   {
     "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -3218,22 +3412,6 @@
     "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SaleVehicleImmutable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

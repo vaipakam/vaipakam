@@ -7642,6 +7642,36 @@ library LibVaipakam {
         uint256 classifiedRecycled;
         uint256 disposed;
         uint256 freshAuthenticated;
+        /// @dev #1566 transport epochs PR 3a, appended.
+        ///
+        ///      `dayListHash` / `dayCount` — the flat commitment to the
+        ///      payload's `dayIds` (keccak of the ABI-encoded list, and its
+        ///      length), recorded by the mirror ingress in the SAME
+        ///      transaction as the record, for every arrival on a wire older
+        ///      than d6. It is what the transport epochs' compact admission
+        ///      (3b) materializes a re-supplied list against, so a packet that
+        ///      landed before that ledger existed still carries authenticated
+        ///      membership and no membership is ever taken from an event.
+        ///
+        ///      `freshAttested` / `recycledAttested` / `attested` — the
+        ///      canonical chain's RECORDED split of a d2 remittance this
+        ///      deployment received untyped, carried by the SPLIT ATTESTATION
+        ///      and scaled to `actualReceived` by the same proportional
+        ///      flooring the d5 receiver applies (§5c: the authenticated
+        ///      component caps are denominated in the destination-observed
+        ///      basis). Written ONCE and IMMUTABLE: the evidence bounding a
+        ///      classification is DERIVED from them at use time
+        ///      ({LibRewardCustody.authenticatedFresh}), never snapshotted
+        ///      into `freshAuthenticated` by an earlier step — the attestation
+        ///      is permissionless and can land after the batch it describes
+        ///      has been parked, and a snapshot taken before it would leave
+        ///      that packet's fresh remainder permanently unusable (Codex
+        ///      #2217 r3).
+        bytes32 dayListHash;
+        uint256 dayCount;
+        uint256 freshAttested;
+        uint256 recycledAttested;
+        bool attested;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
