@@ -5,10 +5,17 @@ The keeper Worker's configuration file described `KEEPER_ENABLED`,
 (non-secret config — plain vars)". They are not. They are per-Worker secrets,
 set the way secrets are set and unreadable afterwards from either the API or
 the dashboard. That was checked against the live deployment on 2026-07-30 for
-the kill-switch specifically; the two reward flags were **absent** there, both
-reward passes dark, and are provisioned the same way when they are armed. The
-distinction matters for anyone reconstructing deployment posture: two of the
-three are not unreadable live state, they are simply not set.
+the kill-switch specifically; the two reward flags were **absent** there and
+are provisioned the same way when they are armed. The distinction matters for
+anyone reconstructing deployment posture: two of the three are not unreadable
+live state, they are simply not set.
+
+Their absence leaves three scheduled duties dark rather than two, which is
+worth stating precisely because the flags and the duties are not one-to-one:
+the reward-budget remittance pass and the remittance-acknowledgement pass are
+both gated by the remit flag, and the commitment-report pass by the commit
+flag. An operator reconstructing what is running from the flag names alone
+would otherwise miss the acknowledgement duty entirely.
 
 The Worker's own environment module and the off-chain restore runbook already
 recorded the classification correctly, and the runbook went as far as naming

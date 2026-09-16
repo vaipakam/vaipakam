@@ -451,7 +451,9 @@
   // (a) ARMING FLAGS — `secret_text`, set with `wrangler secret put`, NOT
   //     entries in the `vars` block below. Verified against the live
   //     `vaipakam-keeper` deployment on 2026-07-30 for KEEPER_ENABLED; the
-  //     two REWARD_* flags are ABSENT there (both reward passes are dark)
+  //     two REWARD_* flags are ABSENT there, which leaves THREE scheduled
+  //     passes dark, not two — rewardBudgetRemit and remitAck both gate on
+  //     REWARD_REMIT_ENABLED, commitmentReport on REWARD_COMMIT_ENABLED —
   //     and are held the same way once armed. Their VALUES cannot be read
   //     back from the API or dashboard, which is why each gated pass
   //     reports how it resolved them (#1475).
