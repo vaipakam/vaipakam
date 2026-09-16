@@ -53,9 +53,14 @@ and it is what turned up several entries no review round had named.
 What this deliberately does not claim is completeness. Each of three review
 rounds found one more document saying something looser than the code does,
 and "no prose anywhere could mislead a reader about this" is not a property
-anyone can check. The corrected sites are the ones that were found; the
-Worker's own environment module is the authority if some other source
-disagrees.
+anyone can check. The corrected sites are the ones that were found.
+
+Where a disagreement turns up later, it resolves against the live deployment
+and the recorded decision, not against the Worker's code comments — those are
+descriptions of a deployment choice, and the environment types a variable and
+a secret identically, so the code cannot establish the binding class on its
+own. If a ratified decision ever changes the intended classification, the
+comments are what gets updated to match it.
 
 The consequence was not cosmetic. Reading that heading, the reasonable next
 step is to commit an arming value into the config so the live state is

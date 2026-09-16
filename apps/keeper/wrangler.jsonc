@@ -439,7 +439,9 @@
   // Operator-managed config. TWO CLASSES, and this block used to state
   // only one — it described all of the below as "non-secret config — plain
   // `vars`", which is wrong for the three arming flags and is the wording
-  // `docs/ops/OffChainRestore.md` §6 names as the incorrect description.
+  // `docs/ops/OffChainRestore.md` names as the incorrect description (§1
+  // step 6f for capture, revisited in §7a when re-arming — NOT §6, which is
+  // the indexer re-bootstrap).
   // #2223 corrected this block and every other site it found saying
   // otherwise — the README, the root `CLAUDE.md`, `src/env.ts`'s own
   // passthrough label, `SecretsStoreMigration.md`, the incident runbook's
@@ -449,8 +451,16 @@
   // That list is what was found and fixed. It is deliberately NOT a claim
   // that no other prose anywhere says something looser: three review rounds
   // each produced one more, because "no document could mislead a reader
-  // about this" is not a checkable property. `src/env.ts` is the authority
-  // if another source disagrees.
+  // about this" is not a checkable property.
+  //
+  // On a disagreement, resolve it against the LIVE DEPLOYMENT and the
+  // recorded decision — `docs/ops/OffChainRestore.md` §7a carries the
+  // 2026-07-30 readback, and #1465 / #2223 carry the do-not-commit decision.
+  // NOT against this comment or `src/env.ts`: both are descriptions, and
+  // `BaseEnv` types a var and a `secret_text` identically, so the code
+  // cannot establish the binding class at all. If a ratified decision ever
+  // changes the intended classification, these comments are what gets
+  // updated — they do not get to outrank it.
   //
   // (a) ARMING FLAGS — `secret_text`, set with `wrangler secret put`, NOT
   //     entries in the `vars` block below. Verified against the live

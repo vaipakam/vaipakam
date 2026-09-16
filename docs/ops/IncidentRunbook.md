@@ -284,14 +284,23 @@ failed or unintended attempts against half-configured infrastructure. Set the
 two secrets only once 2-4 are verified.
 
 **`KEEPER_ENABLED` is not a remittance switch.** If it is currently `false`,
-setting it `true` here re-enables all six gated passes at once — `matcher`,
-`liquidator`, `autoLifecycle` and any reward pass whose own secret is already
-`true` — and items 2-4 above validate only the remittance path. Do not flip it
-from this procedure to turn remittance on. Either it is already `true`
-(the normal case: remittance is being added to a running keeper, so set only
-the dedicated flag), or arming the whole keeper is its own decision with its
-own prerequisites — §"What the kill-switch does and does not stop" in
-`apps/keeper/README.md` lists what else restarts.
+setting it `true` here restarts every duty that gates on it — the gated passes,
+plus at least one write path that is not one of them: the liquidity-confidence
+relay's `setKeeperTier` submission, which becomes live again when
+`depthTieredLtvEnabled` and `submitGloballyEnabled` are already on. Items 2-4
+above validate only the remittance path.
+
+**Do not take the count on trust, including from here.** What this flag
+re-enables has been enumerated incorrectly at least three times in this
+repository — twice in `apps/keeper/wrangler.jsonc`'s own re-enable note (Codex
+#1924 r1/r2) and once in this warning, which named six passes and missed the
+tier-write path. Derive it from `isKeeperEnabled` call sites rather than from
+any prose list, this one included.
+
+So do not flip it from this procedure to turn remittance on. Either it is
+already `true` — the normal case, remittance being added to a running keeper,
+so set only the dedicated flag — or arming the whole keeper is its own
+decision with its own prerequisites.
 
 Scope each command to the keeper — from the repository root there is no
 Wrangler config, so a bare command fails or targets whichever Worker's
