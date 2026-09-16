@@ -294,8 +294,17 @@ above validate only the remittance path.
 re-enables has been enumerated incorrectly at least three times in this
 repository — twice in `apps/keeper/wrangler.jsonc`'s own re-enable note (Codex
 #1924 r1/r2) and once in this warning, which named six passes and missed the
-tier-write path. Derive it from `isKeeperEnabled` call sites rather than from
-any prose list, this one included.
+tier-write path.
+
+Derive it from source rather than from any prose list, this one included — but
+derive it from the **right** entry point, because there are two and the obvious
+one is the minority case. `keeperBlockers` (`keeper.ts:866`) is the shared
+gate: `isKeeperEnabled` wraps it, and `passIsArmed` calls it directly, which is
+how `matcher`, `liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck`
+and `commitmentReport` are gated. Only two call sites reach `isKeeperEnabled`
+by name (`keeper.ts:257`, `liquidityConfidence.ts:781`), so grepping for that
+alone finds two of eight and looks conclusive. Enumerate `keeperBlockers`
+callers, then `passIsArmed` callers.
 
 So do not flip it from this procedure to turn remittance on. Either it is
 already `true` — the normal case, remittance being added to a running keeper,
