@@ -1399,7 +1399,8 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 ## 6. Re-bootstrap the indexer
 
 For the re-derivable tables (`offers`, `loans`, `activity_events`,
-`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`),
+`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
+`prenotify_scan_cursor`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
@@ -1429,8 +1430,17 @@ DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
+DELETE FROM prenotify_scan_cursor; \
 DELETE FROM indexer_cursor"
 ```
+
+`prenotify_scan_cursor` (#2219) is a watermark like `indexer_cursor`,
+not data: it records the DEADLINE at which the pre-notify scan resumes.
+Clearing it restarts that scan at the nearest deadline, which re-reads a
+prefix rather than stepping over one — so the failure direction of
+clearing it is duplicated work, never a reminder that goes unsent.
+Leaving it would point the lane at a deadline from a database the replay
+is in the middle of rebuilding.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never

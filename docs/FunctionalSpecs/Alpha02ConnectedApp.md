@@ -380,6 +380,17 @@ The app uses chain reads and indexed reads for different jobs.
   stay inside its allowance and re-read the same prefix on every later run,
   which is the starvation the remembered position exists to prevent — so the
   two requirements are held together rather than traded off.
+- **The place it saves is a DEADLINE, not a position in a list.** The run
+  resumes at the first record whose deadline is at or after the one it
+  recorded. This is what makes nearest-first survive a run that stops partway:
+  the list of records awaiting a reminder is rebuilt each run, and the ones
+  reminded last time are no longer in it, so a remembered *position* points
+  further along than it did — past exactly as many of the nearest remaining
+  deadlines as were handled. A deadline does not move when other records
+  enter or leave. Where the recorded place cannot be read at all, the run
+  begins at the nearest deadline: that repeats work already done and never
+  steps over a nearer deadline, which is the direction this failure must
+  take.
 - **The same allowance governs the runs that keep the records current, and
   those runs COUNT what they spend rather than estimating it.** The service
   that follows each network and writes down what happened draws on the same
