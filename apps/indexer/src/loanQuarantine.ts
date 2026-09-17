@@ -160,31 +160,48 @@ export function quarantineStatements(
   // own escape hatch ("raise the pin with a test covering the dynamic
   // shape") is for cases that cannot be written statically. This can.
   for (const loanId of settledRows(report)) {
-    // `RETURNING first_seen_at`, so this release can be DISCLOSED when it is
-    // worth disclosing (#2231 r7 `4035821181`).
-    //
-    // The overwhelming majority of these deletes are no-ops against a marker
-    // that was never there, and the rest are the healthy case the module is
-    // built around: a read failed, the row was held for a lap, this pass
-    // settled it. Announcing those would bury the ones that matter.
-    //
-    // What a returned row gives is the one fact that separates them —
-    // `first_seen_at`. A marker held past the stale threshold has been named
-    // in the operator's report on every pass since, and this delete is the
-    // last thing that ever happens to it. `discloseSettledReleases` below
-    // decides; the statement only has to bring back what that decision needs,
-    // which it does at no extra cost, inside a batch that already ran.
-    statements.push(
-      db
-        .prepare(
-          `DELETE FROM loan_reconcile_quarantine
-            WHERE chain_id = ? AND loan_id = ?
-            RETURNING loan_id, reason, first_seen_at`,
-        )
-        .bind(chainId, loanId),
-    );
+    statements.push(quarantineReleaseStatement(db, chainId, loanId));
   }
   return statements;
+}
+
+/**
+ * THE ONLY WAY TO RELEASE ONE MARKER. Every per-loan delete goes through here.
+ *
+ * This exists because of the shape rounds 6–9 of #2231 kept producing. The
+ * quarantine had THREE places that delete a marker for one loan — this
+ * module's settle path, the close-out side-table list, and (in bulk) the
+ * terminal sweep — and disclosure was added to them one at a time, as each
+ * was noticed. Round 7 found the sweep undisclosed. Round 7 again found the
+ * settle path undisclosed. Round 9 found the close-out list undisclosed
+ * (`4036242408`), by which point the pattern was not a missing case but a
+ * missing RULE: nothing made a new delete site inherit the disclosure, so
+ * every one of them had to be remembered, and one never was.
+ *
+ * A caller cannot now write the DELETE without the `RETURNING` that makes the
+ * release visible, because the only way to obtain the statement is to ask for
+ * it here. A fourth site added later is disclosed by construction rather than
+ * by somebody recalling this paragraph.
+ *
+ * `RETURNING loan_id, reason, first_seen_at` — the last of those is what
+ * `discloseQuarantineReleases` uses to separate the cases. The overwhelming
+ * majority of these deletes are no-ops against a marker that was never there,
+ * and most of the rest are the healthy case the module is built around: a
+ * read failed, the row was held for a lap, the next pass settled it.
+ * Announcing those would bury the ones that matter.
+ */
+export function quarantineReleaseStatement(
+  db: D1Database,
+  chainId: number,
+  loanId: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `DELETE FROM loan_reconcile_quarantine
+        WHERE chain_id = ? AND loan_id = ?
+        RETURNING loan_id, reason, first_seen_at`,
+    )
+    .bind(chainId, loanId);
 }
 
 /** One released marker, as the batch hands it back. */
@@ -195,8 +212,8 @@ interface ReleasedMarker {
 }
 
 /**
- * Say which LONG-HELD markers a pass's own settle released (#2231 r7
- * `4035821181`).
+ * Say which LONG-HELD markers a batch released (#2231 r7 `4035821181`,
+ * r9 `4036242408`).
  *
  * The finding this answers is correct on the facts and wrong on the remedy,
  * and the difference is worth stating because the remedy was "prevent this".
@@ -248,7 +265,7 @@ interface ReleasedMarker {
  * improvement that does not arrive, not a regression. Guarded accordingly —
  * this is a log, and it must never be the reason a pass fails.
  */
-export function discloseSettledReleases(
+export function discloseQuarantineReleases(
   chainId: number,
   results: unknown,
   nowSec: number,
@@ -423,23 +440,35 @@ export async function releaseTerminalQuarantine(
     )
     .bind(chainId)
     .run();
-  const removed = outcome.meta?.changes ?? named.length;
+  // NO INVENTED COUNT when the driver reports none.
+  //
+  // This read `?? named.length`, and that fallback is a figure the code
+  // cannot substantiate presented as exact: `named` is capped at
+  // `STALE_ROLL_CALL_LIMIT`, so a sweep that removed five thousand rows would
+  // have reported "released 200". `named.length` IS a sound lower bound —
+  // those rows matched the condition moments earlier — so it is reported as
+  // one, with the shortfall named as unknown rather than as zero.
+  const removed = outcome.meta?.changes ?? null;
   if (removed === 0) return;
   // WHAT THE ROSTER IS, said plainly rather than implied. It was read
   // immediately before the delete, so it is what the sweep was ABOUT to
   // release; `removed` is what it DID release. They can differ if another
   // writer moved a row in between — unlikely, and not worth a transaction for
   // a log line, but not worth misrepresenting either.
-  const unnamed = removed - named.length;
+  const unnamed = removed === null ? 0 : removed - named.length;
   const listed =
     unnamed > 0
       ? `${named.join(', ')} (and ${unnamed} more, not named here — this ` +
         `roster is bounded at ${STALE_ROLL_CALL_LIMIT} ids)`
       : named.join(', ');
+  const howMany =
+    removed === null
+      ? `an unreported number of held entries (the driver returned no row ` +
+        `count; at least ${named.length})`
+      : `${removed} held entr${removed === 1 ? 'y' : 'ies'}`;
   console.warn(
-    `[loanQuarantine] chain ${chainId}: released ${removed} held ` +
-      `entr${removed === 1 ? 'y' : 'ies'} whose stored loan row is ` +
-      `terminal; read just before the delete as: ${listed}. ` +
+    `[loanQuarantine] chain ${chainId}: released ${howMany} whose stored ` +
+      `loan row is terminal; read just before the delete as: ${listed}. ` +
       `Ordinarily this is the entry's own loan ` +
       `closing, and releasing it is correct. It is stated because the ` +
       `condition is an identity assumption the platform cannot verify: it ` +
@@ -651,7 +680,15 @@ export async function reportStaleQuarantine(
         ? ` — and ${unnamed} further held entr${unnamed === 1 ? 'y' : 'ies'} ` +
           `NOT named here, because this report is bounded at ` +
           `${STALE_ROLL_CALL_LIMIT} ids and will not grow with the fault. ` +
-          `List them with: SELECT loan_id FROM loan_reconcile_quarantine ` +
+          // `last_seen_at` HERE TOO (#2231 r9 `4036242397`). r8 paired the
+          // guard value with the ids held in memory and left the query
+          // offered for everything past the cap selecting the id alone — so
+          // the entries FURTHEST from ever being described were the ones
+          // still unclearable by the documented route. Fixing the near half
+          // of a problem and not the far half is the shape this PR has
+          // produced repeatedly; the query returns what the DELETE wants.
+          `List them, with the value each one's guarded DELETE needs, using: ` +
+          `SELECT loan_id, last_seen_at FROM loan_reconcile_quarantine ` +
           `WHERE chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
           `ORDER BY first_seen_at ASC`
         : '';

@@ -40,10 +40,10 @@ So the platform does not guess. The report a person reads now names, for every
 long-held entry, what its number points at today: no stored loan at all, or a
 stored loan in a given state that began at a given point. That description is
 explicitly labelled as **stored and unverified** — the same record that proved
-unsound to act on is not then presented as settled fact — and every held
-number is listed even when there are more than the report describes in full,
-because an entry left out entirely would be withholding reminders with nothing
-anywhere naming it.
+unsound to act on is not then presented as settled fact — and held numbers are
+listed even when there are more than the report describes in full, up to a
+stated limit, because an entry left out entirely would be withholding reminders
+with nothing anywhere naming it.
 
 Someone reading it can see whether the entry is still about the loan it was
 made for, and clear it if not. That is a deliberate act, spelled out in the
@@ -100,24 +100,46 @@ reported stays unannounced — that is the everyday case of a reading that faile
 once and succeeded next time, and a line for each would bury the ones that
 need a person.
 
-Reporting costs the same fixed amount of work however many entries are held,
-and this took two goes to get right. The first fix made the number of database
-enquiries constant and left the amount READ and PRINTED growing with the
-number of entries — so the report would still have failed on exactly the
-network that most needed it, inside the run that must also record how far the
-chain has been read. It now names at most a set number of entries, says
-**exactly** how many more are held, and hands over the enquiry that lists them.
-A listing that simply stopped would be the silent truncation this whole change
-exists to avoid.
+Reporting takes the same small number of database enquiries however many
+entries are held, and the first attempt at that left the amount READ and
+PRINTED still growing with the number of entries — so the report would have
+failed on exactly the network that most needed it, inside the run that must
+also record how far the chain has been read. It now names at most a set number
+of entries, says **exactly** how many more are held, and hands over the
+enquiry that lists them. A listing that simply stopped would be the silent
+truncation this whole change exists to avoid.
 
-What matters there is that the work does not vary with the size of the fault —
-not that it is as small as it could be. A shorter version was written and set
-aside: it would have saved one database enquiry by using a query feature the
+What matters there is that the work does not vary with the size of the fault
+more than it must — not that it is as small as it could be. A shorter version
+was written and set aside: it would have saved one database enquiry by using a query feature the
 database's own documentation neither promises nor rules out, and which nothing
 else in this codebase has ever asked it for. This is the one report that makes
 a withheld position visible at all, so a query the database declined would not
 degrade it — it would hide every withheld position on every run, which is the
 fault the whole change exists to prevent. One saved enquiry is not worth that.
+
+A held entry can be cleared from more than one place — a periodic sweep, a run
+that settles the loan, and the close-out that ends it — and announcing each was
+done one at a time, as each was noticed. That is how the third one stayed
+silent: in the very case worth disclosing, a reused number's replacement
+closing normally, the entry vanished without a word while the other two paths
+announced themselves. The missing piece was never a case, it was a rule. There
+is now a single shared way to write such a release, and it reports what it
+removed, so a fourth route added later announces itself by construction rather
+than by somebody remembering to add it.
+
+Finally, the report's promises and its behaviour are now the same size. Three
+separate rounds each bounded a different cost of the same report — the length
+of the message, the volume handed back to the platform, and the work the
+database does to produce it — and each was found only because the previous one
+was fixed. The common cause was not the implementation but the claim: the
+specification promised fixed work outright, so every review went looking for
+the next place that was not fixed. It now says precisely what is bounded and
+names the one thing that is not — establishing HOW MANY entries are held grows
+with how many there are, and that is kept deliberately, because telling someone
+"more than 200" when the true figure is three thousand hides the only number
+that tells them how bad it is. A supporting index makes the page a bounded walk
+rather than a sort of everything held.
 
 A suppression a person can see and undo is worth more than an automatic release
 built on evidence that has been wrong four different ways.

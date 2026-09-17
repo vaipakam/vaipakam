@@ -340,18 +340,43 @@ The app uses chain reads and indexed reads for different jobs.
   to act on it would, in practice, push a person toward the unguarded removal
   this report spends a paragraph warning against — and because the described
   page does not rotate, it would push them there indefinitely.
-- **The report is bounded, and says so where the bound bites.** Reporting is
-  fixed work — the same small number of enquiries every run, and a listing
-  that does not grow past a stated number of identifiers however many records
-  are held. What matters is that the work does not vary with the size of the
-  fault, not that it is as small as possible. The run holding
+- **The report is bounded, and says so where the bound bites — and says
+  exactly what is NOT bounded.** Reporting takes the same small number of
+  enquiries every run, returns no more than a stated number of records to the
+  platform, and lists no more than a stated number of identifiers however many
+  are held. One thing is deliberately *not* fixed: establishing **how many**
+  are held requires the database to consider every record that qualifies, so
+  that part grows with the size of the fault. It is kept because the
+  alternative is telling a person "more than 200" when the true figure might
+  be three thousand — and the magnitude is the most actionable thing the
+  report carries. The growth is confined to a counting pass the database can
+  satisfy from its index rather than from the records themselves, and the
+  page the person actually reads is a bounded walk of that same index rather
+  than a sort of everything held.
+
+  Stating this precisely matters more than stating it strongly. Earlier
+  drafts of this point claimed fixed work outright, and each time the claim
+  outran the implementation it was the *claim* that had to be chased — first
+  the message length, then the volume returned, then the work the database
+  does. A specification that promises more than the system delivers turns
+  every review into a search for the next unbounded layer. The run holding
   the most records is the one least able to afford extra work, and the one
   whose failure would leave the network's reading position unrecorded and its
-  view frozen; a report that grew with the fault would fail on the only
-  network that needed it. Where more are held than it will name, it states
-  **how many** — an exact figure, not "at least" — and gives the enquiry that
-  lists the rest. A listing that simply stopped would be the silent truncation
-  everything here is written to avoid.
+  view frozen; a report whose OUTPUT grew with the fault would fail on the
+  only network that needed it. Where more are held than it will name, it
+  states **how many** — an exact figure, not "at least" — and gives the
+  enquiry that lists the rest, returning for each the value its safe removal
+  needs rather than the identifier alone. A listing that simply stopped would
+  be the silent truncation everything here is written to avoid.
+- **Every route that releases a held record announces it, because there is
+  only one way to write such a release.** The platform releases records from
+  more than one place — a periodic sweep, a run that settles the position, and
+  the close-out that ends it — and disclosure was added to those one at a
+  time as each was noticed, which is precisely how one of them stayed silent.
+  A release is now expressible only through a single shared form that reports
+  what it removed, so a route added later discloses by construction rather
+  than by someone remembering this paragraph. This is the general rule; the
+  points above describe what each route says.
 - **One automatic release remains an identity assumption, and is stated as
   one — by the release itself.** A record is released when a stored position
   bearing its identifier is no longer running. Where an identifier has been

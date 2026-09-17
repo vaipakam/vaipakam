@@ -21,7 +21,8 @@ import {
   reportStaleQuarantine,
   STALE_REPORT_LIMIT,
   STALE_ROLL_CALL_LIMIT,
-  discloseSettledReleases,
+  discloseQuarantineReleases,
+  quarantineReleaseStatement,
   settledRows,
   unsettledRows,
 } from '../src/loanQuarantine';
@@ -255,7 +256,7 @@ describe('the table, over the real migrated schema', () => {
     warn.mockClear();
     const later = NOW + QUARANTINE_STALE_SECONDS + 1;
     const outcome = await apply(h, report({ examined: [77] }), later);
-    discloseSettledReleases(CHAIN, outcome, later);
+    discloseQuarantineReleases(CHAIN, outcome, later);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('released 1 long-held entry');
     expect(said).toContain('loan 77');
@@ -264,6 +265,40 @@ describe('the table, over the real migrated schema', () => {
     expect(said).toContain('Nothing here can tell whether there was an earlier position');
     expect(quarantined(h)).toEqual([]);
     warn.mockRestore();
+  });
+
+  it('leaves no way to release one marker without reporting it', async () => {
+    // THE ROOT FIX, pinned structurally (#2231 r9 `4036242408`).
+    //
+    // Three places delete a marker for one loan, and disclosure was added to
+    // them one at a time as each round noticed one — so the third stayed
+    // silent until round 9 found it. The defect was never a missing case; it
+    // was a missing RULE. `quarantineReleaseStatement` is now the only way to
+    // build such a delete, and it carries the `RETURNING` that makes the
+    // release visible.
+    //
+    // A test naming the three sites would pass while a FOURTH was added
+    // silently — which is the failure this fix exists to prevent, reproduced
+    // in the test. So the assertion is on the source: no module may write a
+    // single-loan quarantine delete by hand.
+    const sources = ['../src/loanQuarantine.ts', '../src/chainIndexer.ts'].map((rel) =>
+      readFileSync(new URL(rel, import.meta.url), 'utf8'),
+    );
+    for (const src of sources) {
+      // Every `DELETE FROM loan_reconcile_quarantine` keyed by a single loan
+      // must come from the shared builder. The bulk sweep deletes by
+      // `chain_id` alone plus an EXISTS, so it does not match, and it has its
+      // own disclosure.
+      const handWritten = src.match(
+        /DELETE FROM loan_reconcile_quarantine\s+WHERE chain_id = \?\s+AND loan_id = \?(?![\s\S]{0,80}RETURNING)/g,
+      );
+      expect(handWritten).toBeNull();
+    }
+    // And the builder does carry it, so the rule above has something to mean.
+    const built = quarantineReleaseStatement({
+      prepare: (sql: string) => ({ bind: () => sql }),
+    } as never, CHAIN, 7) as unknown as string;
+    expect(built).toContain('RETURNING');
   });
 
   it('stays quiet when a settle releases a mark that was never long-held', async () => {
@@ -276,7 +311,7 @@ describe('the table, over the real migrated schema', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
     const outcome = await apply(h, report({ examined: [77, 78] }), NOW + 300);
-    discloseSettledReleases(CHAIN, outcome, NOW + 300);
+    discloseQuarantineReleases(CHAIN, outcome, NOW + 300);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -351,6 +386,42 @@ describe('the table, over the real migrated schema', () => {
     for (const count of returned) expect(count).toBeLessThanOrEqual(STALE_ROLL_CALL_LIMIT);
     // And the release still happened in full — the bound is on what is READ
     // BACK, never on what is removed.
+    expect(quarantined(h)).toEqual([]);
+  });
+
+  it('will not invent a count when the driver reports none', async () => {
+    // Found by re-reading my own round-8 commit, not by a round. The count
+    // fell back to the roster length, which is CAPPED — so a sweep that
+    // removed five thousand rows would have reported "released 200": a figure
+    // the code cannot substantiate, stated as exact. The roster length is a
+    // sound LOWER bound, so it is reported as one.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_ROLL_CALL_LIMIT + 7 }, (_, k) => 6000 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }));
+    for (const id of ids) seedLoanRow(h, id, 'repaid');
+    // A driver that runs the statement but reports no row count.
+    const countless = {
+      prepare: (sql: string) => {
+        const stmt = (h.d1 as { prepare: (s: string) => never }).prepare(sql);
+        return {
+          bind: (...args: unknown[]) => {
+            const st = (stmt as unknown as { bind: (...a: unknown[]) => Record<string, unknown> })
+              .bind(...args);
+            return { ...st, run: async () => { await (st.run as () => Promise<unknown>)(); return {}; } };
+          },
+        };
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await releaseTerminalQuarantine(countless as never, CHAIN);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    expect(said).toContain('an unreported number of held entries');
+    expect(said).toContain(`at least ${STALE_ROLL_CALL_LIMIT}`);
+    // The capped roster length is never passed off as the total.
+    expect(said).not.toContain(`released ${STALE_ROLL_CALL_LIMIT} held entries`);
+    // The release still happened.
     expect(quarantined(h)).toEqual([]);
   });
 
@@ -551,7 +622,7 @@ describe('telling the operator about a row that stays', () => {
     // And the shortfall is STATED, with the query that closes it.
     expect(said).toContain(`${extra} further held entries NOT named here`);
     expect(said).toContain(`bounded at ${STALE_ROLL_CALL_LIMIT} ids`);
-    expect(said).toContain('SELECT loan_id FROM loan_reconcile_quarantine');
+    expect(said).toContain('SELECT loan_id, last_seen_at FROM loan_reconcile_quarantine');
     warn.mockRestore();
   });
 

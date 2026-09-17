@@ -59,7 +59,8 @@ import {
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import {
   quarantineStatements,
-  discloseSettledReleases,
+  discloseQuarantineReleases,
+  quarantineReleaseStatement,
   releaseTerminalQuarantine,
   reportStaleQuarantine,
   settledRows,
@@ -1473,6 +1474,8 @@ export async function _runLoanReconcilePass(input: {
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
+        discloseSideTableBatch: (results) =>
+          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000)),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the
@@ -1594,7 +1597,7 @@ export async function _runLoanReconcilePass(input: {
           // that has come round again, and it did so silently (#2231 r7
           // `4035821181`). The batch already carries back which rows it
           // deleted; this only decides which of them are worth a line.
-          discloseSettledReleases(chainId, outcome, nowSec);
+          discloseQuarantineReleases(chainId, outcome, nowSec);
         }
       } catch (err) {
         // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
@@ -5777,11 +5780,12 @@ export function _closedLoanSideTableStatements(
   // to fail: there is no mark to release on a database that has no memory,
   // and a batch naming a missing table takes the close-out down with it.
   if (quarantineAvailable) {
-    statements.push(
-      env.DB.prepare(
-        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
-      ).bind(chainId, loanId),
-    );
+    // THROUGH THE SHARED BUILDER, so this release is disclosed like every
+    // other (#2231 r9 `4036242408`). It was a hand-written DELETE, and that
+    // is exactly how it came to be the one release path nothing announced:
+    // disclosure was added to the sweep and to the settle path as each was
+    // noticed, and nothing made a third site inherit it.
+    statements.push(quarantineReleaseStatement(env.DB, chainId, loanId));
   }
   return statements;
 }
@@ -5815,9 +5819,14 @@ async function _clearClosedLoanSideTables(
   loanId: number,
 ): Promise<void> {
   const availability = await quarantineAvailableForWrites(env.DB as never);
-  await env.DB.batch(
+  const outcome = await env.DB.batch(
     _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
   );
+  // This batch can carry a quarantine release, so it reports one (#2231 r9
+  // `4036242408`). Nothing else observes it: the terminal sweep runs later
+  // and finds the marker already gone, and the settle path never sees this
+  // loan again because it has left the set the rotation selects from.
+  discloseQuarantineReleases(chainId, outcome, Math.floor(Date.now() / 1000));
   // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
   //
   // r14 added one for the `'unknown'` case, and a single attempt in the same

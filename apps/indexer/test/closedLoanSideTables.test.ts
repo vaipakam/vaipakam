@@ -26,7 +26,7 @@
  *    the user still holds.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
 import {
   _closedLoanSideTableStatements,
@@ -41,6 +41,10 @@ import {
   notificationInsertStatement,
   planReconciledNotifications,
 } from '../src/notifications';
+import {
+  discloseQuarantineReleases,
+  QUARANTINE_STALE_SECONDS,
+} from '../src/loanQuarantine';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -361,6 +365,9 @@ describe('reconcileAfterScan against a real database', () => {
     };
   };
 
+  /** The clock the disclosure hook reads; one test moves it. */
+  let discloseAt = 1_700_000_000;
+
   const runRepair = (h: SqliteD1) =>
     reconcileAfterScan(
       {
@@ -372,7 +379,17 @@ describe('reconcileAfterScan against a real database', () => {
         metricsAbi: [],
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
-          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+          // `true`: the harness runs the REAL migrations, so the quarantine
+          // table exists and its release belongs in this list. Omitting the
+          // argument left it falsy and quietly dropped that statement, which
+          // is how the repair path's quarantine release went untested here.
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        // Wired exactly as production wires it, so the repair path's
+        // disclosure is exercised here rather than only asserted structurally
+        // (#2231 r9 `4036242408`). `discloseAt` lets one test push the clock
+        // past the stale threshold; the rest keep the default and stay quiet.
+        discloseSideTableBatch: (results) =>
+          discloseQuarantineReleases(CHAIN, results, discloseAt),
         mutableColumns: (d: Record<string, unknown>) => ({
           assignments: ['principal = ?', 'collateral_amount = ?'],
           values: [String(d.principal), String(d.collateralAmount)],
@@ -386,6 +403,40 @@ describe('reconcileAfterScan against a real database', () => {
       },
       { maxRows: 5, minRows: 1 },
     );
+
+  it('ANNOUNCES a long-held quarantine marker the close-out batch released', async () => {
+    // #2231 r9 `4036242408`. This batch deletes the marker, and it runs
+    // before either disclosure path could observe it: the terminal sweep
+    // finds nothing left, and the settle path never sees this loan again
+    // because a terminal loan has left the set the rotation selects from.
+    // So an unresolved finding about a reused id disappeared here, silently,
+    // while two other release paths announced themselves.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 21);
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine
+           (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'orphan', ?, ?)`,
+      )
+      .run(CHAIN, 21, 1_700_000_000, 1_700_000_000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    discloseAt = 1_700_000_000 + QUARANTINE_STALE_SECONDS + 1;
+    try {
+      await runRepair(h);
+    } finally {
+      discloseAt = 1_700_000_000;
+    }
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    expect(said).toContain('loan 21');
+    expect(said).toContain('the chain answered');
+    // And the marker really is gone — the disclosure is about a release that
+    // happened, not a release that was contemplated.
+    expect(
+      h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine').get(),
+    ).toMatchObject({ n: 0 });
+  });
 
   it('closes the row and both side tables in one write', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
