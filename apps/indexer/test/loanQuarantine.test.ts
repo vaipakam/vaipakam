@@ -33,6 +33,7 @@ import {
   _resetQuarantineWriteProbe,
 } from '../src/chainIndexer';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+import { maxD1InListWidth } from '@vaipakam/lib/d1Binds';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -505,6 +506,15 @@ describe('the table, over the real migrated schema', () => {
     // removed everything in one go by repeating the roster's two-table
     // condition — unbounded work behind a bounded read.
     expect(quarantined(h)).toHaveLength(STALE_ROLL_CALL_LIMIT + 40 - QUARANTINE_SWEEP_BATCH);
+  });
+
+  it('keeps the sweep batch under the width one statement can bind', () => {
+    // The batch is a LIMIT on the roster SELECT chosen so the ids it returns
+    // always fit ONE delete, which is why it is not `chunkD1InList` (#2234).
+    // Nothing else ties the two numbers together, so this is what stops the
+    // batch drifting above the cap the delete has to satisfy: the delete
+    // binds the chain id plus one `?` per rostered id.
+    expect(QUARANTINE_SWEEP_BATCH).toBeLessThanOrEqual(maxD1InListWidth(1));
   });
 
   it('will not invent a count when the driver reports none', async () => {

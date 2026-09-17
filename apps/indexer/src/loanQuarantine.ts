@@ -85,6 +85,16 @@ export const STALE_ROLL_CALL_LIMIT = 200;
  * 90 for the same reason the existing site chose it: it leaves room for the
  * chain bind and for a statement to grow a condition without anyone having to
  * recompute the ceiling.
+ *
+ * WHY THIS ONE IS NOT `chunkD1InList`, while the other four sites now are
+ * (#2234). That helper splits a list you already hold into as many statements
+ * as the cap requires. This is the opposite direction: it is a `LIMIT` on the
+ * roster SELECT, chosen so the ids that come back always fit ONE delete — a
+ * bound on how much work a single pass does, which the pass then reports as a
+ * shortfall when there is more. Chunking here would remove that bound rather
+ * than respect it. `maxD1InListWidth(1)` states the ceiling this sits under
+ * (99); the gap between them is the room the paragraph above is about, and it
+ * is deliberate rather than an arithmetic slip.
  */
 export const QUARANTINE_SWEEP_BATCH = 90;
 

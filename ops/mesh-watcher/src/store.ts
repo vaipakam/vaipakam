@@ -71,6 +71,19 @@ export class AlertStore {
   ): Promise<StoreResult<DueAlert[]>> {
     if (candidates.length === 0) return { ok: true, value: [] };
     try {
+      // BOUNDED BY CONFIGURATION, not by data (#2234). D1 caps a statement at
+      // 100 bound parameters, and the three dynamic lists in this file —
+      // these candidate keys, `keepChainIds`, `keepKeys` — are all sized by
+      // the watcher's own signal set times its configured chains, not by how
+      // much has accumulated in the ledger. That is why they are not chunked
+      // and the Workers' equivalents are.
+      //
+      // Stated rather than left implicit, because "it is small" is exactly
+      // what was assumed at the two call sites that turned out not to be.
+      // This Worker is deliberately outside the pnpm workspace for trust
+      // reasons, so it cannot import `@vaipakam/lib/d1Binds`; if a future
+      // signal makes one of these lists grow with the ledger, the chunker
+      // belongs here in copy rather than the assumption staying unexamined.
       const placeholders = candidates.map(() => '?').join(', ');
       const rows = await this.db
         .prepare(

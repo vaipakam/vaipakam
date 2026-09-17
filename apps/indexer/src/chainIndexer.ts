@@ -70,6 +70,7 @@ import {
   verifyRpcChainIdentity as verifyRpcIdentityShared,
   type RpcIdentityVerdict,
 } from '@vaipakam/lib/rpcIdentity';
+import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -5464,15 +5465,32 @@ export async function recordActivityEvents(
   }
   const creatorByOfferId = new Map<number, string>();
   if (consumedOfferIds.size > 0) {
-    const placeholders = Array.from(consumedOfferIds, () => '?').join(',');
-    const rows = await env.DB.prepare(
-      `SELECT offer_id, creator FROM offers
-        WHERE chain_id = ? AND offer_id IN (${placeholders})`,
-    )
-      .bind(chainId, ...Array.from(consumedOfferIds))
-      .all<{ offer_id: number; creator: string }>();
-    for (const r of rows.results ?? []) {
-      creatorByOfferId.set(r.offer_id, r.creator);
+    // CHUNKED (#2234). The comment above says "one batched lookup … so the
+    // per-row D1 round-trips stay bounded", and that was true of the
+    // round-trips and not of the BINDS: this set is as large as the number of
+    // `OfferConsumedBySale` events in the ingest batch, which nothing here
+    // caps, and D1 refuses a statement carrying more than 100 bound
+    // parameters. A busy range would have thrown, and — this being inside the
+    // batch that writes the activity rows — taken the whole batch with it.
+    //
+    // Still one subrequest: `batch()` costs one however many statements it
+    // carries, so the "one batched lookup" the comment promises survives
+    // becoming several statements.
+    const chunks = chunkD1InList(Array.from(consumedOfferIds), {
+      before: [chainId],
+    });
+    const parts = await env.DB.batch<{ offer_id: number; creator: string }>(
+      chunks.map((c) =>
+        env.DB.prepare(
+          `SELECT offer_id, creator FROM offers
+        WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+        ).bind(...c.binds),
+      ),
+    );
+    for (const part of parts) {
+      for (const r of part.results ?? []) {
+        creatorByOfferId.set(r.offer_id, r.creator);
+      }
     }
   }
 

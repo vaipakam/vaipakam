@@ -2,8 +2,9 @@
  * HF-band inbox rows (#1213 PR 2b) — band classification and the
  * downgrade-only crossing semantics, exercised over the REAL shared-DB
  * migration DDL (apps/indexer/migrations owns the schema; the keeper
- * only reads/writes it). The D1 shim's batch() surfaces no
- * meta.changes, so every assertion reads the tables.
+ * only reads/writes it). Assertions read the tables rather than returned
+ * counts — the shim does carry `meta.changes` per statement since #2234, but
+ * the table is the fact and the count is a report of it.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
