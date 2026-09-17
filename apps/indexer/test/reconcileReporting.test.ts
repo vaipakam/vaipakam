@@ -293,12 +293,18 @@ describe('the join, not just the wording', () => {
     await _reportQuarantineForChain(env, CHAIN);
     // THE REPORTER'S OWN QUERY, not any query naming the table. Three
     // different statements mention it now — the availability probe via
-    // `sqlite_master`, the release sweep's DELETE, and the report's COUNT —
-    // so each loosening of this assertion has found a new way to pass while
-    // the thing it names never ran. This matches the COUNT, which only the
-    // reporter issues.
+    // `sqlite_master`, the release sweep's DELETE, and the report's own SELECT
+    // — so each loosening of this assertion has found a new way to pass while
+    // the thing it names never ran.
+    //
+    // It matched the report's `COUNT(*)` until #2231 r6 folded the count, the
+    // detail page and the overflow roll call into ONE statement, so that the
+    // report's cost stops depending on how many rows are held. The signature
+    // moved with it: the `LEFT JOIN loans` is the reporter's alone — the probe
+    // reads `sqlite_master` and the sweep correlates with `EXISTS`, neither of
+    // which joins.
     expect(
-      seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
+      seen.some((q) => /FROM loan_reconcile_quarantine[\s\S]*LEFT JOIN\s+loans\b/.test(q)),
     ).toBe(true);
   });
 

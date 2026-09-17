@@ -214,7 +214,24 @@ export async function releaseTerminalQuarantine(
   // `reportStaleQuarantine` naming the loan a held id now points at. A
   // suppression a person can see and clear is worth more than an automatic
   // release built on evidence that has been wrong four different ways.
-  await db
+  // `RETURNING`, so THIS sweep discloses its own action (#2231 r6
+  // `4035682797`).
+  //
+  // The condition above is an identity assumption — it takes the stored
+  // loan row bearing this id to be the position the finding was about — and
+  // the report below states that. But the report cannot be the surface that
+  // discloses it, because this sweep runs FIRST and the report returns early
+  // when nothing is left held. In the exact case worth disclosing — a
+  // replacement loan that started and ended, erasing a finding about the
+  // position before it — the sweep empties the table and the operator is told
+  // nothing at all.
+  //
+  // Whoever exercises an unverifiable assumption is the one who reports it.
+  // `RETURNING` makes that free: same single statement, same one subrequest,
+  // and the ids come back instead of a count nobody can audit. Not a new bet
+  // on D1 — `consumeTelegramLinkCode` has run `DELETE … RETURNING` on this
+  // same database since the handshake was built.
+  const released = await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
         WHERE chain_id = ?
@@ -223,10 +240,26 @@ export async function releaseTerminalQuarantine(
              WHERE l.chain_id = loan_reconcile_quarantine.chain_id
                AND l.loan_id  = loan_reconcile_quarantine.loan_id
                AND l.status NOT IN ('active', 'fallback_pending')
-          )`,
+          )
+        RETURNING loan_id`,
     )
     .bind(chainId)
-    .run();
+    .all<{ loan_id: number }>();
+  const ids = (released.results ?? []).map((r) => r.loan_id);
+  if (ids.length === 0) return;
+  console.warn(
+    `[loanQuarantine] chain ${chainId}: released ${ids.length} held ` +
+      `entr${ids.length === 1 ? 'y' : 'ies'} whose stored loan row is ` +
+      `terminal: ${ids.join(', ')}. Ordinarily this is the entry's own loan ` +
+      `closing, and releasing it is correct. It is stated because the ` +
+      `condition is an identity assumption the platform cannot verify: it ` +
+      `takes the stored row bearing an id to be the position the finding was ` +
+      `about, and a REPLACEMENT loan that started and ended under the same id ` +
+      `satisfies it just as well — releasing a finding about the position ` +
+      `before it. Nothing here distinguishes the two; every column that might ` +
+      `has proved unsound (#2222). If one of these ids was under ` +
+      `investigation, it is no longer held.`,
+  );
 }
 
 /**
@@ -265,15 +298,25 @@ export async function reportStaleQuarantine(
   nowSec: number,
 ): Promise<void> {
   const cutoff = nowSec - QUARANTINE_STALE_SECONDS;
-  const total = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM loan_reconcile_quarantine
-        WHERE chain_id = ? AND first_seen_at <= ?`,
-    )
-    .bind(chainId, cutoff)
-    .first<{ n: number }>();
-  const n = total?.n ?? 0;
-  if (n === 0) return;
+  // ONE QUERY, WHATEVER THE DATA SAYS (#2231 r6 `4035682768`).
+  //
+  // This was three statements — a count, a capped detail page, and, only when
+  // the page overflowed, a roll call of the ids behind it. That last one is
+  // the defect: a report whose cost DEPENDS ON THE DATA, under a ceiling
+  // whose overrun does not merely drop the report but aborts the invocation
+  // before the scan cursor is written. The pass that pays the extra
+  // subrequest is by definition the pass with the most held rows — the one
+  // least able to afford it, and the one whose failure freezes the chain.
+  //
+  // Selecting every held row once removes the dependency instead of
+  // re-budgeting for it: the count is the row count, the described page is
+  // the first `STALE_REPORT_LIMIT` of them, and the roll call is the rest.
+  // Constant cost, and one subrequest LESS than the old no-overflow case.
+  //
+  // The result set is unbounded in rows, which is not a new bound: the roll
+  // call already read every held id, and the warning already names every one
+  // of them. What is new is four more columns per row beyond the twentieth.
+  //
   // THE LOAN THE HELD ID POINTS AT NOW, carried alongside (#2231 r4).
   //
   // A held entry withholds reminders from whatever loan currently bears its
@@ -295,9 +338,9 @@ export async function reportStaleQuarantine(
          LEFT JOIN loans l
            ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
         WHERE q.chain_id = ? AND q.first_seen_at <= ?
-        ORDER BY q.first_seen_at ASC LIMIT ?`,
+        ORDER BY q.first_seen_at ASC`,
     )
-    .bind(chainId, cutoff, STALE_REPORT_LIMIT)
+    .bind(chainId, cutoff)
     .all<{
       loan_id: number;
       reason: string;
@@ -306,7 +349,10 @@ export async function reportStaleQuarantine(
       loan_status: string | null;
       loan_start_block: number | null;
     }>();
-  const shown = rows.results ?? [];
+  const held = rows.results ?? [];
+  const n = held.length;
+  if (n === 0) return;
+  const shown = held.slice(0, STALE_REPORT_LIMIT);
   const described = shown
     .map((r) => {
       const heldHours = Math.floor((nowSec - r.first_seen_at) / 3600);
@@ -352,20 +398,23 @@ export async function reportStaleQuarantine(
   // page that stopped at twenty left every id past it suppressing reminders
   // with nothing ever saying which. Ids are short; the detail is capped, the
   // roll call is not.
+  //
+  // WHAT IT DOES NOT SAY IS "described next tick" (#2231 r6 `4035682787`).
+  // It said exactly that for one round, and it was a promise nothing keeps:
+  // the described page is the OLDEST entries and there is no rotation, so the
+  // same twenty are described every tick and these ids stay identifier-only
+  // until an entry ahead of them is resolved. An operator waiting for detail
+  // that will never arrive is worse off than one told to go and get it — so
+  // the report says what actually makes them described, which is also the
+  // thing the operator should be doing anyway.
   let overflow = '';
   if (n > shown.length) {
-    const rest = await db
-      .prepare(
-        `SELECT loan_id FROM loan_reconcile_quarantine
-          WHERE chain_id = ? AND first_seen_at <= ?
-          ORDER BY first_seen_at ASC LIMIT -1 OFFSET ?`,
-      )
-      .bind(chainId, cutoff, STALE_REPORT_LIMIT)
-      .all<{ loan_id: number }>();
-    const ids = (rest.results ?? []).map((r) => r.loan_id).join(', ');
+    const ids = held.slice(STALE_REPORT_LIMIT).map((r) => r.loan_id).join(', ');
     overflow =
-      ` (+${n - shown.length} more, described next tick; every one of them is ` +
-      `also holding reminders back: ${ids})`;
+      ` (+${n - shown.length} more, each also holding reminders back and each ` +
+      `named here but NOT described: ${ids} — the detail above is the oldest ` +
+      `${STALE_REPORT_LIMIT} and does not rotate, so these stay ` +
+      `identifier-only until an entry ahead of them is resolved)`;
   }
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +

@@ -324,14 +324,26 @@ The app uses chain reads and indexed reads for different jobs.
   the report describes in full, the remainder are still listed by identifier —
   a record left out entirely would be withholding reminders with nothing
   anywhere saying which position it concerned, and this report is the only
-  surface that discloses that at all.
+  surface that discloses that at all. The report says plainly that those
+  identifiers are named but **not** described, that the descriptions are of
+  the longest-held records and do not take turns, and that resolving one of
+  those is what brings the next into view. It does not promise detail that a
+  later run would supply, because no later run would.
+- **The report's cost does not depend on how much is being held.** Reporting
+  is bounded work whatever the data says, because the run that holds the most
+  records is the one least able to afford extra work and the one whose failure
+  would leave the network's reading position unrecorded — freezing it.
 - **One automatic release remains an identity assumption, and is stated as
-  one.** A record is released when a stored position bearing its identifier is
-  no longer running. Where an identifier has been reused, that establishes the
-  replacement ended, not the position the record was about — so the original
-  unresolved finding is erased. The platform does not have a verifiable
-  identity for a position and so cannot tell the two apart; this is recorded
-  as a known limit rather than presented as a settled outcome.
+  one — by the release itself.** A record is released when a stored position
+  bearing its identifier is no longer running. Where an identifier has been
+  reused, that establishes the replacement ended, not the position the record
+  was about — so the original unresolved finding is erased. The platform does
+  not have a verifiable identity for a position and so cannot tell the two
+  apart; this is recorded as a known limit rather than presented as a settled
+  outcome. **The disclosure is made where the assumption is exercised**: the
+  release names the records it removed. Leaving it to the held-record report
+  would disclose nothing in the very case that matters, since a release can
+  empty the report it would have appeared in.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.

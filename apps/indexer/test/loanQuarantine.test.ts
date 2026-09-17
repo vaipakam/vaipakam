@@ -206,6 +206,49 @@ describe('the table, over the real migrated schema', () => {
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([14]);
   });
 
+  it('says which entries it released, because it cannot verify they are the same position', async () => {
+    // #2231 r6 `4035682797`. The release condition is itself an identity
+    // assumption: it takes the stored row bearing an id to be the position
+    // the finding was about, and a REPLACEMENT loan that started and ended
+    // under that id satisfies it just as well.
+    //
+    // The stale report states that assumption — but the report cannot be the
+    // surface that discloses it, because this sweep runs FIRST and the report
+    // returns early once nothing is held. In exactly the case worth
+    // disclosing, the sweep empties the table and the report says nothing.
+    // Whoever exercises the assumption reports it.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [13, 14], unread: [13], unresolvable: [14] }));
+    seedLoanRow(h, 13, 'repaid');
+    seedLoanRow(h, 14, 'active');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // The id that WAS released is named — a count alone cannot be audited.
+    expect(said).toContain('released 1 held entry');
+    expect(said).toContain('13');
+    expect(said).toContain('identity assumption');
+    // And it does not claim more than it knows.
+    expect(said).toContain('Nothing here distinguishes the two');
+    warn.mockRestore();
+  });
+
+  it('stays silent on a sweep that released nothing', async () => {
+    // The disclosure is about an assumption EXERCISED. A sweep that deleted
+    // no row exercised none, and a line on every pass would bury the ones
+    // that matter — the same noise argument that keeps the young-mark case
+    // silent.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [14], unread: [14] }));
+    seedLoanRow(h, 14, 'active');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('leaves a held row alone when its loan is not in the table at all', async () => {
     // The orphan case — the chain denies the loan and D1 may have no row for
     // it either. There is nothing to prove it ended, so it stays held and
@@ -326,6 +369,57 @@ describe('telling the operator about a row that stays', () => {
       expect(said).toContain(String(id));
     }
     expect(said).toContain('also holding reminders back');
+    warn.mockRestore();
+  });
+
+  it('costs the same one statement whether or not the page overflows', async () => {
+    // #2231 r6 `4035682768`. The roll call above arrived as a THIRD D1 call,
+    // issued only when the page overflowed — a report whose cost depends on
+    // the data, under a ceiling whose overrun aborts the invocation before
+    // the scan cursor is written. The pass that pays the extra is by
+    // definition the one holding the most rows: the least able to afford it,
+    // and the one whose failure freezes the chain.
+    //
+    // So the assertion is on the COST, and it is the same number on both
+    // sides of the page boundary. Re-budgeting for a variable cost would have
+    // satisfied the finding and left the dependency in place.
+    const statements = async (count: number): Promise<number> => {
+      const h = createSqliteD1(ALL_MIGRATIONS);
+      const ids = Array.from({ length: count }, (_, k) => 500 + k);
+      await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+      let prepared = 0;
+      const counting = {
+        prepare: (sql: string) => {
+          prepared += 1;
+          return (h.d1 as { prepare: (s: string) => unknown }).prepare(sql);
+        },
+      };
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await reportStaleQuarantine(counting as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+      warn.mockRestore();
+      return prepared;
+    };
+    expect(await statements(STALE_REPORT_LIMIT - 1)).toBe(1);
+    expect(await statements(STALE_REPORT_LIMIT + 3)).toBe(1);
+  });
+
+  it('does not promise the overflow will be described later', async () => {
+    // #2231 r6 `4035682787`. It said "described next tick" for one round, and
+    // nothing keeps that promise: the described page is the OLDEST entries
+    // and does not rotate, so the same ones are described every tick and the
+    // remainder stay identifier-only until an entry ahead of them is
+    // resolved. An operator waiting for detail that never arrives is worse
+    // off than one told what would produce it.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_REPORT_LIMIT + 2 }, (_, k) => 600 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).not.toContain('described next tick');
+    expect(said).toContain('does not rotate');
+    expect(said).toContain('until an entry ahead of them is resolved');
     warn.mockRestore();
   });
 

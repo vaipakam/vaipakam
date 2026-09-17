@@ -726,7 +726,14 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       cannot satisfy the calendar side's cache, so a cold pass pays twice
  *       (#2213 r30 `4017166962`)
  * - 1 — `releaseTerminalQuarantine`
- * - 2 — the stale report: its count, and the listing when there is one
+ * - 1 — the stale report, whatever the data says. It was 2 (a count and a
+ *       listing) and briefly 3, because a chain with more held rows than one
+ *       page fits paid for a roll call of the remainder — a cost that varied
+ *       with the data, under a ceiling whose overrun aborts the pass before
+ *       the scan cursor is written. The pass that paid the extra was by
+ *       definition the one with the most held rows. Selecting the held rows
+ *       ONCE and slicing the page in memory removed the dependency rather
+ *       than re-budgeting for it (#2231 r6 `4035682768`)
  * - 1 — the repair's own quarantine writes, when a repair happened
  *
  * The close-out statements themselves are folded into batches that already
@@ -739,7 +746,7 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * edited. Sharing one answer between the lanes would remove the entry
  * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 5;
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**

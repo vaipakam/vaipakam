@@ -51,11 +51,27 @@ report, and it names the exact entry that was read: a check that ran between
 the reading and the clearing can have recorded a fresh finding under the same
 number, and an unguarded removal would discard it.
 
+Where more entries are held than the report describes in full, it also says
+what it is not doing: those numbers are named but not described, the
+descriptions are of the longest-held entries and do not take turns, and
+resolving one of those is what brings the next into view. It would be easy to
+write "described next time" there, and it would be untrue — nothing would ever
+supply that detail.
+
 One release does still happen on its own — when a stored loan bearing the
 number is no longer running — and that carries the same identity assumption in
 smaller form: where a number has been reused, it establishes that the
 replacement ended rather than that the original position did. It is recorded as
-a known limit rather than presented as settled.
+a known limit rather than presented as settled, **and it is the release itself
+that says so**, naming the entries it removed. Leaving that to the held-entry
+report would have disclosed nothing in the one case that matters: a release can
+clear the last held entry, and the report says nothing when nothing is held.
+
+Reporting also costs the same fixed amount of work however many entries are
+held. It briefly did not — listing the overflow was extra work done only when
+there was an overflow — and that is backwards: the run holding the most entries
+is the one least able to afford extra work, and the one whose failure would
+leave the network reading position unrecorded and the chain's view frozen.
 
 A suppression a person can see and undo is worth more than an automatic release
 built on evidence that has been wrong four different ways.
