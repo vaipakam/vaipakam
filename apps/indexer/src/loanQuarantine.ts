@@ -723,7 +723,7 @@ function clearCommand(chainId: number, loanId: number, obs: string, lastSeenAt: 
     `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ${chainId} ` +
     `AND loan_id = ${loanId} AND obs = '` +
     obs.replace(/'/g, `''`) +
-    `' AND last_seen_at = ${lastSeenAt};`
+    `' AND last_seen_at = ${lastSeenAt} RETURNING loan_id;`
   );
 }
 /**
@@ -739,11 +739,14 @@ const CLEAR_INSTRUCTION =
   `re-observe the id as unsettled, and an unconditional delete would then ` +
   `drop that fresh finding instead. Each described entry above carries the ` +
   `command for it, finished: run it as printed, changing nothing. It quotes ` +
-  `a token that changes on every sighting AND the time of that sighting — ` +
-  `the token alone would miss a sighting recorded while the guard column ` +
-  `was not yet in place, and the time alone cannot separate two sightings ` +
-  `inside one second. If it deletes nothing, the entry changed under you ` +
-  `and wants re-reading.`;
+  `a token AND the time of the sighting, and the two cover different ` +
+  `things: an ordinary write rotates the token, which is what separates two ` +
+  `sightings inside one second; a write made while the guard column was not ` +
+  `yet in place CANNOT rotate it, and those are caught by the time moving ` +
+  `instead. It ends in RETURNING loan_id so you can see which happened — a ` +
+  `row back means the entry you read is the entry that went, and NO row ` +
+  `back means it changed under you and wants re-reading. Without that the ` +
+  `two outcomes look identical through a command line.`;
 export async function reportStaleQuarantine(
   db: D1Database,
   chainId: number,
@@ -967,13 +970,30 @@ export async function reportStaleQuarantine(
     // `4037027810`, `4037027817`). The enquiry is itself a finished statement
     // and is executed by the tests, like every other statement this report
     // emits.
+    // THE ENQUIRY RETURNS FINISHED COMMANDS, not the values to build one
+    // from (#2231 r15 `4037257304`).
+    //
+    // r14 said nothing was left to assemble and that was true only of the
+    // described entries; these still had an operator copying three values
+    // into a template read off another row. That is the assembly the whole
+    // root fix was about, surviving in the one place the executing test
+    // could not reach — it ran this SELECT and stopped, so it validated the
+    // enquiry and nothing the enquiry led to.
+    //
+    // SQLite builds the statement instead: `||` for concatenation and
+    // `replace()` for the quote doubling, so the quoting that went wrong by
+    // hand at r12 is done by the engine that will parse it. The test now
+    // executes this enquiry AND every command it returns.
     const lookup = withGuard
-      ? ` To clear any of them you need the two values a clear quotes, which ` +
-        `are not shown above; this enquiry returns them, and the described ` +
-        `entries show the command they go into: SELECT loan_id, obs, ` +
-        `last_seen_at FROM loan_reconcile_quarantine WHERE ` +
-        `chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
-        `ORDER BY first_seen_at ASC;`
+      ? ` To clear any of them, this enquiry returns each one's command ` +
+        `already written — run the enquiry, then run the command it gives ` +
+        `you for the entry you want, changing nothing: SELECT loan_id, ` +
+        `'DELETE FROM loan_reconcile_quarantine WHERE chain_id = ' || ` +
+        `chain_id || ' AND loan_id = ' || loan_id || ' AND obs = ''' || ` +
+        `replace(obs, '''', '''''') || ''' AND last_seen_at = ' || ` +
+        `last_seen_at || ' RETURNING loan_id;' AS clear_command FROM ` +
+        `loan_reconcile_quarantine WHERE chain_id = ${chainId} ` +
+        `AND first_seen_at <= ${cutoff} ORDER BY first_seen_at ASC;`
       : '';
     overflow =
       ` (+${n - shown.length} more, each also holding reminders back; ` +
@@ -997,7 +1017,12 @@ export async function reportStaleQuarantine(
       + `naming it would fail with an unknown-column error. Wait for the `
       + `migration rather than deleting unguarded — an unguarded delete `
       + `drops whatever a pass recorded between your reading this and `
-      + `running it. This is a deploy window and lasts minutes.`;
+      + `running it. In the ordinary rollout this is a deploy window of `
+      + `minutes. Nothing here can tell you that, though: a probe `
+      + `establishes only that the column is ABSENT, never when it will `
+      + `arrive. If you are still reading this on a later run, the `
+      + `migration did not land — go and look at it, because these `
+      + `suppressions stay unclearable until it does.`;
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +
       `for over ${QUARANTINE_STALE_SECONDS / 3600}h — ${described}${overflow}. ` +

@@ -744,17 +744,16 @@ describe('telling the operator about a row that stays', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
     // An empty SQL literal, not a word.
-    expect(said).toContain(`AND obs = '' AND last_seen_at = ${NOW};`);
+    expect(said).toContain(`AND obs = '' AND last_seen_at = ${NOW} RETURNING loan_id;`);
     expect(said).not.toContain('guard none');
     // And the instruction does not add quotes of its own, which would turn
     // that into four quote characters and match nothing again.
     expect(said).toContain('run it as printed, changing nothing');
     // The command it produces is the one that works.
     // The command the report produces, RUN AS PRINTED.
-    const printed = (said.match(/DELETE FROM loan_reconcile_quarantine[^;]*;/) ?? [])[0];
+    const printed = (said.match(/clear with: (DELETE[^;]*;)/) ?? [])[1];
     expect(printed).toBeTruthy();
-    const removed = h.db.prepare(printed as string).run();
-    expect(Number(removed.changes)).toBe(1);
+    expect(h.db.prepare(printed as string).all()).toHaveLength(1);
   });
 
   it('EXECUTES every statement it prints, exactly as printed', async () => {
@@ -790,32 +789,44 @@ describe('telling the operator about a row that stays', () => {
     // the defect this test exists for was brackets around the command, and a
     // `DELETE`-anchored match reads straight past an opening bracket and
     // passes on the exact string that fails for a human.
-    const statements = [
-      ...[...said.matchAll(/clear with: ([^;]*;)/g)].map((m) => m[1]),
-      ...[...said.matchAll(/command they go into: ([^;]*;)/g)].map((m) => m[1]),
-    ];
-    // One per described entry, plus the overflow enquiry.
-    expect(statements.length).toBe(STALE_REPORT_LIMIT + 1);
+    const perEntry = [...said.matchAll(/clear with: (DELETE[^;]*;)/g)].map((m) => m[1]);
+    expect(perEntry).toHaveLength(STALE_REPORT_LIMIT);
+    // The enquiry is matched to its OWN terminator, not to the first `;`:
+    // it builds a statement, so it contains a semicolon inside a string
+    // literal. A lazy `[^;]*;` truncates it into something that does not
+    // parse — and a test that then asserted "it parses" would be asserting
+    // about a string the report never printed.
+    const enquiry = (said.match(/SELECT loan_id,[\s\S]*?ORDER BY first_seen_at ASC;/) ?? [])[1 - 1];
+    expect(enquiry).toBeTruthy();
 
-    let deletes = 0;
-    for (const sql of statements) {
-      // Executed verbatim — no binds, no edits. This throws on a syntax
-      // error, an unknown column, or a mis-quoted literal.
-      if (sql.startsWith('SELECT')) {
-        const rows = h.db.prepare(sql).all();
-        expect(Array.isArray(rows)).toBe(true);
-      } else {
-        const info = h.db.prepare(sql).run();
-        // And each one removes EXACTLY its own entry: a command that removed
-        // nothing would be a guard that does not match, and one that removed
-        // more would be a delete that is not anchored to a row.
-        expect(Number(info.changes)).toBe(1);
-        deletes += 1;
-      }
+    // Each described entry's command, run verbatim. Throws on a syntax
+    // error, an unknown column, or a mis-quoted literal.
+    for (const sql of perEntry) {
+      const rows = h.db.prepare(sql).all() as unknown[];
+      // `RETURNING loan_id`, so the operator can SEE which outcome they got
+      // (#2231 r15 `4037257331`). Exactly one row back: a command returning
+      // none would be a guard that does not match, and one returning more
+      // would be a delete not anchored to a row.
+      expect(rows).toHaveLength(1);
     }
-    expect(deletes).toBe(STALE_REPORT_LIMIT);
     // Exactly the described entries went; everything else is still held.
     expect(quarantined(h)).toHaveLength(5);
+
+    // THE ENQUIRY, AND THEN WHAT THE ENQUIRY HANDS BACK (#2231 r15
+    // `4037257304`). Running only the enquiry validated the enquiry and
+    // nothing it led to — which is where the operator-side assembly had
+    // survived the root fix.
+    const handed = h.db.prepare(enquiry as string).all() as Array<{
+      loan_id: number;
+      clear_command: string;
+    }>;
+    expect(handed).toHaveLength(5);
+    for (const row of handed) {
+      const rows = h.db.prepare(row.clear_command).all() as unknown[];
+      expect(rows).toHaveLength(1);
+    }
+    // And with those run, nothing is held at all.
+    expect(quarantined(h)).toHaveLength(0);
   });
 
   it('offers NO clearing command while the guard column is unseen', async () => {
@@ -903,7 +914,7 @@ describe('telling the operator about a row that stays', () => {
     // And the shortfall is STATED, with the query that closes it.
     expect(said).toContain(`${extra} further held entries NOT named here`);
     expect(said).toContain(`bounded at ${STALE_ROLL_CALL_LIMIT} ids`);
-    expect(said).toContain('SELECT loan_id, obs, last_seen_at FROM loan_reconcile_quarantine');
+    expect(said).toContain("'DELETE FROM loan_reconcile_quarantine WHERE chain_id = ' ||");
     warn.mockRestore();
   });
 
@@ -955,7 +966,7 @@ describe('telling the operator about a row that stays', () => {
       expect(said).not.toContain(`${id}@`);
     }
     // And what they can do about it is stated, with a finished enquiry.
-    expect(said).toContain('SELECT loan_id, obs, last_seen_at FROM');
+    expect(said).toContain('AS clear_command FROM');
     expect(said).toContain('Being named is not being examined');
     expect(said).toContain('nothing above says what these ids point at now');
     warn.mockRestore();

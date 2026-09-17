@@ -440,17 +440,26 @@ The app uses chain reads and indexed reads for different jobs.
   refuses any release written by hand. Saying "by construction" here would
   promise more than the mechanism delivers, and a guarantee a reader trusts
   without checking is worse than one they check.
-- **What a release announces depends on what licensed it, and there are three
+- **What a release announces depends on what licensed it, and there are four
   different licences.** A run that read the network for an identifier and got
   an answer has the soundest evidence the platform holds, and says so. A
   repair is a network read too, but of a position whose ending was never
   announced — so it says the ending was FOUND, rather than claiming one
-  arrived. A close-out did see the ending announced, and establishes that the
-  position *currently* bearing the identifier ended, not that the record being
-  released was ever about that position. Each names its own basis; none
-  borrows another's. Sharing a mechanism does not license sharing a claim, and
-  one announcement wired to every route said the strongest of the three on all
-  of them.
+  arrived.
+
+  A repair only says that when its own write is the one that recorded the
+  ending. Where it finds another writer got there first, it says less: on
+  that path the other writer may well have been the announcement arriving,
+  which is the very race the check exists to detect, so claiming no
+  announcement came would deny the likeliest explanation. It reports a
+  network read and nothing about announcements.
+
+  A close-out did see the ending announced, and establishes that the position
+  *currently* bearing the identifier ended, not that the record being released
+  was ever about that position. Each names its own basis; none borrows
+  another's. Sharing a mechanism does not license sharing a claim, and one
+  announcement wired to every route said the strongest of them on all of
+  them.
 - **One automatic release remains an identity assumption, and is stated as
   one — by the release itself.** A record is released when a stored position
   bearing its identifier is no longer running. Where an identifier has been

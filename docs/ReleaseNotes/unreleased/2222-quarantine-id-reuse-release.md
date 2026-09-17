@@ -151,12 +151,15 @@ oversight, and a check refuses any release written by hand. A guarantee a
 reader trusts without checking is worse than one they check.
 
 What a release says also depends on what licensed it, and there turned out to
-be three different licences rather than two. A run that read the network for a
+be four different licences rather than two. A run that read the network for a
 number and got an answer holds the soundest evidence in any of this, and says
 so. A repair is a network read too, but of a loan whose ending was never
 announced — so it says the ending was FOUND, rather than claiming one arrived,
 which on the one path defined by a missing announcement would have described
-the opposite of what happened. A close-out did see the ending announced, and
+the opposite of what happened. It only says that where its own write is the
+one that recorded the ending; where another writer got there first it says
+less, because that writer may have been the announcement arriving, and
+claiming none came would deny the likeliest explanation. A close-out did see the ending announced, and
 establishes that the loan CURRENTLY bearing the number ended, never that the
 entry being released was about that loan. Each names its own basis and none
 borrows another's. Sharing a mechanism does not license sharing a claim, and
