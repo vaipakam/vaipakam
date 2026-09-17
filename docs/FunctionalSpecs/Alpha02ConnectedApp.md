@@ -449,9 +449,18 @@ The app uses chain reads and indexed reads for different jobs.
   than one place — a periodic sweep, a run that settles the position, and the
   close-out that ends it — and disclosure was added to those one at a time as
   each was noticed, which is precisely how one of them stayed silent. A
-  release is now expressible only through a single shared form that always
-  carries back what it removed, so no route has to remember to ask for that,
-  and a new route cannot be added without deciding what it discloses.
+  release of a SINGLE record is now expressible only through one shared form
+  that always carries back what it removed, so no route has to remember to ask
+  for that, and a new route cannot be added without deciding what it
+  discloses.
+
+  The periodic sweep is the exception, and naming it is the point. It removes
+  a batch in one instruction, so it cannot use a per-record form and a check
+  that demanded it would be wrong rather than strict. It carries its own
+  disclosure instead, and it is the only such place: one instruction, and a
+  check that refuses any OTHER hand-written single-record removal. An
+  invariant with a stated exception is worth more than one that reads as
+  absolute and is not.
 
   This is deliberately stated as a strong default rather than a guarantee. A
   route that obtained the shared form and then discarded what it returned
@@ -490,10 +499,15 @@ The app uses chain reads and indexed reads for different jobs.
   not have a verifiable identity for a position and so cannot tell the two
   apart; this is recorded as a known limit rather than presented as a settled
   outcome. **The disclosure is made where the assumption is exercised**: the
-  release names the records it removed — an exact count, and a roster bounded
-  by the same stated limit and read immediately before the removal, so it
-  describes what was about to be released rather than claiming to be the
-  removal itself. Leaving this to the held-record report would disclose
+  release names the records it removed — a count where the store reports one,
+  and a roster bounded by a stated limit and read immediately before the
+  removal, so it describes what was about to be released rather than claiming
+  to be the removal itself. Where the store reports no count, that is said:
+  the number that qualified a moment earlier is given as exactly that, and
+  explicitly not as a count of what went, because any of them may have been
+  cleared or become live in between. The removal also re-checks its condition,
+  so fewer records can go than were listed, and where that happens the
+  difference is stated rather than left for a reader to notice. Leaving this to the held-record report would disclose
   nothing in the very case that matters, since a release can empty the report
   it would have appeared in.
 - **A record is also released, correctly, the moment a run examines its

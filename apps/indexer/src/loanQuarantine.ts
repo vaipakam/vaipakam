@@ -648,11 +648,29 @@ export async function releaseTerminalQuarantine(
   // release; `removed` is what it DID release. They can differ if another
   // writer moved a row in between — unlikely, and not worth a transaction for
   // a log line, but not worth misrepresenting either.
-  const unnamed = removed === null ? 0 : removed - named.length;
+  // FEWER CAN GO THAN WERE LISTED, and that is now reachable rather than
+  // theoretical — found by re-reading this function after #2231 r16 rather
+  // than by a round.
+  //
+  // Two things changed in r16 and their interaction is this. The delete is
+  // bounded BY the id list, so it can never remove more than the roster —
+  // which retired an over-count branch that had been carried since the
+  // delete was unbounded, and whose message cited the REPORT's cap rather
+  // than the sweep's. And the delete re-checks the terminal condition, so a
+  // rostered id that turned active in the window is correctly skipped.
+  //
+  // The roster is printed beside the count. Left alone, an operator reads 90
+  // ids and a count of 88 and has no way to know the two do not describe the
+  // same set. Which two did not go is not something this pass knows — the
+  // statement reports a number, not a set — so it says how many and why,
+  // and does not invent the subset.
+  const shortfall = removed === null ? 0 : named.length - removed;
   const listed =
-    unnamed > 0
-      ? `${named.join(', ')} (and ${unnamed} more, not named here — this ` +
-        `roster is bounded at ${STALE_ROLL_CALL_LIMIT} ids)`
+    shortfall > 0
+      ? `${named.join(', ')} — but ${shortfall} of those ${named.length} did ` +
+        `NOT go: their loan changed between the read and the delete, so the ` +
+        `hold stays and the next pass looks again. Which ones is not ` +
+        `recorded; the delete reports a count, not a set`
       : named.join(', ');
   const howMany =
     removed === null

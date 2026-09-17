@@ -86,7 +86,8 @@ number is no longer running — and that carries the same identity assumption in
 smaller form: where a number has been reused, it establishes that the
 replacement ended rather than that the original position did. It is recorded as
 a known limit rather than presented as settled, **and it is the release itself
-that says so**, giving an exact count and a bounded roster of what it removed.
+that says so**, giving a count where the store reports one — and saying so
+plainly where it does not — alongside a bounded roster of what it removed.
 Leaving that to the held-entry report would have disclosed nothing in the one
 case that matters: a release can clear the last held entry, and the report says
 nothing when nothing is held.

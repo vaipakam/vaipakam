@@ -594,6 +594,54 @@ describe('the table, over the real migrated schema', () => {
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([81]);
   });
 
+  it('says how many of the listed ids did NOT go, when its re-check skips some', async () => {
+    // Found by self-review of #2231 r16, whose two fixes create this between
+    // them: the delete is bounded by the id list (so it can never remove more
+    // than the roster) and re-checks the terminal condition (so it can remove
+    // fewer). The roster is printed beside the count, and 90 ids next to a
+    // count of 89 silently implies they are the same set.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [91, 92], unread: [91, 92] }));
+    seedLoanRow(h, 91, 'repaid');
+    seedLoanRow(h, 92, 'repaid');
+    const racing = {
+      prepare: (sql: string) => {
+        const st = (h.d1 as { prepare: (q: string) => never }).prepare(sql) as unknown as Record<
+          string,
+          unknown
+        >;
+        if (!/^\s*SELECT loan_id FROM/.test(sql)) return st;
+        return {
+          ...st,
+          bind: (...args: unknown[]) => {
+            const bound = (st.bind as (...a: unknown[]) => Record<string, unknown>)(...args);
+            return {
+              ...bound,
+              all: async () => {
+                const out = await (bound.all as () => Promise<unknown>)();
+                h.db.prepare('DELETE FROM loans WHERE loan_id = 91').run();
+                seedLoanRow(h, 91, 'active');
+                return out;
+              },
+            };
+          },
+        };
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await releaseTerminalQuarantine(racing as never, CHAIN);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    expect(said).toContain('released 1 held entry');
+    // Both ids were listed, and the shortfall is stated rather than left for
+    // the reader to spot by counting.
+    expect(said).toContain('1 of those 2 did NOT go');
+    expect(said).toContain('Which ones is not recorded');
+    // And the over-count wording that could never happen is gone.
+    expect(said).not.toContain('more, not named here');
+  });
+
   it('stays silent on a sweep that released nothing', async () => {
     // The disclosure is about an assumption EXERCISED. A sweep that deleted
     // no row exercised none, and a line on every pass would bury the ones
