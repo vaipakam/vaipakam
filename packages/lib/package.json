@@ -76,6 +76,10 @@
     "./contractRevert": {
       "types": "./src/contractRevert.ts",
       "default": "./src/contractRevert.ts"
+    },
+    "./d1Binds": {
+      "types": "./src/d1Binds.ts",
+      "default": "./src/d1Binds.ts"
     }
   },
   "scripts": {

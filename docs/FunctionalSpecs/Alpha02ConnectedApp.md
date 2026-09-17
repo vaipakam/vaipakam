@@ -297,6 +297,18 @@ The app uses chain reads and indexed reads for different jobs.
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.
+- **A lookup that covers many records at once must not fail BECAUSE there are
+  many.** The platform decides who an inbox row is for, and who a sold-offer
+  row belongs to, by asking its own store about every record in the batch it
+  is working on. How many that is depends on how busy the network was and on
+  how far behind the platform had fallen — so it is largest exactly when a
+  catch-up is running. A question the store refuses because it names too many
+  records at once is not a slow answer, it is no answer: the work it belonged
+  to fails whole, and it fails identically next time, because the backlog that
+  made the question too large is still there. So such a question is split into
+  as many as it takes and the answers combined, and the splitting is one shared
+  rule rather than a number each caller remembers — a limit that has to be
+  recalled at five call sites is a limit two of them will not know about.
 - **A held record is NEVER released on an inference that the position has
   changed.** A record is released when the position it names is settled, or
   found to have ended — facts the platform establishes. It is not released on

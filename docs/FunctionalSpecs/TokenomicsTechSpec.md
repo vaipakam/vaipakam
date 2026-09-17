@@ -171,6 +171,19 @@ Functional consolidation through 2026-07-12:
 - Keeper automation may remit finalized mirror budgets when explicitly enabled,
   but on-chain accounting remains the source of truth and manual remittance
   remains possible.
+- **A backlog must not be the thing that stops the backlog being worked.**
+  The automation that acknowledges delivered remittances examines a bounded
+  window each pass, and how much it finds waiting in that window is a
+  function of how long the automation has been off — which is longest at the
+  moment it is first switched on. So no step of that pass may have a ceiling
+  that the amount of waiting work can exceed: a step that does fails on
+  exactly the backlog it exists to clear, fails the same way every pass
+  because the backlog does not shrink while it is failing, and leaves value
+  delivered with the bookkeeping that closes it never following. Where a pass
+  advances its own position before doing the work, this compounds — it moves
+  past a window it never acted on. Bounded work per pass is the requirement;
+  a bound that is a hard limit rather than a choice must be respected by
+  splitting the work, never by attempting it whole and losing it.
 
 Pool size:
 

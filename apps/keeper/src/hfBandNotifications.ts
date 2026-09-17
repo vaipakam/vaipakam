@@ -50,6 +50,8 @@
  * immediate.
  */
 
+import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+
 export type HfBand = 'healthy' | 'warn' | 'alert' | 'critical';
 
 /** Protocol-level band thresholds in milli-HF (1e18-scaled HF / 1e15).
@@ -98,9 +100,13 @@ export function classifyBand(hfMilli: number): HfBand {
   return 'healthy';
 }
 
-/** IN()-list width — keeps every chunked statement's bind count far
- *  under D1/SQLite variable limits. */
-const IN_CHUNK = 90;
+// The IN()-list width this file used to carry as a local `const IN_CHUNK = 90`
+// is gone (#2234). Three files had independently arrived at 90, each
+// re-deriving D1's 100-parameter cap in its own comment, and two other call
+// sites had never chunked at all — which is how `getRemitAckAttempts` came to
+// pass up to 200 binds. `chunkD1InList` subtracts the statement's own fixed
+// binds from the cap and hands back the complete bind array per chunk, so
+// there is no width to keep in step with a `WHERE` clause here.
 /** Notification INSERT chunk — 9 binds per row, 500 × 9 = 4500 stays
  *  under D1's ~5000-binding invocation cap (same bound the indexer's
  *  insertNotificationRows uses). */
@@ -228,14 +234,16 @@ export async function recordHfBandNotifications(
     // the edge (Codex #1300 r2): a borrower transfer inside the SAME
     // band must still notify the new holder.
     const prev = new Map<number, { band: HfBand; recipient: string }>();
-    for (let i = 0; i < observed.length; i += IN_CHUNK) {
-      const chunk = observed.slice(i, i + IN_CHUNK);
+    for (const c of chunkD1InList(
+      observed.map((o) => o.loanId),
+      { before: [chainId] },
+    )) {
       const res = await db
         .prepare(
           `SELECT loan_id, last_band, last_recipient FROM hf_band_state
-            WHERE chain_id = ? AND loan_id IN (${chunk.map(() => '?').join(',')})`,
+            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
         )
-        .bind(chainId, ...chunk.map((o) => o.loanId))
+        .bind(...c.binds)
         .all<{ loan_id: number; last_band: HfBand; last_recipient: string }>();
       for (const row of res.results ?? []) {
         prev.set(row.loan_id, { band: row.last_band, recipient: row.last_recipient });
@@ -248,14 +256,16 @@ export async function recordHfBandNotifications(
     // ever DELETE state, which needs no recipient).
     const inBand = observed.filter((o) => o.band !== 'healthy');
     const recipientByLoan = new Map<number, string>();
-    for (let i = 0; i < inBand.length; i += IN_CHUNK) {
-      const chunk = inBand.slice(i, i + IN_CHUNK);
+    for (const c of chunkD1InList(
+      inBand.map((o) => o.loanId),
+      { before: [chainId] },
+    )) {
       const res = await db
         .prepare(
           `SELECT loan_id, borrower, borrower_current_owner FROM loans
-            WHERE chain_id = ? AND loan_id IN (${chunk.map(() => '?').join(',')})`,
+            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
         )
-        .bind(chainId, ...chunk.map((o) => o.loanId))
+        .bind(...c.binds)
         .all<{
           loan_id: number;
           borrower: string | null;
