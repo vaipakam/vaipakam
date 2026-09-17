@@ -35,9 +35,18 @@ verified —
 - `docs/ops/DeploymentRunbook.md` for the per-Worker deploy commands;
 - `apps/keeper/README.md` for the kill-switch and its confirmation.
 
-Where a command does appear here it is marked **[run]** if that exact form
-was executed against the live account on 2026-08-03, or **[unrun]** if it was
-written but not executed. That distinction is the honest one, and it is the
+Where a command does appear here it is marked **[run] `<date>`** if that exact
+form was executed against the live account on that date, or **[unrun]** if it
+was written but not executed. Every `[run]` block carries its date — there are
+no undated ones and no relative words like "today", which say nothing to
+someone reading on another day.
+
+The date moved into the blocks when a later one was added on 2026-09-17
+(#2243 r5): a single date in this paragraph made the marker ambiguous the
+moment a second sitting contributed to the file, which is the opposite of what
+it is for. The existing blocks were dated in the same change (#2243 r6) —
+changing the convention without migrating its instances would have left the
+marker exactly as ambiguous, by a different route. That distinction is the honest one, and it is the
 one the defect history above argues for: treat an unrun line as a description
 of intent to check against the canonical runbook, not as something to paste
 into a terminal during an irreversible operation.
@@ -105,8 +114,8 @@ person waiting for a reply, and a contract redeploy does not change that. If
 those are real, export that one table before starting:
 
 ```bash
-install -m 700 -d ~/vaipakam-cutover        # [run] private directory FIRST
-# [run]
+install -m 700 -d ~/vaipakam-cutover        # [run] 2026-08-03 — private dir FIRST
+# [run] 2026-08-03
 (cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
 chmod 600 ~/vaipakam-cutover/tickets.sql
@@ -199,7 +208,10 @@ preparation and execution, the Workers will come up against a database
 missing its schema.
 
 ```bash
-# [run] — this exact form was used on the source today
+# [run] 2026-08-03 — this exact form was used on the source that day
+# ("today" until #2243 r6: a relative word in a file read on other days says
+# nothing about when the command was verified, which is the whole job of the
+# marker)
 (cd apps/indexer && npx wrangler d1 migrations apply "$TARGET_DB" --remote)
 (cd apps/indexer && npx wrangler d1 migrations list "$TARGET_DB" --remote)   # expect none pending
 ```
@@ -235,32 +247,157 @@ sections below are about.
 Update the docs that describe the live binding in the same PR — the same
 check scans `wrangler d1` commands in scripts and runbooks.
 
-### Step 2 — deploy the one that does not auto-deploy
+### Step 2 — deploy the ones that do not auto-deploy
 
-`apps/indexer`, `apps/keeper` **and `apps/agent`** deploy automatically on
-merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm` does not.**
+`apps/indexer`, `apps/keeper`, `apps/agent` **and `apps/www`** deploy
+automatically on merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm`
+does not, and `apps/app` is operator-deployed by design.**
 
-**Corrected 2026-09-17 (#2237): this step used to name `apps/agent` as not
-auto-deploying**, on the evidence that no `Workers Builds: vaipakam-agent`
-check appeared on any recent main commit. That was true when written and is
-not now. The check appears on the merge commits that touch it, and the live
-Worker matches — `vaipakam-agent`'s deployment at `2026-09-17T08:55:34Z` sits
-five seconds before its build check on `819623903` completed.
+**Corrected twice on 2026-09-17, in opposite directions**, which is why the
+test below matters more than the list:
 
-The test the old wording named is the right one; keep it and re-run it rather
-than trusting either answer:
+- **#2237** — this step named `apps/agent` as not auto-deploying. It does.
+- **#2242** — the corrected list then omitted `apps/www`, which also does.
+
+**Do not test this by looking for a build check.** That is what #2237's
+correction used, and measuring every Worker afterwards showed it misleads in
+both directions:
+
+On **`main`** commits:
+
+| Commit | Touched | Build checks that ran |
+| --- | --- | --- |
+| `9623117ac` | `CLAUDE.md` only | **all five** |
+| `7a3545b58` | `docs/` only | **none** |
+| `51c21a4b6` | `apps/indexer`, `docs/` | indexer only |
+
+A root-level file change triggers every Worker's build; a `docs/`-only change
+triggers none. So "a check appeared" can be true of a Worker the commit never
+touched, and "no check appeared" can be true of one that is on the automatic
+path.
+
+**And PR heads behave differently again**, so do not read the table above as
+the rule for a branch. Three `docs/`-only PR heads — `c4e0582b3`, `37aba6d4b`,
+`7d3f02d90` — each got exactly one build check, `vaipakam-app`, where the same
+shape of commit on `main` got none at all. Whatever governs these triggers,
+"which Worker deploys itself" is not recoverable from it. Worse, a **green check does not imply a deployment** — `apps/app`'s build
+reported success on `06d657b9f` (2026-09-13) and that Worker's latest
+deployment is still `2026-09-10T00:38:56Z` (#2241).
+
+### The deployment timestamp can prove a Worker is BEHIND. It cannot prove one is CURRENT.
+
+That asymmetry is the whole of what this step can offer, and stating it as a
+symmetric test is the mistake this section has now made twice — first with
+build checks, then with timestamps (#2243 r1, six findings, four of them this).
+
+First, the concrete pair that was executed, with its **verbatim** output —
+`apps/indexer`, on 2026-09-17:
 
 ```bash
-# [unrun] — the EQUIVALENT REST call produced the evidence on 2026-09-17, but
-# this exact `gh api` form was not the one executed, and the convention above
-# means exactly what it says. Does a build check appear on a main commit that
-# touched the Worker?
-gh api repos/vaipakam/vaipakam/commits/<sha>/check-runs --paginate \
-  --jq '.check_runs[] | select(.name | test("Workers Builds")) | .name'
+# [run] 2026-09-17 — exactly these two commands, run in this order from the
+# repo root, exactly this STDOUT. wrangler also writes a banner and config
+# warnings to stderr; they are not reproduced here and `grep` does not
+# suppress them.
+#
+# The SUBSHELL is load-bearing (#2243 r5): without it the first command leaves
+# the shell in apps/indexer, and the second's `-- apps/indexer` pathspec then
+# resolves to apps/indexer/apps/indexer and matches nothing.
+$ ( cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
+Created:     2026-09-17T16:09:37.144Z
+
+$ TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- apps/indexer
+838c25cf3 2026-09-17T16:08:34+00:00
 ```
 
-On the four most recent main commits touching `ops/offchain-data-warm`, no
-`vaipakam-offchain-data-warm` build appears, so it still needs a hand:
+**What that example does and does not show**, since it is the wrong way round
+from the heading and it would be easy to misread. The deployment is 63 seconds
+NEWER than the commit, so the test returns nothing: it is consistent with the
+Worker being current and does not establish it, for the four reasons below. It
+is quoted because it is what a healthy reading looks like — not as a pass.
+
+And the generic form, which is a **template and was not executed as written**
+— `<worker-dir>` is a placeholder, not a path:
+
+```bash
+# [unrun] — parameterised. The concrete instance above is the executed one.
+git fetch origin main                      # the left side goes stale silently
+
+# In-workspace Workers (apps/*): pnpm has already installed wrangler.
+( cd <worker-dir> && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
+
+# ops/* packages are OUTSIDE the pnpm workspace and may have no local
+# wrangler, in which case `npx` silently downloads an UNPINNED one from the
+# registry (#2243 r3). Install first and call the installed binary:
+( cd ops/offchain-data-warm && npm ci \
+    && ./node_modules/.bin/wrangler deployments list | grep -E '^Created:' | tail -1 )
+
+# TZ=UTC with %cd, NOT %cI: `%cI` ignores `--date` and prints the commit's
+# ORIGINAL offset (+05:30 on this repo), while wrangler prints UTC `Z`.
+# Comparing those two literally makes a healthy deployment look older.
+TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- <worker-dir>
+```
+
+**The split is the point** (#2243 r4). An earlier revision marked the whole
+block `[run]` and pasted a hand-aligned summary underneath — text neither
+wrangler nor git emits — which presents a template and a reconstruction as
+execution evidence. In a runbook whose only validation is that its commands
+were tested, that is the marker meaning less than it says, one round after
+this PR corrected the same slip elsewhere.
+
+**`%cd` under `TZ=UTC`, not `%ad` and not `%cI`** (#2243 r2, r3). An author date
+is user-controlled and survives rebase, so a commit can carry one LATER than
+the moment it reached `main` — reporting a deployment that already includes it
+as behind. `%cI` fixes that and introduces a zone mismatch instead, because it
+ignores `--date`. `%cd` with `--date=iso-strict-local` under `TZ=UTC` is the
+form that is both committer-dated and directly comparable to wrangler's `Z`.
+On the five most recent `main` commits the author and committer dates are
+identical, so the figures quoted below are unaffected by the field change.
+
+**A deployment older than the newest commit means that code is not live** —
+and this is the direction to rely on. It is not absolutely proof: a commit
+bearing a timestamp later than when it actually landed would read as behind
+while already deployed. But that is the **safe direction to be wrong in**. A
+false "behind" costs a redundant deploy or a second look; a false "current"
+costs exactly what this whole step exists to prevent.
+
+**A deployment NEWER than the newest commit establishes nothing**, for four
+separate reasons, all of which produce a false "current":
+
+- **The left side is not the build input set.** Every workspace Worker depends
+  on `@vaipakam/contracts`, and this cutover explicitly allows
+  `packages/contracts/src/deployments.json` to change without touching a Worker's
+  own directory. `apps/www` can then pass while serving old addresses.
+- **`origin/main` is a cached ref.** A clone last fetched before the merge
+  compares against a commit that predates it. Hence the `git fetch` above, and
+  the reason it is the first line rather than assumed.
+- **A rollback creates a fresh deployment pointing at OLD code.** `wrangler
+  rollback` makes a new deployment record for a previously built version, so
+  `Created:` is recent and the running code is not. `grep '^Created:'` reads
+  exactly the field that lies here; the per-version timestamps underneath it
+  are what to read during any rollback or recovery.
+- **A failed automatic build looks exactly like a Worker that is behind** —
+  because it is one.
+
+**Do NOT infer the deployment MECHANISM from staleness.** An earlier revision
+said "a Worker more than a few minutes behind is not on the automatic path".
+That is wrong and it is actively harmful: a Worker whose automatic build
+FAILED is also behind, and this document says elsewhere that the mixed state
+then persists until someone repairs the build. Reading staleness as "this one
+is manual" sends an operator to hand-deploy around a broken build instead of
+fixing it. Staleness says *the code is not live*, and nothing about why.
+
+For reference, when every automatic Worker was healthy on 2026-09-17 each had
+deployed **63–151 seconds** after the commit touching it. That is a sense of
+the normal gap, not a classifier.
+
+As of that measurement, `ops/offchain-data-warm` was **28 days behind** (newest
+commit `d5d3b3083` 2026-08-31, last deployment 2026-08-03) and `apps/app`
+**4 days behind** (#2242) — both in the direction the test can prove.
+`ops/mesh-watcher` does not exist on the account at all, which is the expected
+pre-arm state — GovernanceRunbook Step 3f deploys it as part of the arming
+ceremony — and is not a drift to act on here.
+
+Both hand-deployed Workers need a hand in the same sitting as the merge.
 
 ```bash
 # [unrun here] — verified form, from OffChainRestore.md §7b.
@@ -269,7 +406,28 @@ On the four most recent main commits touching `ops/offchain-data-warm`, no
 ( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
-Do this in the same sitting as the merge.
+```bash
+# [unrun] — apps/app is operator-deployed because its build env lives in a
+# gitignored `apps/app/.env.local`, which a build from a git clone cannot see.
+pnpm --filter @vaipakam/app run deploy
+```
+
+**That command is NOT sufficient on its own, and the guard does not make it
+so** (#2243 r1). `run deploy` carries `REQUIRE_INDEXER_ORIGIN=1`, which checks
+exactly one variable. `docs/ops/DeploymentRunbook.md` lists a deployable
+`.env.local` as **nineteen** operator variables — keyed RPC endpoints, the
+WalletConnect project id, the agent origin, feature flags and the rest. A file
+carrying only the indexer origin passes the guard and deploys **successfully**,
+replacing the live app with a preview-grade configuration.
+
+So follow DeploymentRunbook's full procedure for this one. An earlier revision
+of this step implied the guard was the safety net; it is a single assertion
+about a single variable, and reading it as coverage is how a four-day-stale app
+gets replaced by something worse.
+
+**Neither is optional here**, and the staleness figures above are the reason
+to check rather than assume: both were behind on the day this step was
+written, so "somebody will have deployed it" is not a safe default for either.
 
 ### A binding change puts the deployment set in a MIXED STATE — this is the rule everything else follows from
 
@@ -509,7 +667,40 @@ that.
 Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
 `apps/keeper` and `apps/agent` automatically through Workers Builds — the
 revert is a merge like any other (#2237). Then redeploy
-`ops/offchain-data-warm` by hand, since that one is not built on merge.
+`ops/offchain-data-warm` by hand, since it is not built on merge.
+
+**`apps/app` is conditional. `apps/www` is not a rollback step at all**
+(#2243 r4, corrected r5).
+
+- **`apps/app`** must be hand-deployed **only if** the reverted PR also moved
+  `packages/contracts/src/deployments.json`. It imports
+  `@vaipakam/contracts/deployments` in its own source, so those addresses are
+  baked into its bundle. On the separate-PR flow it has no changed input, and
+  a manual deploy is then an unnecessary production change carrying the
+  nineteen-variable environment hazard below for nothing.
+- **`apps/www` does NOT need waiting for, in either flow.** An earlier
+  revision said it did. `apps/www/src` contains **no import from
+  `@vaipakam/contracts`** — the package is a `package.json` dependency and
+  nothing more — so its bundle cannot carry contract addresses and cannot be
+  serving reverted ones. Cloudflare may still start a www build off the
+  workspace dependency; blocking an urgent rollback on a build whose output
+  is irrelevant is a cost with no corresponding risk.
+
+**Both additions matter here specifically** (#2243 r1). This step named only
+the three Workers and the backup, which is the pre-#2242 deployment set, and
+the omissions bite harder on the way back than on the way out:
+
+- **`apps/app` is the public surface an operator is least likely to remember**,
+  because nothing on the automatic path reminds them. If the reverted PR also
+  changed `packages/contracts/src/deployments.json` — which this plan explicitly
+  permits in one PR — then leaving the app unredeployed leaves it serving the
+  NEW contract addresses against a rolled-back database and rolled-back
+  Workers. The rollback then looks complete and the public surface is the one
+  thing still on the other side of it.
+- **`apps/www` is never re-checked by anything downstream**, because Step 3's
+  probes are D1-binding probes and `apps/www` has no D1 binding. That is worth
+  knowing in general — but it is not a reason to gate a rollback on it, since
+  its bundle carries nothing the rollback changes (see above).
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
 SOURCE, so a write must land there, and the discriminator is the source's
