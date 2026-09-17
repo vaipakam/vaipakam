@@ -251,6 +251,8 @@ test below matters more than the list:
 correction used, and measuring every Worker afterwards showed it misleads in
 both directions:
 
+On **`main`** commits:
+
 | Commit | Touched | Build checks that ran |
 | --- | --- | --- |
 | `9623117ac` | `CLAUDE.md` only | **all five** |
@@ -260,7 +262,13 @@ both directions:
 A root-level file change triggers every Worker's build; a `docs/`-only change
 triggers none. So "a check appeared" can be true of a Worker the commit never
 touched, and "no check appeared" can be true of one that is on the automatic
-path. Worse, a **green check does not imply a deployment** — `apps/app`'s build
+path.
+
+**And PR heads behave differently again**, so do not read the table above as
+the rule for a branch. Three `docs/`-only PR heads — `c4e0582b3`, `37aba6d4b`,
+`7d3f02d90` — each got exactly one build check, `vaipakam-app`, where the same
+shape of commit on `main` got none at all. Whatever governs these triggers,
+"which Worker deploys itself" is not recoverable from it. Worse, a **green check does not imply a deployment** — `apps/app`'s build
 reported success on `06d657b9f` (2026-09-13) and that Worker's latest
 deployment is still `2026-09-10T00:38:56Z` (#2241).
 

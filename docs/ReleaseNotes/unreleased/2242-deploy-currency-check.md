@@ -14,7 +14,9 @@ test it used to name turns out not to work.
 single file at the top of the repository starts a build for *every* service; a
 change confined to the documentation folder starts none. So "a build ran" can
 be true of a service the change never touched, and "no build ran" can be true
-of one that does deploy itself. Worse, a **successful build does not mean
+of one that does deploy itself. The same kind of change behaves differently
+again on a branch than on the main line, which removes the last way a reader
+might have salvaged the signal. Worse, a **successful build does not mean
 anything was deployed**: one service's build reported success four days after
 its last deployment, and that deployment is still the one serving.
 
