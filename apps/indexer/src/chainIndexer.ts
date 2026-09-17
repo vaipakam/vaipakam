@@ -1475,7 +1475,10 @@ export async function _runLoanReconcilePass(input: {
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
         discloseSideTableBatch: (results) =>
-          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000)),
+          // `closed-out`: this list runs because the chain reported the loan
+          // ENDED, which is a different basis from the settle path's read and
+          // carries an identity assumption the settle path's does not.
+          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000), 'closed-out'),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the
@@ -5826,7 +5829,7 @@ async function _clearClosedLoanSideTables(
   // `4036242408`). Nothing else observes it: the terminal sweep runs later
   // and finds the marker already gone, and the settle path never sees this
   // loan again because it has left the set the rotation selects from.
-  discloseQuarantineReleases(chainId, outcome, Math.floor(Date.now() / 1000));
+  discloseQuarantineReleases(chainId, outcome, Math.floor(Date.now() / 1000), 'closed-out');
   // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
   //
   // r14 added one for the `'unknown'` case, and a single attempt in the same

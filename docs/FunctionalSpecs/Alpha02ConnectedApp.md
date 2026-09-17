@@ -368,15 +368,31 @@ The app uses chain reads and indexed reads for different jobs.
   enquiry that lists the rest, returning for each the value its safe removal
   needs rather than the identifier alone. A listing that simply stopped would
   be the silent truncation everything here is written to avoid.
-- **Every route that releases a held record announces it, because there is
-  only one way to write such a release.** The platform releases records from
-  more than one place — a periodic sweep, a run that settles the position, and
-  the close-out that ends it — and disclosure was added to those one at a
-  time as each was noticed, which is precisely how one of them stayed silent.
-  A release is now expressible only through a single shared form that reports
-  what it removed, so a route added later discloses by construction rather
-  than by someone remembering this paragraph. This is the general rule; the
-  points above describe what each route says.
+- **Every route that releases a held record announces it, and there is only
+  one way to write such a release.** The platform releases records from more
+  than one place — a periodic sweep, a run that settles the position, and the
+  close-out that ends it — and disclosure was added to those one at a time as
+  each was noticed, which is precisely how one of them stayed silent. A
+  release is now expressible only through a single shared form that always
+  carries back what it removed, so no route has to remember to ask for that,
+  and a new route cannot be added without deciding what it discloses.
+
+  This is deliberately stated as a strong default rather than a guarantee. A
+  route that obtained the shared form and then discarded what it returned
+  would still be silent; nothing in the platform can prevent that, because
+  these releases exist to be committed together with unrelated work and so
+  cannot own their own execution. What closes the gap in practice is that the
+  omission is now a deliberate act rather than an oversight, and that a check
+  refuses any release written by hand. Saying "by construction" here would
+  promise more than the mechanism delivers, and a guarantee a reader trusts
+  without checking is worse than one they check.
+- **What a release announces depends on what licensed it.** A run that read
+  the network for an identifier and got an answer has the soundest evidence
+  the platform holds, and says so. A close-out is different: the ending it
+  reports establishes that the position *currently* bearing the identifier
+  ended, not that the record being released was ever about that position — so
+  it names that limit rather than borrowing the stronger wording. Sharing a
+  mechanism does not license sharing a claim.
 - **One automatic release remains an identity assumption, and is stated as
   one — by the release itself.** A record is released when a stored position
   bearing its identifier is no longer running. Where an identifier has been

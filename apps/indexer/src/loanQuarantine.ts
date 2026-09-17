@@ -180,8 +180,33 @@ export function quarantineStatements(
  *
  * A caller cannot now write the DELETE without the `RETURNING` that makes the
  * release visible, because the only way to obtain the statement is to ask for
- * it here. A fourth site added later is disclosed by construction rather than
- * by somebody recalling this paragraph.
+ * it here.
+ *
+ * WHAT THAT DOES AND DOES NOT BUY, stated because the first version of this
+ * paragraph said "disclosed by construction" and that was more than the
+ * mechanism delivers (#2231 r10 `4036448014`). This helper returns a
+ * statement; it does not execute one. A caller can still put it in a batch
+ * and throw the results away, and the source assertion in the tests would
+ * pass, because the SQL does contain `RETURNING`. Claiming otherwise is the
+ * same overreach that made the report's spec sentence outrun the report three
+ * rounds running, and it would be worse here: a guarantee a reader trusts is
+ * more dangerous than one they check.
+ *
+ * What IS enforced, precisely:
+ *
+ *   - the SQL carries `RETURNING`, so the data disclosure needs is always
+ *     available to whoever runs the batch — no site has to remember to ask
+ *     for it;
+ *   - `ReconcileContext.discloseSideTableBatch` is REQUIRED, so a new
+ *     reconcile context does not compile without deciding what it discloses;
+ *   - a source assertion refuses a hand-written single-loan delete anywhere
+ *     in these modules, which is how the three existing sites drifted apart.
+ *
+ * What remains a convention is the last step: the caller passing its batch
+ * results to `discloseQuarantineReleases`. Making that unavoidable would mean
+ * this module owning execution, and it cannot — these statements exist to be
+ * spliced into batches that are atomic with things this module knows nothing
+ * about, which is the whole reason they are statements.
  *
  * `RETURNING loan_id, reason, first_seen_at` — the last of those is what
  * `discloseQuarantineReleases` uses to separate the cases. The overwhelming
@@ -265,10 +290,31 @@ interface ReleasedMarker {
  * improvement that does not arrive, not a regression. Guarded accordingly —
  * this is a log, and it must never be the reason a pass fails.
  */
+/**
+ * WHY A BASIS, and why one wording will not do (#2231 r10 `4036448029`).
+ *
+ * Wiring this discloser to every release path made its message wrong for one
+ * of them. "This pass examined the id and the chain answered" is true of the
+ * settle path and is the soundest evidence in the module. It is NOT true of
+ * the close-out: there, a terminal EVENT for the id arrived, which establishes
+ * that the position CURRENTLY bearing the id ended — not that the marker being
+ * released was ever about that position. Reusing the settle wording there
+ * presented the reused-id identity assumption as settled, on the very path
+ * this PR added disclosure to because it was silent about it.
+ *
+ * Sharing a mechanism does not license sharing a claim.
+ */
+export type ReleaseBasis =
+  /** A pass read the chain for this id and got an answer. */
+  | 'examined'
+  /** A terminal event for this id arrived and the close-out cleared it. */
+  | 'closed-out';
+
 export function discloseQuarantineReleases(
   chainId: number,
   results: unknown,
   nowSec: number,
+  basis: ReleaseBasis = 'examined',
 ): void {
   if (!Array.isArray(results)) return;
   const cutoff = nowSec - QUARANTINE_STALE_SECONDS;
@@ -292,12 +338,21 @@ export function discloseQuarantineReleases(
         `${Math.floor((nowSec - r.first_seen_at) / 3600)}h)`,
     )
     .join('; ');
+  const why =
+    basis === 'examined'
+      ? `because this pass examined the id and the chain answered: ` +
+        `${described}. That is the soundest release the platform makes — a ` +
+        `chain read about the id, not a stored column standing in for one — ` +
+        `and reminders for that id resume, correctly.`
+      : `because a terminal event for the id arrived and the close-out ` +
+        `cleared it: ${described}. Note what that event establishes and what ` +
+        `it does not: the position CURRENTLY bearing the id ended. It does ` +
+        `NOT establish that the entry being released was ever about that ` +
+        `position, so this release carries the same identity assumption the ` +
+        `platform cannot verify.`;
   console.warn(
     `[loanQuarantine] chain ${chainId}: released ${stale.length} long-held ` +
-      `entr${stale.length === 1 ? 'y' : 'ies'} because this pass examined the ` +
-      `id and the chain answered: ${described}. This is the soundest release ` +
-      `the platform makes — a chain read about the id, not a stored column ` +
-      `standing in for one — and reminders for that id resume, correctly. It ` +
+      `entr${stale.length === 1 ? 'y' : 'ies'} ${why} It ` +
       `is stated because these are the entries the stale report has been ` +
       `naming, and this is the last thing that happens to them: if the id had ` +
       `come round again, the answer is about the position bearing it NOW and ` +
@@ -698,8 +753,11 @@ export async function reportStaleQuarantine(
       `described: ${ids} — the detail above is the oldest ` +
       `${STALE_REPORT_LIMIT} and does not rotate, so these stay undescribed ` +
       `until an entry ahead of them is resolved. The value after @ is the ` +
-      `one the guarded DELETE below wants for that row, so these are ` +
-      `clearable without waiting to be described${beyond})`;
+      `one the guarded DELETE below wants for that row, so removing one of ` +
+      `these is SAFE against a pass re-observing it — which is not the same ` +
+      `as its being examined: nothing above says what these ids point at now, ` +
+      `and that is the check the described entries got and these did ` +
+      `not${beyond})`;
   }
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +

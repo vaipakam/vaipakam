@@ -261,6 +261,7 @@ describe('the table, over the real migrated schema', () => {
     expect(said).toContain('released 1 long-held entry');
     expect(said).toContain('loan 77');
     expect(said).toContain('the chain answered');
+    expect(said).toContain('soundest release');
     // It says what it cannot know, rather than implying identity.
     expect(said).toContain('Nothing here can tell whether there was an earlier position');
     expect(quarantined(h)).toEqual([]);
@@ -666,7 +667,7 @@ describe('telling the operator about a row that stays', () => {
     }
     // And the format is explained rather than left to be guessed.
     expect(said).toContain('id@last_seen_at');
-    expect(said).toContain('clearable without waiting to be described');
+    expect(said).toContain('nothing above says what these ids point at now');
     warn.mockRestore();
   });
 

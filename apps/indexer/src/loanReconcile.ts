@@ -597,9 +597,15 @@ export interface ScanReconcileContext {
    *  and a release nothing announces is how the close-out path came to be
    *  the one undisclosed release path in #2231 r9 (`4036242408`). Handed in
    *  for the same reason the statements are — importing the quarantine here
-   *  would make this module and it mutually dependent. Optional so a context
-   *  that splices no such statement need not supply it. */
-  discloseSideTableBatch?(results: unknown): void;
+   *  would make this module and it mutually dependent.
+   *
+   *  REQUIRED, not optional (#2231 r10 `4036448014`). It was optional so a
+   *  context splicing no such statement need not supply it — which is the
+   *  same convenience that let the close-out path be silent in the first
+   *  place. A new context now fails to COMPILE without it, which is the only
+   *  part of "discloses by construction" a type system can actually deliver;
+   *  a context with nothing to disclose supplies a no-op and says so. */
+  discloseSideTableBatch(results: unknown): void;
   /** Everything a repair to `to` owes this loan's HOLDERS, as STATEMENTS
    *  for the same transaction as the write: the refreshed
    *  `*_current_owner` columns and the inbox rows. Async because it reads
@@ -793,7 +799,7 @@ export async function reconcileAfterScan(
       // returned, and UNCONDITIONALLY — the side tables are cleared whether
       // or not the loan row itself changed, so gating this on the repair
       // verdict would drop the disclosure in the commonest case (#2231 r9).
-      ctx.discloseSideTableBatch?.(results);
+      ctx.discloseSideTableBatch(results);
       // The FIRST result is the loan row's, and only it decides whether
       // this was a repair. The deletes run regardless — see the module
       // header: what licenses clearing the side tables is the chain having

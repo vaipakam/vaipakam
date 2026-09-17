@@ -125,8 +125,25 @@ silent: in the very case worth disclosing, a reused number's replacement
 closing normally, the entry vanished without a word while the other two paths
 announced themselves. The missing piece was never a case, it was a rule. There
 is now a single shared way to write such a release, and it reports what it
-removed, so a fourth route added later announces itself by construction rather
-than by somebody remembering to add it.
+removed, and a new route cannot be added without deciding what it announces.
+
+That is a strong default, not a guarantee, and the difference is worth stating
+because the first version of this paragraph claimed the stronger thing. A route
+that took the shared form and threw away what it returned would still be
+silent, and nothing can prevent that: these releases have to be committed
+together with unrelated work, so they cannot control their own execution. What
+changed is that staying silent is now a deliberate act rather than an
+oversight, and a check refuses any release written by hand. A guarantee a
+reader trusts without checking is worse than one they check.
+
+What a release says also depends on what licensed it. A run that read the
+network for a number and got an answer holds the soundest evidence in any of
+this, and says so. A close-out is weaker: the ending it reports establishes
+that the loan CURRENTLY bearing the number ended, never that the entry being
+released was about that loan — so it names that limit instead of borrowing the
+stronger wording. Sharing a mechanism does not license sharing a claim, and
+wiring one announcement to every route briefly made it say the strong thing on
+the weak path.
 
 Finally, the report's promises and its behaviour are now the same size. Three
 separate rounds each bounded a different cost of the same report — the length
