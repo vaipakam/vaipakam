@@ -54,11 +54,11 @@ export const STALE_REPORT_LIMIT = 20;
  *
  * A bound is therefore not optional. What IS optional is whether crossing it
  * is silent, and it must not be: past this many, the report says how many
- * more are held — the count is EXACT, taken in the same statement via
- * `COUNT(*) OVER ()` rather than inferred from a truncated page — and gives
- * the query that lists them. "More than I will name here, and here is how to
- * see them" is an honest bound; a page that stops without saying so is the
- * silent truncation this whole module exists to avoid.
+ * more are held — an EXACT count, from its own statement rather than
+ * inferred from a truncated page — and gives the query that lists them.
+ * "More than I will name here, and here is how to see them" is an honest
+ * bound; a page that stops without saying so is the silent truncation this
+ * whole module exists to avoid.
  *
  * The number is a judgement about one log line, not a protocol constant:
  * 200 ids is roughly 1.5 KB, which a log surface carries intact, and a chain
@@ -443,17 +443,39 @@ export async function reportStaleQuarantine(
   // the first `STALE_REPORT_LIMIT` of them, and the roll call is the rest.
   // Constant cost, and one subrequest LESS than the old no-overflow case.
   //
-  // AND THE ROWS ARE BOUNDED, which the first version of this was not
-  // (#2231 r7 `4035821168`). Folding three statements into one fixed the
-  // ROUND-TRIP count and left the VOLUME growing with the size of the
-  // problem — so the report would fail on exactly the chain that most needs
-  // it, inside the invocation that must still write the scan cursor. Those
-  // are two different costs and only one of them had been addressed.
+  // TWO STATEMENTS, ALWAYS TWO. Constant is the property that matters, not
+  // one (#2231 r6 `4035682768`, r7 `4035821168`). What was wrong was a cost
+  // that VARIED with the data — the pass paying the extra was the pass
+  // holding the most rows, the one least able to afford it and the one whose
+  // failure aborts before the scan cursor is written. Two every time is as
+  // immune to that as one every time.
   //
-  // `COUNT(*) OVER ()` is what makes the bound honest rather than a silent
-  // truncation: the total comes back EXACT in the same statement, so the
-  // report can say how many it is not naming. A `LIMIT` alone would have to
-  // infer "there are more" from a full page and could never say how many.
+  // It was briefly one, via `COUNT(*) OVER ()` in the page's own statement,
+  // and that is reverted deliberately rather than for taste. Cloudflare
+  // documents D1 as "compatible with MOST SQLite's SQL convention" and names
+  // no version; nothing in this repository has ever run a window function
+  // against it, so there is no precedent to lean on the way
+  // `consumeTelegramLinkCode` gives `RETURNING` one. The feature is old and
+  // almost certainly present — but "almost certainly" is the wrong standard
+  // for THIS statement: the stale report is the ONLY surface that discloses
+  // a suppression, so a statement D1 rejected would not degrade the report,
+  // it would make every held entry invisible on every pass. That is the
+  // defect this whole module exists to prevent, reintroduced by the fix for
+  // it. One saved subrequest does not buy that risk, and the count returns
+  // to what `main` already budgets.
+  const total = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM loan_reconcile_quarantine
+        WHERE chain_id = ? AND first_seen_at <= ?`,
+    )
+    .bind(chainId, cutoff)
+    .first<{ n: number }>();
+  const n = total?.n ?? 0;
+  if (n === 0) return;
+  // AND THE ROWS ARE BOUNDED, which the first version of this was not
+  // (#2231 r7 `4035821168`). Folding the statements together fixed the
+  // ROUND-TRIP count and left the VOLUME growing with the size of the
+  // problem. Those are two different costs and only one had been addressed.
   //
   // THE LOAN THE HELD ID POINTS AT NOW, carried alongside (#2231 r4).
   //
@@ -471,8 +493,7 @@ export async function reportStaleQuarantine(
   const rows = await db
     .prepare(
       `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at,
-              l.status AS loan_status, l.start_block AS loan_start_block,
-              COUNT(*) OVER () AS held_total
+              l.status AS loan_status, l.start_block AS loan_start_block
          FROM loan_reconcile_quarantine q
          LEFT JOIN loans l
            ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
@@ -488,13 +509,8 @@ export async function reportStaleQuarantine(
       last_seen_at: number;
       loan_status: string | null;
       loan_start_block: number | null;
-      held_total: number;
     }>();
   const held = rows.results ?? [];
-  if (held.length === 0) return;
-  // The EXACT total, from the window function — not `held.length`, which is
-  // capped, and not a separate count, which would put the cost back.
-  const n = held[0].held_total;
   const shown = held.slice(0, STALE_REPORT_LIMIT);
   const described = shown
     .map((r) => {

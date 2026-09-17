@@ -297,14 +297,16 @@ describe('the join, not just the wording', () => {
     // — so each loosening of this assertion has found a new way to pass while
     // the thing it names never ran.
     //
-    // It matched the report's `COUNT(*)` until #2231 r6 folded the count, the
-    // detail page and the overflow roll call into ONE statement, so that the
-    // report's cost stops depending on how many rows are held. The signature
-    // moved with it: the `LEFT JOIN loans` is the reporter's alone — the probe
-    // reads `sqlite_master` and the sweep correlates with `EXISTS`, neither of
-    // which joins.
+    // This matches the `COUNT(*)`, which only the reporter issues and which it
+    // issues FIRST — so it is reached whatever the stub answers. It briefly
+    // matched the `LEFT JOIN` instead, while #2231 r6 had folded the count
+    // into the page's own statement; r7 unfolded it again rather than run a
+    // window function D1 does not document, and the signature came back with
+    // it. The join would be a WORSE pin now: it sits behind an early return on
+    // a zero count, so a stub reporting no held rows would fail this test for
+    // a reason that has nothing to do with whether the reporter ran.
     expect(
-      seen.some((q) => /FROM loan_reconcile_quarantine[\s\S]*LEFT JOIN\s+loans\b/.test(q)),
+      seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
     ).toBe(true);
   });
 

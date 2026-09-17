@@ -330,8 +330,10 @@ The app uses chain reads and indexed reads for different jobs.
   those is what brings the next into view. It does not promise detail that a
   later run would supply, because no later run would.
 - **The report is bounded, and says so where the bound bites.** Reporting is
-  fixed work — a single enquiry, and a listing that does not grow past a
-  stated number of identifiers however many records are held. The run holding
+  fixed work — the same small number of enquiries every run, and a listing
+  that does not grow past a stated number of identifiers however many records
+  are held. What matters is that the work does not vary with the size of the
+  fault, not that it is as small as possible. The run holding
   the most records is the one least able to afford extra work, and the one
   whose failure would leave the network's reading position unrecorded and its
   view frozen; a report that grew with the fault would fail on the only

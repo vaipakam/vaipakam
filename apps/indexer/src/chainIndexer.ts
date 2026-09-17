@@ -727,14 +727,19 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       cannot satisfy the calendar side's cache, so a cold pass pays twice
  *       (#2213 r30 `4017166962`)
  * - 1 — `releaseTerminalQuarantine`
- * - 1 — the stale report, whatever the data says. It was 2 (a count and a
- *       listing) and briefly 3, because a chain with more held rows than one
- *       page fits paid for a roll call of the remainder — a cost that varied
- *       with the data, under a ceiling whose overrun aborts the pass before
- *       the scan cursor is written. The pass that paid the extra was by
- *       definition the one with the most held rows. Selecting the held rows
- *       ONCE and slicing the page in memory removed the dependency rather
- *       than re-budgeting for it (#2231 r6 `4035682768`)
+ * - 2 — the stale report: its count, and its bounded listing. TWO WHATEVER
+ *       THE DATA SAYS, and the constancy is the point rather than the number
+ *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
+ *       a chain holding more rows than one page fits paid for a roll call of
+ *       the remainder — a cost that VARIED with the data, under a ceiling
+ *       whose overrun aborts the pass before the scan cursor is written, so
+ *       the pass paying the extra was by definition the one holding the most
+ *       rows. It then briefly became 1, by folding the count into the
+ *       listing with a window function; that is reverted because D1
+ *       documents no version and nothing here has run one against it, and
+ *       this is the one statement whose failure would make every suppression
+ *       invisible. Two constant statements settle the dependency just as
+ *       well as one
  * - 1 — the repair's own quarantine writes, when a repair happened
  *
  * The close-out statements themselves are folded into batches that already
@@ -747,7 +752,7 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * edited. Sharing one answer between the lanes would remove the entry
  * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 5;
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**

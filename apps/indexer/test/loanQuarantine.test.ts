@@ -446,8 +446,8 @@ describe('telling the operator about a row that stays', () => {
       warn.mockRestore();
       return prepared;
     };
-    expect(await statements(STALE_REPORT_LIMIT - 1)).toBe(1);
-    expect(await statements(STALE_REPORT_LIMIT + 3)).toBe(1);
+    expect(await statements(STALE_REPORT_LIMIT - 1)).toBe(2);
+    expect(await statements(STALE_REPORT_LIMIT + 3)).toBe(2);
   });
 
   it('bounds the roll call, and says exactly how many it is not naming', async () => {

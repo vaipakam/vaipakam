@@ -92,5 +92,14 @@ chain has been read. It now names at most a set number of entries, says
 A listing that simply stopped would be the silent truncation this whole change
 exists to avoid.
 
+What matters there is that the work does not vary with the size of the fault —
+not that it is as small as it could be. A shorter version was written and set
+aside: it would have saved one database enquiry by using a query feature the
+database's own documentation neither promises nor rules out, and which nothing
+else in this codebase has ever asked it for. This is the one report that makes
+a withheld position visible at all, so a query the database declined would not
+degrade it — it would hide every withheld position on every run, which is the
+fault the whole change exists to prevent. One saved enquiry is not worth that.
+
 A suppression a person can see and undo is worth more than an automatic release
 built on evidence that has been wrong four different ways.
