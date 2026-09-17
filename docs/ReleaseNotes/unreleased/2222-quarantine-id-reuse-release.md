@@ -58,14 +58,32 @@ resolving one of those is what brings the next into view. It would be easy to
 write "described next time" there, and it would be untrue — nothing would ever
 supply that detail.
 
+Each of those numbers is listed together with the value its safe-removal
+command needs. Naming an entry while withholding what it takes to act on it
+sounds harmless and is not: because the described page does not take turns,
+the entry would stay unactionable indefinitely, and a person who needed it
+gone would be pushed toward exactly the unguarded removal this report spends a
+paragraph warning against.
+
 One release does still happen on its own — when a stored loan bearing the
 number is no longer running — and that carries the same identity assumption in
 smaller form: where a number has been reused, it establishes that the
 replacement ended rather than that the original position did. It is recorded as
 a known limit rather than presented as settled, **and it is the release itself
-that says so**, naming the entries it removed. Leaving that to the held-entry
-report would have disclosed nothing in the one case that matters: a release can
-clear the last held entry, and the report says nothing when nothing is held.
+that says so**, giving an exact count and a bounded roster of what it removed.
+Leaving that to the held-entry report would have disclosed nothing in the one
+case that matters: a release can clear the last held entry, and the report says
+nothing when nothing is held.
+
+That roster took two goes as well, and the first was worse than it looked. It
+named at most a set number of entries — but only after asking the database for
+every single one and holding them all in memory, so the *appearance* of a limit
+sat on top of work that still grew without one. A limit that only shortens the
+message is not a limit; it hides the cost rather than removing it. The entries
+are now read back under a limit the database itself applies, while the count
+stays exact, and the roster is described for what it is: what the sweep was
+about to release, read immediately beforehand, rather than a claim about the
+removal itself.
 
 There is a second way a held entry clears by itself, and it is the sound one:
 a run examines the number, the network answers, and the entry goes. That is

@@ -377,7 +377,40 @@ export async function releaseTerminalQuarantine(
   // and the ids come back instead of a count nobody can audit. Not a new bet
   // on D1 — `consumeTelegramLinkCode` has run `DELETE … RETURNING` on this
   // same database since the handshake was built.
-  const released = await db
+  // BOUNDED AT THE DATABASE, not in the string (#2231 r8 `4036084552`).
+  //
+  // The previous revision took `RETURNING loan_id` on the DELETE and sliced
+  // the array afterwards. That bounds the LOG and nothing else: D1 is still
+  // asked to return every deleted id and the Worker still materialises them
+  // all, so response volume and memory stay linear in the number of terminal
+  // markers — on a sweep the comment itself said could be thousands. It is
+  // the same half-fix this PR has now made twice: the visible half of a cost
+  // addressed, the one that actually bites left alone.
+  //
+  // So the roster is read FIRST, with a `LIMIT` D1 honours, and the release
+  // is a plain DELETE whose `meta.changes` gives the exact number removed.
+  // Two statements at worst, one when nothing is terminal — and the roster
+  // read is what decides, since its condition is character-for-character the
+  // DELETE's. A row that turns terminal between them is not lost; this sweep
+  // is the durable cleanup path and the next pass takes it.
+  const roster = await db
+    .prepare(
+      `SELECT loan_id FROM loan_reconcile_quarantine
+        WHERE chain_id = ?
+          AND EXISTS (
+            SELECT 1 FROM loans l
+             WHERE l.chain_id = loan_reconcile_quarantine.chain_id
+               AND l.loan_id  = loan_reconcile_quarantine.loan_id
+               AND l.status NOT IN ('active', 'fallback_pending')
+          )
+        ORDER BY loan_id
+        LIMIT ?`,
+    )
+    .bind(chainId, STALE_ROLL_CALL_LIMIT)
+    .all<{ loan_id: number }>();
+  const named = (roster.results ?? []).map((r) => r.loan_id);
+  if (named.length === 0) return;
+  const outcome = await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
         WHERE chain_id = ?
@@ -386,33 +419,28 @@ export async function releaseTerminalQuarantine(
              WHERE l.chain_id = loan_reconcile_quarantine.chain_id
                AND l.loan_id  = loan_reconcile_quarantine.loan_id
                AND l.status NOT IN ('active', 'fallback_pending')
-          )
-        RETURNING loan_id`,
+          )`,
     )
     .bind(chainId)
-    .all<{ loan_id: number }>();
-  const ids = (released.results ?? []).map((r) => r.loan_id);
-  if (ids.length === 0) return;
-  // BOUNDED, for the same reason the stale report is (#2231 r7
-  // `4035821168`, found here by a self-review of this PR's own diff rather
-  // than by a round).
-  //
-  // This sweep releases everything terminal on the chain in one statement, so
-  // a mass close-out or a backfill can return thousands of ids — and joining
-  // them into one line is precisely the defect the report was just corrected
-  // for, arriving by the other door. The count is exact and free, so the
-  // bound costs only the tail of a roster nobody reads past.
-  const named = ids.slice(0, STALE_ROLL_CALL_LIMIT);
-  const unnamed = ids.length - named.length;
-  const roster =
+    .run();
+  const removed = outcome.meta?.changes ?? named.length;
+  if (removed === 0) return;
+  // WHAT THE ROSTER IS, said plainly rather than implied. It was read
+  // immediately before the delete, so it is what the sweep was ABOUT to
+  // release; `removed` is what it DID release. They can differ if another
+  // writer moved a row in between — unlikely, and not worth a transaction for
+  // a log line, but not worth misrepresenting either.
+  const unnamed = removed - named.length;
+  const listed =
     unnamed > 0
-      ? `${named.join(', ')} (and ${unnamed} more, not named here — this line ` +
-        `is bounded at ${STALE_ROLL_CALL_LIMIT} ids)`
+      ? `${named.join(', ')} (and ${unnamed} more, not named here — this ` +
+        `roster is bounded at ${STALE_ROLL_CALL_LIMIT} ids)`
       : named.join(', ');
   console.warn(
-    `[loanQuarantine] chain ${chainId}: released ${ids.length} held ` +
-      `entr${ids.length === 1 ? 'y' : 'ies'} whose stored loan row is ` +
-      `terminal: ${roster}. Ordinarily this is the entry's own loan ` +
+    `[loanQuarantine] chain ${chainId}: released ${removed} held ` +
+      `entr${removed === 1 ? 'y' : 'ies'} whose stored loan row is ` +
+      `terminal; read just before the delete as: ${listed}. ` +
+      `Ordinarily this is the entry's own loan ` +
       `closing, and releasing it is correct. It is stated because the ` +
       `condition is an identity assumption the platform cannot verify: it ` +
       `takes the stored row bearing an id to be the position the finding was ` +
@@ -601,7 +629,19 @@ export async function reportStaleQuarantine(
   let overflow = '';
   if (n > shown.length) {
     const named = held.slice(STALE_REPORT_LIMIT);
-    const ids = named.map((r) => r.loan_id).join(', ');
+    // `id@last_seen_at`, NOT the id alone (#2231 r8 `4036084570`).
+    //
+    // The clearing instruction below is deliberately compare-and-delete and
+    // needs the exact `last_seen_at` of the row being cleared. Printing only
+    // ids here meant an overflow entry could be named and still be
+    // unclearable by the documented route — and since the detail page does
+    // not rotate, unclearable indefinitely. An operator who needs it out
+    // would have had to invent a command, which in practice means the
+    // unguarded delete this report spends a paragraph warning against.
+    //
+    // The value is already in hand: the same statement selects it for every
+    // row it returns. Pairing it costs bytes, not a query.
+    const ids = named.map((r) => `${r.loan_id}@${r.last_seen_at}`).join(', ');
     // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
     // count is exact even here, so this is a stated limit rather than a page
     // that quietly ended (#2231 r7 `4035821168`).
@@ -617,10 +657,12 @@ export async function reportStaleQuarantine(
         : '';
     overflow =
       ` (+${n - shown.length} more, each also holding reminders back; ` +
-      `${named.length} of them named here but NOT described: ${ids} — the ` +
-      `detail above is the oldest ${STALE_REPORT_LIMIT} and does not rotate, ` +
-      `so these stay identifier-only until an entry ahead of them is ` +
-      `resolved${beyond})`;
+      `${named.length} of them listed here as id@last_seen_at but NOT ` +
+      `described: ${ids} — the detail above is the oldest ` +
+      `${STALE_REPORT_LIMIT} and does not rotate, so these stay undescribed ` +
+      `until an entry ahead of them is resolved. The value after @ is the ` +
+      `one the guarded DELETE below wants for that row, so these are ` +
+      `clearable without waiting to be described${beyond})`;
   }
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +

@@ -307,6 +307,53 @@ describe('the table, over the real migrated schema', () => {
     warn.mockRestore();
   });
 
+  it('never asks D1 for more rows than it will name', async () => {
+    // #2231 r8 `4036084552`. The previous revision bounded the LOG and
+    // nothing else: `RETURNING` still asked D1 to hand back every deleted id
+    // and the Worker still materialised them all, so response volume and
+    // memory stayed linear in the number of terminal markers. Slicing the
+    // array afterwards hides that rather than fixing it.
+    //
+    // So the assertion is on what comes back from the DATABASE, not on the
+    // string — the only place the distinction is visible.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_ROLL_CALL_LIMIT + 40 }, (_, k) => 8000 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }));
+    for (const id of ids) seedLoanRow(h, id, 'repaid');
+    const returned: number[] = [];
+    const counting = {
+      prepare: (sql: string) => {
+        const stmt = (h.d1 as { prepare: (s: string) => never }).prepare(sql);
+        return new Proxy(stmt as object, {
+          get(target, prop, recv) {
+            const bound = Reflect.get(target, prop, recv);
+            if (prop !== 'bind') return bound;
+            return (...args: unknown[]) => {
+              const st = (bound as (...a: unknown[]) => Record<string, unknown>).apply(target, args);
+              const all = st.all as () => Promise<{ results?: unknown[] }>;
+              return {
+                ...st,
+                all: async () => {
+                  const res = await all.call(st);
+                  returned.push((res.results ?? []).length);
+                  return res;
+                },
+              };
+            };
+          },
+        });
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await releaseTerminalQuarantine(counting as never, CHAIN);
+    warn.mockRestore();
+    expect(returned.length).toBeGreaterThan(0);
+    for (const count of returned) expect(count).toBeLessThanOrEqual(STALE_ROLL_CALL_LIMIT);
+    // And the release still happened in full — the bound is on what is READ
+    // BACK, never on what is removed.
+    expect(quarantined(h)).toEqual([]);
+  });
+
   it('stays silent on a sweep that released nothing', async () => {
     // The disclosure is about an assumption EXERCISED. A sweep that deleted
     // no row exercised none, and a line on every pass would bury the ones
@@ -528,6 +575,30 @@ describe('telling the operator about a row that stays', () => {
     warn.mockRestore();
   });
 
+  it('gives each undescribed id the value its guarded DELETE needs', async () => {
+    // #2231 r8 `4036084570`. The clearing instruction is compare-and-delete
+    // and wants the row's exact `last_seen_at`. Printing overflow entries as
+    // bare ids named them while leaving them UNCLEARABLE by the documented
+    // route — and since the described page does not rotate, unclearable
+    // indefinitely. In practice that pushes a person toward the unguarded
+    // delete this report spends a paragraph warning against.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_REPORT_LIMIT + 2 }, (_, k) => 900 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // Every undescribed id carries its own last_seen_at, not just an id.
+    for (const id of ids.slice(STALE_REPORT_LIMIT)) {
+      expect(said).toContain(`${id}@${NOW}`);
+    }
+    // And the format is explained rather than left to be guessed.
+    expect(said).toContain('id@last_seen_at');
+    expect(said).toContain('clearable without waiting to be described');
+    warn.mockRestore();
+  });
+
   it('still NAMES long-held rows when the release sweep fails', async () => {
     // #2213 r26 `4015927513`. r15 put the release before the report so the
     // report never names an already-resolvable row, and sharing one `try` was
@@ -538,7 +609,16 @@ describe('telling the operator about a row that stays', () => {
     // Broken maintenance hiding the disclosure is the worse half of the pair,
     // because the disclosure is what tells anyone the maintenance is broken.
     const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [77], unresolvable: [77] }), NOW);
+    await apply(h, report({ examined: [77, 78], unresolvable: [77], unread: [78] }), NOW);
+    // THE SWEEP MUST HAVE WORK TO DO for its write to be the thing that fails
+    // (#2231 r8). The sweep now reads a bounded roster first and returns
+    // early when nothing is terminal, so a stub that throws on the DELETE is
+    // never reached unless a releasable row exists — and a test that passes
+    // because the code under test was skipped is not testing it. Loan 78 is
+    // terminal and held, so the roster is non-empty and the delete is
+    // attempted; loan 77 is the long-held orphan that must still be reported
+    // once that delete has failed.
+    seedLoanRow(h, 78, 'repaid');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     warn.mockClear();

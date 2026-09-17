@@ -320,15 +320,26 @@ The app uses chain reads and indexed reads for different jobs.
   Clearing is a deliberate act, and names the exact record that was read, so
   that a re-observation arriving between the reading and the clearing is not
   silently discarded.
-- **Every held record is named, not merely counted.** Where more are held than
-  the report describes in full, the remainder are still listed by identifier —
-  a record left out entirely would be withholding reminders with nothing
-  anywhere saying which position it concerned, and this report is the only
-  surface that discloses that at all. The report says plainly that those
-  identifiers are named but **not** described, that the descriptions are of
-  the longest-held records and do not take turns, and that resolving one of
-  those is what brings the next into view. It does not promise detail that a
-  later run would supply, because no later run would.
+- **Held records are named, not merely counted — up to a stated limit, and
+  the limit is never silent.** Where more are held than the report describes
+  in full, the remainder are still listed by identifier, because a record left
+  out entirely would be withholding reminders with nothing anywhere saying
+  which position it concerned, and this report is the only surface that
+  discloses that at all. The report says plainly that those identifiers are
+  named but **not** described, that the descriptions are of the longest-held
+  records and do not take turns, and that resolving one of those is what
+  brings the next into view. It does not promise detail that a later run
+  would supply, because no later run would. Past the listing limit it names
+  no more, says exactly how many it is not naming, and gives the enquiry that
+  lists them — see the bounded-report point below, which this one does not
+  override.
+- **A named record can be cleared without waiting to be described.** Clearing
+  safely requires the exact value the report holds for that record's last
+  recorded sighting, so each identifier in the undescribed remainder is listed
+  together with that value. Naming a record while withholding what is needed
+  to act on it would, in practice, push a person toward the unguarded removal
+  this report spends a paragraph warning against — and because the described
+  page does not rotate, it would push them there indefinitely.
 - **The report is bounded, and says so where the bound bites.** Reporting is
   fixed work — the same small number of enquiries every run, and a listing
   that does not grow past a stated number of identifiers however many records
@@ -349,9 +360,12 @@ The app uses chain reads and indexed reads for different jobs.
   not have a verifiable identity for a position and so cannot tell the two
   apart; this is recorded as a known limit rather than presented as a settled
   outcome. **The disclosure is made where the assumption is exercised**: the
-  release names the records it removed. Leaving it to the held-record report
-  would disclose nothing in the very case that matters, since a release can
-  empty the report it would have appeared in.
+  release names the records it removed — an exact count, and a roster bounded
+  by the same stated limit and read immediately before the removal, so it
+  describes what was about to be released rather than claiming to be the
+  removal itself. Leaving this to the held-record report would disclose
+  nothing in the very case that matters, since a release can empty the report
+  it would have appeared in.
 - **A record is also released, correctly, the moment a run examines its
   identifier and the network answers — and that release is announced when the
   record was long-held.** This is a second path on which a reused identifier

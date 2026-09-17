@@ -726,7 +726,14 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       so they were built as independent probes. The write side's answer
  *       cannot satisfy the calendar side's cache, so a cold pass pays twice
  *       (#2213 r30 `4017166962`)
- * - 1 — `releaseTerminalQuarantine`
+ * - 2 — `releaseTerminalQuarantine`, worst case: a bounded read of the ids it
+ *       is about to release, then the release itself. ONE when nothing is
+ *       terminal, which is most passes, because the read is what decides.
+ *       It was a single `DELETE … RETURNING` until #2231 r8 `4036084552`
+ *       pointed out that this bounded only the log — D1 was still asked to
+ *       return every deleted id, and the Worker to materialise them all, on
+ *       a sweep that can cover thousands. A `LIMIT` the database honours
+ *       costs one statement and removes a linear response
  * - 2 — the stale report: its count, and its bounded listing. TWO WHATEVER
  *       THE DATA SAYS, and the constancy is the point rather than the number
  *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
@@ -752,7 +759,7 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * edited. Sharing one answer between the lanes would remove the entry
  * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 7;
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**
