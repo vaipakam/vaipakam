@@ -45,6 +45,14 @@ worth having, and it was previously reported only on the busiest path. And when
 a run does pass its allowance, it says so at the moment it happens rather than
 at the end, because by the end the run may no longer be alive to say anything.
 
+Review found two further places the count fell short, and both are now closed.
+A request answered with "this has moved" is followed to the new address, and
+reaching it is another request — so those are counted individually rather than
+as one, and a request that moves to a different host no longer carries its
+credentials along. And a run is counted to its own end rather than to the end
+of its main job: the step that tells connected apps what changed reads records
+too, and a figure published before it ran was short by that much.
+
 What is still not counted is stated in the code rather than left to be
 discovered: requests served to visitors of the public read endpoints are a
 separate allowance and a separate count.

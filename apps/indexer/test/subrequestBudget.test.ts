@@ -273,6 +273,95 @@ describe('meterFetch — the egress rule', () => {
     expect(spent(budget)).toBe(1);
   });
 
+  it('counts EVERY redirect hop, not the request that started them', async () => {
+    // #2227 r2 `4033723749`: the platform bills each hop of a redirect chain.
+    // Charging once and letting the runtime chase the rest reports a figure
+    // the counter cannot know is wrong — the confident-but-incorrect number
+    // this module exists to retire.
+    const budget = createBudget();
+    const seen: string[] = [];
+    const base = (async (url: string) => {
+      seen.push(url);
+      if (seen.length < 3) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: `https://rpc.test/hop${seen.length}` },
+        });
+      }
+      return new Response('final');
+    }) as unknown as typeof fetch;
+
+    const res = await meterFetch(budget, base)('https://rpc.test/start');
+    expect(await res.text()).toBe('final');
+    expect(seen).toEqual([
+      'https://rpc.test/start',
+      'https://rpc.test/hop1',
+      'https://rpc.test/hop2',
+    ]);
+    expect(spent(budget)).toBe(3);
+  });
+
+  it('turns a redirected POST into a GET without the body', async () => {
+    // Re-POSTing a JSON-RPC call or a listing to wherever a redirect pointed
+    // would be a second WRITE, not a retry. This is what `fetch` itself does.
+    const calls: { method?: string; body: unknown }[] = [];
+    const base = (async (url: string, init?: RequestInit) => {
+      calls.push({ method: init?.method, body: init?.body });
+      return calls.length === 1
+        ? new Response(null, {
+            status: 303,
+            headers: { location: 'https://api.test/done' },
+          })
+        : new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await meterFetch(createBudget(), base)('https://api.test/orders', {
+      method: 'POST',
+      body: '{"listing":1}',
+    });
+    expect(calls[0]).toEqual({ method: 'POST', body: '{"listing":1}' });
+    expect(calls[1]?.method).toBe('GET');
+    expect(calls[1]?.body).toBeUndefined();
+  });
+
+  it('drops credentials when a redirect crosses origin', async () => {
+    // A redirect must not be able to walk an API key to another host.
+    const headers: Headers[] = [];
+    const base = (async (url: string, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers));
+      return headers.length === 1
+        ? new Response(null, {
+            status: 307,
+            headers: { location: 'https://elsewhere.test/v2' },
+          })
+        : new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await meterFetch(createBudget(), base)('https://api.test/v2', {
+      headers: { 'X-API-KEY': 'secret', 'Content-Type': 'application/json' },
+    });
+    expect(headers[0]?.get('x-api-key')).toBe('secret');
+    expect(headers[1]?.get('x-api-key')).toBeNull();
+    expect(headers[1]?.get('content-type')).toBe('application/json');
+  });
+
+  it('stops at the hop cap and hands the caller the 3xx', async () => {
+    const budget = createBudget();
+    let n = 0;
+    const base = (async () => {
+      n += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://rpc.test/${n}` },
+      });
+    }) as unknown as typeof fetch;
+
+    const res = await meterFetch(budget, base)('https://rpc.test/0');
+    expect(res.status).toBe(302);
+    // Six sends: the original plus the five hops the cap allows.
+    expect(spent(budget)).toBe(6);
+  });
+
   it('passes the response through untouched', async () => {
     const send = meterFetch(
       createBudget(),

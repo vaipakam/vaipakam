@@ -180,6 +180,33 @@ export function spent(budget: TickBudget): number {
   return budget.limit - budget.remaining;
 }
 
+/**
+ * Say what an invocation has spent, in ONE format, from wherever it exits.
+ *
+ * Three entry points report this — the chain pass, the cron tick and the
+ * ingest DO's alarm — and three hand-written log lines would drift in wording
+ * and in which fields they carried, which is the small version of the problem
+ * this module exists for. `at` names the exit, because the same counter is
+ * legitimately read at more than one moment on one invocation.
+ *
+ * The key is `invocationSpent`, not `spent`: on the cron path several passes
+ * share one counter, so a figure printed beside a chain id is the TICK's total
+ * and not that chain's share. A per-pass share would have to be a delta, and
+ * deltas are not attributable while the passes run concurrently.
+ */
+export function reportSpend(budget: TickBudget, at: string): void {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[subrequests] ${JSON.stringify({
+      scope: budget.label,
+      at,
+      invocationSpent: spent(budget),
+      limit: budget.limit,
+      over: overspent(budget),
+    })}`,
+  );
+}
+
 // ── The wrappers ──────────────────────────────────────────────────────────
 //
 // The wrapped types are PASS-THROUGH GENERICS rather than a local restatement
@@ -306,10 +333,141 @@ export function meterFetch(
   budget: TickBudget,
   base: typeof fetch = fetch,
 ): typeof fetch {
-  return ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    spend(budget);
-    return base(input, init);
+  return (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    // `redirect: 'manual'` is what makes the count exact (#2227 r2
+    // `4033723749`). Left on the default 'follow', the runtime chases a
+    // redirect chain on our behalf and bills every hop, while this wrapper
+    // charges once and reports a figure it cannot know is wrong — the
+    // confident-but-incorrect number this module exists to retire. Taking each
+    // hop ourselves means each one comes back through here and is counted,
+    // because it IS a separate request.
+    //
+    // Conservative if the platform turns out not to bill a hop: the count is
+    // then high by the number of redirects, which on this lane is normally
+    // zero. A ceiling guard that errs high does less work than it could; one
+    // that errs low freezes a chain.
+    let hop = normaliseHop(input, init);
+
+    for (let hops = 0; ; hops += 1) {
+      spend(budget);
+      const response = await base(hop.url, hop.init);
+      if (!REDIRECT_STATUSES.has(response.status)) return response;
+
+      const location = response.headers.get('location');
+      if (!location || hops >= MAX_REDIRECT_HOPS) return response;
+
+      const next = redirectedHop(hop, response.status, location);
+      // A body this cannot re-send — a stream, already consumed by the send
+      // above — is the one case it will not follow. Returning the 3xx makes
+      // that visible to the caller rather than pretending; nothing on this
+      // lane sends one.
+      if (!next) return response;
+      hop = next;
+    }
   }) as typeof fetch;
+}
+
+/**
+ * One outbound attempt, as a URL and a plain init.
+ *
+ * Kept as values rather than as a `Request` so a hop can be rebuilt and sent
+ * again: a `Request`'s body is consumed by the send, and re-sending is the
+ * whole point of following a redirect ourselves.
+ */
+interface Hop {
+  url: string;
+  init: RequestInit;
+}
+
+/** Redirects a `fetch` would follow. 304 is deliberately absent — it is a
+ *  cache response, not a hop. */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** Matches what a browser stops at. A chain longer than this on an RPC or a
+ *  marketplace API is a misconfiguration, and the caller sees the 3xx. */
+const MAX_REDIRECT_HOPS = 5;
+
+function normaliseHop(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Hop {
+  const asRequest =
+    typeof input === 'string' || input instanceof URL
+      ? null
+      : (input as Request);
+  return {
+    url: asRequest ? asRequest.url : String(input),
+    init: {
+      ...(asRequest
+        ? { method: asRequest.method, headers: new Headers(asRequest.headers) }
+        : {}),
+      ...((init ?? {}) as RequestInit),
+      redirect: 'manual',
+    },
+  };
+}
+
+/**
+ * Build the next hop, following the same rules `fetch` itself would.
+ *
+ * Two of those rules are not incidental. 301/302 on a non-GET, and 303 on
+ * anything, become a GET WITHOUT the body — re-POSTing a JSON-RPC call or a
+ * marketplace listing to wherever a redirect pointed would be a second write,
+ * not a retry. And credentials are dropped when the hop crosses origin, so a
+ * redirect cannot walk an API key to another host.
+ *
+ * Returns null when the body cannot be re-sent.
+ */
+function redirectedHop(
+  previous: Hop,
+  status: number,
+  location: string,
+): Hop | null {
+  const nextUrl = new URL(location, previous.url).toString();
+  const method = (previous.init.method ?? 'GET').toUpperCase();
+  const dropsBody =
+    status === 303 ||
+    ((status === 301 || status === 302) &&
+      method !== 'GET' &&
+      method !== 'HEAD');
+  const nextMethod = dropsBody ? 'GET' : method;
+
+  const headers = new Headers(previous.init.headers as HeadersInit | undefined);
+  if (new URL(nextUrl).origin !== new URL(previous.url).origin) {
+    for (const sensitive of ['authorization', 'cookie', 'x-api-key']) {
+      headers.delete(sensitive);
+    }
+  }
+
+  const body = previous.init.body;
+  const keepsBody = !dropsBody && nextMethod !== 'GET' && nextMethod !== 'HEAD';
+  // A stream was consumed by the attempt that produced this redirect. Strings
+  // and buffers — everything this lane actually sends — re-send unchanged.
+  if (keepsBody && body != null && typeof body !== 'string' && !isReplayable(body)) {
+    return null;
+  }
+
+  return {
+    url: nextUrl,
+    init: {
+      ...previous.init,
+      method: nextMethod,
+      headers,
+      ...(keepsBody ? {} : { body: undefined }),
+      redirect: 'manual',
+    },
+  };
+}
+
+function isReplayable(body: BodyInit): boolean {
+  return (
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body) ||
+    body instanceof URLSearchParams
+  );
 }
 
 /**

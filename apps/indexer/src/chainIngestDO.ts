@@ -41,7 +41,9 @@ import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
+  meterD1,
   meterEnv,
+  reportSpend,
 } from './subrequestBudget';
 import type { PushHints } from './pushHints';
 import {
@@ -431,6 +433,19 @@ export class ChainIngestDO {
     // `fetch()` trigger sees `scanRunning` and won't arm a second scan. Cleared
     // in `finally` no matter how we exit, so the DO can never wedge "running".
     this.scanRunning = true;
+    // THIS INVOCATION'S COUNTER (#2221), created before anything can send.
+    // At the TOP of the alarm rather than inside the scan, because the scan is
+    // not the last thing that spends here: the post-scan broadcast reads the
+    // cursor, and #2227 r2 (`4033723744`) found that read outside the count —
+    // so a pass finishing at the ceiling could issue an unannounced further
+    // request, which is the failure this counter exists to see.
+    const budget = createBudget(
+      MAX_SUBREQUESTS_PER_INVOCATION,
+      'chain ingest DO alarm',
+    );
+    // Metered ONCE for the whole alarm, so everything downstream — the scan
+    // AND the broadcast — draws on it.
+    const db = meterD1(this.env.DB, budget);
     try {
       // Honor the rollout gate INSIDE the alarm (Codex #764 round 5). If an
       // operator turns `CHAIN_INGEST_VIA_DO` off after it was on, `scheduled()`
@@ -455,16 +470,9 @@ export class ChainIngestDO {
       let scannedTo: bigint | null = null;
       let headBlock: bigint | undefined;
       let retryableFailure = false;
-      // THIS INVOCATION'S COUNTER (#2221), created before the first request so
-      // the Secrets Store reads at the top of the alarm are counted too — the
-      // scan is not the only thing that spends here. The DO owns its
-      // invocation, so the whole allowance is its own; that is the same fact
-      // the note below states about the reconcile budget, now measured.
-      const budget = createBudget(
-        MAX_SUBREQUESTS_PER_INVOCATION,
-        `chain ${chainId} ingest DO`,
-      );
       try {
+        // The Secrets Store reads at the top of the alarm are counted too —
+        // the scan is not the only thing that spends here.
         const resolved = meterEnv(await resolveEnv(this.env, budget), budget);
         const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
         if (!chain) {
@@ -502,7 +510,7 @@ export class ChainIngestDO {
         // a recovery broadcast even when this pass's counts are empty.
         const pendingBroadcast =
           (await this.state.storage.get<boolean>('pendingBroadcast')) ?? false;
-        await this.broadcast(chainId, result, pendingBroadcast);
+        await this.broadcast(chainId, result, db, pendingBroadcast);
         if (pendingBroadcast) {
           await this.state.storage.delete('pendingBroadcast');
         }
@@ -545,6 +553,11 @@ export class ChainIngestDO {
       }
     } finally {
       this.scanRunning = false;
+      // THE ALARM'S EXIT is the honest boundary for this invocation's figure
+      // (#2227 r2 `4033723744`). The chain pass reports at its own exit too,
+      // and that reading is true when it is printed; this one is the whole
+      // alarm's, including the post-scan broadcast.
+      reportSpend(budget, 'alarm exit');
     }
   }
 
@@ -592,6 +605,12 @@ export class ChainIngestDO {
     // stale cursor with a live socket must read as "down", design §4.1.1).
     // Best-effort: a failed read reports null, which clients treat as
     // "unknown" → they stay in the polling fallback posture.
+    // DELIBERATELY UNCOUNTED, and said rather than left to be noticed. This is
+    // the DO's `fetch()` — a socket handshake, a DIFFERENT invocation from the
+    // alarm with its own allowance, so there is no alarm counter to draw on
+    // and reaching for one would attribute a handshake's read to a scan. The
+    // alarm's own reads all go through its metered handle (#2227 r2
+    // `4033723744`); this is the one place `this.env.DB` is still correct.
     let cursor: { lastBlock: number; updatedAt: number } | null = null;
     if (ingestActive && chainId !== null) {
       try {
@@ -639,6 +658,15 @@ export class ChainIngestDO {
   private async broadcast(
     chainId: number,
     result: ChainIndexerResult,
+    /**
+     * The alarm's METERED D1 handle (#2227 r2 `4033723744`).
+     *
+     * Taken as an argument rather than reached for on `this.env`, because
+     * `this.env` holds the raw binding and has no invocation attached to it —
+     * the counter belongs to one alarm, and reaching past it here is exactly
+     * how this read came to be outside the count.
+     */
+    db: D1Database,
     recoverPending = false,
   ): Promise<void> {
     const sockets = this.state.getWebSockets();
@@ -682,10 +710,11 @@ export class ChainIngestDO {
     // failed cursor read) sends no heartbeat at all.
     if (!isRetryableScanSkip(result.skipped)) {
       try {
-        const row = await this.env.DB.prepare(
-          `SELECT last_block, updated_at FROM indexer_cursor
+        const row = await db
+          .prepare(
+            `SELECT last_block, updated_at FROM indexer_cursor
            WHERE chain_id = ? AND kind = 'diamond'`,
-        )
+          )
           .bind(chainId)
           .first<{ last_block: number; updated_at: number }>();
         if (row) {

@@ -120,6 +120,7 @@ import {
   createBudget,
   createChainClient,
   meterEnv,
+  reportSpend,
   spent,
   type TickBudget,
 } from './subrequestBudget';
@@ -383,7 +384,14 @@ export async function runChainIndexer(
     results.push(r);
   } catch (err) {
     console.error(`[chainIndexer] chain ${chain.id} failed`, err);
-    results.push({ ...emptyResult('chain-error'), chainId: chain.id });
+    // The count belongs on the failure result too. A pass that threw still
+    // spent what it spent, and the tick that went wrong is the one an
+    // operator most wants the figure for.
+    results.push({
+      ...emptyResult('chain-error'),
+      chainId: chain.id,
+      invocationSubrequestsSpent: spent(budget),
+    });
   }
 
   // Advance pointer regardless of pass success — sticking on a failing
@@ -1724,19 +1732,16 @@ export async function runChainIndexerForChain(
     const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
     return { ...result, invocationSubrequestsSpent: spent(budget) };
   } finally {
-    // The NORMAL figure, on every tick, at info level. A number that is only
-    // logged when it is already too late tells an operator nothing about the
-    // headroom they have; this is what makes the constants re-tunable from
-    // evidence instead of from argument.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[chainIndexer] subrequests ${JSON.stringify({
-        chainId: chain.id,
-        spent: spent(budget),
-        limit: budget.limit,
-        scope: budget.label,
-      })}`,
-    );
+    // The NORMAL figure, on every tick. A number that is only logged when it
+    // is already too late tells an operator nothing about the headroom they
+    // have; this is what makes the constants re-tunable from evidence instead
+    // of from argument.
+    //
+    // NOT the last word on the invocation, and it does not claim to be: the
+    // ingest DO does more work after this returns, and reports again at its
+    // own exit (#2227 r2 `4033723744`). `at` is in the line precisely so two
+    // readings of one counter cannot be mistaken for a disagreement.
+    reportSpend(budget, `chain ${chain.id} pass exit`);
   }
 }
 

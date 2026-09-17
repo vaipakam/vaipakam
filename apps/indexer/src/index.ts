@@ -76,8 +76,7 @@ import {
   createBudget,
   meterEnv,
   meterFetch,
-  overspent,
-  spent,
+  reportSpend,
 } from './subrequestBudget';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
@@ -308,17 +307,7 @@ export default {
     // rather than `all`: a failed pass still spent what it spent, and the
     // number is most worth having on the tick that went wrong.
     ctx.waitUntil(
-      Promise.allSettled(passes).then(() => {
-        // eslint-disable-next-line no-console
-        console.log(
-          `[indexer] subrequests ${JSON.stringify({
-            scope: budget.label,
-            spent: spent(budget),
-            limit: budget.limit,
-            over: overspent(budget),
-          })}`,
-        );
-      }),
+      Promise.allSettled(passes).then(() => reportSpend(budget, 'tick exit')),
     );
   },
 

@@ -413,7 +413,16 @@ The app uses chain reads and indexed reads for different jobs.
   share one count. For the same reason, a read that fails and is retried costs
   what the attempts cost: an attempt that reaches the network is a request
   whether or not the caller asked for it, and the attempts a failing provider
-  causes are exactly the ones that decide whether a run survives.
+  causes are exactly the ones that decide whether a run survives. **A request
+  answered by "the address moved" is the same case**: reaching the new address
+  is another request, so a count that charged only for the first would be
+  short by however many moves the run was sent on.
+- **The run is counted to its own end, not to the end of its main job.** Where
+  a run does further work after the part that reads the network — announcing
+  what changed to anyone listening, for instance — that work issues requests
+  too, and they come out of the same allowance. A figure reported when the
+  main job finished would be short by them, and a run finishing at its limit
+  could then issue a further request with nothing having said so.
 - **Every run reports what it spent, including the ones that end early or
   fail, and a run that passes the limit says so at the moment it happens.**
   The ordinary figure is the one that makes the limits re-settable from
