@@ -262,8 +262,13 @@ export function quarantineStatements(
  *     for it;
  *   - `ReconcileContext.discloseSideTableBatch` is REQUIRED, so a new
  *     reconcile context does not compile without deciding what it discloses;
- *   - a source assertion refuses a hand-written single-loan delete anywhere
- *     in these modules, which is how the three existing sites drifted apart.
+ *   - a source assertion refuses a hand-written single-loan delete EXECUTED
+ *     BY THESE MODULES, which is how the three existing sites drifted apart.
+ *     It does not — and must not — cover the DELETE text the report writes
+ *     out for an operator to run: that is a person's deliberate act, guarded
+ *     and reported on its own terms, and routing it through a form built to
+ *     announce what the platform did unwatched would be announcing someone's
+ *     action back to them (#2231 r21 `4038149879`).
  *
  * What remains a convention is the last step: the caller passing its batch
  * results to `discloseQuarantineReleases`. Making that unavoidable would mean

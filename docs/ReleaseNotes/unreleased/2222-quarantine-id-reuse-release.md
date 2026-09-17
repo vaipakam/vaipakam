@@ -147,7 +147,9 @@ done one at a time, as each was noticed. That is how the third one stayed
 silent: in the very case worth disclosing, a reused number's replacement
 closing normally, the entry vanished without a word while the other two paths
 announced themselves. The missing piece was never a case, it was a rule. There
-is now a single shared way to write the release of ONE entry, and it reports
+is now a single shared way for the platform to release ONE entry by itself — a
+removal a PERSON runs is a different thing and outside this rule, written out
+for them one per entry and guarded as described above — and it reports
 what it removed, and a new route cannot be added without deciding what it
 announces.
 

@@ -453,8 +453,8 @@ The app uses chain reads and indexed reads for different jobs.
   rest, returning for each the value its safe removal needs rather than the
   identifier alone. A listing that simply stopped would
   be the silent truncation everything here is written to avoid.
-- **Every route that releases a LONG-HELD record announces it, and there is
-  only one way to write a single-record release.** The qualifier is not
+- **Every route by which the PLATFORM releases a LONG-HELD record announces
+  it, and there is only one way to write such a release of a single record.** The qualifier is not
   hedging: a record released before it was ever reported is deliberately NOT
   announced, because that is the ordinary case this memory is built around — a
   reading failed, the record was held for a turn, the next turn settled it —
@@ -464,10 +464,20 @@ The app uses chain reads and indexed reads for different jobs.
   The platform releases records from more than one place — a periodic sweep, a
   run that settles the position, and the close-out that ends it — and
   disclosure was added to those one at a time as each was noticed, which is
-  precisely how one of them stayed silent. A release of a SINGLE record is now
-  expressible only through one shared form that always carries back what it
-  removed, so no route has to remember to ask for that, and a new route cannot
-  be added without deciding what it discloses.
+  precisely how one of them stayed silent. A release the platform performs BY
+  ITSELF, of a single record, is now expressible only through one shared form
+  that always carries back what it removed, so no route has to remember to ask
+  for that, and a new route cannot be added without deciding what it
+  discloses.
+
+  A removal a PERSON runs is outside that rule, and deliberately so. The
+  report writes those out for them, one per record, and they are the subject
+  of their own points above — guarded against a sighting arriving in between,
+  reporting whether they matched, withheld entirely where they could not run.
+  Routing them through a form built to announce what the platform did by
+  itself would be announcing a person's action back to the person who took
+  it. The rule is about routes that act unwatched; that is exactly why it
+  exists.
 
   The periodic sweep is the exception, and naming it is the point. It removes
   a batch in one instruction, so it cannot use a per-record form and a check
