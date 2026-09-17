@@ -13,12 +13,19 @@ remaining deadlines, the very ones that should have been next — were stepped
 over.
 
 Under sustained load this ran the service's own rule backwards: reminders about
-payments further away went out while nearer ones waited. Nothing was lost, and
-that is why this was treated as an ordering fault rather than an outage — the
-position wraps to the front when it runs off the end, so a stepped-over loan is
-reached on a later pass, and the reminder window is days wide against runs that
-happen every minute. But "it gets there eventually" is not what the service
-says it does.
+payments further away went out while nearer ones waited.
+
+Whether any reminder was actually missed is **not known, and is not claimed
+here**. The reasoning that made this look harmless was that the position wraps
+to the front when it runs off the end, so a stepped-over loan is reached on a
+later pass — but that argument holds only if the list is worked through. If
+loans enter the list about as fast as they are handled, its end keeps moving,
+the wrap may not come, and a loan stepped over near the front can pass its
+deadline and leave the window before anything reaches it. That is the same
+sustained load the fault needs to appear in the first place. Establishing
+which of those actually happened would take production evidence nobody has
+gathered, so this is recorded as an ordering fault of unknown consequence
+rather than as one known to be harmless.
 
 It now records **the deadline** it stopped at, and resumes at the first loan due
 at or after that moment. A deadline does not move when other loans are reminded,

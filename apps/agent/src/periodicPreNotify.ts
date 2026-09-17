@@ -768,7 +768,7 @@ async function preNotifyChain(
   // it examined 50 — so the old `examined < due.length` was true and the tick
   // announced a remainder it had just consumed, telling an operator the run
   // was partial when it had completed the window.
-  if (cursor < due.length) {
+  if (!resumeAtEnd) {
     // THE SAME THRESHOLD THE LOOP TESTS (#2213 r14 `4013761165`). The loop
     // needs a batch read AND a loan's sends to continue, so a tick stopping
     // with exactly four left was halted by the allowance and reported only
@@ -1434,12 +1434,38 @@ async function scanResumeKey(
     )
       .bind(chainId)
       .first<{ next_checkpoint: number; loan_id: number }>();
-    if (!row) return SCAN_FROM_TOP;
+    // SAID, BOTH WAYS (#2229 r1 `4034434474`). A cursor that is gone and a
+    // cursor that is unreadable have the same consequence — the lane re-reads
+    // a prefix — and this file's own promise is that an unavailable position
+    // is announced rather than absorbed. Returning quietly on the two
+    // non-throwing paths would have made that promise true only of the
+    // throwing one, and a row being deleted or corrupted repeatedly is
+    // exactly the case an operator would never hear about.
+    //
+    // A chain that has genuinely never been scanned has no position to be
+    // missing, so that first tick is not reported as a loss: it is the same
+    // absent row, and the sentence says which it is.
+    if (!row) {
+      console.warn(
+        `[periodicPreNotify] chain ${chainId}: no stored scan position; ` +
+          `starting from the nearest deadline. Expected once for a chain this ` +
+          `lane has not scanned before, and after a restore clears the row — ` +
+          `repeated appearances otherwise mean the position is not being kept.`,
+      );
+      return SCAN_FROM_TOP;
+    }
     const checkpoint = Number(row.next_checkpoint);
     const loanId = Number(row.loan_id);
     // A stored pair that is not a pair of numbers is not a position. Falling
     // back to the top is the same safe direction as an absent row.
     if (!Number.isFinite(checkpoint) || !Number.isFinite(loanId)) {
+      console.warn(
+        `[periodicPreNotify] chain ${chainId}: the stored scan position is ` +
+          `not a pair of numbers (${String(row.next_checkpoint)}, ` +
+          `${String(row.loan_id)}); starting from the nearest deadline. That ` +
+          `re-reads a prefix rather than skipping one, but the position is ` +
+          `not being kept and the tail will not be reached until it is.`,
+      );
       return SCAN_FROM_TOP;
     }
     return { checkpoint, loanId };

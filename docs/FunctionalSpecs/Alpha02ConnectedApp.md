@@ -382,15 +382,27 @@ The app uses chain reads and indexed reads for different jobs.
   two requirements are held together rather than traded off.
 - **The place it saves is a DEADLINE, not a position in a list.** The run
   resumes at the first record whose deadline is at or after the one it
-  recorded. This is what makes nearest-first survive a run that stops partway:
-  the list of records awaiting a reminder is rebuilt each run, and the ones
-  reminded last time are no longer in it, so a remembered *position* points
-  further along than it did — past exactly as many of the nearest remaining
-  deadlines as were handled. A deadline does not move when other records
-  enter or leave. Where the recorded place cannot be read at all, the run
-  begins at the nearest deadline: that repeats work already done and never
-  steps over a nearer deadline, which is the direction this failure must
-  take.
+  recorded. This is what stops the saved place drifting: the list of records
+  awaiting a reminder is rebuilt each run, and the ones reminded last time are
+  no longer in it, so a remembered *position* points further along than it did
+  — past exactly as many of the nearest remaining deadlines as were handled.
+  A deadline does not move when other records are handled or leave. Where the
+  recorded place cannot be read at all, the run begins at the nearest
+  deadline: that repeats work already done and never steps over a nearer
+  deadline, which is the direction this failure must take, and the run says
+  so rather than falling back quietly.
+- **What "nearest first" does and does not promise, stated exactly.** Within
+  one pass through the list, records are taken nearest deadline first. Across
+  passes, the saved place means the run continues rather than restarting, so
+  every record gets its turn within one pass of the list rather than
+  competing forever with the nearest ones. It does NOT promise preemption: a
+  record that becomes known *after* the run has already passed its deadline in
+  the order waits for the next pass rather than jumping the queue. That
+  matters only where a pass takes longer than the notice period itself — a
+  backlog deep enough that the list cannot be worked through in the days the
+  reminder window covers — and in that state the service is under-provisioned
+  in a way no ordering can conceal. The honest statement is that this is
+  bounded by how long a pass takes, not that it cannot happen.
 - **The same allowance governs the runs that keep the records current, and
   those runs COUNT what they spend rather than estimating it.** The service
   that follows each network and writes down what happened draws on the same
