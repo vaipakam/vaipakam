@@ -228,9 +228,25 @@ interface ReleasedMarker {
  * was never reported while it was held.
  *
  * Reads the batch results and needs no index arithmetic: only the deletes
- * carry `RETURNING`, so a result with rows IS a release. Degrades to silence
- * rather than throwing if a driver hands back no `results` — this is a log,
- * and it must never be the reason a pass fails.
+ * carry `RETURNING`, so a result with rows IS a release.
+ *
+ * WHAT IS AND IS NOT SUBSTANTIATED ABOUT THAT, so a later reader need not
+ * redo the check. Cloudflare documents `batch()` as returning "an array of
+ * `D1Result` objects", each carrying a `results` array — that shape is
+ * certain. That D1 surfaces `RETURNING` rows through a statement result is
+ * also certain: `consumeTelegramLinkCode` reads a `DELETE … RETURNING` row in
+ * production. That the two compose — RETURNING rows landing in `results` on
+ * the BATCH path specifically — is an INFERENCE across those two facts, and
+ * D1's documentation does not mention `RETURNING` at all.
+ *
+ * It is kept on that inference where the stale report's window function was
+ * reverted off a comparable one, and the difference is the failure mode, not
+ * the confidence. A rejected window function makes the report THROW, and the
+ * report is the only surface disclosing a suppression at all — the module's
+ * own defect, reintroduced by its fix. An empty `results` here makes this
+ * function return silently, which is the behaviour before this PR: an
+ * improvement that does not arrive, not a regression. Guarded accordingly —
+ * this is a log, and it must never be the reason a pass fails.
  */
 export function discloseSettledReleases(
   chainId: number,
@@ -377,10 +393,26 @@ export async function releaseTerminalQuarantine(
     .all<{ loan_id: number }>();
   const ids = (released.results ?? []).map((r) => r.loan_id);
   if (ids.length === 0) return;
+  // BOUNDED, for the same reason the stale report is (#2231 r7
+  // `4035821168`, found here by a self-review of this PR's own diff rather
+  // than by a round).
+  //
+  // This sweep releases everything terminal on the chain in one statement, so
+  // a mass close-out or a backfill can return thousands of ids — and joining
+  // them into one line is precisely the defect the report was just corrected
+  // for, arriving by the other door. The count is exact and free, so the
+  // bound costs only the tail of a roster nobody reads past.
+  const named = ids.slice(0, STALE_ROLL_CALL_LIMIT);
+  const unnamed = ids.length - named.length;
+  const roster =
+    unnamed > 0
+      ? `${named.join(', ')} (and ${unnamed} more, not named here — this line ` +
+        `is bounded at ${STALE_ROLL_CALL_LIMIT} ids)`
+      : named.join(', ');
   console.warn(
     `[loanQuarantine] chain ${chainId}: released ${ids.length} held ` +
       `entr${ids.length === 1 ? 'y' : 'ies'} whose stored loan row is ` +
-      `terminal: ${ids.join(', ')}. Ordinarily this is the entry's own loan ` +
+      `terminal: ${roster}. Ordinarily this is the entry's own loan ` +
       `closing, and releasing it is correct. It is stated because the ` +
       `condition is an identity assumption the platform cannot verify: it ` +
       `takes the stored row bearing an id to be the position the finding was ` +

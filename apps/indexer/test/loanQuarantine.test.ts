@@ -281,6 +281,32 @@ describe('the table, over the real migrated schema', () => {
     warn.mockRestore();
   });
 
+  it('bounds the ids it names when a sweep releases a great many', async () => {
+    // The sweep clears everything terminal on the chain in ONE statement, so
+    // a mass close-out or a backfill returns thousands of ids — and joining
+    // them into one line is the same unbounded-log defect #2231 r7 found in
+    // the stale report, arriving by the other door. Found by a self-review of
+    // this PR's diff rather than by a round, which is the only reason it is
+    // not a finding.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const extra = 4;
+    const ids = Array.from({ length: STALE_ROLL_CALL_LIMIT + extra }, (_, k) => 7000 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }));
+    for (const id of ids) seedLoanRow(h, id, 'repaid');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // The COUNT is exact — it is free, and it is what conveys the magnitude.
+    expect(said).toContain(`released ${STALE_ROLL_CALL_LIMIT + extra} held entries`);
+    // The ROSTER is not.
+    const shown = ids.filter((id) => new RegExp(`\\b${id}\\b`).test(said));
+    expect(shown).toHaveLength(STALE_ROLL_CALL_LIMIT);
+    expect(said).toContain(`and ${extra} more, not named here`);
+    expect(quarantined(h)).toEqual([]);
+    warn.mockRestore();
+  });
+
   it('stays silent on a sweep that released nothing', async () => {
     // The disclosure is about an assumption EXERCISED. A sweep that deleted
     // no row exercised none, and a line on every pass would bury the ones
