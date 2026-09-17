@@ -1,11 +1,12 @@
 # Release Notes — 2026-09-17
 
-Eight entries, in the order the file assembles them: the keeper's arming
+Nine entries, in the order the file assembles them: the keeper's arming
 flags, the transport epochs, the reminder hold, the indexer's request count,
 the order payment reminders go out in, what a held record now tells a person
 about the loan number it is holding, a lookup that no longer fails because a
-lot is waiting for it, and a correction to what the notification service does
-when a change merges. The transport epochs are
+lot is waiting for it, a correction to what the notification service does when
+a change merges, and — following directly from that one — how to tell whether
+any service is running the code that was merged. The transport epochs are
 the substantial one — the last part of the #1566 programme before the role
 carry-forward — and what that change adds is deliberately inert where it
 counts: no ledger arithmetic moves, and no classification comes out
@@ -92,6 +93,16 @@ turns out not to be a finishable task, so the document now states the hazard
 plainly and says the procedure is unsettled, rather than offering a list that
 reads complete and is not. That is a smaller promise than it made this morning,
 and the only one it can keep.
+
+The ninth entry grew out of the eighth, and it is worth reading for what it
+stopped claiming rather than for what it established. Having corrected one
+stale sentence about which services deploy themselves, the obvious next move
+was a reliable way to check. Two candidate checks were tried and both
+misled — looking for a build to have run, then reading a deployment's age —
+so what survives is deliberately one-sided: you can tell that a service is
+BEHIND, and you cannot tell that it is CURRENT. Saying only the half that
+holds is less satisfying than a green tick, and it is the only version that
+does not eventually tell somebody the wrong thing.
 
 ## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
 
@@ -1572,3 +1583,63 @@ reconstruct, because the condition they describe may have passed.
 
 Closes #2237.
 <!-- assembled-fragment: 2237-agent-auto-deploy-correction.md sha256=dafc0b7ee4ad0be5742e5f146d9a24dbb8f61df394c488cde52de7ea50531c96 -->
+
+## Thread — How to tell whether a service is actually running the code that was merged (PR #2243, issue #2242)
+
+A cutover step told an operator which services deploy themselves when a change
+merges, and which need deploying by hand. It was corrected earlier the same day
+because it named one service as manual when it is automatic. Measuring every
+service afterwards showed the corrected list was **also** wrong, in the other
+direction: another service deploys itself and was left out.
+
+Two errors in one list on one day is a sign the list is the wrong thing to
+maintain, so the step now leads with the test rather than the answer — and the
+test it used to name turns out not to work.
+
+**Looking for a build to have run misleads in both directions.** A change to a
+single file at the top of the repository starts a build for every one of the
+five services that build automatically; a change confined to the documentation
+folder starts none at all.
+
+And **building is not deploying** — which is the distinction that matters most
+here, and the easiest to lose. One of those five builds automatically and is
+still deployed **by hand**: its build reported success four days after its last
+deployment, and that deployment is still the one serving. Only the nightly
+backup worker has no automatic build at all. So "a build ran" can
+be true of a service the change never touched, and "no build ran" can be true
+of one that does deploy itself. The same kind of change behaves differently
+again on a branch than on the main line, which removes the last way a reader
+might have salvaged the signal. Worse, a **successful build does not mean
+anything was deployed**: one service's build reported success four days after
+its last deployment, and that deployment is still the one serving.
+
+**The deployment timestamp is the thing worth reading — in one direction
+only.** If a service's last deployment is older than the newest change
+affecting it, that change is almost certainly not live. Almost, because a
+change can carry a timestamp later than the moment it actually landed — but
+that is the safe direction to be wrong in: it costs a redundant deployment or
+a second look, where the opposite mistake costs the thing the step exists to
+prevent. The reverse does not hold: a recent-looking deployment proves
+nothing, because the comparison can be made against a stale local copy of the
+project's history, because a service can be affected by changes outside its own
+folder, and because undoing a deployment creates a *new, recent* record that
+points at *old* code.
+
+An intermediate version of this change also used staleness to infer that a
+service must be hand-deployed. That is wrong in a way worth naming: a service
+whose automatic deployment **failed** is also behind, and reading that as "this
+one is manual" sends someone to deploy around a broken build instead of fixing
+it. Being behind says the code is not live and says nothing about why.
+
+Running that comparison found two services behind: the connected app by four
+days, and the nightly backup worker by twenty-eight. Both are hand-deployed by
+design, and both had simply not been deployed. Their figures are now recorded
+in the step, as the reason to check rather than assume — "somebody will have
+deployed it" is not a safe default for either.
+
+One service appears in no deployment list at all, and that is correct: it is
+deployed as part of an arming ceremony that has not happened. The step says so,
+so it is not mistaken for drift.
+
+Part of #2242.
+<!-- assembled-fragment: 2242-deploy-currency-check.md sha256=9e6be06c94440e55c26b38d02334d51d2c73ef63444ee96f78ac31c8c6bbf8bb -->
