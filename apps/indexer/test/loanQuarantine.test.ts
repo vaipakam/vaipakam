@@ -78,7 +78,7 @@ const guardTokens = (h: SqliteD1) =>
   );
 
 async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW): Promise<unknown> {
-  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec);
+  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec, true);
   if (writes.length === 0) return [];
   return (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
 }
@@ -181,6 +181,45 @@ describe('the table, over the real migrated schema', () => {
     expect(quarantined(h)).toEqual([
       { loan_id: 99, reason: 'orphan', first_seen_at: NOW, last_seen_at: NOW },
     ]);
+  });
+
+  it('still records a marker on a database where 0053 has NOT landed', async () => {
+    // #2231 r12 `4036719800`. The canonical runbook publishes the Worker
+    // before applying migrations, so for a few minutes on every deploy this
+    // code runs against 0049's table, which has no guard column. Naming it
+    // fails the WHOLE batch, and a pass that cannot record an unsettled row
+    // leaves the next pass free to remind on it — the module's own defect,
+    // during its own upgrade.
+    //
+    // Every other test here runs the fully migrated schema, which is why
+    // mutation-checking the flag away broke nothing. This is the deploy
+    // window, built.
+    const legacy = createSqliteD1(
+      ALL_MIGRATIONS.filter((sql) => !/ADD COLUMN obs/.test(sql)),
+    );
+    const writes = quarantineStatements(
+      legacy.d1 as never,
+      CHAIN,
+      report({ examined: [31], unread: [31] }),
+      NOW,
+      false,
+    );
+    await (legacy.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
+    expect(quarantined(legacy)).toEqual([
+      { loan_id: 31, reason: 'unread', first_seen_at: NOW, last_seen_at: NOW },
+    ]);
+    // And the guard-shaped write is exactly what would have failed, which is
+    // why the flag defaults to the legacy shape rather than the new one.
+    const guarded = quarantineStatements(
+      legacy.d1 as never,
+      CHAIN,
+      report({ examined: [32], unread: [32] }),
+      NOW,
+      true,
+    );
+    await expect(
+      (legacy.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(guarded),
+    ).rejects.toThrow();
   });
 
   it('KEEPS first_seen_at when the same row is seen unsettled again', async () => {
@@ -545,7 +584,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: [13], unread: [13] }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 60);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 60, true);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -558,7 +597,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('loan 99');
     expect(said).toContain('orphan');
@@ -578,7 +617,7 @@ describe('telling the operator about a row that stays', () => {
     seedLoanRow(h, 99, 'active', 5_000);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('stored row for this id: active, from block 5000');
     // Labelled as stored and unverified, never as what the id "now holds" —
@@ -589,7 +628,7 @@ describe('telling the operator about a row that stays', () => {
     // guarded on the exact entry that was read, so a pass that re-observes
     // the id between the reading and the running is not silently dropped.
     expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
-    expect(said).toContain("AND obs = '<the guard shown");
+    expect(said).toContain('AND obs = <the guard shown');
     warn.mockRestore();
   });
 
@@ -601,7 +640,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('loan 99');
     expect(said).toContain('no stored loan row for this id');
@@ -617,7 +656,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // The three past the described page are named individually.
     for (const id of ids.slice(STALE_REPORT_LIMIT)) {
@@ -671,12 +710,42 @@ describe('telling the operator about a row that stays', () => {
         },
       };
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      await reportStaleQuarantine(counting as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+      await reportStaleQuarantine(counting as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
       warn.mockRestore();
       return trips;
     };
     expect(await subrequests(STALE_REPORT_LIMIT - 1)).toBe(1);
     expect(await subrequests(STALE_REPORT_LIMIT + 3)).toBe(1);
+  });
+
+  it('prints a legacy row\u2019s guard as something that actually executes', async () => {
+    // #2231 r12 `4036719806`. A row written before migration 0053 carries the
+    // column default \u2014 an empty string \u2014 and rendering that as the word
+    // "none" produced `obs = 'none'`, which matches nothing. An orphan may
+    // never be re-observed, so it would never acquire a token: the entry
+    // would be permanently unclearable by the documented safe route while
+    // still suppressing reminders, which is the one class of row this report
+    // exists for.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [55], unresolvable: [55] }), NOW);
+    // Exactly what 0053 leaves behind on a row written by the old shape.
+    h.db.prepare("UPDATE loan_reconcile_quarantine SET obs = '' WHERE loan_id = 55").run();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    // An empty SQL literal, not a word.
+    expect(said).toContain("guard ''");
+    expect(said).not.toContain('guard none');
+    // And the instruction does not add quotes of its own, which would turn
+    // that into four quote characters and match nothing again.
+    expect(said).toContain('AND obs = <the guard shown');
+    // The command it produces is the one that works.
+    const removed = h.db
+      .prepare("DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? AND obs = ''")
+      .run(CHAIN, 55);
+    expect(Number(removed.changes)).toBe(1);
   });
 
   it('bounds the roll call, and says exactly how many it is not naming', async () => {
@@ -697,7 +766,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // The TOTAL is exact past the cap — the window function, not the page.
     expect(said).toContain(`${STALE_ROLL_CALL_LIMIT + extra} loan(s) held back`);
@@ -723,7 +792,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).not.toContain('described next tick');
     expect(said).toContain('does not rotate');
@@ -743,7 +812,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // Every undescribed id carries its own GUARD value, not just an id — and
     // the guard is the per-observation token, not the whole-second timestamp
@@ -752,7 +821,7 @@ describe('telling the operator about a row that stays', () => {
     for (const id of ids.slice(STALE_REPORT_LIMIT)) {
       const obs = byId.get(id);
       expect(obs).toMatch(/^[0-9a-f]{8}$/);
-      expect(said).toContain(`${id}@${obs}`);
+      expect(said).toContain(`${id}@'${obs}'`);
       // And NOT the timestamp, which is what made the guard unsound.
       expect(said).not.toContain(`${id}@${NOW}`);
     }
@@ -821,7 +890,7 @@ describe('telling the operator about a row that stays', () => {
     await apply(h, report({ examined: [42], unresolvable: [42] }), NOW);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     warn.mockClear();
-    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('last recorded unsettled');
     // The claim it must NOT make: that the row has not been looked at since.
@@ -835,8 +904,22 @@ describe('how often the table is probed for', () => {
    * A `sqlite_master` read is a D1 binding call and therefore one of the
    * Worker's ~50 subrequests. The costs below are counted, not assumed.
    */
-  function countingDb(present: boolean | 'throws') {
+  /**
+   * `present` may be `'legacy'`: the table is there but without 0053's guard
+   * column, which is what a database looks like during the deploy window the
+   * canonical runbook creates (#2231 r12 `4036719800`).
+   *
+   * The stub returns the table's DDL because that is what the probe reads —
+   * it used to return `{ name }`, and a stub answering a question the code no
+   * longer asks is how a probe test keeps passing while it has stopped
+   * covering the probe.
+   */
+  function countingDb(present: boolean | 'legacy' | 'throws') {
     let probes = 0;
+    const legacyDdl =
+      `CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER, loan_id INTEGER, ` +
+      `reason TEXT, first_seen_at INTEGER, last_seen_at INTEGER)`;
+    const currentDdl = legacyDdl.replace(/\)$/, `, obs TEXT NOT NULL DEFAULT '')`);
     return {
       probes: () => probes,
       db: {
@@ -845,7 +928,8 @@ describe('how often the table is probed for', () => {
             async first<T>(): Promise<T | null> {
               probes += 1;
               if (present === 'throws') throw new Error('D1_ERROR: unavailable');
-              return present ? ({ name: 'loan_quarantine' } as unknown as T) : null;
+              if (present === 'legacy') return { sql: legacyDdl } as unknown as T;
+              return present ? ({ sql: currentDdl } as unknown as T) : null;
             },
           };
         },
@@ -898,6 +982,65 @@ describe('how often the table is probed for', () => {
     probe.beginPass();
     expect(await probe(db)).toBe('present');
     expect(probes()).toBe(1);
+  });
+
+  it('keeps re-asking while the guard column has not landed yet', async () => {
+    // #2231 r12 `4036719800`. A table without 0053's column is a database
+    // mid-deploy, not a settled one. Latching `present` on the table alone
+    // would leave the write path on the legacy shape for the life of the
+    // isolate — long after the migration landed — so the probe stays curious
+    // until BOTH are there, while still costing one read per pass.
+    const { db, probes } = countingDb('legacy');
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    expect(await probe(db)).toBe('present');
+    expect(await probe(db)).toBe('present');
+    expect(probes()).toBe(1);
+    expect(probe.guardColumn()).toBe(false);
+    probe.beginPass();
+    expect(await probe(db)).toBe('present');
+    expect(probes()).toBe(2);
+  });
+
+  it('stops asking once BOTH the table and the guard column are there', async () => {
+    const { db, probes } = countingDb(true);
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    await probe(db);
+    expect(probe.guardColumn()).toBe(true);
+    probe.beginPass();
+    await probe(db);
+    expect(probes()).toBe(1);
+  });
+
+  it('never lets a FAILED probe downgrade a guard it already saw', async () => {
+    // The direction that matters: a hiccup must not send a healthy database's
+    // write path back to the legacy shape, which would stop recording guards
+    // and leave those rows unclearable by the documented route.
+    let present: boolean | 'throws' = true;
+    let probes = 0;
+    const db = {
+      prepare() {
+        return {
+          async first<T>(): Promise<T | null> {
+            probes += 1;
+            if (present === 'throws') throw new Error('D1_ERROR: unavailable');
+            return {
+              sql: `CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER, obs TEXT)`,
+            } as unknown as T;
+          },
+        };
+      },
+    };
+    const probe = createQuarantineAvailability();
+    probe.beginPass();
+    await probe(db as never);
+    expect(probe.guardColumn()).toBe(true);
+    present = 'throws';
+    probe.beginPass();
+    await probe(db as never);
+    expect(probe.guardColumn()).toBe(true);
+    expect(probes).toBe(1);
   });
 
   it('caches NOTHING negative for a caller that never opens a pass', async () => {

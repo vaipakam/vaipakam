@@ -1294,7 +1294,12 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
         err,
       );
     }
-    await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
+    await reportStaleQuarantine(
+      env.DB,
+      chainId,
+      Math.floor(Date.now() / 1000),
+      quarantineAvailableForWrites.guardColumn() === true,
+    );
   } catch (err) {
     // The marks are unaffected: this is the read that NAMES long-held rows.
     // Withholding continues; what is lost is the operator being told.
@@ -1603,7 +1608,13 @@ export async function _runLoanReconcilePass(input: {
     const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
     if (writeAvailability !== 'absent') {
       try {
-        const writes = quarantineStatements(env.DB, chainId, report, nowSec);
+        const writes = quarantineStatements(
+          env.DB,
+          chainId,
+          report,
+          nowSec,
+          quarantineAvailableForWrites.guardColumn() === true,
+        );
         if (writes.length > 0) {
           const outcome = await env.DB.batch(writes);
           // The settle path releases held markers too, including on an id

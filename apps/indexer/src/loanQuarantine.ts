@@ -147,6 +147,21 @@ export function quarantineStatements(
   chainId: number,
   report: ReconcileReport,
   nowSec: number,
+  /**
+   * Whether 0053's guard column is known to be there (#2231 r12
+   * `4036719800`).
+   *
+   * DEFAULTS TO THE LEGACY SHAPE, and that direction is the whole point: an
+   * insert that omits `obs` succeeds on BOTH schemas — the column takes its
+   * default — while one that names it fails the entire batch on a database
+   * that has not been migrated yet. The canonical runbook publishes the
+   * Worker before applying migrations, so that database exists for a few
+   * minutes on every deploy, and a pass that cannot record an unsettled row
+   * leaves the next pass free to remind on it. Guessing wrong in the other
+   * direction costs those rows a guard token; guessing wrong this way costs
+   * the marker itself.
+   */
+  withGuard = false,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   for (const { loanId, reason } of unsettledRows(report)) {
@@ -155,17 +170,28 @@ export function quarantineStatements(
     // ghost nobody resolved — and an upsert that refreshed it on every
     // re-observation would erase exactly that.
     statements.push(
-      db
-        .prepare(
-          `INSERT INTO loan_reconcile_quarantine
-             (chain_id, loan_id, reason, first_seen_at, last_seen_at, obs)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(chain_id, loan_id) DO UPDATE SET
-             reason = excluded.reason,
-             last_seen_at = excluded.last_seen_at,
-             obs = excluded.obs`,
-        )
-        .bind(chainId, loanId, reason, nowSec, nowSec, observationToken()),
+      withGuard
+        ? db
+            .prepare(
+              `INSERT INTO loan_reconcile_quarantine
+                 (chain_id, loan_id, reason, first_seen_at, last_seen_at, obs)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
+                 reason = excluded.reason,
+                 last_seen_at = excluded.last_seen_at,
+                 obs = excluded.obs`,
+            )
+            .bind(chainId, loanId, reason, nowSec, nowSec, observationToken())
+        : db
+            .prepare(
+              `INSERT INTO loan_reconcile_quarantine
+                 (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
+                 reason = excluded.reason,
+                 last_seen_at = excluded.last_seen_at`,
+            )
+            .bind(chainId, loanId, reason, nowSec, nowSec),
     );
   }
   // ONE STATEMENT PER ROW, not an interpolated `IN (...)` list. The pass
@@ -598,10 +624,34 @@ export async function releaseTerminalQuarantine(
  *    while never being named. The total is counted separately and the
  *    overflow is stated, so "20 shown" can never read as "20 exist".
  */
+/**
+ * A guard rendered as the SQL LITERAL the operator pastes (#2231 r12
+ * `4036719806`).
+ *
+ * It read `obs || 'none'`, which turns the empty guard on a pre-0053 row into
+ * the word `none` — so the prescribed clear became `obs = 'none'`, matching
+ * nothing. Not a cosmetic slip: an orphan may never be re-observed, so it
+ * would never acquire a token, and the entry would be permanently unclearable
+ * by the safe route while going on suppressing reminders. The one class of row
+ * this report exists for would be the one it could not help with.
+ *
+ * Quoting HERE rather than in the instruction's template is what makes the
+ * empty case work: a template that wrapped the printed value in quotes would
+ * turn an empty guard into four quote characters and match nothing again.
+ */
+function sqlGuard(obs: string): string {
+  return `'` + obs.replace(/'/g, `''`) + `'`;
+}
 export async function reportStaleQuarantine(
   db: D1Database,
   chainId: number,
   nowSec: number,
+  /** As for the writes: selecting `q.obs` fails outright on a database where
+   *  0053 has not landed, so the report asks for it only once the probe has
+   *  seen it (#2231 r12 `4036719800`). A report that throws during a deploy
+   *  window is a report that hides every suppression precisely when the
+   *  deploy is the thing most likely to have caused one. */
+  withGuard = false,
 ): Promise<void> {
   const cutoff = nowSec - QUARANTINE_STALE_SECONDS;
   // ONE QUERY, WHATEVER THE DATA SAYS (#2231 r6 `4035682768`).
@@ -663,18 +713,38 @@ export async function reportStaleQuarantine(
   //
   // A LEFT JOIN, so an entry whose loan row is absent — the orphan, the case
   // that lingers — is still listed, with nothing claimed about it.
-  const pageStatement = db
-    .prepare(
-      `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at, q.obs,
-              l.status AS loan_status, l.start_block AS loan_start_block
-         FROM loan_reconcile_quarantine q
-         LEFT JOIN loans l
-           ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
-        WHERE q.chain_id = ? AND q.first_seen_at <= ?
-        ORDER BY q.first_seen_at ASC
-        LIMIT ?`,
-    )
-    .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT);
+  // TWO STATIC STATEMENTS, not one built with an interpolated column list.
+  // The #1149 guard reads static `prepare` sites and schema-checks them; a
+  // `${...}` in the select list moves this one out of its reach, which the
+  // guard's own pinned skip-count caught. Duplicating ten lines is the price
+  // of keeping both shapes checked, and the shape that runs in the deploy
+  // window is exactly the one nobody exercises locally.
+  const pageStatement = withGuard
+    ? db
+        .prepare(
+          `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at, q.obs,
+                  l.status AS loan_status, l.start_block AS loan_start_block
+             FROM loan_reconcile_quarantine q
+             LEFT JOIN loans l
+               ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
+            WHERE q.chain_id = ? AND q.first_seen_at <= ?
+            ORDER BY q.first_seen_at ASC
+            LIMIT ?`,
+        )
+        .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT)
+    : db
+        .prepare(
+          `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at,
+                  '' AS obs,
+                  l.status AS loan_status, l.start_block AS loan_start_block
+             FROM loan_reconcile_quarantine q
+             LEFT JOIN loans l
+               ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
+            WHERE q.chain_id = ? AND q.first_seen_at <= ?
+            ORDER BY q.first_seen_at ASC
+            LIMIT ?`,
+        )
+        .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT);
   // ONE SNAPSHOT, because the count and the page describe the same moment or
   // they describe nothing (#2231 r11 `4036569628`).
   //
@@ -737,7 +807,7 @@ export async function reportStaleQuarantine(
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
         `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}, ` +
-        `guard ${r.obs || 'none'}; ` +
+        `guard ${sqlGuard(r.obs)}; ` +
         `${points})`
       );
     })
@@ -772,7 +842,7 @@ export async function reportStaleQuarantine(
     //
     // The value is already in hand: the same statement selects it for every
     // row it returns. Pairing it costs bytes, not a query.
-    const ids = named.map((r) => `${r.loan_id}@${r.obs || 'none'}`).join(', ');
+    const ids = named.map((r) => `${r.loan_id}@${sqlGuard(r.obs)}`).join(', ');
     // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
     // count is exact even here, so this is a stated limit rather than a page
     // that quietly ended (#2231 r7 `4035821168`).
@@ -822,8 +892,10 @@ export async function reportStaleQuarantine(
       `between your reading this and running it can re-observe the id as ` +
       `unsettled, and an unconditional delete would then drop that fresh ` +
       `finding instead: DELETE FROM loan_reconcile_quarantine WHERE ` +
-      `chain_id = <chain> AND loan_id = <id> AND obs = '<the guard shown ` +
-      `above for that row>'. The guard changes on EVERY observation, which ` +
+      `chain_id = <chain> AND loan_id = <id> AND obs = <the guard shown ` +
+      `above for that row, quotes included — an entry written before the ` +
+      `guard column landed shows an empty pair and that is a valid guard ` +
+      `for it>. The guard changes on EVERY observation, which ` +
       `a timestamp does not — two sightings in one second leave a timestamp ` +
       `identical and would let this delete a finding you never saw. If it ` +
       `deletes nothing, the entry changed under you and wants re-reading. Note also that an entry IS released ` +
@@ -941,23 +1013,62 @@ export interface QuarantineAvailabilityProbe {
   (db: QuarantineProbeDb): Promise<QuarantineAvailability>;
   /** Forget a cached `absent`/`unknown`; a cached `present` survives. */
   beginPass(): void;
+  /**
+   * Whether migration 0053's guard column has landed, as of the last probe
+   * that succeeded — `'unknown'` before any has (#2231 r12 `4036719800`).
+   *
+   * A SECOND ANSWER FROM THE SAME READ, not a second probe. The deploy
+   * window this whole probe exists for applies to a COLUMN exactly as it
+   * does to a table: the canonical runbook publishes the Worker before
+   * applying migrations, so new code runs for a few minutes against 0049's
+   * table, which has no `obs`. An insert naming it fails the whole
+   * quarantine batch, and a pass that cannot record an unsettled row leaves
+   * the next pass free to remind on it — the module's own defect, during its
+   * own upgrade.
+   *
+   * `sqlite_master.sql` carries the table's full DDL including columns added
+   * by `ALTER TABLE`, so asking for it instead of the name answers both
+   * questions for one read and no extra subrequest.
+   */
+  guardColumn(): boolean | 'unknown';
 }
 
 export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   let seen = false;
   let passOpen = false;
   let thisPass: QuarantineAvailability | null = null;
+  // Latches on TRUE only, like `seen`: a column cannot un-land, and a probe
+  // that failed must not be able to downgrade a `true` into a `false` and
+  // send the write path back to the legacy shape on a healthy database.
+  let guard: boolean | 'unknown' = 'unknown';
   const probe = async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
-    if (seen) return 'present';
+    // FULLY SETTLED: the table is there AND the guard column is there. Only
+    // then can this stop asking for good — a database seen without `obs` is
+    // one mid-deploy, and it must be re-asked (once per pass) so the write
+    // path picks up 0053 the moment it lands rather than at the next isolate.
+    if (seen && guard === true) return 'present';
+    // Otherwise still AT MOST ONCE PER PASS, exactly as before: the pass
+    // cache covers the guard question too, so a legacy database costs one
+    // probe a pass and not one per call.
     if (thisPass !== null) return thisPass;
     try {
       const row = await db
         .prepare(
-          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
+          `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
         )
-        .first<{ name: string }>();
+        .first<{ sql: string | null }>();
       if (row) {
         seen = true;
+        if (passOpen) thisPass = 'present';
+        // A word-boundary match on the stored DDL. The column list is the
+        // only place an identifier appears there — SQLite does not keep
+        // comments for a column added by `ALTER TABLE` — so this is a
+        // question about text with one right answer, not a parse.
+        // TRUE or FALSE, never left `'unknown'` once the DDL has been read:
+        // "the column is not there" is a definite answer and the write path
+        // needs it, so it can use the legacy shape deliberately rather than
+        // guess. Only a probe that FAILED leaves the previous value alone.
+        guard = /\bobs\b/.test(row.sql ?? '');
         return 'present';
       }
       if (passOpen) thisPass = 'absent';
@@ -976,5 +1087,6 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
     passOpen = true;
     thisPass = null;
   };
+  probe.guardColumn = () => guard;
   return probe as QuarantineAvailabilityProbe;
 }
