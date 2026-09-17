@@ -166,7 +166,9 @@ that took the shared form and threw away what it returned would still be
 silent, and nothing can prevent that: these releases have to be committed
 together with unrelated work, so they cannot control their own execution. What
 changed is that staying silent is now a deliberate act rather than an
-oversight, and a check refuses any release written by hand. A guarantee a
+oversight, and a check refuses any release the platform itself performs with a
+hand-written statement — the commands it writes out for a person are a
+different thing, covered above. A guarantee a
 reader trusts without checking is worse than one they check.
 
 What a release says also depends on what licensed it, and there turned out to

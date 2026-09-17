@@ -450,8 +450,8 @@ The app uses chain reads and indexed reads for different jobs.
   states **how many** — an exact figure, not "at least", and taken in the same
   instant as the records it describes, so the two cannot disagree about a
   removal that happened between them — and gives the enquiry that lists the
-  rest, returning for each the value its safe removal needs rather than the
-  identifier alone. A listing that simply stopped would
+  rest, returning for each that record's removal instruction already written,
+  rather than the identifier alone or the values to build one from. A listing that simply stopped would
   be the silent truncation everything here is written to avoid.
 - **Every route by which the PLATFORM releases a LONG-HELD record announces
   it, and there is only one way to write such a release of a single record.** The qualifier is not
@@ -483,7 +483,9 @@ The app uses chain reads and indexed reads for different jobs.
   a batch in one instruction, so it cannot use a per-record form and a check
   that demanded it would be wrong rather than strict. It carries its own
   disclosure instead, and it is the only such place: one instruction, and a
-  check that refuses any OTHER hand-written single-record removal. An
+  check that refuses any OTHER single-record removal the platform executes by
+  hand — the report's own instructions for a person are outside it, as above.
+  An
   invariant with a stated exception is worth more than one that reads as
   absolute and is not.
 
@@ -493,7 +495,8 @@ The app uses chain reads and indexed reads for different jobs.
   these releases exist to be committed together with unrelated work and so
   cannot own their own execution. What closes the gap in practice is that the
   omission is now a deliberate act rather than an oversight, and that a check
-  refuses any release written by hand. Saying "by construction" here would
+  refuses any platform-executed release written by hand. Saying "by
+  construction" here would
   promise more than the mechanism delivers, and a guarantee a reader trusts
   without checking is worse than one they check.
 - **What a release announces depends on what licensed it, and there are four
