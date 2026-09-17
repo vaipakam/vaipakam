@@ -55,6 +55,18 @@ describe('chunkD1InList', () => {
     }
   });
 
+  it('refuses an over-capacity statement even when the list is EMPTY', () => {
+    // Deliberate, and the opposite of what #2235 r1 P3 proposed: returning []
+    // first would make the complaint depend on whether there was anything to
+    // look up, so a caller whose statement can never run passes on a quiet
+    // tick and fails on a busy one — the data-dependent failure this module
+    // exists to remove.
+    const before = Array.from({ length: D1_MAX_BOUND_PARAMETERS }, () => 'x');
+    expect(() => chunkD1InList([], { before })).toThrow(RangeError);
+    // ...while an empty list under a SANE statement is still a clean no-op.
+    expect(chunkD1InList([], { before: ['a', 'b'] })).toEqual([]);
+  });
+
   it('refuses a statement whose fixed binds leave no room for one item', () => {
     // Returning zero-width chunks instead would loop forever; this is a
     // statement that cannot run at ANY list length, so it is a bug in the

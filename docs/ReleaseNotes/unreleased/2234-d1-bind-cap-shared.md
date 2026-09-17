@@ -43,11 +43,32 @@ instruction. That is a bound on how much work one pass does, and splitting
 would remove it rather than respect it. An exception with a stated reason is
 worth more than a rule that reads absolute and quietly is not.
 
-A fourth service, the internal mesh watcher, asks similar questions and is
-deliberately kept outside the shared code for trust reasons. Its lists are
-sized by how the deployment is configured rather than by how much has
-accumulated, so they cannot grow into the limit — which is now written down
-next to them, because "it is small" is exactly what had been assumed at the two
-places where it turned out not to be true.
+A fourth service, the internal mesh watcher, asks similar questions. The first
+version of this change exempted it on the grounds that its lists are sized by
+how the deployment is configured. **That was wrong, and review caught it**: the
+set of chains it watches is read from the canonical chain itself, where nothing
+limits how many may be registered, and one chain can raise more than one
+finding. So the exemption was the same unexamined assumption of smallness that
+this change set out to remove — written in the same breath as removing it.
+
+Two of its questions could not simply be split, and the reason is worth
+recording. They were phrased as "delete everything EXCEPT these", and that
+phrasing cannot be broken into pieces: the first piece deletes what the second
+was going to keep. They now ask the opposite question — read what is stored,
+work out what is not being kept, and delete that in bounded pieces — which
+splits safely and means the same thing. The read happens inside the same
+guarded boundary as the writes, so a failure of it is reported rather than
+escaping.
+
+That service also had no test of what those two operations actually delete —
+only of how they behave when the database is unavailable. So the rewrite could
+have changed the retention behaviour with every existing test still passing.
+Tests for the behaviour itself were written first, and then deliberately broken
+to confirm they would object.
+
+The watcher stays outside the shared package for trust reasons — its own
+database, its own alerting channel — but it now uses the same splitting rule,
+reached the same way it already reads shared deployment data. One definition
+beats a copy that drifts.
 
 Closes #2234.

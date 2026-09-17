@@ -81,6 +81,16 @@ export interface D1InChunk<T> {
  * item. That is a statement that can never run, so it is a programming error
  * rather than a condition to degrade around, and the alternative — returning
  * zero-width chunks — is an infinite loop.
+ *
+ * THE CAPACITY CHECK RUNS EVEN WHEN `items` IS EMPTY, and that ordering is
+ * deliberate rather than incidental (#2235 r1 P3 raised the opposite). Moving
+ * the empty-list return in front of it would make the complaint depend on
+ * whether there happened to be anything to look up — so a caller whose
+ * statement cannot run at ANY length would pass on a quiet tick and fail on a
+ * busy one. That is precisely the data-dependent failure this module exists to
+ * remove, and it would be a poor thing for the module to reintroduce in itself.
+ * A caller reaching this with an empty list is already broken; hearing about it
+ * immediately is the service being offered.
  */
 export function chunkD1InList<T>(
   items: readonly T[],

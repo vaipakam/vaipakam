@@ -1091,8 +1091,17 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
-      - name: Typecheck
+      # BOTH programs (#2235 r1 P2). `tsconfig.json` is src-only so Node's
+      # types stay out of the Worker's program; `tsconfig.test.json` adds them
+      # for the store tests, which drive the real schema through `node:sqlite`.
+      # Running only the first would leave `test/**` unchecked entirely — the
+      # split has to be matched here or it is a quiet reduction in coverage
+      # rather than a separation of concerns.
+      - name: Typecheck (src)
         run: ./node_modules/.bin/tsc --noEmit
+
+      - name: Typecheck (tests)
+        run: ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit
 
       - name: Unit tests
         run: ./node_modules/.bin/vitest run
