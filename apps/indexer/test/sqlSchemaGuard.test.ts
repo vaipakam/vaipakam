@@ -115,7 +115,18 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `closedLoanSideTables.test.ts` drives `reconcileAfterScan` end to
     // end, and `loanStatusProjection`'s heal lane runs in the scan suites.
     // A column named wrongly in the builder fails those, loudly.
-    expect(skipped.length).toBeLessThanOrEqual(14);
+    //
+    // Raised 14 → 15 for #2213 r22 (`4015173433`): the quarantine table's
+    // availability probe MOVED INTO this Worker from `@vaipakam/lib`, where
+    // this extractor could not see it. The statement itself is unchanged and
+    // as old as the probe — it interpolates `${QUARANTINE_TABLE}`, the single
+    // constant naming the table, into a `sqlite_master` lookup. So this raise
+    // records a statement entering the guard's SCOPE rather than a new
+    // dynamic statement being written, which is exactly what the pin is for:
+    // it noticed, and it should have. The shape runs against the real
+    // migrated schema in `calendarNotifications.test.ts` and
+    // `loanQuarantine.test.ts`.
+    expect(skipped.length).toBeLessThanOrEqual(15);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

@@ -13,11 +13,35 @@ const TELEGRAM_API = 'https://api.telegram.org';
  *  band change. Returns whether Telegram accepted the send, so the
  *  UX-012 test-alert round-trip can distinguish a real delivery from a
  *  silent failure (the cron callers simply ignore the boolean). */
+/**
+ * What became of one Telegram send.
+ *
+ * FOUR ANSWERS, because four different things should happen next (#2213 r24
+ * `4015538638`, extended r26 `4015927527`).
+ *
+ * A boolean first flattened a definitive refusal into a transport failure.
+ * Fixing that left `refused` covering a second pair that is just as
+ * different: an HTTP 429 or a 5xx is the service saying "not now", where a
+ * 400 or a 401 is the service saying "not ever, as configured". Filing a
+ * passing rate-limit under the bucket whose stated meaning is "will keep
+ * failing until someone repairs it" sends an operator to rotate a credential
+ * during an incident that would have cleared itself.
+ *
+ * - `accepted`  — it went.
+ * - `refused`   — answered NO about the request or the caller. Needs a person.
+ * - `transient` — answered "not now" (429, 5xx). Needs nobody; it retries.
+ * - `unknown`   — nothing answered. May or may not have arrived.
+ *
+ * All four are distinguishable structurally, from the status or from whether
+ * a response came back at all. None requires parsing a message.
+ */
+export type TelegramOutcome = 'accepted' | 'refused' | 'transient' | 'unknown';
+
 export async function sendMessage(
   token: string,
   chatId: string,
   text: string,
-): Promise<boolean> {
+): Promise<TelegramOutcome> {
   let res: Response;
   try {
     res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
@@ -30,18 +54,23 @@ export async function sendMessage(
       }),
     });
   } catch (err) {
-    // Network-level failure (DNS, timeout) — same swallow policy.
+    // Network-level failure (DNS, timeout) — same swallow policy. NOTHING
+    // came back, so whether the message arrived is genuinely unknown.
     console.error(`Telegram sendMessage threw: chat=${chatId} err=${err}`);
-    return false;
+    return 'unknown';
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     console.error(
       `Telegram sendMessage failed: chat=${chatId} status=${res.status} body=${body.slice(0, 200)}`,
     );
-    return false;
+    // WHICH KIND OF NO (#2213 r26 `4015927527`). 429 is rate limiting and 5xx
+    // is the service being unwell — both clear on their own. 4xx otherwise is
+    // the request or the credential, which does not.
+    if (res.status === 429 || res.status >= 500) return 'transient';
+    return 'refused';
   }
-  return true;
+  return 'accepted';
 }
 
 export interface TelegramUpdate {

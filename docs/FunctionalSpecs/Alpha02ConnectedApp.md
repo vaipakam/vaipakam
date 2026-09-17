@@ -270,6 +270,308 @@ The app uses chain reads and indexed reads for different jobs.
   reminders because one record could not be read, would punish every other
   holder for it — and would do so indefinitely if that record stays
   unreadable.
+- A record left out for that reason stays left out until a later turn settles
+  it, not merely for the turn that noticed. Each turn examines a handful of
+  records, so a rule applied only to the current turn's findings leaves the
+  same record reminded about on every other turn — the platform would be
+  treating *what this turn looked at* as if it were *what is currently
+  unconfirmed*, which are different questions. The stricter-looking variant
+  of that mistake fails identically: holding back every record on a turn
+  whose findings were dirty still reminds on the next turn, because that
+  turn's findings are clean for having looked elsewhere.
+- What the platform remembers about such a record is which way it could not
+  be confirmed and when it was first noticed, and it says so out loud once
+  that has lasted. The four ways need different responses, and the age is the
+  difference between a source having a bad moment and a position nobody has
+  resolved — so neither is flattened away, and the first-noticed time is
+  never refreshed by a later sighting of the same problem.
+- A record is released as soon as a turn settles it, by any route: corrected,
+  found genuinely running, or ended by someone else. It is ALSO released by a
+  standing sweep over every held record whose loan is no longer running, so a
+  release missed at close-out — for any reason, including one nobody
+  anticipated — is picked up later rather than leaving the record held for
+  good. A loan that has ended can generate no reminders, so holding its record
+  withholds nothing and only buries the records that do need a person. Holding a record back
+  forever on the strength of one unreadable moment is the same defect facing
+  the other way, and it is the failure this rule is most likely to produce if
+  it is written carelessly.
+- The payment-due reminder for a loan paying interest on a schedule is
+  confirmed against the chain before it is sent, rather than against the
+  memory above — and the confirmation covers the PERIOD as well as the loan.
+  A borrower who has just paid leaves the loan open and the platform's own
+  record pointing at the period they settled, so every other condition passes
+  and the reminder would arrive moments after the payment. The chain's own
+  record of when the last period was settled decides it: if the period the
+  reminder is about is not the period the chain is on, nothing is sent and the
+  record is left for a later run, by which time the platform's own records
+  have caught up.
+- No reminder is sent on a network where settlement is currently switched off.
+  Governance can disable periodic interest platform-wide, which stops new
+  positions taking a cadence and makes the settlement itself refuse — but
+  positions already open keep the cadence they were opened with, so they go on
+  looking due. A reminder then instructs someone to make a payment the platform
+  would reject, which is worse than silence and worst during the emergency that
+  prompted the switch. A run reads that setting before it speaks, sends nothing
+  on a network where it is off, and marks nothing — so reminders resume by
+  themselves when it is turned back on. A run that cannot READ the setting also
+  sends nothing: not knowing whether a payment can be made is not permission to
+  demand one.
+- A disagreement about WHICH period is current withholds the reminder in
+  either direction, but the two directions are reported apart. The chain being
+  further along means the borrower has paid and the platform's records are
+  catching up, and nothing needs doing. The platform's own record being
+  further along — a payment recorded and then undone by the chain
+  reorganising, or a damaged record — does not catch up, because the
+  correction pass does not revisit that field, so that position's reminders
+  stay withheld until a person fixes the record. Reporting the second as the
+  first would tell the reader to wait for something that never arrives.
+- Confirmation is only accepted from a source that has first proved it is the
+  network it is configured to be. A source pointed at a different network —
+  by a swapped setting, say — answers every question confidently and about
+  the wrong chain, and could certify a loan that has nothing to do with the
+  one being reminded about. A run asks once, and stops if the answer is wrong
+  or if the source cannot say at all.
+- Confirmation is only accepted from a view of the chain that is at least as
+  current as the platform's own records. A source lagging behind what the
+  platform has already read still reports an ended loan as running, so it
+  would confirm precisely the reminder the check exists to withhold; a run
+  that finds itself in that position sends nothing and says so, rather than
+  accepting an endorsement worth less than no check at all. A run that cannot
+  establish how current its source is — because the comparison itself failed —
+  also sends nothing: an unanswered question is not an answer, and treating it
+  as one would turn a momentary database failure into permission to send. Every loan in one
+  run is also checked against a single point in the chain's history, so a
+  source that serves part of the answer from further back fails outright
+  instead of quietly mixing two moments. It is the other message a person cannot un-receive, it is sent
+  from a different part of the platform on a different schedule, and a rule
+  held in one part does not reach the other. Confirmation means the chain
+  still has that loan and still has it in the one state the interest payment
+  can actually be made from — not merely that it has not ended, since a state
+  that cannot be paid from would invite an action the platform would then
+  refuse.
+- That confirmation is true at the moment it is made, and the platform does
+  not claim more. A loan that ends between the confirmation and the message
+  going out is still messaged. What the confirmation removes is a record that
+  has been wrong for hours or days; what remains is the few seconds in which
+  no off-chain check could have known, on a reminder about a payment still
+  days away.
+- A single run sends a bounded number of these reminders, takes the nearest
+  deadlines first, and does not always begin with the same network. Every run
+  has a fixed allowance of outbound requests — covering every request it makes,
+  its own queries to the chain included — so an unbounded one would stop
+  partway through and take every network after it down with it, on every run,
+  for as long as the load lasted. A run does not begin work on a network it
+  cannot afford to both query and send for — including the cost of confirming
+  that network's identity when that has not already been done, so a network it
+  refuses spends nothing at all and the ones behind it keep what it would
+  otherwise have wasted. The order is what makes the bound safe: a
+  reminder deferred by it is nearer the front next time and arrives well
+  before the deadline it concerns, where an arbitrary order would reach the
+  same records every run and the ones behind them never.
+- The bound is on OUTBOUND REQUESTS — every request the run issues, never on
+  records examined or records handled. "Every request" includes the run's own
+  reads and writes of the platform's records, not only its queries to the
+  chain and the messages it sends: those leave the run just as the others do,
+  and a bound that ignored them would let a run that believed it was rationing
+  its messages exceed the real limit while sending almost none.
+- The run holds back the request it needs to SAVE ITS PLACE, and refuses to
+  begin a record it could only finish by spending it. A run that used its
+  last request on a reminder and then could not record where it got to would
+  stay inside its allowance and re-read the same prefix on every later run,
+  which is the starvation the remembered position exists to prevent — so the
+  two requirements are held together rather than traded off.
+- Anything that occupies a record slot without issuing a request cannot
+  consume the allowance — a record the chain declines to confirm is the case
+  that arises, since nothing is worth asking about a loan the chain has never
+  heard of. A record whose recipients have switched these reminders off DOES
+  cost the run the lookups that established it, because there is no way to
+  know someone opted out without asking; what it never costs is the messages.
+  Were the bound on records instead, a record that sends nothing would hold
+  the whole run's allowance while never being marked as handled, so the same
+  few would sit at the front of the order on every run and the people behind
+  them would never be reached. A run therefore continues past records it
+  cannot send for, up to a stated limit of its own, reaches the ones behind
+  them in the same run, and — because its remembered place advances past them
+  — does not pay for the same prefix on the next run either.
+- A run establishes how far the platform's own records have been brought up to
+  date before trusting them against the network's head. If that position
+  cannot be READ, or if there is NO stored position for the network at all,
+  the run sends nothing — an absent position is only harmless where it
+  explains itself, and on a network with stored positions it means they are
+  there without the bookkeeping that says how current they are. The two are
+  reported distinctly even though they stop the run alike: a failed read
+  clears on its own, a position that is gone needs somebody.
+- Where the deployment's own configuration prevents a channel from working at
+  all, a run says so rather than silently not using it. "Cannot work" includes
+  the libraries the deployment is built from disagreeing with each other about
+  how to sign, not only a setting being absent or invalid — the disclosure
+  names each possible cause, because the remedy differs and they are not
+  distinguishable from the symptom. A channel established as unable to send is
+  never charged against the run's request allowance and never counted as an
+  attempt of unknown fate, because no request was made. A subscriber who has
+  asked for a channel the deployment cannot sign for can never be reached on
+  it, and a run that marks such records as handled while delivering nothing is
+  the hardest failure for an operator to notice. The count is reported once per
+  network per run, naming the setting — not once per record, which would train
+  a real misconfiguration into background noise. This covers a credential that
+  is present and unusable as well as one that is missing, and the platform
+  decides which by what the sending step actually did rather than by
+  inspecting the setting.
+- A message the delivery service ANSWERED and refused is counted apart from
+  one whose fate is unknown, and apart again from one it DEFERRED — rate
+  limiting, or the service being briefly unwell. A deferral did not deliver
+  and needs nobody; a refusal needs a person. Counting a deferral as a refusal
+  sends that person to repair a configuration that is fine. They need opposite responses — a refusal is a
+  credential or destination to fix and will keep failing until someone does,
+  where an unknown attempt may be a passing incident — so flattening them
+  leaves a reader unable to tell which is happening. Where a channel cannot
+  distinguish the two, the platform says so rather than implying that channel
+  never refuses.
+- Whether a record is marked as finished is ONE rule about the record, not a
+  verdict reached separately for each party. Marking it means "never revisit
+  this period", which is justified exactly when no later run could do better
+  for anybody. Three questions decide it:
+  - **Was anybody actually reached?** Then returning would tell them about the
+    same payment twice. The mark is per record, so one confirmed delivery
+    settles it.
+  - **Is anything uncertain?** A message that was issued and never answered
+    for may have arrived. Returning risks the same duplicate, so an unknown
+    blocks the retry exactly as a delivery does — the platform does not know,
+    and a duplicate reminder is the worse of the two ways to be wrong.
+  - **Is anybody owed another attempt?** Three things earn one, and the test
+    they share is that each is a state which can CHANGE and then make
+    delivery possible: a service that said "not now"; a subscriber who
+    switched the reminder off and may switch it back on before the deadline;
+    and a subscriber who asked for a channel this deployment cannot currently
+    use, which an operator may repair. A refusal does not qualify — it will
+    fail identically until a person acts on that credential. Having no
+    channel at all, and having no subscription, do not either: nothing about
+    those changes on its own.
+
+  The record is left unmarked when somebody is owed, nobody was reached and
+  nothing is uncertain; otherwise it is marked.
+- The third of those is worth its own statement, because it is the one that
+  looks like a settled outcome and is not. A subscriber who asked for a
+  channel this deployment cannot currently use is OWED another attempt, not
+  written off: an operator may repair the setting, or the dependency, inside
+  the notification window, and a record marked as handled is never revisited
+  — so marking it is the same "handled while delivering nothing" failure the
+  disclosure above exists to make visible, arriving one step later. It stays
+  unmarked until a usable channel
+  either succeeds or leaves the outcome uncertain.
+- A refusal does not earn another attempt, but it does not block one either.
+  So a record where one party is owed an attempt and the other's channel was
+  refused comes back, and the refused channel is tried again beside the party
+  who is owed — there is no way to reach one without the other. The cost is a
+  futile attempt each time that record comes round, which on a deployment
+  whose credential has been rotated is every record with a party who has
+  switched reminders off. What bounds it is the remembered scan position,
+  which advances past an unmarked record exactly as it does past a marked
+  one: the futile attempt costs once per trip round the window, not once per
+  run.
+- **Being owed another attempt is not cancelled by the other party having
+  nothing to offer.** A borrower whose reminder the service deferred stays
+  owed one even when their lender turns out to have no usable channel at all;
+  the lender's absence is not a reason to spend the borrower's retry. Only a
+  real delivery or a real uncertainty may end it, because only those two can
+  result in somebody being told twice. **This changes a previously stated
+  behaviour**: a record where one party had no usable channel and the other
+  had switched reminders off used to be marked, on the reasoning that the
+  first party was settled. That is true of them and says nothing about the
+  second, who may re-enable before the deadline — and since nothing was sent
+  to anybody, there was no duplicate to protect against.
+- Where a run reports how many subscribers a configuration problem affects, it
+  counts distinct subscribers and not how many records they appear on. One
+  wallet that is a counterparty on many positions is one affected subscriber;
+  reporting it as many turns a single stale subscription into what reads like
+  a deployment-wide outage, and those call for different responses.
+- No reminder is sent on a network that is globally halted, which is a
+  separate setting from the periodic-interest one and is checked first by the
+  settlement route itself — and the platform asks it first too, so that when
+  both are closed the reader is told about the halt rather than the milder
+  state, and a failed read of the other setting cannot hide it. A network can therefore have periodic interest
+  enabled and still refuse every payment. The halt also closes ordinary
+  repayment, so someone told to pay has no route at all — which makes this the
+  more serious of the two to get wrong. As with the other setting, a run that
+  cannot read it sends nothing.
+- Agreeing on a payment date is not agreeing on a payment schedule. Two
+  different schedules produce the same date whenever the last payments differ
+  by exactly the gap between them, so a run that checked only the date could
+  send a reminder describing a schedule the position does not have. The
+  schedule the platform read the position with must match the chain's, as part
+  of what makes the reminder allowed at all.
+- Every question a run asks the chain is asked about the SAME moment in that
+  chain's history — whether settlement is currently possible as much as whether
+  each position is still running. A setting read at "now" while the positions
+  are read at a fixed moment can describe a state the positions were never read
+  at, either because it changed in between or because two machines behind one
+  address answered from different heights, and the result is the very reminder
+  these rules exist to withhold. A run therefore settles on one moment before
+  it reads anything, and accepts an extra question on a network with nothing
+  due as the price of every answer describing one moment.
+- A run that COMPLETES also reports, whenever anything happened that someone
+  would want to know about — records nobody could be told about, attempts
+  confirmed to nobody, unconfirmed channels, records the chain declined,
+  records waiting on the platform's own to catch up, records it could not read.
+  A run that reaches nobody never stops early, because reaching nobody costs
+  nothing, so reporting only on an early stop is silent in exactly the case
+  that most needs a person. A run where everything went right stays silent.
+- A run will not begin a record it might not be able to finish, even when some
+  allowance remains. Stopping between one party's message and the other's
+  would mark the reminder as delivered with one side never told, and that
+  side's reminder is then lost rather than delayed. Leaving a little allowance
+  unused is the cheaper error.
+- A run does not always begin at the front of the order. Not spending the
+  bound is not the same as making progress: a record that sends nothing is
+  also never marked as handled, so it keeps its place at the front and is
+  examined again on every run. If enough such records sit ahead of a record
+  that WOULD send, starting at the front every time hides it for good. So a
+  run REMEMBERS where it stopped and the next one continues from there,
+  wrapping to the front when it reaches the end. Where it resumes is a
+  remembered position rather than anything derived from the time of day —
+  deliberately, because any schedule-derived position can fall into step with
+  another schedule and then never move: the platform's other rotations, or the
+  interval between runs itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither position can be
+  remembered, the run says so — starting from the front every time restores
+  the unfairness the memory exists to remove, and would otherwise do it
+  silently. A remembered position advances on the work
+  actually done, which nothing else can align with. When the window fits in
+  one run, which is the ordinary case, the nearest deadline is examined first
+  as before.
+- The remembered position is approximate, and the platform does not pretend
+  otherwise: the list it indexes into changes between runs as records enter
+  the window, are handled, or pass their deadline. It resumes near where it
+  stopped, which is all that forward progress requires.
+- A run that stops early says which limit stopped it, where in the window it
+  resumed, and separates what it found — examined, reminded, reached nobody,
+  had nobody to tell, declined by the chain, and unreadable — so the categories
+  account for every record examined rather than leaving some of them
+  unexplained between two totals. A run interrupted part-way still reports what
+  its completed work did: the records it already messaged about are stamped
+  permanently, so discarding those counts would hide real deliveries behind an
+  error about a later step. Those need different remedies — a run reporting
+  many declines is reporting records the platform holds wrongly, not load — so
+  they are never flattened into one "deferred" count. "Reminded" means a message the
+  delivery service CONFIRMED it accepted — not one the platform tried to send.
+  A message refused by the service, or one whose fate is unknown because the
+  attempt itself failed, is counted separately and never as a reminder; a
+  recipient the platform has on file but cannot reach at all is counted as
+  handled. Failed messages are counted **per channel and independently of
+  whether the person was reached another way**: someone told over one channel
+  while the other failed is both a reminder and a broken channel, and
+  reporting only the first would hide an outage of one channel for as long as
+  the other kept working. So the count can never claim people were told on a run that
+  reached nobody, which is the number someone reads while investigating
+  silence.
+- The bound and the count deliberately disagree about a failed attempt, and
+  that is the correct disagreement. A request that may have gone out has to be
+  charged, because the limit exists to keep the platform inside what it is
+  allowed to send; the same request must not be reported as a delivery,
+  because nothing confirms it arrived. What never leaves at all — no signer
+  configured, a channel the platform cannot use — is neither charged nor
+  counted, and that case matters most because it fails every message of its
+  kind rather than one.
 - A corrected record carries the loan's amounts as well as its state,
   taken from the same reading and therefore describing the same moment.
   The events that move principal and collateral — a part repayment, a

@@ -1418,6 +1418,7 @@ DELETE FROM loan_participants; \
 DELETE FROM notifications; \
 DELETE FROM hf_band_state; \
 DELETE FROM swap_to_repay_intents; \
+DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
 DELETE FROM offers; \
 DELETE FROM oracle_snapshot_state; \
@@ -1444,7 +1445,14 @@ append-only `INSERT OR IGNORE` chain history. `swap_to_repay_intents`
 likewise: its only writers are the `SwapToRepayIntent*` handlers in
 `chainIndexer.ts` — verified repo-wide, no HTTP or keeper/agent
 writes — so a fabricated pending intent would otherwise survive
-replay as a visible user action. #1450 r31/r32.)
+replay as a visible user action. #1450 r31/r32.
+`loan_reconcile_quarantine` likewise, and it fails in the more
+alarming direction: each row says "do not act on this loan, we could
+not confirm it", so a fabricated entry is a silent suppression — it
+withholds a real borrower's due-date and grace reminders with nothing
+on any surface to show why. The reconciliation pass rewrites the
+table from the chain as it examines rows, so clearing it costs at
+most one rotation's worth of re-marking. #2212.)
 
 **`notifications` is cleared with its producer state, and the loss
 boundary is stated honestly** (#1450 r33). The table has THREE

@@ -22,6 +22,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _sweepCalendarIfEstablished, _unestablishedRows } from '../src/chainIndexer';
+import { settledRows } from '../src/loanQuarantine';
 import type { ReconcileReport } from '../src/loanReconcile';
 import type { Env } from '../src/env';
 
@@ -122,6 +123,46 @@ describe('which rows a pass has actually established', () => {
         report({ repaired: [{ loanId: 8, from: 'active', to: 'defaulted' }], superseded: [9] }),
       ),
     ).toEqual([]);
+  });
+});
+
+describe('what a failed quarantine WRITE tells the operator', () => {
+  // #2213 r3 `4011960578`. One batch carries two opposite operations — marks
+  // that START withholding and releases that STOP it — so a fixed message
+  // describes the wrong one half the time, and reads as nonsense on a batch
+  // that carried only releases.
+  const rep = (over: Partial<ReconcileReport>): ReconcileReport => ({
+    chainId: CHAIN,
+    chainActive: 6,
+    indexedActive: 6,
+    agreed: true,
+    examined: [],
+    repaired: [],
+    unread: [],
+    writeFailed: [],
+    unresolvable: [],
+    unknownStatus: [],
+    superseded: [],
+    nextPointer: 0,
+    wrappedLap: false,
+    ...over,
+  });
+
+  it('counts both halves from the same report the batch was built from', () => {
+    // Marks and releases are derived by the same two functions the statement
+    // builder uses, so the message cannot describe a batch other than the one
+    // that failed.
+    expect(_unestablishedRows(rep({ unread: [13], unresolvable: [99] })).length).toBe(2);
+    expect(settledRows(rep({ examined: [5, 6] })).length).toBe(2);
+  });
+
+  it('a release-only pass has marks to report as zero, not as one', () => {
+    // The case the old wording was nonsense on: nothing failed to be
+    // withheld, because nothing was being withheld — a row was failing to be
+    // RELEASED, which is the opposite effect.
+    const r = rep({ examined: [5] });
+    expect(_unestablishedRows(r).length).toBe(0);
+    expect(settledRows(r).length).toBe(1);
   });
 });
 

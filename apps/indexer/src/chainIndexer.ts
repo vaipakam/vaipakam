@@ -55,6 +55,17 @@ import {
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import {
+  quarantineStatements,
+  releaseTerminalQuarantine,
+  reportStaleQuarantine,
+  settledRows,
+} from './loanQuarantine';
+import { createQuarantineAvailability } from './loanQuarantine';
+import {
+  verifyRpcChainIdentity as verifyRpcIdentityShared,
+  type RpcIdentityVerdict,
+} from '@vaipakam/lib/rpcIdentity';
+import {
   blockToNumber,
   resolveSettledHead,
   SAFE_FALLBACK_BUFFER,
@@ -581,56 +592,22 @@ async function sweepMarketSummaries(
 // both route through it). Unchanged behaviour: one cursor-derived,
 // safe-head-bounded scan that advances the cursor. `scannedTo` is the new
 // cursor, which the DO's catch-up loop compares against its target block.
-/** #1415 — RPC chain-identity assertion. A mis-pointed RPC secret
- *  (wrong `network=` slug, swapped URLs) fails in the ONE shape that
- *  produces zero signal: a different network whose head sits below our
- *  cursor reads as "caught up" — no error, no log, no cursor movement
- *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
- *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
- *  scan is skipped as a RETRYABLE failure so the caught-up check can
- *  never mistake it for success. A transport failure is not an
- *  identity VERDICT, but it is not license to proceed either (Codex
- *  #1527 r1 P1): an unverified endpoint could be the mis-pointed one,
- *  and a foreign chain whose head sits ABOVE our cursor would let the
- *  pass read an empty foreign log range and advance the monotonic
- *  cursor past real blocks — permanent, silent data loss. So a
- *  transport failure aborts the pass as a retryable `rpc-error`; the
- *  pair stays uncached and is re-probed next pass. Identity is a
- *  PRECONDITION of cursor advancement, never assumed. */
-const verifiedRpcIdentity = new Set<string>();
-
-export type RpcIdentityVerdict =
-  | { ok: true }
-  | { ok: false; reason: 'transport' }
-  | { ok: false; reason: 'mismatch'; reported: number };
-
+/**
+ * RPC chain-identity assertion — the rule itself now lives in
+ * `@vaipakam/lib/rpcIdentity`, because the agent's reminder lane needs the
+ * same precondition before it trusts a loan state (#2213 r14 `4013761179`).
+ *
+ * Kept as a named export here with the caller's own log prefix baked in, so
+ * this Worker's call sites and their tests read exactly as before. Identity is
+ * a PRECONDITION of cursor advancement, never assumed: a transport failure
+ * aborts the pass as a retryable `rpc-error` and the pair stays uncached.
+ */
 export async function verifyRpcChainIdentity(
   client: { getChainId: () => Promise<number> },
   chainId: number,
   rpc: string,
 ): Promise<RpcIdentityVerdict> {
-  const key = `${chainId}:${rpc}`;
-  if (verifiedRpcIdentity.has(key)) return { ok: true };
-  let reported: number;
-  try {
-    reported = await client.getChainId();
-  } catch {
-    return { ok: false, reason: 'transport' }; // no verdict — re-probe next pass
-  }
-  if (reported !== chainId) {
-    // Deliberately NO fragment of the RPC URL here — not even the host.
-    // Some providers put the generated credential in the HOSTNAME itself
-    // (Codex #1527 r1 P2), so any slice of the URL risks turning this
-    // diagnostic into a key leak. The expected chain id alone names the
-    // mis-pointed `RPC_*` secret unambiguously.
-    console.error(
-      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} — ` +
-        `mis-pointed RPC_* secret for this chain; skipping scan until it is fixed`,
-    );
-    return { ok: false, reason: 'mismatch', reported };
-  }
-  verifiedRpcIdentity.add(key);
-  return { ok: true };
+  return verifyRpcIdentityShared(client, chainId, rpc, 'chainIndexer');
 }
 
 /** The scan-skip kinds the ingest loop must treat as FAILURES (rewound
@@ -672,8 +649,94 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * beats more rows and a terminal notice sent to somebody who exited the
  * position. The rotation still reaches every row; it takes more turns.
  */
+/**
+ * WHAT QUARANTINE MAINTENANCE COSTS A PASS, stated as a number because the
+ * reconcile allowance below is now sized around it (#2213 r29 `4016866252`).
+ *
+ * This PR added D1 work to every pass and did not put it in anybody's
+ * arithmetic — the same defect r27 `4016129218` found in the agent's lane,
+ * arriving here by the other door. Worst case per pass, with the r28
+ * pass-scoped probe already counted:
+ *
+ * - 1 — the write side's `sqlite_master` probe, once per pass however many
+ *       close-outs
+ * - 1 — the CALENDAR sweep's own probe. It runs in this same invocation, via
+ *       `_sweepCalendarIfEstablished`, and holds a SEPARATE cache: the two
+ *       lanes read the same fact and take opposite readings of `'unknown'`,
+ *       so they were built as independent probes. The write side's answer
+ *       cannot satisfy the calendar side's cache, so a cold pass pays twice
+ *       (#2213 r30 `4017166962`)
+ * - 1 — `releaseTerminalQuarantine`
+ * - 2 — the stale report: its count, and the listing when there is one
+ * - 1 — the repair's own quarantine writes, when a repair happened
+ *
+ * The close-out statements themselves are folded into batches that already
+ * existed, so they add nothing.
+ *
+ * The second entry is the one r29 missed, and missing it is instructive: r29
+ * counted the probe it had just changed rather than every probe the
+ * invocation makes. One probe per LANE, not one per pass — which is only
+ * visible if you go looking for callers rather than reading the code you
+ * edited. Sharing one answer between the lanes would remove the entry
+ * entirely and is noted on #2221.
+ */
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
+
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
-export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 3, minRows: 1 };
+/**
+ * THREE CAME DOWN TO TWO for the quarantine maintenance above (#2213 r29
+ * `4016866252`), and it is the same trade the note above records, made again
+ * for the same reason.
+ *
+ * The DO invocation's arithmetic, worst case: the scan's own ~38, plus
+ * `1 + maxRows * 3` here, plus `QUARANTINE_MAINTENANCE_SUBREQUESTS`. At three
+ * rows that was 38 + 10 + 5 = 53, over the 50 this repository targets — and
+ * going over does not merely drop a repair, it aborts the pass before the
+ * scan cursor is recorded, which is the frozen chain this whole PR keeps
+ * working to avoid.
+ *
+ * THE SUM IS NOT ESTABLISHED, AND THIS NOTE NO LONGER PRETENDS IT IS.
+ *
+ * Three consecutive review rounds each corrected a worst-case figure stated
+ * here, and each correction was found by someone else looking rather than by
+ * anything in the code: r29 said 50 and it was 51 (the calendar lane's own
+ * probe, r30 `4017166962`); r30 said 48 and it is at least 57 (nine
+ * uncounted D1 calls inside the reconciliation pass itself, r31
+ * `4017540301`). A fourth number asserted the same way would be worth
+ * exactly as much as the first three.
+ *
+ * So what is claimed here is only what can be substantiated:
+ *
+ * - The scan is about 38, this pass contributes `1 + maxRows * 3` chain
+ *   reads, and quarantine maintenance is 6.
+ * - The reconciliation pass makes at least nine further D1 calls per
+ *   repaired row that NOBODY counts — pointer, lap boundary, maximum id, row
+ *   selection, party lookup, repair batch, cursor writes. They were believed
+ *   free; `loanReconcile.ts` carried that belief in a comment until r31, and
+ *   this PR is what disproved it.
+ * - Therefore the invocation's true worst case is ABOVE 50 and its exact
+ *   value is unknown. Going over aborts the pass before the scan cursor is
+ *   recorded, which is a frozen chain.
+ *
+ * ONE ROW is what this constant can do about that, and it is a mitigation
+ * rather than a fix: it takes the pass from three repaired rows to one,
+ * removing roughly two thirds of the uncounted reconciliation cost as well
+ * as six chain reads. The risk predates this PR — those D1 calls were always
+ * made and never counted — and this PR is what made it visible, so leaving
+ * the allowance where it was would be worse.
+ *
+ * It now equals the shared-tick budget, which is itself the signal: the
+ * constant whose name means "the roomy one" has been squeezed until it is
+ * the tight one, and there is nothing left to give here.
+ *
+ * #2221 is the fix — an explicit counter, as the agent's lane got in r27 —
+ * and it is a blocker for this lane rather than a tidy-up. Do not add
+ * another request to this path, or another number to this note, before it
+ * lands.
+ *
+ * The rotation still reaches every row; it takes more turns.
+ */
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, minRows: 1 };
 
 /**
  * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.
@@ -1054,6 +1117,13 @@ export async function _sweepCalendarIfEstablished(
   // The tick established SOME rows; the ones it did not are named and held
   // back individually (#2211 r3 `4011279296`).
   //
+  // BOTH THIS AND THE QUARANTINE TABLE, and they are not redundant (#2212).
+  // The table is the durable answer and covers the ticks that did not examine
+  // the row — but it is written fail-open, so a tick whose quarantine write
+  // failed would have nothing there. This set is what still protects THIS
+  // tick in that case: it comes straight from the report in memory and needs
+  // no write to have succeeded.
+  //
   // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT (#2212). The exclusion is
   // derived from THIS tick's report, and the rotation examines one or three
   // rows a turn — so on the next turn an unsettled row is simply not in the
@@ -1074,6 +1144,78 @@ export async function _sweepCalendarIfEstablished(
     headBlock,
     new Set(outcome.unestablishedLoanIds),
   );
+}
+
+/**
+ * Name the rows this chain has been withholding reminders for, if any.
+ *
+ * Its own function, called from the per-chain ENTRY POINT rather than from
+ * the reconciliation pass (#2213 r3 `4011960607`). Quarantined rows suppress
+ * reminders whatever else happens on a tick — including during an RPC outage,
+ * when nothing is being re-examined and the suppression is therefore at its
+ * most invisible. A reporter reachable only after a chain check is silent for
+ * exactly as long as the chain is unreachable.
+ *
+ * It reads D1 and nothing else, so it has no reason to sit behind any chain
+ * check at all.
+ */
+export async function _reportQuarantineForChain(env: Env, chainId: number): Promise<void> {
+  // 'absent' AND 'unknown' both mean "do not name the table": a statement
+  // naming a table that might not exist fails the whole batch, and that batch
+  // advances the chain cursor. The reminder SWEEP takes the opposite reading
+  // of 'unknown' for the opposite reason — see the probe's own doc.
+  const reportAvailability = await quarantineAvailableForWrites(env.DB as never);
+  if (reportAvailability === 'unknown') {
+    // SAID, not returned silently (#2213 r14 `4013761194`). This reporter is
+    // the ONLY surface that names long-held rows, and the rows it names are
+    // the ones suppressing reminders — so an operator investigating missing
+    // reminders during a probe outage would find the report simply absent,
+    // which reads as "nothing is held" rather than "I could not look".
+    console.warn(
+      `[chainIndexer] chain ${chainId}: could not establish whether ` +
+        `loan_reconcile_quarantine exists, so the held-row report is ` +
+        `UNAVAILABLE this tick — not empty. Rows may be held back and ` +
+        `unreported until this clears.`,
+    );
+    return;
+  }
+  if (reportAvailability !== 'present') return;
+  try {
+    // RELEASE BEFORE REPORTING, so the report never names a row that is
+    // already resolvable (#2213 r15 `4013952990`). This is also the durable
+    // cleanup path for a release the close-out could not make: it keys on the
+    // row's own state rather than on remembering what failed, so it runs every
+    // pass until there is nothing to release.
+    // SEPARATE CATCHES, because a failed CLEANUP must not silence the REPORT
+    // (#2213 r26 `4015927513`). r15 put the release first so the report never
+    // names an already-resolvable row, and sharing one `try` was the cost of
+    // that ordering: a recurring write failure here — a transient D1 fault,
+    // say — returned before the report ran, so every long-held row on every
+    // tick went unnamed while the reads that would have named them were
+    // perfectly healthy. Broken maintenance hiding the disclosure is the
+    // worse half of the pair, because the disclosure is what tells anyone the
+    // maintenance is broken.
+    try {
+      await releaseTerminalQuarantine(env.DB, chainId);
+    } catch (err) {
+      console.error(
+        `[chainIndexer] quarantine RELEASE failed for chain ${chainId} — rows ` +
+          `whose loan has ended stay held until a later pass releases them, ` +
+          `and the report below may therefore name rows that are already ` +
+          `resolvable`,
+        err,
+      );
+    }
+    await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
+  } catch (err) {
+    // The marks are unaffected: this is the read that NAMES long-held rows.
+    // Withholding continues; what is lost is the operator being told.
+    console.error(
+      `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
+        `withholding is unaffected, but long-held rows are not being named`,
+      err,
+    );
+  }
 }
 
 /**
@@ -1122,6 +1264,19 @@ export async function _runLoanReconcilePass(input: {
   // anything wanting provenance names `settled` explicitly.
   const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
   const head = settled.block;
+  // Already reported once per chain at the entry point (#2213 r3
+  // `4011960607`), which runs even when this pass is never reached.
+  // BEFORE ANY REFUSAL (#2213 r2 `4011776398`). Long-held rows go on
+  // suppressing reminders whatever this tick does, so naming them cannot be
+  // conditional on this tick having produced a report. Placed below the
+  // refusals, it never ran during a backfill, a cursor/head mismatch, or a
+  // stretch with no settled head — exactly the stretches where an operator
+  // most needs to know what is being withheld and why.
+  //
+  // Guarded on availability rather than caught: in the deploy window the read
+  // would throw deterministically, and a catch there would have to say
+  // something about withholding it cannot know.
+
   // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
   //
   // `latest - 32` is a heuristic finality margin, not the chain's statement
@@ -1193,6 +1348,11 @@ export async function _runLoanReconcilePass(input: {
           : `records are current through ${readThrough}, short of the head ${head}`,
     };
   }
+  // Asked once per pass, before any repair builds its batch: every repair's
+  // close-out statements are gated on the same answer, so a pass cannot half
+  // include the release (#2213 r2 `4011776381`).
+  const closeOutAvailability = await quarantineAvailableForWrites(env.DB as never);
+  const quarantineAvailable = closeOutAvailability === 'present';
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
   // pass's "one subrequest per read" could be four, and the whole budget
@@ -1232,7 +1392,7 @@ export async function _runLoanReconcilePass(input: {
         // intent, and a table added to `_closedLoanSideTableStatements`
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
-          _closedLoanSideTableStatements(env, chainId, loanId),
+          _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the
@@ -1314,6 +1474,95 @@ export async function _runLoanReconcilePass(input: {
   // Everything the pass noticed reaches the operator, whether it finished or
   // died on its cursor write.
   if (report) _reportReconcilePass(chainId, report);
+  // THE SAME REPORT, REMEMBERED (#2212). Reporting tells the operator; this
+  // tells the NEXT tick. The rotation examines one or three rows a turn, so
+  // a row this pass could not settle is absent from every later report until
+  // the rotation comes round again — and a surface reading only the current
+  // report would go on acting on it as though it were confirmed.
+  //
+  // Fail-open, deliberately. This is a withholding mechanism: if it cannot
+  // write, the correct outcome is the behaviour that existed before it — not
+  // a failed tick. It is loud about failing, because a quarantine that
+  // silently stops recording is a surface that silently resumes reminding.
+  if (report) {
+    // The WRITE only. The stale-report READ moved to the top of the pass
+    // (#2213 r2 `4011776398`), which also settles r1's `4011674998`: the two
+    // operations no longer share a catch because they no longer share a
+    // place.
+    const nowSec = Math.floor(Date.now() / 1000);
+    // ASKED BEFORE BUILDING THE BATCH (#2213 r19 `4014677444`). The probe is
+    // memoised per isolate and the close-out path already consults it, so this
+    // costs nothing and removes a guaranteed failure: with migration 0049
+    // DEFINITIVELY absent, this built a `DELETE` per settled row against a
+    // table that does not exist, failed every pass, and then described the
+    // consequences in terms of withholding — while the calendar lane was
+    // simultaneously and correctly telling the operator that nothing was being
+    // withheld, because there is nowhere to withhold anything. Two lanes
+    // contradicting each other about the same table is worse than either being
+    // silent.
+    //
+    // ONLY on `absent`. `unknown` still attempts, because this is a
+    // fail-open withholding mechanism and a probe that could not answer is not
+    // evidence the table is missing.
+    const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
+    if (writeAvailability !== 'absent') {
+      try {
+        const writes = quarantineStatements(env.DB, chainId, report, nowSec);
+        if (writes.length > 0) await env.DB.batch(writes);
+      } catch (err) {
+        // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
+        // batch carries two opposite operations — marks that START withholding
+        // and releases that STOP it — so a fixed message describes the wrong
+        // one half the time, and is nonsense on a batch that carried only
+        // releases. Both counts come from the report the batch was built from.
+        const marks = _unestablishedRows(report).length;
+        const releases = settledRows(report).length;
+        // THE RELEASE HALF CANNOT NAME A STATE IT NEVER READ (#2213 r20
+        // `4014807959`). `settledRows` is every row this pass settled, not
+        // every row that was marked: the overwhelming majority are ordinary
+        // healthy loans whose `DELETE` was a no-op against a marker that was
+        // never there. Saying they "stay withheld" asserts suppression for
+        // rows nothing was ever suppressing — and the batch failed, so which
+        // of them had markers is exactly what this pass does not know.
+        //
+        // r19 hedged this on the PROBE (`present` vs `unknown`) and left the
+        // `present` branch confident, which was the wrong axis. Knowing the
+        // table exists says nothing about whether THESE rows had rows in it.
+        // What is true in every case is that their quarantine state could not
+        // be updated, and a later pass reaches them — `releaseTerminalQuarantine`
+        // keys on the row's own state rather than on remembering this failure.
+        const effects = [
+          marks > 0
+            ? // THE BOUNDARY, not just the outcome (#2213 r21 `4015014122`).
+              // "NOT withheld" was true of later ticks and false of this one.
+              // This tick still hands the same ids to
+              // `_sweepCalendarIfEstablished` through
+              // `ReconcilePassOutcome.unestablishedLoanIds`, which holds them
+              // back from memory and needs no write to have succeeded — the
+              // belt-and-braces this failure is exactly why the code carries.
+              // Saying they are unprotected NOW would send an operator
+              // hunting for reminders that cannot have escaped yet, and would
+              // understate the real risk, which starts quietly on the next
+              // tick.
+              `${marks} row(s) this pass could not settle are still withheld ` +
+              `THIS tick from the report in memory, but nothing durable ` +
+              `records them — so a later tick that does not re-examine them ` +
+              `can remind about them, until a pass records them or settles them`
+            : null,
+          releases > 0
+            ? `the quarantine state of ${releases} row(s) it settled could not be ` +
+              `updated — any that were withheld stay withheld until a later ` +
+              `pass releases them, and the rest were never withheld at all`
+            : null,
+        ].filter(Boolean);
+        console.error(
+          `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
+            `${effects.join('; ')}`,
+          err,
+        );
+      }
+    }
+  }
 
   if (failure === null) {
     // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
@@ -1401,6 +1650,17 @@ export async function runChainIndexerForChain(
 ): Promise<ChainIndexerResult> {
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
+  // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
+  // `4016565774`). Every close-out in this pass now shares one answer, so a
+  // backfill full of terminal events costs one `sqlite_master` read rather
+  // than one per event — which during the deploy-before-migration window
+  // (#2214) could spend the invocation's whole subrequest allowance on
+  // identical probes and abort before the cursor advanced, freezing the very
+  // rollout this guard exists to survive. Drawn HERE, at the top of a chain's
+  // pass, rather than threaded through the fifteen close-out call sites: the
+  // rule is one rule and belongs in one place, and threading it is how the
+  // fourteenth site gets missed.
+  quarantineAvailableForWrites.beginPass();
   // Each chain has its own deployBlock; resolved via getChainConfigs
   // → deployments.json. We re-look it up here because ChainConfig
   // intentionally exposes only the runtime essentials.
@@ -1422,6 +1682,19 @@ export async function runChainIndexerForChain(
   // Cheap after the first run — one flag SELECT each.
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
+
+  // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
+  // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
+  // during an RPC outage — the outage is precisely when nothing is being
+  // re-examined — so a reporter placed after the identity check is silent for
+  // exactly as long as the condition lasts. It reads D1 only and needs no
+  // chain at all, so there is no reason for it to sit behind a chain check.
+  //
+  // Round 2 moved it above the reconcile pass's own refusals and I called it
+  // unconditional; it was unconditional within that function. This is the
+  // same claim tested one level up, which is where it should have been
+  // tested the first time.
+  await _reportQuarantineForChain(env, chainId);
 
   // #1415 — identity before any chain read: a wrong-network RPC must
   // fail LOUDLY here, not silently as "caught up" below. A transport
@@ -5303,8 +5576,24 @@ export function _closedLoanSideTableStatements(
   env: Env,
   chainId: number,
   loanId: number,
+  /**
+   * Whether `loan_reconcile_quarantine` exists on this database.
+   *
+   * REQUIRED, not defaulted (#2213 r2 `4011776381`). These statements go into
+   * a D1 batch, and D1 rejects the WHOLE batch if one names a missing table —
+   * which during the deploy window (#2214) would throw out of
+   * `processLoanLogs` and stop the chain cursor advancing, so the chain would
+   * index nothing until the migration landed. That is far worse than the
+   * defect the quarantine fixes, and it is what my own round-1 fix introduced
+   * by adding an unguarded reference to a shared batch.
+   *
+   * A default of `true` would put the hazard one forgotten argument away; a
+   * default of `false` would silently skip the release. Making it explicit
+   * costs each caller one word and makes neither possible.
+   */
+  quarantineAvailable: boolean,
 ): D1PreparedStatement[] {
-  return [
+  const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
     ).bind(chainId, loanId),
@@ -5312,6 +5601,53 @@ export function _closedLoanSideTableStatements(
       `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
     ).bind(chainId, loanId),
   ];
+  // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
+  //
+  // Without this the release could only ever come from the reconciliation
+  // pass's own report — and a loan quarantined after a transient read, whose
+  // ordinary terminal event then arrives before the rotation revisits it,
+  // leaves the live set for good. The pass never selects it again, so no
+  // report can name it, and the mark sits there being reported stale forever.
+  // A mark that cannot be released is the mirror image of the defect the
+  // quarantine fixes.
+  //
+  // Here rather than in the pass because this is the list every close-out
+  // already shares — which is exactly why the list exists.
+  //
+  // Omitted entirely when the table is absent, rather than added and allowed
+  // to fail: there is no mark to release on a database that has no memory,
+  // and a batch naming a missing table takes the close-out down with it.
+  if (quarantineAvailable) {
+    statements.push(
+      env.DB.prepare(
+        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(chainId, loanId),
+    );
+  }
+  return statements;
+}
+
+/**
+ * One probe for the WRITE side, matching the one the reminder lanes hold.
+ *
+ * Separate instance rather than a shared module-level cache: each is a cache
+ * of "this database has the table", and they are asked at different moments.
+ * Caching only a TRUE means they converge as soon as the migration lands.
+ */
+let quarantineAvailableForWrites = createQuarantineAvailability();
+
+/**
+ * Test seam — the probe latches on a TRUE and is otherwise unobservable.
+ *
+ * The calendar lane has carried `_resetQuarantineTableProbe` for its own
+ * probe since it grew one; this module needed the same and did not have it
+ * (#2213 r19). Without it a suite is order-dependent in the worst direction:
+ * one earlier case answering "the table is there" latches `present` for the
+ * whole file, so a later case that means to exercise the ABSENT path silently
+ * exercises the present one and passes for the wrong reason.
+ */
+export function _resetQuarantineWriteProbe(): void {
+  quarantineAvailableForWrites = createQuarantineAvailability();
 }
 
 async function _clearClosedLoanSideTables(
@@ -5319,7 +5655,19 @@ async function _clearClosedLoanSideTables(
   chainId: number,
   loanId: number,
 ): Promise<void> {
-  await env.DB.batch(_closedLoanSideTableStatements(env, chainId, loanId));
+  const availability = await quarantineAvailableForWrites(env.DB as never);
+  await env.DB.batch(
+    _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
+  );
+  // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
+  //
+  // r14 added one for the `'unknown'` case, and a single attempt in the same
+  // invocation is not a retry path: if it failed too, this loan was terminal
+  // by then and had left the set the reconciliation rotation selects from, so
+  // its row was held and reported stale forever. `releaseTerminalQuarantine`
+  // sweeps every held row whose loan is no longer live, on every pass, so a
+  // release missed for ANY reason is picked up — which covers this case
+  // without a second code path that has to be right.
 }
 
 /// The `*_current_owner` refresh a repair may fold into its own batch, for
