@@ -308,16 +308,53 @@ old frame got wrong (#2238 r2 P1). Both public Workers accept user writes:
 
 Gating only agent leaves a user able to submit a signed order into the
 database about to be deleted, while the operator believes they chose the "no
-window" procedure. `apps/keeper` has no `fetch()` at all — cron only — and its
-writes are reconstructible from the chain, so it is not part of the gate.
+window" procedure.
+
+**`apps/keeper` is outside the gate ONLY while its schedule is empty**, and
+that is a fact about today rather than a property of the Worker (#2238 r3 P2).
+It has no `fetch()` — cron only — and `wrangler.jsonc` commits `"crons": []`
+under #1896, so it currently writes nothing at any time. Restore that schedule
+and it is a writer like the others, and not a reconstructible one:
+`hfBandNotifications` inserts user-visible inbox rows for observed HF-band
+crossings, and a crossing that recovers before the keeper reaches the intended
+database cannot be regenerated from current chain state — it simply disappears
+with the abandoned database.
+
+So: **check the committed schedule before excluding it.** If `crons` is
+non-empty, disable the schedule across both binding changes and restore it
+after confirmation, exactly as the public Workers are gated.
 
 **The two options, restated under the rule:**
 
 - **Quiesce (the safe option, and the one to take whenever real users are on
-  the deployment).** Put BOTH public Workers' mutating routes behind a `503`
-  before the merge — unbind the route, or deploy a rejecting build — and lift
-  it only after Step 3 confirms every binding. A user told "try again shortly"
-  has lost nothing; one whose ticket silently disappeared has.
+  the deployment).** Close BOTH public Workers' mutating routes before the
+  merge and lift only after Step 3 confirms every binding. A user told "try
+  again shortly" has lost nothing; one whose ticket silently disappeared has.
+
+  **The mechanism has to survive the deployment, and the two obvious ones do
+  not** (#2238 r3 P1). An earlier revision said "unbind the route, or deploy a
+  rejecting build". Both are erased by the very deploy they are meant to
+  bracket: `apps/indexer/wrangler.jsonc` DECLARES its route, so the automatic
+  deployment re-creates a route that was manually unbound, and that same
+  deployment replaces a rejecting build with the normal handlers. Either way
+  the indexer's write endpoints reopen the moment its own build lands — while
+  another Worker may still be on the old binding, or have failed. A gate the
+  operation removes is not a gate.
+
+  Two shapes that do hold, neither of them verified on this account — treat
+  the choice as the operator's and the mechanics as unrun:
+
+  1. **Carry the maintenance behaviour IN the binding-change deployment.**
+     The PR that changes the binding also ships the `503`; a second, later
+     merge lifts it once Step 3 passes. Self-contained, no external state, and
+     it cannot be overwritten because it IS what was deployed. Costs a second
+     merge, and the lift is itself a deployment with its own mixed state —
+     harmless, since by then every binding is confirmed.
+  2. **Gate outside the Worker**, in the control plane — a WAF custom rule on
+     the mutating paths, or removing the DNS/route binding at the zone rather
+     than in `wrangler.jsonc`. A Worker deployment does not touch it, so it
+     survives all three builds and a failed one. Verify before relying on it
+     that the rule is not itself reset by anything in the deploy path.
 - **Watch it through (the 2026-08-03 choice, defensible only pre-live).**
   Merge when someone is watching and run Step 3 immediately, accepting that
   anything written in between may be lost. This was chosen when there were no
@@ -392,14 +429,36 @@ empty, its emptiness is the discriminator:
   hand-deployed on this path (#2237). Check the `Workers Builds:
   vaipakam-agent` check on the merge commit: still running means wait and
   re-test, `failure` means the build is the thing to fix and the mixed state
-  persists until it is. This is also the test that closes the deployment
-  window above, so run it before calling the cutover done rather than only if
-  something looks wrong.
+  persists until it is.
 
   Do the same for **indexer's** write surface, not only its ingest: it accepts
   `POST /signed-offers` from users, so "the indexer's cursor advanced in the
   target" proves the scan switched and says nothing about where a user's
   signed order would land.
+
+**THE ORDER MATTERS, because the write probes need the gate OPEN and the rule
+says it stays closed** (#2238 r3 P1). Both probes above go through the same
+public routes the quiesce closes, so running them while the gate holds is
+impossible, and reopening to run them defeats the gate. Confirmation therefore
+happens in two passes:
+
+1. **While quiesced — control plane only.** Read each Worker's D1 binding
+   (*Settings → Bindings*, or the API) and confirm every one names the
+   intended database. That is a configuration check, labelled as such, and it
+   is exactly what the keeper entry above already falls back to. It is also
+   the only check that can distinguish "build still running" and "build
+   failed" from "switched", since it reflects what is actually deployed.
+   **This pass is what authorises lifting the gate** — not the write probes.
+2. **After lifting — behaviour.** Run the write probes as the final
+   confirmation. They can still find something the binding read could not, so
+   they are not redundant; they are simply not available earlier. If one of
+   them fails here, close the gate again rather than leaving it open while
+   investigating.
+
+An earlier revision made the agent write probe "the test that closes the
+deployment window", which cannot be true under a rule that keeps that route
+shut until the window is closed. The binding read closes it; the write
+confirms it.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the

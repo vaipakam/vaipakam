@@ -66,4 +66,21 @@ What the automatic deployment genuinely changes is *who* closes the window — i
 no longer waits on somebody remembering a command. It does not make the window
 zero, bounded, or safe to leave unguarded.
 
+Two further corrections came out of stating the rule plainly enough to be
+tested against. **Closing the routes has to be done in a way the deployment
+cannot undo** — the two obvious mechanisms are both erased by the very deploy
+they are meant to bracket, because one service declares its own route in the
+file that gets deployed, and a deploy replaces a rejecting build with the
+normal one. And **the checks that prove a binding moved cannot all run while
+the routes are closed**, since two of them work by writing through those very
+routes. Confirmation is now in two passes: read each service's binding
+directly while the gate holds — that is what authorises lifting it — then run
+the write checks afterwards as the final confirmation.
+
+One service is currently outside the gate because its schedule is empty and it
+therefore writes nothing at all. That is recorded as a fact about today rather
+than a property of the service: restore the schedule and it writes
+user-visible alerts that a later re-check cannot reconstruct, because the
+condition they describe may have passed.
+
 Closes #2237.

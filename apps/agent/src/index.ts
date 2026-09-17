@@ -164,8 +164,20 @@ export default {
     // identical copy so the watcher still sweeps once rescheduled;
     // both are idempotent, so overlapping runs are harmless.
     //
-    // THIS WORKER AUTO-DEPLOYS ON MERGE, so this sweep goes live with the
-    // merge that adds it (#2237, correcting Codex #1924 r17).
+    // THIS WORKER AUTO-DEPLOYS ON MERGE, so a merge that TOUCHES this Worker
+    // now carries its changes live without a hand-run deploy (#2237,
+    // correcting Codex #1924 r17).
+    //
+    // WHAT THAT DOES NOT SAY, deliberately (#2238 r3 P2). It says nothing
+    // about when THIS sweep first went live. The sweep predates this comment,
+    // the evidence gathered for #2237 is about later commits, and the
+    // paragraph below accepts that the old warning was true when it was
+    // written — so the adding merge may well have landed before this Worker
+    // was built on merge at all. Claiming "it went live with the merge that
+    // added it" would swap one unsupported operational history for another,
+    // which is the defect #2237 exists to correct rather than repeat. If the
+    // first live deployment ever needs to be known, read it from the
+    // deployment history; do not infer it from here.
     //
     // What stood here said the opposite — "`apps/agent` does NOT auto-deploy
     // on merge", citing `docs/ops/D1CutoverArchiveToWarm.md` step 2 — and
