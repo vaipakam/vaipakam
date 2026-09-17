@@ -21,6 +21,7 @@ import {
   reportStaleQuarantine,
   STALE_REPORT_LIMIT,
   STALE_ROLL_CALL_LIMIT,
+  QUARANTINE_SWEEP_BATCH,
   discloseQuarantineReleases,
   quarantineReleaseStatement,
   settledRows,
@@ -441,15 +442,17 @@ describe('the table, over the real migrated schema', () => {
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // The COUNT is exact — it is free, and it is what conveys the magnitude.
-    // ONE PASS CLEARS AT MOST THE CAP, and says exactly that number: the
-    // delete now names the ids the roster returned, so the count describes
-    // the rows just listed rather than a superset (#2231 r14 `4037027829`).
-    expect(said).toContain(`released ${STALE_ROLL_CALL_LIMIT} held entries`);
+    // ONE PASS CLEARS AT MOST A BIND-SAFE BATCH, and says exactly that
+    // number: the delete names the ids the roster returned, so the count
+    // describes the rows just listed (#2231 r14 `4037027829`). The batch is
+    // 90, not the report's 200 — D1 caps a statement at 100 bound parameters
+    // and a 200-id list would throw on every pass (#2231 r16 `4037430369`).
+    expect(said).toContain(`released ${QUARANTINE_SWEEP_BATCH} held entries`);
     const shown = ids.filter((id) => new RegExp(`\\b${id}\\b`).test(said));
-    expect(shown).toHaveLength(STALE_ROLL_CALL_LIMIT);
-    // The remainder waits for the next pass — this sweep is the durable
+    expect(shown).toHaveLength(QUARANTINE_SWEEP_BATCH);
+    // The remainder waits for later passes — this sweep is the durable
     // cleanup path and runs on every one.
-    expect(quarantined(h)).toHaveLength(extra);
+    expect(quarantined(h)).toHaveLength(ids.length - QUARANTINE_SWEEP_BATCH);
     warn.mockRestore();
   });
 
@@ -494,12 +497,14 @@ describe('the table, over the real migrated schema', () => {
     await releaseTerminalQuarantine(counting as never, CHAIN);
     warn.mockRestore();
     expect(returned.length).toBeGreaterThan(0);
-    for (const count of returned) expect(count).toBeLessThanOrEqual(STALE_ROLL_CALL_LIMIT);
-    // The delete is bounded WITH the read now, so one pass clears the cap and
-    // the rest wait for the next (#2231 r14 `4037027829`). The earlier shape
+    // Never more than the sweep's BIND-SAFE batch, which is the tighter of
+    // the two bounds and the one D1 enforces (#2231 r16 `4037430369`).
+    for (const count of returned) expect(count).toBeLessThanOrEqual(QUARANTINE_SWEEP_BATCH);
+    // The delete is bounded WITH the read, so one pass clears a batch and the
+    // rest wait for later passes (#2231 r14 `4037027829`). The earlier shape
     // removed everything in one go by repeating the roster's two-table
     // condition — unbounded work behind a bounded read.
-    expect(quarantined(h)).toHaveLength(40);
+    expect(quarantined(h)).toHaveLength(STALE_ROLL_CALL_LIMIT + 40 - QUARANTINE_SWEEP_BATCH);
   });
 
   it('will not invent a count when the driver reports none', async () => {
@@ -531,9 +536,62 @@ describe('the table, over the real migrated schema', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
     expect(said).toContain('an unreported number of held entries');
-    expect(said).toContain(`at least ${STALE_ROLL_CALL_LIMIT}`);
-    // The release still happened, up to this pass's cap.
-    expect(quarantined(h)).toHaveLength(7);
+    // NOT "at least N" — the roster and the delete are separate statements,
+    // so rows can be cleared or turn active in between and the roster is no
+    // lower bound on what went (#2231 r16 `4037430426`).
+    expect(said).not.toContain('at least');
+    expect(said).toContain(`${QUARANTINE_SWEEP_BATCH} qualified a moment earlier`);
+    expect(said).toContain('not a count of what went');
+    // The release still happened, up to this pass's batch.
+    expect(quarantined(h)).toHaveLength(
+      STALE_ROLL_CALL_LIMIT + 7 - QUARANTINE_SWEEP_BATCH,
+    );
+  });
+
+  it('will not release a hold whose loan turned active between read and delete', async () => {
+    // #2231 r16 `4037430380`. The bounded delete names ids, which is what
+    // stops a second unbounded walk — but an id-only delete no longer checks
+    // the fact that licensed the release. Between the roster read and the
+    // delete, the terminal row can be replaced by an ACTIVE loan under the
+    // same id. That is not a hypothetical race: it is the reused-id
+    // remediation this whole change is about, and releasing there resumes
+    // reminders for a live loan.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [81, 82], unread: [81, 82] }));
+    seedLoanRow(h, 81, 'repaid');
+    seedLoanRow(h, 82, 'repaid');
+    // A db that swaps loan 81 for an active replacement once the roster has
+    // been read — exactly the window the predicate re-check closes.
+    const racing = {
+      prepare: (sql: string) => {
+        const st = (h.d1 as { prepare: (q: string) => never }).prepare(sql) as unknown as Record<
+          string,
+          unknown
+        >;
+        if (!/^\s*SELECT loan_id FROM/.test(sql)) return st;
+        return {
+          ...st,
+          bind: (...args: unknown[]) => {
+            const bound = (st.bind as (...a: unknown[]) => Record<string, unknown>)(...args);
+            return {
+              ...bound,
+              all: async () => {
+                const out = await (bound.all as () => Promise<unknown>)();
+                h.db.prepare('DELETE FROM loans WHERE loan_id = 81').run();
+                seedLoanRow(h, 81, 'active');
+                return out;
+              },
+            };
+          },
+        };
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await releaseTerminalQuarantine(racing as never, CHAIN);
+    warn.mockRestore();
+    // 82 was and remained terminal, so it goes. 81 is a live loan now, so its
+    // hold stays and the next pass looks again.
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([81]);
   });
 
   it('stays silent on a sweep that released nothing', async () => {

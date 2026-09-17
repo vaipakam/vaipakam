@@ -340,20 +340,25 @@ The app uses chain reads and indexed reads for different jobs.
   emits a finished instruction, and it is checked by being executed rather
   than by being read.
 
-  Records named but not described do not carry one — there is no room for
-  hundreds of finished instructions in one message — so the report gives them
-  an enquiry that returns everything a removal needs, and the described
-  records show the finished form it goes into. Naming a record while leaving
-  it unactionable would, in practice, push a person toward the unguarded
-  removal this report spends a paragraph warning against, and because the
-  described page does not rotate it would push them there indefinitely.
+  Records named but not described do not carry one in the message — there is
+  no room for hundreds of finished instructions in one line — so the report
+  gives them an enquiry that RETURNS each one's instruction, already written.
+  Not the values to build one from: the assembly is the thing that kept going
+  wrong, and an enquiry handing back parts would have preserved it in the one
+  place hardest to check. The store builds the text, so the quoting is done by
+  the same engine that will parse it. Naming a record while leaving it
+  unactionable would, in practice, push a person toward the unguarded removal
+  this report spends a paragraph warning against, and because the described
+  page does not rotate it would push them there indefinitely.
 
-  That value is a fresh token written on each sighting **together with** the
-  time of that sighting, and it takes both. A time recorded to the second
-  cannot distinguish two sightings within the same second. A token alone
-  cannot catch a sighting recorded by the older write shape, which is unable
-  to refresh it. Either gap lets a removal delete a finding recorded after the
-  person read the report — resuming reminders for a position nothing has
+  That value is a token **together with** the time of the sighting, and it
+  takes both because neither covers the other's case. An ordinary write
+  rotates the token, which is what separates two sightings inside the same
+  second — a recorded time cannot. A write made while the store is still on
+  the older shape CANNOT rotate it, and those are caught by the time moving
+  instead. Saying simply that the token changes on every sighting would
+  describe protection the fallback path does not provide. Either gap lets a
+  removal delete a finding recorded after the person read the report — resuming reminders for a position nothing has
   settled, the exact harm this memory exists to prevent. A guard that can
   silently fail is worse than none, because its value is that it can be
   trusted without checking.
@@ -381,17 +386,34 @@ The app uses chain reads and indexed reads for different jobs.
   asking until the newer one appears. Where the sweep that releases records
   must read the store to find them, what it REMOVES is bounded together with
   what it reads, so one run clears up to a stated number and the rest wait for
-  the next — the sweep runs on every run. The reading itself still grows with
+  later runs — the sweep runs on every run. That number is smaller than the
+  report's, and for a harder reason: the store refuses a single instruction
+  carrying more than a fixed count of supplied values, and an instruction that
+  exceeds it fails the SAME way on every run, releasing nothing while
+  appearing to work. The removal also re-checks, at the moment of removing,
+  the fact that licensed it — between finding a record and removing it, the
+  position under that identifier can have been replaced by a live one, which
+  is precisely the reuse this memory is about. The reading itself still grows with
   how much is held, and that is stated rather than claimed away: no index can
   bound a question that spans two records and is not stored anywhere.
 
-  While the older shape is in use, the report still names every withheld
-  position — a deployment is exactly when a suppression most needs to be
-  visible — but offers **no** removal procedure, and says why. Every such
-  command names something the older shape does not have, so printing one
-  would hand a person an instruction that cannot run and invite them to
-  improvise the unguarded removal the report warns against. "Not yet, and
-  here is why" is the honest content for a window that lasts minutes.
+  While the older shape is in use, the report names withheld positions on the
+  same terms as ever — up to its stated limit, with an exact count of any
+  beyond it — because a deployment is exactly when a suppression most needs to
+  be visible. What it withholds there is the removal procedure, and it says
+  why: every such command names something the older shape does not have, so
+  printing one would hand a person an instruction that cannot run and invite
+  them to improvise the unguarded removal the report warns against. The
+  enquiry that would fetch instructions for the records past the limit is
+  withheld for the same reason.
+
+  It does **not** promise how long that lasts. In an ordinary rollout it is
+  minutes, and the report says so — but asking the store establishes only that
+  the newer shape is ABSENT, never when it will arrive, and an update that
+  failed or was skipped leaves this indefinitely. So the report tells a person
+  what to do with a second sighting: if the same message appears on a later
+  run, the update did not land and wants looking at, because these
+  suppressions cannot be cleared safely until it does.
 - **The report is bounded, and says so where the bound bites — and says
   exactly what is NOT bounded.** Reporting takes the same small number of
   enquiries every run, returns no more than a stated number of records to the

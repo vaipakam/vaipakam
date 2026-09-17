@@ -64,8 +64,10 @@ attempts to print the *pieces* and let a person assemble them — each of which
 turned out not to run, in a different way each time. The command is checked by
 being executed: the tests take the text the report emits and run it.
 
-The value it quotes is two values, not one: a token written afresh on every
-sighting, and the time of that sighting. A time recorded to the second cannot
+The value it quotes is two values, not one: a token and the time of the
+sighting, and they cover different things rather than doubling up. An ordinary
+write rotates the token; a write made while the store is still on the older
+shape cannot, and those are caught by the time moving instead. A time recorded to the second cannot
 tell two sightings within the same second apart, and a token cannot be
 refreshed by the older write shape, so either on its own would let a removal
 delete a finding recorded *after* the person read the report — resuming
@@ -167,8 +169,8 @@ one announcement wired to every route briefly said the strongest of the three
 on all of them.
 
 Two things about the upgrade itself. A deployment publishes the new code
-before the store is updated to match, so for a few minutes the code runs
-against the older shape — and a run that cannot record a withheld loan lets
+before the store is updated to match, so for a while — minutes in an ordinary
+rollout — the code runs against the older shape — and a run that cannot record a withheld loan lets
 the next run remind on it, which is the failure this memory exists to prevent,
 arriving during its own upgrade. Recording is therefore written to succeed
 against both shapes, and the platform asks the store which shape it has rather
@@ -178,8 +180,15 @@ exact count of any beyond it, because a deployment is exactly when a
 suppression most needs to be visible — but offers no removal command at all,
 and says why: every such command names something the older shape does not
 have, so printing one would hand a person an instruction that cannot run. The
-enquiry that fetches the values for entries past the limit is withheld there
-too, for the same reason.
+enquiry that would hand back instructions for entries past the limit is
+withheld there too, for the same reason.
+
+It also does not promise how long that lasts. Asking the store establishes
+only that the newer shape is ABSENT, never when it will arrive, and an update
+that failed or was skipped leaves this indefinitely — so the report says what
+to do with a second sighting: if the same message turns up on a later run, the
+update did not land and wants looking at, because these entries cannot be
+cleared safely until it does.
 
 The safety value also had to become two values rather than one. The older
 write shape cannot refresh the token, so a token on its own would go on
@@ -193,6 +202,15 @@ carries an empty one; the report prints that in a form that can be pasted as
 it stands, because an entry nothing ever re-examines — exactly the kind this
 report is for — would otherwise be named and permanently unremovable by the
 safe route.
+
+The sweep that releases entries clears a limited number on each run and leaves
+the rest for later ones, and that limit is not a matter of taste: the store
+refuses a single instruction carrying more than a fixed count of supplied
+values, and one that exceeds it fails the same way every run — releasing
+nothing while appearing to work. The removal also re-checks, as it removes,
+the fact that licensed it, because between finding an entry and removing it
+the loan under that number can have been replaced by a live one. That is
+exactly the reuse this whole change is about.
 
 The count of how many entries are held and the list of them are also now read
 in the same instant. Taken separately, a removal happening in between left the

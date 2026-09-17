@@ -67,6 +67,27 @@ export const STALE_REPORT_LIMIT = 20;
  */
 export const STALE_ROLL_CALL_LIMIT = 200;
 
+/**
+ * How many markers the terminal sweep clears in ONE pass.
+ *
+ * NOT `STALE_ROLL_CALL_LIMIT`, and the difference is a hard limit rather than
+ * a judgement (#2231 r16 `4037430369`). The sweep's delete names its ids, and
+ * **D1 caps a statement at 100 bound parameters** — a fact this repository
+ * already paid for once: `loadLoanParties` carries the same note, from
+ * Codex #1292, and settled on 90 ids plus the chain bind.
+ *
+ * At 200 the statement would throw. Worse, it would throw the SAME way on
+ * every pass: the roster is `ORDER BY loan_id`, so the identical oversized
+ * prefix comes back each time and none of those markers is ever released —
+ * a sweep that appears to run and silently achieves nothing, which is the
+ * failure mode the quarantine exists to avoid rather than create.
+ *
+ * 90 for the same reason the existing site chose it: it leaves room for the
+ * chain bind and for a statement to grow a condition without anyone having to
+ * recompute the ceiling.
+ */
+export const QUARANTINE_SWEEP_BATCH = 90;
+
 /** Which of the four ways a row failed to settle. Kept, not flattened. */
 export type QuarantineReason = 'unread' | 'write-failed' | 'orphan' | 'unknown-status';
 
@@ -571,23 +592,26 @@ export async function releaseTerminalQuarantine(
         ORDER BY loan_id
         LIMIT ?`,
     )
-    .bind(chainId, STALE_ROLL_CALL_LIMIT)
+    .bind(chainId, QUARANTINE_SWEEP_BATCH)
     .all<{ loan_id: number }>();
   const named = (roster.results ?? []).map((r) => r.loan_id);
   if (named.length === 0) return;
-  // DELETES EXACTLY THE ROSTER, by id, and nothing else (#2231 r14
-  // `4037027829`).
+  // THE ID LIST BOUNDS IT; THE PREDICATE KEEPS IT TRUE. Both, not either
+  // (#2231 r14 `4037027829`, r16 `4037430380`).
   //
-  // It repeated the `EXISTS` condition, which meant a SECOND unbounded walk
-  // of the chain's held rows on every sweep that had anything to do — the
-  // bounded roster in front of it bounded only what came back, not the work.
-  // Naming the ids turns it into `STALE_ROLL_CALL_LIMIT` primary-key deletes.
+  // Bare `EXISTS` was a second unbounded walk of the chain's held rows behind
+  // a bounded read — the bound applied to what came back, never to the work.
+  // Naming the ids fixed that and introduced the opposite defect: an id-only
+  // delete no longer checks the fact that licensed the release. Between the
+  // roster read and here, the terminal row can be deleted and a REPLACEMENT
+  // active loan inserted under the same id — which is not a hypothetical
+  // race, it is the reused-id remediation this whole change is about — and
+  // the sweep would then release a hold on a live loan and resume its
+  // reminders.
   //
-  // It also settles something the previous shape could only hedge: the roster
-  // and the count are now THE SAME SET, so `meta.changes` describes the rows
-  // just listed rather than a superset read a moment later. A sweep with more
-  // than the cap to clear takes another pass, which this sweep is built for —
-  // it is the durable cleanup path and runs every pass.
+  // Carrying both makes the scan bounded by the id list and the outcome
+  // conditional on the evidence still holding. A row that changed under the
+  // sweep simply stays held, and the next pass looks again.
   //
   // A `?` per id rather than an interpolated list: the #1149 guard reads
   // static prepare sites, and an interpolated `IN (...)` leaves its reach.
@@ -595,18 +619,28 @@ export async function releaseTerminalQuarantine(
   const outcome = await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
-        WHERE chain_id = ? AND loan_id IN (${placeholders})`,
+        WHERE chain_id = ? AND loan_id IN (${placeholders})
+          AND EXISTS (
+            SELECT 1 FROM loans l
+             WHERE l.chain_id = loan_reconcile_quarantine.chain_id
+               AND l.loan_id  = loan_reconcile_quarantine.loan_id
+               AND l.status NOT IN ('active', 'fallback_pending')
+          )`,
     )
     .bind(chainId, ...named)
     .run();
-  // NO INVENTED COUNT when the driver reports none.
+  // NO INVENTED COUNT when the driver reports none, AND NO LOWER BOUND EITHER
+  // (#2231 r16 `4037430426`).
   //
-  // This read `?? named.length`, and that fallback is a figure the code
-  // cannot substantiate presented as exact: `named` is capped at
-  // `STALE_ROLL_CALL_LIMIT`, so a sweep that removed five thousand rows would
-  // have reported "released 200". `named.length` IS a sound lower bound —
-  // those rows matched the condition moments earlier — so it is reported as
-  // one, with the shortfall named as unknown rather than as zero.
+  // This read `?? named.length` and called that a sound lower bound. It is
+  // not: the roster and the delete are separate statements, so an operator's
+  // own clear or another invocation can remove any or all of those rows in
+  // between — and now that the delete re-checks the terminal predicate, a row
+  // that turned active again is skipped as well. "At least 90 released" can
+  // therefore be said of a statement that released nothing.
+  //
+  // What the roster IS is the set that qualified a moment earlier. That is
+  // what it is called now.
   const removed = outcome.meta?.changes ?? null;
   if (removed === 0) return;
   // WHAT THE ROSTER IS, said plainly rather than implied. It was read
@@ -623,7 +657,9 @@ export async function releaseTerminalQuarantine(
   const howMany =
     removed === null
       ? `an unreported number of held entries (the driver returned no row ` +
-        `count; at least ${named.length})`
+        `count; ${named.length} qualified a moment earlier, which is not a ` +
+        `count of what went — any of them may have been cleared or turned ` +
+        `active in between)`
       : `${removed} held entr${removed === 1 ? 'y' : 'ies'}`;
   console.warn(
     `[loanQuarantine] chain ${chainId}: released ${howMany} whose stored ` +
