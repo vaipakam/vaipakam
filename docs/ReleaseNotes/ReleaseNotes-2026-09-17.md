@@ -1,4 +1,222 @@
-## Thread — A reminder could still be sent about a loan nobody had confirmed (issue #2212)
+# Release Notes — 2026-09-17
+
+Three entries, in the order the file assembles them: the keeper's arming
+flags, the transport epochs, the reminder hold. The transport epochs are
+the substantial one — the last part of the #1566 programme before the role
+carry-forward — and what that change adds is deliberately inert where it
+counts: no ledger arithmetic moves, and no classification comes out
+differently than it would have yesterday. It is not inert in the sense of
+adding nothing — anyone may now ask the sending chain to attest a
+delivery's composition, pay the quoted transport fee for it, and have the
+receiving chain record the figures. That supplies the one thing the
+previous release left missing: a mirror holding value whose composition it
+was never told can now be told, by the chain that sent it, what that chain
+recorded when it sent. The figures are kept and not yet consulted, because
+the step that would consult them does not exist until the next change; and
+what a classification may treat as evidence is worked out from them when it
+is asked rather than frozen in advance, since asking the source and
+releasing the value are both open to anyone and can happen in either order.
+Alongside it, every arrival now commits to the days it names, so the ledger
+that comes next can check a re-supplied list against the chain's own record
+rather than against an event.
+
+The two corrections are both cases where a record and the thing it
+described had drifted apart. A Worker's configuration file called three
+arming flags plain settings when they are secrets, which matters to anyone
+reconstructing what a deployment actually holds. Two of the three were
+found unset at the last live check, over a month before this correction;
+whether the deployed keeper is armed today is not something this change
+establishes, and the entry says so rather than letting a stale observation
+read as current posture.
+
+And a reminder could still be sent about a loan nobody had confirmed: a
+record the periodic check could not settle stays stored as open, which is
+exactly what a permanently missed ending looks like, so those records are
+withheld from reminders rather than read as ordinary. The memory of which
+records are unconfirmed is written after each turn rather than within it,
+so a turn interrupted in between loses its entry and leaves that turn's
+worth of exposure — the next turn to examine the record writes it again.
+The entry states that limit rather than leaving it to be discovered.
+
+## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
+
+The keeper Worker's configuration file described `KEEPER_ENABLED`,
+`REWARD_REMIT_ENABLED` and `REWARD_COMMIT_ENABLED` as "operator-managed vars
+(non-secret config — plain vars)". They are not. They are per-Worker secrets,
+set the way secrets are set and unreadable afterwards from either the API or
+the dashboard. That was checked against the live deployment on 2026-07-30 for
+the kill-switch specifically; the two reward flags were **absent** there and
+are provisioned the same way when they are armed. The distinction matters for
+anyone reconstructing deployment posture: two of the three are not unreadable
+live state, they are simply not set.
+
+Their absence would leave three scheduled duties dark rather than two, which
+is worth stating precisely because the flags and the duties are not one-to-one:
+the reward-budget remittance pass and the remittance-acknowledgement pass are
+both gated by the remit flag, and the commitment-report pass by the commit
+flag. An operator reconstructing what is running from the flag names alone
+would otherwise miss the acknowledgement duty entirely.
+
+That "would" is doing real work. The deployed keeper currently has **no cron
+schedule at all** — it was deliberately unscheduled after nearly every
+invocation exceeded its CPU ceiling — and this Worker has no HTTP surface, so
+every pass is dark right now regardless of any flag. The flag-by-flag account
+above describes what gates what *once the schedule is restored*; read as a
+description of today it would wrongly imply the non-reward passes are running.
+
+The Worker's own environment module and the off-chain restore runbook already
+recorded the classification correctly, and the runbook went as far as naming
+this config file as the one carrying the wrong description. Several other
+places did not, and are corrected alongside it: the keeper README filed the
+reward passes' lookback and lane-cap knobs under "set with `wrangler secret
+put`" although they are ordinary variables; the root contributor guide left
+both reward arming flags out of the keeper secret list; the Secrets Store
+migration plan listed the kill-switch as non-secret configuration; the
+environment module's own passthrough label said "non-secret" while covering
+all three flags, contradicting a correction recorded twenty lines above it;
+the incident runbook's reward-remittance prerequisite told operators the flags
+live in the Worker's variables; and two design and restore documents carried
+warnings that the configuration comment could not be trusted, which were true
+until this change and are now stale.
+
+The way that list was arrived at is worth recording, because the first attempt
+was wrong. Sites were initially found by searching for classification
+*language* near a flag name — and that search missed the incident runbook,
+whose sentence says only "in the keeper Worker's vars": no "plain", no
+"non-secret", nothing the pattern was looking for. Deciding from prose whether
+a sentence classifies a binding is the same unbounded guess this repository
+has been bitten by before. The list above instead comes from reading **every**
+mention of the three flag names outside dated changelogs and tests — a fixed
+set of exact strings, small enough to read in full. That is a bounded check,
+and it is what turned up several entries no review round had named.
+
+What this deliberately does not claim is completeness. Each of three review
+rounds found one more document saying something looser than the code does,
+and "no prose anywhere could mislead a reader about this" is not a property
+anyone can check. The corrected sites are the ones that were found.
+
+Where a disagreement turns up later, it resolves against the live deployment
+and the recorded decision, not against the Worker's code comments — those are
+descriptions of a deployment choice, and the environment types a variable and
+a secret identically, so the code cannot establish the binding class on its
+own. If a ratified decision ever changes the intended classification, the
+comments are what gets updated to match it.
+
+The consequence was not cosmetic. Reading that heading, the reasonable next
+step is to commit an arming value into the config so the live state is
+visible in review — which is exactly what the tracking issue for this
+proposed. Doing it would change deployment semantics twice over. A committed
+variable arms or disarms the keeper from any clean checkout. And a variable of
+the same name does not sit beside the secret — the deployment tool's own
+collision warning says it replaces the remote secret with the configured
+value, so committing the flag destroys the binding it was meant to document,
+with no fallback and no rollback short of setting the secret again after
+removing the variable. The environment module already recorded the decision
+not to do this; the config now points at that decision, and at the mechanism,
+instead of quietly inviting the opposite.
+
+The same tracking issue also reported that every plain deploy silently
+cleared these flags. That was true of genuine dashboard-managed variables and
+is now prevented by the preservation setting this Worker declares, but it was
+never true of the three arming flags, because a deploy does not remove
+secrets. Both halves of that report are therefore resolved — one by the
+preservation declaration, one by the flags never having been variables in the
+first place — and the config now separates the two classes so the distinction
+survives.
+
+That preservation promise is itself narrower than it reads, and the config now
+says so: it protects variables the configuration does not declare, because a
+declared one is uploaded on every deploy like any other setting. The bot
+handle is the one variable this configuration does declare, so a dashboard
+edit to it is overwritten rather than kept. Nothing else in the plain-variable
+class is declared, so everything else in it is genuinely preserved.
+
+The bot handle is a weak example of its own rule, and the documentation now
+says so rather than leaving an operator to discover it: no keeper code reads
+that value at all — the Telegram link that uses the handle is built by a
+different Worker from its own binding — so setting it either way changes
+nothing the keeper does. It is kept because the declaration is what makes the
+overwrite behaviour visible, not because the Worker needs it.
+
+One thing this change does not establish is whether the deployed keeper is
+currently armed. For the kill-switch the value exists but cannot be read back,
+which is the whole reason each gated pass reports how it resolved it at
+runtime; for the two reward flags the last live check found nothing set at
+all, and that observation is over a month old.
+
+Closes #1465.
+<!-- assembled-fragment: 1465-keeper-arming-flag-classification.md sha256=982f1feb564d701596440f79a62ca3721a04814cc6b35610e1514b04ae6db8aa -->
+
+## #1566 transport epochs, first change — the attested split, and every arrival's day-list commitment (PR #2224)
+
+The cutover's second part let an administrator classify a protected packet's
+value, and bounded a fresh classification by evidence the administrator
+cannot write: what the packet's source chain recorded of its split. Nothing
+on a live deployment could supply that evidence, so an untyped arrival could
+be classified recycled only. This change supplies it — recorded for later
+rather than consulted yet — and records one more fact about every arrival
+that the transport epochs' ledger will need.
+
+**The attested split.** The canonical chain can send, for any remittance it
+issued, the split it recorded when it sent: the fresh figure and the recycled
+figure, toward the chain that remittance went to. Anyone may ask it to. The
+content is the chain's own record, so a caller can neither forge nor inflate
+it, and the caller pays the transport fee, which the platform quotes
+beforehand. The mirror that received the remittance resolves it through the
+receipt the delivery created and keeps both figures once, each scaled down to
+what actually landed in the same proportion, so a short delivery shrinks both
+and never leaves one larger than the whole. It refuses what it cannot
+honestly attest: a packet whose wire already carried its split, a receipt
+whose delivery came from a chain other than the attesting one, a receipt that
+predates packet stamping, an empty split, and a second attestation that
+disagrees with the first — the first record is the source's, and a differing
+one is a faulty source rather than a correction. A second attestation that
+says the same thing changes nothing and is accepted, because asking again is
+how a sender handles a delivery it cannot confirm, and the transport fee is
+paid whether or not the message lands. A refused message stays re-executable,
+so a repeat send is a retry, not a grief.
+
+Only a remittance that carried its own identity on the wire can be attested.
+The oldest wire shape carried none — no receipt exists for it, and the
+canonical chain holds no reservation — so such a packet's fresh component
+stays unauthenticated for good: it classifies recycled, or leaves untyped
+through the dispositions the epoch already provides.
+
+**Recorded, not yet consulted, and never frozen.** The two attested figures
+sit beside the packet and are never changed afterwards. What a classification
+may treat as evidence is worked out from them at the moment it is asked,
+never written down in advance at some earlier step — because asking the
+canonical chain to attest is open to anyone, and so is the step that later
+releases a packet's value for classification, and the two can happen in
+either order. A figure frozen before the attestation arrived would read as
+"no evidence" for ever, for exactly the packets the attestation was sent to
+evidence. Today the release step does not exist yet, so the answer is the
+same as it was before this change: an attested packet still classifies
+recycled only. The transport epochs' ledger, the next change, is what makes
+the answer move.
+
+**Every arrival commits to its day list.** A packet on any wire before the
+next wire version names the days it funds. The mirror's ingress now records,
+with the packet and in the same transaction, a fingerprint of that list and
+its length. Nothing reads them yet. They are what the transport epochs'
+ledger will check a re-supplied day list against when it admits a packet,
+so a packet that landed before that ledger existed is never admitted on the
+strength of an event, only of the chain's own record. A compensation
+delivery, which names one day, is committed the same way.
+
+**The mirror-side ingress has its own facet.** The three entries the
+transport calls on a mirror — the budget delivery, the compensation delivery
+and the compensation-day hook — moved unchanged out of the remittance facet,
+which had almost no room left under the platform's per-facet size limit, into
+a facet of their own, because the ingress is exactly where this family of
+changes and the role carry-forward after it will grow. Every caller reaches
+them by the same identifiers through the same entry point; only the code
+behind them is separate, and a refresh must carry the two together. The one
+derivation of a delivery receipt's key, which four places had copied byte for
+byte, now lives in one place.
+<!-- assembled-fragment: 1566-transport-epochs-3a.md sha256=174d78b6af638e846c8393c883a6ac641d3664131cf297c17a09d33a1f2f3cc0 -->
+
+## Thread — A reminder could still be sent about a loan nobody had confirmed (PR #2213, issue #2212)
 
 The platform checks its own loan records against the chain a few at a time,
 and derives due-date and grace-period reminders from those records. A record
@@ -714,3 +932,4 @@ turn's worth of exposure rather than a guarantee, and it is stated here rather
 than left for someone to discover.
 
 Closes #2212.
+<!-- assembled-fragment: 2212-quarantine.md sha256=6a8b8cf979c31bb1f3fc4ebc4548d951dd81e6f8c0e195e12c687260ea115f48 -->
