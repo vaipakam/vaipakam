@@ -625,8 +625,26 @@ export async function releaseTerminalQuarantine(
  *    overflow is stated, so "20 shown" can never read as "20 exist".
  */
 /**
- * A guard rendered as the SQL LITERAL the operator pastes (#2231 r12
- * `4036719806`).
+ * A guard rendered as the SQL PREDICATE the operator pastes (#2231 r12
+ * `4036719806`, r13 `4036869950`).
+ *
+ * BOTH the token and the sighting time, because neither alone covers every
+ * way a row can be re-observed. The token changes on every GUARDED write and
+ * is the answer to two sightings inside one second. But the legacy write
+ * shape — the one that runs while migration 0053 has not been observed —
+ * cannot name the column, so its `ON CONFLICT` leaves an existing token
+ * untouched while recording a fresh sighting. A guard of the token alone
+ * would then still match, and the operator's clear would remove a finding
+ * they never saw: round 11's defect, reintroduced by round 12's fallback.
+ * `last_seen_at` moves on that write, so the pair does not match.
+ *
+ * WHAT REMAINS, stated rather than papered over: a LEGACY write landing in
+ * the same second as the sighting whose guard the operator holds changes
+ * neither half. That needs the probe to have failed or to be mid-window AND
+ * two sightings inside one second, on a table that already has the column.
+ * It is not closed, and it is not claimed to be — the alternative was to
+ * force `last_seen_at` forward on collision, which corrupts the one column
+ * telling an operator how long ago a row was actually recorded.
  *
  * It read `obs || 'none'`, which turns the empty guard on a pre-0053 row into
  * the word `none` — so the prescribed clear became `obs = 'none'`, matching
@@ -639,9 +657,27 @@ export async function releaseTerminalQuarantine(
  * empty case work: a template that wrapped the printed value in quotes would
  * turn an empty guard into four quote characters and match nothing again.
  */
-function sqlGuard(obs: string): string {
-  return `'` + obs.replace(/'/g, `''`) + `'`;
+function sqlGuard(obs: string, lastSeenAt: number): string {
+  return `obs = '` + obs.replace(/'/g, `''`) + `' AND last_seen_at = ` + String(lastSeenAt);
 }
+/**
+ * How to clear ONE entry, when the guard column is there to guard with.
+ *
+ * Hoisted out of the warning so the unavailable case has something to be
+ * an alternative TO, rather than the message growing a second inline copy
+ * that drifts from this one (#2231 r13 `4036869959`).
+ */
+const CLEAR_INSTRUCTION =
+  `Clearing one is a deliberate act, and MUST name the exact entry that ` +
+  `was read — a pass between your reading this and running it can ` +
+  `re-observe the id as unsettled, and an unconditional delete would then ` +
+  `drop that fresh finding instead: DELETE FROM loan_reconcile_quarantine ` +
+  `WHERE chain_id = <chain> AND loan_id = <id> AND <the guard shown in ` +
+  `brackets for that row, pasted whole>. The guard is a token that changes ` +
+  `on every sighting AND the time of that sighting: the token alone would ` +
+  `miss a sighting recorded while the guard column was not yet in place, ` +
+  `and the time alone cannot separate two sightings inside one second. If ` +
+  `it deletes nothing, the entry changed under you and wants re-reading.`;
 export async function reportStaleQuarantine(
   db: D1Database,
   chainId: number,
@@ -807,7 +843,7 @@ export async function reportStaleQuarantine(
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
         `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}, ` +
-        `guard ${sqlGuard(r.obs)}; ` +
+        `guard [${sqlGuard(r.obs, r.last_seen_at)}]; ` +
         `${points})`
       );
     })
@@ -842,7 +878,9 @@ export async function reportStaleQuarantine(
     //
     // The value is already in hand: the same statement selects it for every
     // row it returns. Pairing it costs bytes, not a query.
-    const ids = named.map((r) => `${r.loan_id}@${sqlGuard(r.obs)}`).join(', ');
+    const ids = named
+      .map((r) => `${r.loan_id}@[${sqlGuard(r.obs, r.last_seen_at)}]`)
+      .join(', ');
     // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
     // count is exact even here, so this is a stated limit rather than a page
     // that quietly ended (#2231 r7 `4035821168`).
@@ -876,6 +914,20 @@ export async function reportStaleQuarantine(
       `and that is the check the described entries got and these did ` +
       `not${beyond})`;
   }
+  // NO CLEARING INSTRUCTION AT ALL while the guard column has not been
+  // observed (#2231 r13 `4036869959`). On a database still at 0049 every
+  // command naming `obs` fails with an unknown-column error, so printing
+  // one hands the operator something that cannot work and invites them to
+  // improvise the unguarded delete this paragraph exists to prevent. The
+  // window is minutes; saying "not yet" is the honest content for it.
+  const howToClear = withGuard
+    ? CLEAR_INSTRUCTION
+    : `A guarded clear is NOT available on this database yet: the guard `
+      + `column (migration 0053) has not been seen here, and every command `
+      + `naming it would fail with an unknown-column error. Wait for the `
+      + `migration rather than deleting unguarded — an unguarded delete `
+      + `drops whatever a pass recorded between your reading this and `
+      + `running it. This is a deploy window and lasts minutes.`;
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +
       `for over ${QUARANTINE_STALE_SECONDS / 3600}h — ${described}${overflow}. ` +
@@ -887,18 +939,8 @@ export async function reportStaleQuarantine(
       `whose id is held by a loan the finding was plainly not about is a ` +
       `position going without reminders. The platform does not release those ` +
       `automatically: every way it could establish "this is a different loan" ` +
-      `from stored data has proved unsound (#2222). Clearing one is a ` +
-      `deliberate act, and MUST name the exact entry that was read — a pass ` +
-      `between your reading this and running it can re-observe the id as ` +
-      `unsettled, and an unconditional delete would then drop that fresh ` +
-      `finding instead: DELETE FROM loan_reconcile_quarantine WHERE ` +
-      `chain_id = <chain> AND loan_id = <id> AND obs = <the guard shown ` +
-      `above for that row, quotes included — an entry written before the ` +
-      `guard column landed shows an empty pair and that is a valid guard ` +
-      `for it>. The guard changes on EVERY observation, which ` +
-      `a timestamp does not — two sightings in one second leave a timestamp ` +
-      `identical and would let this delete a finding you never saw. If it ` +
-      `deletes nothing, the entry changed under you and wants re-reading. Note also that an entry IS released ` +
+      `from stored data has proved unsound (#2222). ${howToClear} ` +
+      `Note also that an entry IS released ` +
       `automatically when a stored loan with its id is terminal, and that too ` +
       `is an identity assumption the platform cannot verify — a replacement ` +
       `that started and ended would release a finding about the position ` +

@@ -628,7 +628,7 @@ describe('telling the operator about a row that stays', () => {
     // guarded on the exact entry that was read, so a pass that re-observes
     // the id between the reading and the running is not silently dropped.
     expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
-    expect(said).toContain('AND obs = <the guard shown');
+    expect(said).toContain('AND <the guard shown in');
     warn.mockRestore();
   });
 
@@ -736,16 +736,77 @@ describe('telling the operator about a row that stays', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
     // An empty SQL literal, not a word.
-    expect(said).toContain("guard ''");
+    expect(said).toContain(`guard [obs = '' AND last_seen_at = ${NOW}]`);
     expect(said).not.toContain('guard none');
     // And the instruction does not add quotes of its own, which would turn
     // that into four quote characters and match nothing again.
-    expect(said).toContain('AND obs = <the guard shown');
+    expect(said).toContain('AND <the guard shown in');
     // The command it produces is the one that works.
+    // The command the report produces, pasted whole.
     const removed = h.db
-      .prepare("DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? AND obs = ''")
+      .prepare(
+        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? ` +
+          `AND obs = '' AND last_seen_at = ${NOW}`,
+      )
       .run(CHAIN, 55);
     expect(Number(removed.changes)).toBe(1);
+  });
+
+  it('offers NO clearing command while the guard column is unseen', async () => {
+    // #2231 r13 `4036869959`. During the deploy window the report reads a
+    // 0049 table by synthesizing an empty guard — but every command naming
+    // `obs` fails there with an unknown-column error. Printing one hands the
+    // operator something that cannot work and invites them to improvise the
+    // unguarded delete this report spends a paragraph warning against.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [61], unresolvable: [61] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    // `false` is what the probe reports on a database still at 0049.
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, false);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    // The hold is still reported — the window is exactly when a suppression
+    // most needs to be visible.
+    expect(said).toContain('loan 61');
+    // But no command that would fail is offered...
+    expect(said).not.toContain('DELETE FROM loan_reconcile_quarantine');
+    // ...and the reason is stated rather than left as a silent omission.
+    expect(said).toContain('A guarded clear is NOT available on this database yet');
+    expect(said).toContain('unknown-column error');
+    expect(said).toContain('rather than deleting unguarded');
+  });
+
+  it('will not let a stale token clear a row the legacy shape re-observed', async () => {
+    // #2231 r13 `4036869950`. The legacy write cannot name `obs`, so its
+    // ON CONFLICT leaves an existing token untouched while recording a fresh
+    // sighting. Run against a MIGRATED table — which happens if 0053 lands
+    // mid-pass, or if a probe fails — a guard of the token alone would still
+    // match, and the operator's clear would remove a finding they never saw:
+    // round 11's defect, reintroduced by round 12's fallback.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [71], unread: [71] }), NOW);
+    const staleToken = guardTokens(h).get(71) as string;
+    // The fallback shape, on a table that DOES have the column.
+    const legacy = quarantineStatements(
+      h.d1 as never,
+      CHAIN,
+      report({ examined: [71], unread: [71] }),
+      NOW + 30,
+      false,
+    );
+    await (h.d1 as never as { batch: (x: unknown[]) => Promise<unknown> }).batch(legacy);
+    // The token really is untouched — that is the hole.
+    expect(guardTokens(h).get(71)).toBe(staleToken);
+    // The composite guard is what closes it: the sighting time moved.
+    const removed = h.db
+      .prepare(
+        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? ` +
+          `AND obs = ? AND last_seen_at = ?`,
+      )
+      .run(CHAIN, 71, staleToken, NOW);
+    expect(Number(removed.changes)).toBe(0);
+    expect(quarantined(h)).toHaveLength(1);
   });
 
   it('bounds the roll call, and says exactly how many it is not naming', async () => {
@@ -821,7 +882,7 @@ describe('telling the operator about a row that stays', () => {
     for (const id of ids.slice(STALE_REPORT_LIMIT)) {
       const obs = byId.get(id);
       expect(obs).toMatch(/^[0-9a-f]{8}$/);
-      expect(said).toContain(`${id}@'${obs}'`);
+      expect(said).toContain(`${id}@[obs = '${obs}' AND last_seen_at = ${NOW}]`);
       // And NOT the timestamp, which is what made the guard unsound.
       expect(said).not.toContain(`${id}@${NOW}`);
     }

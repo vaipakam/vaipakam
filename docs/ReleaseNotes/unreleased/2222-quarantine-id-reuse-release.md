@@ -162,7 +162,20 @@ against the older shape — and a run that cannot record a withheld loan lets
 the next run remind on it, which is the failure this memory exists to prevent,
 arriving during its own upgrade. Recording is therefore written to succeed
 against both shapes, and the platform asks the store which shape it has rather
-than assuming. And an entry written before the new safety value existed
+than assuming. While the older shape is in use the report still names every
+withheld loan — a deployment is exactly when a suppression most needs to be
+visible — but offers no removal command at all, and says why: every such
+command names something the older shape does not have, so printing one would
+hand a person an instruction that cannot run.
+
+The safety value also had to become two values rather than one. The older
+write shape cannot refresh the token, so a token on its own would go on
+matching after a fresh sighting; the time of the sighting moves instead. One
+narrow gap is left and is written down rather than implied — an older-shape
+sighting in the same second as the one a person is holding moves neither
+half — because closing it would mean pushing the recorded time forward on a
+collision, which corrupts the one thing telling a person how long ago a record
+was really made. And an entry written before the new safety value existed
 carries an empty one; the report prints that in a form that can be pasted as
 it stands, because an entry nothing ever re-examines — exactly the kind this
 report is for — would otherwise be named and permanently unremovable by the

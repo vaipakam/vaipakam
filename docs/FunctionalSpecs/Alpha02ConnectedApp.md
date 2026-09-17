@@ -342,13 +342,22 @@ The app uses chain reads and indexed reads for different jobs.
   warning against — and because the described page does not rotate, it would
   push them there indefinitely.
 
-  That value is a fresh token written on each sighting, not the time of the
-  last one. A time recorded to the second cannot distinguish two sightings
-  within the same second, so a removal quoting it could delete a finding
-  recorded after the person read the report — resuming reminders for a
-  position nothing has settled, which is the exact harm this memory exists to
-  prevent. A guard that can silently fail is worse than none, because its
-  value is that it can be trusted without checking.
+  That value is a fresh token written on each sighting **together with** the
+  time of that sighting, and it takes both. A time recorded to the second
+  cannot distinguish two sightings within the same second. A token alone
+  cannot catch a sighting recorded by the older write shape, which is unable
+  to refresh it. Either gap lets a removal delete a finding recorded after the
+  person read the report — resuming reminders for a position nothing has
+  settled, the exact harm this memory exists to prevent. A guard that can
+  silently fail is worse than none, because its value is that it can be
+  trusted without checking.
+
+  One gap is left open and is written down rather than implied: a sighting by
+  the older write shape landing in the same second as the one the person is
+  holding moves neither half. That needs a deployment window or a failed
+  question to the store, AND two sightings inside one second. Closing it would
+  mean forcing the recorded time forward on a collision, which corrupts the
+  one thing telling a person how long ago a record was actually made.
 
   A record written before that value existed carries an empty one, and the
   report prints it in a form that can be pasted as it stands rather than a
@@ -364,6 +373,14 @@ The app uses chain reads and indexed reads for different jobs.
   failure this memory exists to prevent, arriving during its own upgrade. The
   platform asks the store which shape it has rather than assuming, and keeps
   asking until the newer one appears.
+
+  While the older shape is in use, the report still names every withheld
+  position — a deployment is exactly when a suppression most needs to be
+  visible — but offers **no** removal procedure, and says why. Every such
+  command names something the older shape does not have, so printing one
+  would hand a person an instruction that cannot run and invite them to
+  improvise the unguarded removal the report warns against. "Not yet, and
+  here is why" is the honest content for a window that lasts minutes.
 - **The report is bounded, and says so where the bound bites — and says
   exactly what is NOT bounded.** Reporting takes the same small number of
   enquiries every run, returns no more than a stated number of records to the
