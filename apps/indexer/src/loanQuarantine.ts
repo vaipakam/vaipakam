@@ -184,11 +184,37 @@ export async function releaseTerminalQuarantine(
   // where a person needs to see it. A blanket release would delete precisely
   // the rows the quarantine exists to surface, and do it silently.
   //
-  // The finding's residual concern is real and is NOT addressed here: once an
-  // operator resolves an orphan by deleting the fabricated row, this entry
-  // has nothing left to match and lingers in the report for good. "Row
-  // absent" cannot distinguish that from the unresolved orphan above, so the
-  // fix needs a way to tell them apart rather than a different predicate.
+  // THE SECOND CLAUSE IS ID REUSE, and it closes the harmful half of that
+  // residual concern (#2222). Once an operator resolves an orphan the
+  // documented way — by deleting the fabricated `loans` row — this entry has
+  // nothing left to match, and "row absent" cannot tell that resolved orphan
+  // from the unresolved one above, because in both cases there is no row. So
+  // the predicate does not ask about absence at all. It asks whether a loan
+  // now EXISTS whose own start is later than the moment this entry was first
+  // seen.
+  //
+  // That can only be a different position. An entry is created about a loan
+  // the pass was already examining, so that loan's start is necessarily in
+  // the past relative to `first_seen_at`: a loan cannot start after it was
+  // quarantined. A row for the same `(chain_id, loan_id)` that started AFTER
+  // is a new position that has taken the id — a chain redeploy, a partial
+  // reset — and holding it would suppress reminders for a legitimate loan on
+  // the strength of a finding about a different one. That suppression is
+  // silent, which is why it is the half worth fixing.
+  //
+  // `start_at` rather than `updated_at`: an ordinary re-index of the SAME
+  // loan bumps `updated_at`, which would release an entry that is still about
+  // that loan. And rather than `start_block`, which orders the two equally
+  // well until the chain redeploy this is meant to survive resets block
+  // numbers and the comparison silently inverts. Seconds do not reset.
+  //
+  // What this deliberately does NOT do is release an entry whose row is
+  // simply gone. An unresolved orphan staying held and visible in the stale
+  // report is the single most useful thing this table does, and a replayed
+  // old loan re-indexed after a reset carries its original `start_at`, so it
+  // does not satisfy this clause either — clutter in the report, never
+  // suppression of a live position. The clutter half is #2222's stated
+  // remainder.
   await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
@@ -197,7 +223,10 @@ export async function releaseTerminalQuarantine(
             SELECT 1 FROM loans l
              WHERE l.chain_id = loan_reconcile_quarantine.chain_id
                AND l.loan_id  = loan_reconcile_quarantine.loan_id
-               AND l.status NOT IN ('active', 'fallback_pending')
+               AND (
+                 l.status NOT IN ('active', 'fallback_pending')
+                 OR l.start_at > loan_reconcile_quarantine.first_seen_at
+               )
           )`,
     )
     .bind(chainId)

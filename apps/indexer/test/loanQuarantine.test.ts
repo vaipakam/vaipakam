@@ -133,7 +133,8 @@ describe('what counts as settled — the half that must not over-release', () =>
 });
 
 /** The minimum a `loans` row needs to exist, for the release sweep's join. */
-function seedLoanRow(h: SqliteD1, loanId: number, status: string) {
+/** `startAt` is the CHAIN's loan start, which #2222's release clause reads. */
+function seedLoanRow(h: SqliteD1, loanId: number, status: string, startAt = 0) {
   h.db
     .prepare(
       `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -143,9 +144,9 @@ function seedLoanRow(h: SqliteD1, loanId: number, status: string) {
          lender_current_owner, borrower_current_owner, interest_rate_bps,
          start_time, start_block, start_at, updated_at)
        VALUES (?, ?, 1, ?, '0xl', '0xb', '100', '200', 0, 0, '0xa', '0xc', 30,
-         '0', '0', '1', '2', '0xl', '0xb', 500, ?, 0, 0, ?)`,
+         '0', '0', '1', '2', '0xl', '0xb', 500, ?, 0, ?, ?)`,
     )
-    .run(CHAIN, loanId, status, NOW, NOW);
+    .run(CHAIN, loanId, status, NOW, startAt, NOW);
 }
 
 describe('the table, over the real migrated schema', () => {
@@ -201,6 +202,34 @@ describe('the table, over the real migrated schema', () => {
     // stays in the stale report, which is where a person needs to see it.
     const h = createSqliteD1(ALL_MIGRATIONS);
     await apply(h, report({ examined: [99], unresolvable: [99] }));
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
+  });
+
+  it('releases a held row once a NEWER loan has taken its id (#2222)', async () => {
+    // The operator remedy for an orphan is to delete the fabricated `loans`
+    // row. After that the entry matches nothing and "row absent" cannot tell
+    // it from an unresolved orphan — so if the id is ever reused, the stale
+    // entry would suppress reminders for a DIFFERENT, legitimate position,
+    // silently. The discriminator is the new loan's own start: a loan cannot
+    // start after it was quarantined, so a later start is a different loan.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
+    expect(quarantined(h)).toHaveLength(1);
+    // A new, ACTIVE loan takes id 99, started after the entry was first seen.
+    seedLoanRow(h, 99, 'active', NOW + 3600);
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h)).toEqual([]);
+  });
+
+  it('keeps holding when the loan that reappears started BEFORE the entry', async () => {
+    // A replayed old loan — re-indexed after a reset — carries its original
+    // start, so it is the same position the entry is about and the finding
+    // still stands. Releasing on mere reappearance would drop exactly the row
+    // the quarantine exists to surface.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
+    seedLoanRow(h, 99, 'active', NOW - 3600);
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
   });

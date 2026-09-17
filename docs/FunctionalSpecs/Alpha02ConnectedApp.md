@@ -295,6 +295,25 @@ The app uses chain reads and indexed reads for different jobs.
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.
+- **A held record is also released once a NEWER position has taken its
+  identifier.** A record is held about a position the platform was already
+  examining, so that position's own start is necessarily earlier than the
+  moment it was held. A position bearing the same identifier that started
+  AFTER that moment therefore cannot be the same one — it is a new position on
+  an identifier that has come round again, which a network redeployment or a
+  partial reset can do. Continuing to hold then would withhold reminders from
+  a legitimate position on the strength of a finding about a different one,
+  and it would do it silently, which is what makes it worth ruling out.
+- **Being absent is NOT release.** Where the platform holds a record about a
+  position that has no stored loan at all — the case where the network denies
+  a position the platform recorded — nothing establishes that it ended, and it
+  stays held and visible. That is the single most useful thing this memory
+  does, so a rule that released on absence would drop precisely the records it
+  exists to surface. The consequence is stated rather than hidden: where a
+  person resolves such a case by deleting the stored position, the held record
+  remains in the report as clutter until the identifier is reused or a person
+  clears it. Clutter in a report a person reads is the acceptable side of that
+  trade; silent suppression of a live position is not.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.
