@@ -1,10 +1,11 @@
 # Release Notes — 2026-09-17
 
-Six entries, in the order the file assembles them: the keeper's arming
+Eight entries, in the order the file assembles them: the keeper's arming
 flags, the transport epochs, the reminder hold, the indexer's request count,
-the order payment reminders go out in, and — continuing the reminder-hold
-thread the same day — what a held record now tells a person about the loan
-number it is holding. The transport epochs are
+the order payment reminders go out in, what a held record now tells a person
+about the loan number it is holding, a lookup that no longer fails because a
+lot is waiting for it, and a correction to what the notification service does
+when a change merges. The transport epochs are
 the substantial one — the last part of the #1566 programme before the role
 carry-forward — and what that change adds is deliberately inert where it
 counts: no ledger arithmetic moves, and no classification comes out
@@ -70,6 +71,27 @@ found after the previous was fixed. The platform now tells a person what the
 number points at today and lets them decide, and labels that description as
 stored and unverified rather than presenting the same record it refused to act
 on as settled fact.
+
+The last two entries are both about a claim that was true when it was written
+and had stopped being true, which is the day's recurring shape. One is a
+question the platform asks its own store about many records at once: it can be
+refused for naming too many things, and the refusal arrives exactly when a
+backlog has built up — so the pass that would drain the backlog is the one that
+cannot run. Three places had independently learned the limit and two had never
+heard of it, so it now lives in one place that works out the size from the
+question being asked.
+
+The other began as a single stale sentence — documentation saying a service is
+not deployed automatically when a change merges, when it is — and turned into a
+longer lesson about what could be promised alongside it. The surrounding
+guidance described how to protect a database change by closing the ways users
+write. Review found one more way in each time it looked: work on a timer, a
+background alarm that restarts itself, work already running when the closure
+went up, addresses that bypass it. Listing the ways code can reach a database
+turns out not to be a finishable task, so the document now states the hazard
+plainly and says the procedure is unsettled, rather than offering a list that
+reads complete and is not. That is a smaller promise than it made this morning,
+and the only one it can keep.
 
 ## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
 
@@ -1363,3 +1385,190 @@ rather than a sort of everything held.
 A suppression a person can see and undo is worth more than an automatic release
 built on evidence that has been wrong four different ways.
 <!-- assembled-fragment: 2222-quarantine-id-reuse-release.md sha256=b46f0c77b690c49c757cf5585bb331b336dbf6d1e9e2f19e32df597f61a611de -->
+
+## Thread — A lookup no longer fails because there is a lot waiting for it (PR #2235, issue #2234)
+
+The platform's back-office services ask their own store about many records at
+once: who each inbox notification is for, who owns a sold offer row, which
+delivered cross-chain remittances have already been acknowledged. Each of those
+questions names every record in the batch being worked on, and the store
+refuses a question that names more than a hundred things at a time.
+
+Refusal is not a slow answer — it is no answer, and the work the question
+belonged to fails whole. Worse, it fails the same way on the next attempt,
+because what made the question too large is a backlog, and a backlog does not
+shrink while the thing that would drain it is failing. That is the shape worth
+naming: not a flaky moment, a stall, and one that arrives precisely when the
+platform has fallen behind and most needs to catch up.
+
+Three of these lookups already split their question up. Two did not. The one
+that mattered most is the pass that acknowledges cross-chain reward
+remittances: it examines a window two hundred wide, so a hundred or more
+unacknowledged deliveries in that window made every attempt fail — and because
+that pass records its new position **before** asking, each failing attempt also
+moved past a window whose acknowledgements were never sent. Value had been
+delivered and the bookkeeping that closes it would never have followed. The
+likeliest moment to meet that is the first time the pass is switched on, since
+nothing has been acknowledging while it was off.
+
+That pass has not run in production — this service's schedule is currently
+empty and the feature is not enabled — so this is a defect on the arming path
+rather than an incident. It was found by reading the arming prerequisites, not
+by anything reporting it.
+
+**The fix is one shared rule rather than five careful authors.** The store's
+limit and the splitting now live in one place used by every service. Callers
+hand over the rest of their question's contents and get back complete,
+correctly sized pieces, so there is no count for anyone to keep in step with a
+condition added later — which is how the three that knew about the limit came
+to be three rather than five. Splitting costs nothing extra: the pieces travel
+together as one request, so a lookup that used to be one request still is.
+
+One place deliberately does **not** use the shared splitter, and the reason is
+recorded where it lives: the sweep that releases long-held records limits how
+many it examines per pass so that what comes back always fits a single
+instruction. That is a bound on how much work one pass does, and splitting
+would remove it rather than respect it. An exception with a stated reason is
+worth more than a rule that reads absolute and quietly is not.
+
+A fourth service, the internal mesh watcher, asks similar questions. The first
+version of this change exempted it on the grounds that its lists are sized by
+how the deployment is configured. **That was wrong, and review caught it**: the
+set of chains it watches is read from the canonical chain itself, where nothing
+limits how many may be registered, and one chain can raise more than one
+finding. So the exemption was the same unexamined assumption of smallness that
+this change set out to remove — written in the same breath as removing it.
+
+Two of its questions could not simply be split, and the reason is worth
+recording. They were phrased as "delete everything EXCEPT these", and that
+phrasing cannot be broken into pieces: the first piece deletes what the second
+was going to keep. They now ask the opposite question — read what is stored,
+work out what is not being kept, and delete that in bounded pieces — which
+splits safely and means the same thing. The read happens inside the same
+guarded boundary as the writes, so a failure of it is reported rather than
+escaping.
+
+That service also had no test of what those two operations actually delete —
+only of how they behave when the database is unavailable. So the rewrite could
+have changed the retention behaviour with every existing test still passing.
+Tests for the behaviour itself were written first, and then deliberately broken
+to confirm they would object.
+
+The watcher stays outside the shared package for trust reasons — its own
+database, its own alerting channel — but it now uses the same splitting rule,
+reached the same way it already reads shared deployment data. One definition
+beats a copy that drifts.
+
+Closes #2234.
+<!-- assembled-fragment: 2234-d1-bind-cap-shared.md sha256=2c280741ff86793a71acf0fba1d03a568a4aa81fa208cf120d317b2521bbf498 -->
+
+## Thread — The notification service does deploy itself on merge, and two places said it did not (PR #2238, issue #2237)
+
+Operational documentation and a comment in the service's own source both stated
+that the notification service is **not** deployed automatically when a change
+merges, and that an operator therefore has to deploy it by hand in the same
+sitting. Both are now corrected: it is deployed automatically, along with the
+two services already described that way.
+
+The claim was true when it was written, and it stated its own test — *does a
+build check appear on a recent merge?* — which is what makes it checkable now.
+It does: the build runs on the merge commits that touch this service, and the
+live deployment was created seconds before that build check finished — the
+deployment happens during the build, which is what produces it. The test is
+kept and the answer refreshed, rather than the test being removed.
+
+**Believing the old wording was worse than the problem it warned about.** It
+told a reader that a merged change to that service is not live when it is, and
+nobody goes looking for the effects of a change they think never shipped. The
+source comment carried the same claim into the file it most affects — the
+sweep that clears expired account-linking codes, which had been moved to this
+service precisely so it would keep running when another service stopped.
+
+Two things the correction does **not** sweep away:
+
+- **The nightly backup worker still is not deployed automatically**, and the
+  step still says so, with the same evidence checked the same way.
+- **The configuration hazard the old comment described is real and matters
+  more now, not less.** Two operator-tuned settings live only in the
+  deployment dashboard, and a deploy that does not know about them removes
+  them. An automatic deploy passes no flags at all, so the protection cannot
+  be something a person remembers to type — it is declared in the service's
+  own configuration file, which every deploy route reads. The comment now says
+  that, instead of naming a command an automatic deploy never runs.
+
+The step in the runbook also warned that, during the gap before a hand-run
+deploy, this service would read and write the *old* database while its
+neighbours used the new one — so a setting changed or a support request filed
+in that window would land in a database about to be deleted.
+
+**A first version of this change said that gap no longer opens; a second said
+it is now a short, measured one. Both were wrong, and review caught each in
+turn.** What is true is smaller and more useful: each service reaches a new
+database binding through its own independent build, so from the merge until
+every binding has been *checked*, the set is in a mixed state — with no
+guarantee about which services have switched, in what order, or for how long,
+and no guarantee that a given one switched at all, because a build can fail
+and leave that service on the old binding until a person repairs it.
+
+The second version's "short window" came from comparing two build-completion
+timestamps. That comparison does not measure what it was used for: a
+deployment is created *during* its build, not at the end, and the other
+service's activation time was never collected. The document now says the
+duration is not derivable rather than printing a number that was not measured
+where it matters.
+
+So the guidance is one requirement covering both directions, rather than a
+caveat per path: **before any binding change is merged — the cutover or its
+undo — no service may still be able to write to either database, and normal
+operation resumes only once every service's binding has been confirmed on the
+database it is meant to be on.**
+
+That is stated as a CONDITION rather than as an action, and the difference is
+the whole of what this change learned. "Close the routes through which users
+write" was the action an earlier version prescribed, and it does not achieve
+the condition: it leaves timed work, background alarms and already-running
+work untouched. Someone following it would believe the change was protected
+and lose rows anyway.
+
+The framing also corrects two narrower errors: it named only one of the two
+services that accept user writes, and it pointed an undo at the same checks as
+the rollout, which would have passed a service still stuck on the database
+being abandoned.
+
+What the automatic deployment genuinely changes is *who* closes the window — it
+no longer waits on somebody remembering a command. It does not make the window
+zero, bounded, or safe to leave unguarded.
+
+Trying to state that protection precisely enough to be tested against is where
+this change stopped. Each review round found another way a service reaches the
+database that the previous wording had not covered — a second service's public
+routes, then diagnostic routes, then work scheduled on a timer, then a
+self-rearming background alarm, then work already in flight when the closure
+went up, then addresses that bypass it, then the fifteen minutes a schedule
+change takes to take effect.
+
+**Listing the ways code can reach a database is not a finishable task**, and a
+list that reads authoritative while being incomplete is worse than none: an
+operator follows it, believes the writers are stopped, and loses exactly the
+records the step exists to protect. So the document now states the hazard and
+says plainly that the procedure is unspecified, with the requirements and the
+decisions it needs recorded separately. One of those decisions is whether the
+closure should work by removing the database from the service entirely rather
+than by naming its entry points — the only formulation that does not depend on
+having listed them all correctly.
+
+What did get settled: the checks that prove a binding moved cannot all run
+while writes are closed, since two of them work by writing. Confirmation is in
+two passes — read each service's binding directly, which is what authorises
+restoring traffic, then run the write checks afterwards.
+
+None of these mechanics has been exercised on the live account; they are
+reasoned from how the deployments work, and the document says so.
+
+One service writes nothing at all today because its schedule is empty. That is
+recorded as a fact about today rather than a property of the service: restore
+the schedule and it writes user-visible alerts that a later re-check cannot
+reconstruct, because the condition they describe may have passed.
+
+Closes #2237.
+<!-- assembled-fragment: 2237-agent-auto-deploy-correction.md sha256=dafc0b7ee4ad0be5742e5f146d9a24dbb8f61df394c488cde52de7ea50531c96 -->
