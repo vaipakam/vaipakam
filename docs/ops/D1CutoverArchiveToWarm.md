@@ -215,9 +215,22 @@ vaipakam-warm   e5e927cf-56c3-42c7-9820-179a235cc84f
 ```
 
 `check-d1-name-consistency` is a required status check and fails unless all
-four agree on both fields, so a partial switch cannot merge. That is the
-protection worth having here: half-switched is the only genuinely bad state,
-because migrations and reads would target different databases.
+four agree on both fields, so a partial switch cannot **merge**.
+
+**That is a claim about the repository, not about production** (#2238 r7 P1).
+The check reads committed configuration: it guarantees the four files change
+together in one commit. It says nothing about the four *live* Workers, which
+take that commit through four independent builds — so a partially switched
+deployment is not merely possible, it is what every merge produces for as long
+as those builds take, and a failed build can leave it that way indefinitely.
+
+An earlier revision called this "the protection worth having here", which
+would let an operator read a green check as cover for the live hazard and
+leave the writers running. It is worth having, and what it protects against is
+a half-switched *tree* — where migrations and reads would target different
+databases on the next clean checkout. **Live safety comes only from stopping
+the writers and confirming each Worker's binding individually**, which the
+sections below are about.
 
 Update the docs that describe the live binding in the same PR — the same
 check scans `wrangler d1` commands in scripts and runbooks.
