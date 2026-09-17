@@ -432,36 +432,44 @@ empty, its emptiness is the discriminator:
   re-test, `failure` means the build is the thing to fix and the mixed state
   persists until it is.
 
-  Do the same for **indexer's** write surface, not only its ingest: it accepts
-  `POST /signed-offers` from users, so "the indexer's cursor advanced in the
-  target" proves the scan switched and says nothing about where a user's
-  signed order would land.
+  A threshold row is operator-owned configuration on a wallet you control, and
+  can be deleted afterwards — pick the probe accordingly.
 
-**THE ORDER MATTERS, because the write probes need the gate OPEN and the rule
-says it stays closed** (#2238 r3 P1). Both probes above go through the same
-public routes the quiesce closes, so running them while the gate holds is
-impossible, and reopening to run them defeats the gate. Confirmation therefore
-happens in two passes:
+  **NEVER probe the indexer with `POST /signed-offers`** (#2238 r6 P1). An
+  earlier revision said to, on the reasoning that the ingest cursor proves
+  only that the scan switched. The reasoning was wrong and the instruction was
+  dangerous: that route is not a diagnostic. It validates a real EIP-712
+  order, inserts it `status = 'active'`, and `GET /signed-offers` then serves
+  it to takers to fill on-chain. Confirming a database binding is not worth
+  leaving a fillable order behind.
 
-1. **While quiesced — control plane only.** Read each Worker's D1 binding
+  It is also unnecessary, because **a Worker has ONE D1 binding**. `env.DB` is
+  the same object for every route, every tick and every alarm in that Worker,
+  so a write observed from ANY of them proves where ALL of them write. For the
+  indexer, its own ingest write — the cursor advancing in the intended
+  database — is therefore sufficient, and it costs nothing and risks nothing.
+
+**THE ORDER MATTERS, and it survives whether or not the writers were stopped**
+(#2238 r3 P1, adjusted r6 P2). Confirmation is two passes, and the first is
+the one that authorises restoring normal operation:
+
+1. **Binding read — control plane.** Read each Worker's D1 binding
    (*Settings → Bindings*, or the API) and confirm every one names the
-   intended database. That is a configuration check, labelled as such, and it
-   is exactly what the keeper entry above already falls back to. It is also
-   the only check that can distinguish "build still running" and "build
-   failed" from "switched", since it reflects what is actually deployed.
-   **This pass is what authorises restoring traffic** — not the write probes.
-   It stands whether or not a gate was used: it is the only check that
-   reflects what is actually deployed.
-2. **After lifting — behaviour.** Run the write probes as the final
-   confirmation. They can still find something the binding read could not, so
-   they are not redundant; they are simply not available earlier. If one of
-   them fails here, close the gate again rather than leaving it open while
-   investigating.
+   intended database. A configuration check, labelled as such. It is the only
+   check that distinguishes "build still running" and "build failed" from
+   "switched", since it reflects what is actually deployed — and the only one
+   available at all if the writers have been stopped, because the write probes
+   below go through the very surfaces a stoppage closes.
+2. **Write probes — behaviour.** Run them once traffic is flowing again. They
+   can still find something the binding read could not, so they are not
+   redundant; they are simply not available while anything is closed. If one
+   fails here, stop the writers again rather than leaving them running while
+   investigating — by whatever means #2239 settles on, which today means
+   accepting the exposure knowingly.
 
 An earlier revision made the agent write probe "the test that closes the
-deployment window", which cannot be true under a rule that keeps that route
-shut until the window is closed. The binding read closes it; the write
-confirms it.
+deployment window". It cannot be: it is unavailable exactly when the window is
+open. The binding read closes the window; the write confirms it afterwards.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the

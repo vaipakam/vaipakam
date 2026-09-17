@@ -53,14 +53,23 @@ service's activation time was never collected. The document now says the
 duration is not derivable rather than printing a number that was not measured
 where it matters.
 
-So the guidance is one rule covering both directions, rather than a caveat per
-path: **before any binding change is merged — the cutover or its undo — close
-the routes through which users write, and reopen them only once every
-service's binding has been confirmed on the database it is meant to be on.**
-That also corrects two narrower errors the old framing produced: it named only
-one of the two services that accept user writes, and it pointed an undo at the
-same checks as the rollout, which would have passed a service still stuck on
-the database being abandoned.
+So the guidance is one requirement covering both directions, rather than a
+caveat per path: **before any binding change is merged — the cutover or its
+undo — no service may still be able to write to either database, and normal
+operation resumes only once every service's binding has been confirmed on the
+database it is meant to be on.**
+
+That is stated as a CONDITION rather than as an action, and the difference is
+the whole of what this change learned. "Close the routes through which users
+write" was the action an earlier version prescribed, and it does not achieve
+the condition: it leaves timed work, background alarms and already-running
+work untouched. Someone following it would believe the change was protected
+and lose rows anyway.
+
+The framing also corrects two narrower errors: it named only one of the two
+services that accept user writes, and it pointed an undo at the same checks as
+the rollout, which would have passed a service still stuck on the database
+being abandoned.
 
 What the automatic deployment genuinely changes is *who* closes the window — it
 no longer waits on somebody remembering a command. It does not make the window
