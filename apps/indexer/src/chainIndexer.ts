@@ -1260,7 +1260,9 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
       console.error(
         `[chainIndexer] quarantine RELEASE failed for chain ${chainId} — rows ` +
           `whose loan has ended stay held until a later pass releases them, ` +
-          `and the report below may therefore name rows that are already ` +
+          `and so do rows whose loan id a NEWER loan has since taken, which ` +
+          `means that newer loan's reminders stay suppressed meanwhile ` +
+          `(#2222). The report below may therefore name rows that are already ` +
           `resolvable`,
         err,
       );
@@ -1566,7 +1568,16 @@ export async function _runLoanReconcilePass(input: {
     const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
     if (writeAvailability !== 'absent') {
       try {
-        const writes = quarantineStatements(env.DB, chainId, report, nowSec);
+        // The head this pass established is the block the finding was made
+        // AGAINST, which is what the id-reuse release compares a later loan's
+        // start to (#2231 r1 `4035070199`).
+        const writes = quarantineStatements(
+          env.DB,
+          chainId,
+          report,
+          nowSec,
+          Number(head),
+        );
         if (writes.length > 0) await env.DB.batch(writes);
       } catch (err) {
         // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One

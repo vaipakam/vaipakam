@@ -297,13 +297,27 @@ The app uses chain reads and indexed reads for different jobs.
   it is written carelessly.
 - **A held record is also released once a NEWER position has taken its
   identifier.** A record is held about a position the platform was already
-  examining, so that position's own start is necessarily earlier than the
-  moment it was held. A position bearing the same identifier that started
-  AFTER that moment therefore cannot be the same one — it is a new position on
-  an identifier that has come round again, which a network redeployment or a
-  partial reset can do. Continuing to hold then would withhold reminders from
-  a legitimate position on the strength of a finding about a different one,
-  and it would do it silently, which is what makes it worth ruling out.
+  examining, so that position began earlier in the network's own sequence than
+  the point the platform had reached when it held it. A position bearing the
+  same identifier that began AFTER that point therefore cannot be the same one
+  — it is a new position on an identifier that has come round again, which a
+  network redeployment or a partial reset can do. Continuing to hold then
+  would withhold reminders from a legitimate position on the strength of a
+  finding about a different one, and it would do it silently, which is what
+  makes it worth ruling out.
+- **That comparison uses the network's own sequence, never a clock.** Where a
+  timestamp cannot be read from the network during recording, the platform
+  substitutes its own clock — so a position re-recorded during such a failure
+  can carry a time later than the finding about it, and a decision made on
+  times would release a hold because a read failed. A position's place in the
+  network's sequence is taken from the record itself and is never substituted.
+  Where that sequence restarts — a test network reset — the comparison simply
+  does not apply and the record stays held, which is the direction this
+  failure must take.
+- **A record held before the platform began keeping that sequence carries no
+  evidence either way**, and is never released on this rule. Treating its
+  absence as a position at the start of the sequence would release every held
+  record at once, since every real position began after it.
 - **Being absent is NOT release.** Where the platform holds a record about a
   position that has no stored loan at all — the case where the network denies
   a position the platform recorded — nothing establishes that it ended, and it

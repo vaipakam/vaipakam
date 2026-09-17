@@ -1,0 +1,28 @@
+-- #2222 / #2231 r1 — the id-reuse release needs a discriminator that cannot be
+-- a sentinel.
+--
+-- Releasing a held entry when a loan bearing the same id has started SINCE the
+-- entry was recorded is the right rule: a loan cannot start after it was
+-- quarantined, so a later start is a different position. The first version
+-- compared `loans.start_at`, and review found that column can hold a local
+-- clock reading rather than a chain time: when a block-timestamp lookup fails
+-- during ingest, the scan stamps `Date.now()` as a sentinel and that value is
+-- persisted as the loan's start. A replayed ORIGINAL loan whose lookup hiccuped
+-- would therefore look newer than the entry about it, and the hold would be
+-- released on the strength of an RPC failure.
+--
+-- Block numbers come from the log itself and are never substituted, so this
+-- records the block the pass had established when it first held the row, and
+-- the release compares `loans.start_block` against it.
+--
+-- ON A CHAIN WHOSE BLOCK NUMBERS RESET — a testnet wipe — a new loan's block
+-- can be LOWER than the recorded one, so the comparison simply does not fire
+-- and the entry stays held. That is the safe direction: clutter in a report a
+-- person reads, never a live position silently suppressed.
+--
+-- DEFAULT 0 means "recorded before this column existed", and the release
+-- treats 0 as no evidence rather than as block zero — every real loan starts
+-- after block zero, so reading it as a block would release every held entry on
+-- the chain the moment this migration landed.
+ALTER TABLE loan_reconcile_quarantine
+  ADD COLUMN first_seen_block INTEGER NOT NULL DEFAULT 0;

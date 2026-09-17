@@ -62,8 +62,15 @@ const quarantined = (h: SqliteD1) =>
     )
     .all() as Array<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>;
 
-async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW) {
-  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec);
+/** `firstSeenBlock` is the head the pass established — what the id-reuse
+ *  release compares a later loan's `start_block` against (#2231 r1). */
+async function apply(
+  h: SqliteD1,
+  r: ReconcileReport,
+  nowSec = NOW,
+  firstSeenBlock = 1_000,
+) {
+  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec, firstSeenBlock);
   if (writes.length > 0) await (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
 }
 
@@ -133,8 +140,17 @@ describe('what counts as settled — the half that must not over-release', () =>
 });
 
 /** The minimum a `loans` row needs to exist, for the release sweep's join. */
-/** `startAt` is the CHAIN's loan start, which #2222's release clause reads. */
-function seedLoanRow(h: SqliteD1, loanId: number, status: string, startAt = 0) {
+/**
+ * `startBlock` is the CHAIN's loan start block, which #2222's release clause
+ * reads — a log-derived number, unlike `start_at`, which ingest may fill with
+ * a local clock sentinel when a block-timestamp lookup fails (#2231 r1).
+ */
+function seedLoanRow(
+  h: SqliteD1,
+  loanId: number,
+  status: string,
+  startBlock = 0,
+) {
   h.db
     .prepare(
       `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -144,9 +160,9 @@ function seedLoanRow(h: SqliteD1, loanId: number, status: string, startAt = 0) {
          lender_current_owner, borrower_current_owner, interest_rate_bps,
          start_time, start_block, start_at, updated_at)
        VALUES (?, ?, 1, ?, '0xl', '0xb', '100', '200', 0, 0, '0xa', '0xc', 30,
-         '0', '0', '1', '2', '0xl', '0xb', 500, ?, 0, ?, ?)`,
+         '0', '0', '1', '2', '0xl', '0xb', 500, ?, ?, 0, ?)`,
     )
-    .run(CHAIN, loanId, status, NOW, startAt, NOW);
+    .run(CHAIN, loanId, status, NOW, startBlock, NOW);
 }
 
 describe('the table, over the real migrated schema', () => {
@@ -214,22 +230,63 @@ describe('the table, over the real migrated schema', () => {
     // silently. The discriminator is the new loan's own start: a loan cannot
     // start after it was quarantined, so a later start is a different loan.
     const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
     expect(quarantined(h)).toHaveLength(1);
-    // A new, ACTIVE loan takes id 99, started after the entry was first seen.
-    seedLoanRow(h, 99, 'active', NOW + 3600);
+    // A new, ACTIVE loan takes id 99, started at a LATER block than the one
+    // the finding was made against.
+    seedLoanRow(h, 99, 'active', 1_001);
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
     expect(quarantined(h)).toEqual([]);
   });
 
   it('keeps holding when the loan that reappears started BEFORE the entry', async () => {
     // A replayed old loan — re-indexed after a reset — carries its original
-    // start, so it is the same position the entry is about and the finding
-    // still stands. Releasing on mere reappearance would drop exactly the row
-    // the quarantine exists to surface.
+    // start BLOCK, so it is the same position the entry is about and the
+    // finding still stands. Releasing on mere reappearance would drop exactly
+    // the row the quarantine exists to surface. Blocks rather than seconds
+    // because ingest can stamp a local clock into `start_at` when a
+    // block-timestamp lookup fails, and an RPC hiccup must not release a hold
+    // (#2231 r1 `4035070199`).
     const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
-    seedLoanRow(h, 99, 'active', NOW - 3600);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
+    seedLoanRow(h, 99, 'active', 999);
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
+  });
+
+  it('is not fooled by a wall-clock sentinel in the loan start (#2231 r1)', async () => {
+    // Ingest stamps `Date.now()` into a loan's `start_at` when a
+    // block-timestamp lookup fails, so a REPLAYED ORIGINAL loan can carry a
+    // start later than the finding about it. Comparing seconds would release
+    // the hold on the strength of an RPC hiccup — the one direction this rule
+    // must never fail in. The block comes from the log and cannot be
+    // substituted.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
+    // The original loan, re-indexed: real block, sentinel timestamp.
+    h.db
+      .prepare(
+        `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+           principal, collateral_amount, asset_type, collateral_asset_type,
+           lending_asset, collateral_asset, duration_days, token_id,
+           collateral_token_id, lender_token_id, borrower_token_id,
+           lender_current_owner, borrower_current_owner, interest_rate_bps,
+           start_time, start_block, start_at, updated_at)
+         VALUES (?, ?, 1, 'active', '0xl', '0xb', '100', '200', 0, 0, '0xa',
+           '0xc', 30, '0', '0', '1', '2', '0xl', '0xb', 500, ?, ?, ?, ?)`,
+      )
+      .run(CHAIN, 99, NOW, 900, NOW + 86_400, NOW);
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
+  });
+
+  it('treats an entry recorded before the block column as no evidence', async () => {
+    // `first_seen_block = 0` means "recorded before migration 0051". Read as a
+    // block it sits below every real loan, so arithmetic alone would release
+    // every held entry on the chain the moment the column landed.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 0);
+    seedLoanRow(h, 99, 'active', 5_000);
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
   });

@@ -19,10 +19,19 @@ network redeployment, a partial reset — and a stale entry would then withhold
 reminders from a **different, legitimate** loan, without saying so.
 
 The second is now closed. A held entry is released as soon as a loan bearing
-the same number appears whose own start is later than the moment the entry was
-recorded. That can only be a different loan: a loan cannot start after it was
-held. A loan replayed from history keeps its original start and so is still
+the same number appears that began later in the network's own sequence than
+the point the platform had reached when it recorded the entry. That can only
+be a different loan: a loan cannot begin after it was held. A loan replayed
+from history keeps its original place in the sequence and so is still
 recognised as the same position, and stays held.
+
+The comparison deliberately uses that sequence rather than a time. When the
+platform cannot read a timestamp from the network while recording a loan, it
+substitutes its own clock — so a replayed original loan can carry a time later
+than the finding about it, and a decision made on times would have released a
+hold because a read had failed. A position's place in the sequence comes from
+the record itself and is never substituted. Where that sequence restarts, on a
+test network reset, the rule simply does not apply and the entry stays held.
 
 The clutter is deliberately left. Removing it would mean either releasing
 entries merely because their record is absent — which drops exactly the cases

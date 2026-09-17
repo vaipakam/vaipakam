@@ -106,6 +106,16 @@ export function quarantineStatements(
   chainId: number,
   report: ReconcileReport,
   nowSec: number,
+  /**
+   * The block this pass had established when it held these rows (#2231 r1
+   * `4035070199`).
+   *
+   * Recorded so the id-reuse release has a discriminator that cannot be a
+   * sentinel: a loan's `start_at` may hold a local clock reading when a
+   * block-timestamp lookup failed during ingest, but its `start_block` comes
+   * from the log and is never substituted.
+   */
+  firstSeenBlock: number,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   for (const { loanId, reason } of unsettledRows(report)) {
@@ -113,8 +123,9 @@ export function quarantineStatements(
       db
         .prepare(
           `INSERT INTO loan_reconcile_quarantine
-             (chain_id, loan_id, reason, first_seen_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?)
+             (chain_id, loan_id, reason, first_seen_at, last_seen_at,
+              first_seen_block)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(chain_id, loan_id) DO UPDATE SET
              reason = excluded.reason,
              last_seen_at = excluded.last_seen_at`,
@@ -123,7 +134,12 @@ export function quarantineStatements(
         // operator's whole signal — minutes means a transient read, days
         // means a ghost nobody resolved — and an upsert that refreshed it on
         // every re-observation would erase exactly that.
-        .bind(chainId, loanId, reason, nowSec, nowSec),
+        //
+        // `first_seen_block` is out of it for the same reason and a sharper
+        // one: refreshing it would move the line that decides whether a loan
+        // started BEFORE or AFTER this finding, so a re-observation could
+        // walk the line past a reused id and turn a release back into a hold.
+        .bind(chainId, loanId, reason, nowSec, nowSec, firstSeenBlock),
     );
   }
   // ONE STATEMENT PER ROW, not an interpolated `IN (...)` list. The pass
@@ -202,11 +218,28 @@ export async function releaseTerminalQuarantine(
   // the strength of a finding about a different one. That suppression is
   // silent, which is why it is the half worth fixing.
   //
-  // `start_at` rather than `updated_at`: an ordinary re-index of the SAME
-  // loan bumps `updated_at`, which would release an entry that is still about
-  // that loan. And rather than `start_block`, which orders the two equally
-  // well until the chain redeploy this is meant to survive resets block
-  // numbers and the comparison silently inverts. Seconds do not reset.
+  // THE COMPARISON IS ON BLOCKS, NOT SECONDS (#2231 r1 `4035070199`). The
+  // first version compared `loans.start_at`, and that column can hold a LOCAL
+  // CLOCK READING rather than a chain time: when a block-timestamp lookup
+  // fails during ingest the scan stamps `Date.now()` as a sentinel, and the
+  // loan insert persists it. A replayed ORIGINAL loan whose lookup hiccuped
+  // would then look newer than the entry about it, and an RPC failure would
+  // release a hold that should stand — the exact direction this rule must
+  // never fail in. A block number comes from the log and is never
+  // substituted.
+  //
+  // `updated_at` is wrong for a different reason worth keeping: an ordinary
+  // re-index of the SAME loan bumps it, which would release an entry still
+  // about that loan.
+  //
+  // WHERE BLOCK NUMBERS RESET — a testnet wipe — a new loan's block can be
+  // LOWER than the recorded one, so this simply does not fire and the entry
+  // stays held. Clutter in the report, never a live position suppressed.
+  //
+  // `first_seen_block = 0` means the entry predates the column (migration
+  // 0051) and carries no evidence. Read as a block it would be below every
+  // real loan and release every held entry on the chain, so it is excluded
+  // explicitly rather than left to arithmetic.
   //
   // What this deliberately does NOT do is release an entry whose row is
   // simply gone. An unresolved orphan staying held and visible in the stale
@@ -225,7 +258,10 @@ export async function releaseTerminalQuarantine(
                AND l.loan_id  = loan_reconcile_quarantine.loan_id
                AND (
                  l.status NOT IN ('active', 'fallback_pending')
-                 OR l.start_at > loan_reconcile_quarantine.first_seen_at
+                 OR (
+                   loan_reconcile_quarantine.first_seen_block > 0
+                   AND l.start_block > loan_reconcile_quarantine.first_seen_block
+                 )
                )
           )`,
     )
