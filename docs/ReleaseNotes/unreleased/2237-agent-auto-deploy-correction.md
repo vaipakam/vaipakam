@@ -66,16 +66,36 @@ What the automatic deployment genuinely changes is *who* closes the window — i
 no longer waits on somebody remembering a command. It does not make the window
 zero, bounded, or safe to leave unguarded.
 
-Two further corrections came out of stating the rule plainly enough to be
-tested against. **Closing the routes has to be done in a way the deployment
-cannot undo** — the two obvious mechanisms are both erased by the very deploy
-they are meant to bracket, because one service declares its own route in the
-file that gets deployed, and a deploy replaces a rejecting build with the
-normal one. And **the checks that prove a binding moved cannot all run while
-the routes are closed**, since two of them work by writing through those very
-routes. Confirmation is now in two passes: read each service's binding
-directly while the gate holds — that is what authorises lifting it — then run
-the write checks afterwards as the final confirmation.
+Stating the rule plainly enough to be tested against then found three holes in
+it, each the same hole: it was written as an instruction about **routes**, so
+every review round found another way a service reaches the database that a
+route does not cover. It is now written as a **state** to establish — no
+writer can reach either database, by any entry point, from before the first
+binding changes until every binding is confirmed — and the holes close
+together:
+
+- **Scheduled work is not a route.** Every service here also runs on a timer,
+  and closing a public endpoint does nothing to that. One of those timers
+  sends payment reminders and records that it sent them; if it records only
+  into the database being abandoned, the next run after the change sends the
+  same reminder again — and a reminder cannot be taken back.
+- **The closure has to be in place before the first binding moves.** Shipping
+  it together with the binding change does not work: each service takes both
+  in the same independent deployment, so the moment one switches, another that
+  has not is both unguarded and on the old database. It takes three changes in
+  order — close, switch, reopen — each confirmed before the next.
+- **The closure must survive the deployment.** Two obvious mechanisms do not,
+  because one service declares its own public route in the file that gets
+  deployed, and a deployment replaces a rejecting build with the normal one.
+
+And **the checks that prove a binding moved cannot all run while the routes
+are closed**, since two of them work by writing through those very routes.
+Confirmation is now in two passes: read each service's binding directly while
+the gate holds — that is what authorises lifting it — then run the write
+checks afterwards as the final confirmation.
+
+None of these mechanics has been exercised on the live account; they are
+reasoned from how the deployments work, and the document says so.
 
 One service is currently outside the gate because its schedule is empty and it
 therefore writes nothing at all. That is recorded as a fact about today rather

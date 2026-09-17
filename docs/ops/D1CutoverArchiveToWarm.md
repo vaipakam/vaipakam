@@ -324,41 +324,82 @@ So: **check the committed schedule before excluding it.** If `crons` is
 non-empty, disable the schedule across both binding changes and restore it
 after confirmation, exactly as the public Workers are gated.
 
-**The two options, restated under the rule:**
+### Quiescence is a STATE to establish, not a route to close
 
-- **Quiesce (the safe option, and the one to take whenever real users are on
-  the deployment).** Close BOTH public Workers' mutating routes before the
-  merge and lift only after Step 3 confirms every binding. A user told "try
-  again shortly" has lost nothing; one whose ticket silently disappeared has.
+Rounds 2, 3 and 4 of #2238 each found a different hole in this rule, and all
+three were the same hole: it was written as an instruction about *routes*,
+so each round found another way for a writer to reach D1 that a route did not
+cover. Stated as a state instead, it is checkable and the holes close
+together:
 
-  **The mechanism has to survive the deployment, and the two obvious ones do
-  not** (#2238 r3 P1). An earlier revision said "unbind the route, or deploy a
-  rejecting build". Both are erased by the very deploy they are meant to
-  bracket: `apps/indexer/wrangler.jsonc` DECLARES its route, so the automatic
-  deployment re-creates a route that was manually unbound, and that same
-  deployment replaces a rejecting build with the normal handlers. Either way
-  the indexer's write endpoints reopen the moment its own build lands — while
-  another Worker may still be on the old binding, or have failed. A gate the
-  operation removes is not a gate.
+> **No writer can reach either database, by any entry point, from before the
+> first binding changes until every binding has been confirmed.**
 
-  Two shapes that do hold, neither of them verified on this account — treat
-  the choice as the operator's and the mechanics as unrun:
+Three things follow that "close the mutating routes" did not give you.
 
-  1. **Carry the maintenance behaviour IN the binding-change deployment.**
-     The PR that changes the binding also ships the `503`; a second, later
-     merge lifts it once Step 3 passes. Self-contained, no external state, and
-     it cannot be overwritten because it IS what was deployed. Costs a second
-     merge, and the lift is itself a deployment with its own mixed state —
-     harmless, since by then every binding is confirmed.
-  2. **Gate outside the Worker**, in the control plane — a WAF custom rule on
-     the mutating paths, or removing the DNS/route binding at the zone rather
-     than in `wrangler.jsonc`. A Worker deployment does not touch it, so it
-     survives all three builds and a failed one. Verify before relying on it
-     that the rule is not itself reset by anything in the deploy path.
-- **Watch it through (the 2026-08-03 choice, defensible only pre-live).**
-  Merge when someone is watching and run Step 3 immediately, accepting that
-  anything written in between may be lost. This was chosen when there were no
-  real users; it is not a decision to inherit once there are.
+**1. Enumerate writers × ENTRY POINTS, not writers.** Every Worker here has
+two ways in, and a `fetch`-level `503` or a WAF rule stops exactly one of them
+(#2238 r4 P2). A cron event does not traverse a route at all.
+
+| Worker | `fetch()` writes | `scheduled()` writes | Committed cron |
+| --- | --- | --- | --- |
+| `apps/agent` | thresholds, Telegram links, support tickets, listings | pre-notify reminders + their checkpoint stamps, diag/ticket prunes, expired-link sweep | `* * * * *` |
+| `apps/indexer` | `POST /signed-offers`, `POST /loans/:id/prepay-listing/match-source`, `/hooks/chain-event` | the ingest scan and everything it materialises | `* * * * *` |
+| `apps/keeper` | none — no `fetch()` handler | HF-band inbox rows, remit/ack state | `[]` today (#1896) |
+
+The agent's pre-notify tick is the sharp one: it can deliver a reminder while
+stamping only the database about to be abandoned, so the tick after the
+cutover delivers it **again**. A reminder is not retractable, which is the
+whole reason that lane is built the way it is.
+
+So the gate must close `scheduled()` as well — empty the schedule across the
+change, or have the maintenance build short-circuit `scheduled()` — for every
+Worker whose committed cron is non-empty. `apps/keeper`'s is empty today; that
+is a fact to re-check, not a property (see above).
+
+**2. The gate must be in place BEFORE the first binding moves** (#2238 r4 P1).
+Shipping the maintenance behaviour *in* the binding-change deployment does not
+work, and it was wrong when this document said it: the gate reaches each
+Worker in the same independent build that changes that Worker's binding, so
+the moment agent switches, an indexer still building — or whose build failed —
+is both ungated and on the old database, which is precisely the loss this
+option claimed to close. **Three merges, in order:**
+
+| | Merge | Confirm before proceeding |
+| --- | --- | --- |
+| 1 | Maintenance behaviour on every writer, bindings untouched | every writer is gated, on both entry points |
+| 2 | The binding change | every binding, by control-plane read (Step 3 pass 1) |
+| 3 | Lift the maintenance behaviour | the write probes (Step 3 pass 2) |
+
+Merge 1's own mixed state is harmless — a Worker that has not yet taken the
+gate is still on the source, with everything else, and nothing has moved.
+Merge 3's is harmless for the mirror reason: every binding is already
+confirmed.
+
+**3. A gate the operation erases is not a gate** (#2238 r3 P1). "Unbind the
+route" and "deploy a rejecting build" were both wrong for this reason:
+`apps/indexer/wrangler.jsonc` DECLARES its route, so the automatic deployment
+re-creates a route that was manually unbound, and that same deployment
+replaces a rejecting build with the normal handlers. Under the three-merge
+order above, the in-Worker maintenance behaviour is no longer erased — merge 2
+does not remove it, because it is in the tree merge 2 builds from. A
+control-plane gate (a WAF rule on the mutating paths, or unbinding at the
+zone) also survives, and additionally survives a *failed* build; it does not
+touch cron, so it is a complement to emptying the schedule rather than a
+substitute.
+
+**None of these mechanics has been exercised on this account.** They are
+reasoned from the deployment model, and are marked `[unrun]` in the same sense
+the commands are.
+### The alternative, and when it is defensible
+
+**Watch it through (the 2026-08-03 choice, defensible only pre-live).** Skip
+the quiescence entirely: merge when someone is watching and run Step 3
+immediately, accepting that anything written in between may be lost. This was
+chosen when there were no real users. It is not a decision to inherit once
+there are — and note it is the whole of the alternative, not a lighter version
+of the gate. Half a gate (routes closed, cron running; or gate and binding in
+one merge) is this option with extra steps and a false sense of cover.
 
 What the auto-deploy correction genuinely changes is **who** closes the
 window: it no longer waits on a person remembering a command. It does not make
@@ -471,9 +512,11 @@ confirms it.
 **Free until the Workers start writing to the target — and staying free is
 something you have to DO, not something you observe** (#2238 r2 P1).
 
-A revert is a binding change, so §3's rule applies to it unchanged and in the
-same order: **quiesce every user-facing writer BEFORE merging the revert**,
-and lift the gate only once every binding is confirmed back on the source.
+A revert is a binding change, so the quiescence rule applies to it unchanged:
+**establish the state before the revert merges** — every writer, both entry
+points, gated first in its own merge — and lift only once every binding is
+confirmed back on the source. The same three-merge order applies, with the
+binding change in the middle being the revert.
 Confirming afterwards cannot make the window safe — during the revert's own
 independent builds, a Worker still serving the target can accept the first
 threshold, signed order or support ticket written there, and that row is lost
