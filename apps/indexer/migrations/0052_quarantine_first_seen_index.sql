@@ -1,0 +1,27 @@
+-- #2231 r9 `4036242415` — the stale report's BOUNDED PAGE needs an index to
+-- actually be bounded work.
+--
+-- Three rounds bounded three different costs of the same report, each one
+-- revealed by fixing the last: the log line (r6), the rows returned to the
+-- Worker (r7/r8), and now the rows the DATABASE visits. Without this index
+-- the page query has no usable order: 0049 supplies `(chain_id, loan_id)`,
+-- which does not serve `WHERE chain_id = ? AND first_seen_at <= ?
+-- ORDER BY first_seen_at`, so SQLite scans the chain's rows and builds a
+-- temporary sort before applying `LIMIT 200`. The work grows with the number
+-- held even though the result does not — inside the invocation that must
+-- still write the scan cursor, which is the failure this report keeps being
+-- corrected to avoid.
+--
+-- With it, the page is an index range walk that stops after 200 entries:
+-- bounded in the plan, not only in the output.
+--
+-- It helps the exact COUNT too, but does not make it constant, and the spec
+-- no longer claims otherwise. Counting rows matching a predicate is linear in
+-- the number matching, whatever the index; this makes it an index-only walk
+-- instead of a table scan. Keeping the count EXACT is a deliberate trade —
+-- an operator judging whether 3 entries are held or 3,000 is better served by
+-- a true number than by "more than 200", and the alternative that would be
+-- constant is a maintained counter, which is a second source of truth about
+-- the same fact and a new way to be wrong.
+CREATE INDEX IF NOT EXISTS idx_loan_reconcile_quarantine_chain_first_seen
+  ON loan_reconcile_quarantine (chain_id, first_seen_at);

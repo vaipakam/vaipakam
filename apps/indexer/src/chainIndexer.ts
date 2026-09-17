@@ -59,6 +59,8 @@ import {
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import {
   quarantineStatements,
+  discloseQuarantineReleases,
+  quarantineReleaseStatement,
   releaseTerminalQuarantine,
   reportStaleQuarantine,
   settledRows,
@@ -725,8 +727,34 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       so they were built as independent probes. The write side's answer
  *       cannot satisfy the calendar side's cache, so a cold pass pays twice
  *       (#2213 r30 `4017166962`)
- * - 1 — `releaseTerminalQuarantine`
- * - 2 — the stale report: its count, and the listing when there is one
+ * - 2 — `releaseTerminalQuarantine`, worst case: a bounded read of the ids it
+ *       is about to release, then the release itself. ONE when nothing is
+ *       terminal, which is most passes, because the read is what decides.
+ *       It was a single `DELETE … RETURNING` until #2231 r8 `4036084552`
+ *       pointed out that this bounded only the log — D1 was still asked to
+ *       return every deleted id, and the Worker to materialise them all, on
+ *       a sweep that can cover thousands. A `LIMIT` the database honours
+ *       costs one statement and removes a linear response
+ * - 1 — the stale report: its count and its bounded listing, in ONE
+ *       `batch()`. Two statements, one round trip — and a transaction, which
+ *       is why they were folded together (#2231 r11 `4036569628`): read
+ *       separately, the exact total could be taken before an operator's
+ *       guarded clear and the page after it, so the report would describe
+ *       overflow entries that no longer existed. The snapshot was the
+ *       requirement; costing one subrequest instead of two came with it.
+ *       CONSTANT WHATEVER THE DATA SAYS, and the constancy is the point
+ *       rather than the number
+ *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
+ *       a chain holding more rows than one page fits paid for a roll call of
+ *       the remainder — a cost that VARIED with the data, under a ceiling
+ *       whose overrun aborts the pass before the scan cursor is written, so
+ *       the pass paying the extra was by definition the one holding the most
+ *       rows. It then briefly became 1, by folding the count into the
+ *       listing with a window function; that is reverted because D1
+ *       documents no version and nothing here has run one against it, and
+ *       this is the one statement whose failure would make every suppression
+ *       invisible. A constant cost settles that dependency whatever the
+ *       number is
  * - 1 — the repair's own quarantine writes, when a repair happened
  *
  * The close-out statements themselves are folded into batches that already
@@ -1260,12 +1288,18 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
       console.error(
         `[chainIndexer] quarantine RELEASE failed for chain ${chainId} — rows ` +
           `whose loan has ended stay held until a later pass releases them, ` +
-          `and the report below may therefore name rows that are already ` +
+          `and every held row withholds reminders from whatever loan now bears ` +
+          `its id. The report below may therefore name rows that are already ` +
           `resolvable`,
         err,
       );
     }
-    await reportStaleQuarantine(env.DB, chainId, Math.floor(Date.now() / 1000));
+    await reportStaleQuarantine(
+      env.DB,
+      chainId,
+      Math.floor(Date.now() / 1000),
+      quarantineAvailableForWrites.guardColumn() === true,
+    );
   } catch (err) {
     // The marks are unaffected: this is the read that NAMES long-held rows.
     // Withholding continues; what is lost is the operator being told.
@@ -1452,6 +1486,25 @@ export async function _runLoanReconcilePass(input: {
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
+        discloseSideTableBatch: (results, wonTheCas) =>
+          // `reconciled` when this pass's own write landed, NOT `closed-out`
+          // (#2231 r11 `4036569613`): the repair reaches this list from a
+          // safe-head chain READ that found the loan already terminal — the
+          // terminal event is the thing that was MISSED, which is why the
+          // repair exists.
+          //
+          // But only when the write landed. A compare-and-set that changed
+          // nothing means another writer terminalized the row first, and on
+          // this path that writer may have been the event handler — so
+          // claiming no event arrived would assert the absence of the very
+          // thing the race is about (#2231 r14 `4037027847`). Then the honest
+          // basis is the weaker one: a chain read, nothing said about events.
+          discloseQuarantineReleases(
+            chainId,
+            results,
+            Math.floor(Date.now() / 1000),
+            wonTheCas ? 'reconciled' : 'chain-read',
+          ),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the
@@ -1566,8 +1619,21 @@ export async function _runLoanReconcilePass(input: {
     const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
     if (writeAvailability !== 'absent') {
       try {
-        const writes = quarantineStatements(env.DB, chainId, report, nowSec);
-        if (writes.length > 0) await env.DB.batch(writes);
+        const writes = quarantineStatements(
+          env.DB,
+          chainId,
+          report,
+          nowSec,
+          quarantineAvailableForWrites.guardColumn() === true,
+        );
+        if (writes.length > 0) {
+          const outcome = await env.DB.batch(writes);
+          // The settle path releases held markers too, including on an id
+          // that has come round again, and it did so silently (#2231 r7
+          // `4035821181`). The batch already carries back which rows it
+          // deleted; this only decides which of them are worth a line.
+          discloseQuarantineReleases(chainId, outcome, nowSec);
+        }
       } catch (err) {
         // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
         // batch carries two opposite operations — marks that START withholding
@@ -5749,11 +5815,12 @@ export function _closedLoanSideTableStatements(
   // to fail: there is no mark to release on a database that has no memory,
   // and a batch naming a missing table takes the close-out down with it.
   if (quarantineAvailable) {
-    statements.push(
-      env.DB.prepare(
-        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`,
-      ).bind(chainId, loanId),
-    );
+    // THROUGH THE SHARED BUILDER, so this release is disclosed like every
+    // other (#2231 r9 `4036242408`). It was a hand-written DELETE, and that
+    // is exactly how it came to be the one release path nothing announced:
+    // disclosure was added to the sweep and to the settle path as each was
+    // noticed, and nothing made a third site inherit it.
+    statements.push(quarantineReleaseStatement(env.DB, chainId, loanId));
   }
   return statements;
 }
@@ -5787,9 +5854,14 @@ async function _clearClosedLoanSideTables(
   loanId: number,
 ): Promise<void> {
   const availability = await quarantineAvailableForWrites(env.DB as never);
-  await env.DB.batch(
+  const outcome = await env.DB.batch(
     _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
   );
+  // This batch can carry a quarantine release, so it reports one (#2231 r9
+  // `4036242408`). Nothing else observes it: the terminal sweep runs later
+  // and finds the marker already gone, and the settle path never sees this
+  // loan again because it has left the set the rotation selects from.
+  discloseQuarantineReleases(chainId, outcome, Math.floor(Date.now() / 1000), 'closed-out');
   // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
   //
   // r14 added one for the `'unknown'` case, and a single attempt in the same

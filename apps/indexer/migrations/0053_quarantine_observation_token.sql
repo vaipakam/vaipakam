@@ -1,0 +1,34 @@
+-- #2231 r11 `4036569620` — the guarded clear needs a value that CHANGES on
+-- every observation.
+--
+-- The stale report tells an operator to remove an entry with a
+-- compare-and-delete, so that a pass re-observing the row between their
+-- reading and their running it is not silently discarded. The value it
+-- compared was `last_seen_at`, which is whole seconds — so two observations
+-- inside one second leave it identical, the guard passes, and the FRESH
+-- finding is deleted. The message promised "if it deletes nothing, the entry
+-- changed under you"; on that path it deletes something and says nothing.
+--
+-- Narrow, because the reconciliation pass runs minutes apart — but overlapping
+-- invocations are possible, and narrowness is no defence for a guard. The
+-- entire value of a guard is that it can be trusted without checking; one that
+-- silently fails is worse than none, and what it loses here is a live finding
+-- about an unsettled loan, which resumes reminders the platform cannot stand
+-- behind. That is the defect this whole table exists to prevent.
+--
+-- A COUNTER would not fix it. A row deleted and reinserted restarts at zero,
+-- so an operator holding a stale zero can delete a different incarnation's
+-- row — the same ABA problem by a longer route. A fresh random token per
+-- observation has no such sequence to restart.
+--
+-- Eight hex characters, not a UUID: the report names up to 200 entries in one
+-- line and a 36-character token would add 7 KB to it. The guard compares
+-- against ONE already-identified row, so the only way to be wrong is for that
+-- row to be deleted and reinserted with the same token — 1 in 2^32. That is a
+-- substantiated "negligible" rather than an asserted one.
+--
+-- `DEFAULT ''` for rows written before this migration. A legacy row keeps ''
+-- until its next observation, and '' is a perfectly good guard value for it:
+-- if the row is re-observed it gains a real token and the guard fails, which
+-- is the outcome wanted. A reinserted row never comes back as ''.
+ALTER TABLE loan_reconcile_quarantine ADD COLUMN obs TEXT NOT NULL DEFAULT '';

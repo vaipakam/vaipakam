@@ -1,8 +1,8 @@
 # Release Notes — 2026-09-17
 
-Four entries, in the order the file assembles them: the keeper's arming
-flags, the transport epochs, the reminder hold, and the indexer's request
-count. The transport epochs are
+Five entries, in the order the file assembles them: the keeper's arming
+flags, the transport epochs, the reminder hold, the indexer's request count,
+and the order payment reminders go out in. The transport epochs are
 the substantial one — the last part of the #1566 programme before the role
 carry-forward — and what that change adds is deliberately inert where it
 counts: no ledger arithmetic moves, and no classification comes out
@@ -30,6 +30,15 @@ entry records what measuring it honestly cost — the count had to stop
 following a moved address, because counting those moves exactly would have
 meant re-implementing the web's own forwarding rules and keeping the copy in
 step forever.
+
+The reminder-ordering entry is a near neighbour of that one, and shares its
+shape: a service that knew where it had stopped, recorded that place in a form
+that stopped meaning what it said, and carried on confidently. It kept its
+place in a list that is rebuilt every run, so once the loans it had just
+handled dropped out, the remembered place pointed past the very deadlines that
+should have come next. It now records the deadline instead. Whether any
+reminder was actually missed is recorded as unknown rather than assumed either
+way, which is the honest state of it.
 
 The two remaining corrections are both cases where a record and the thing it
 described had drifted apart. A Worker's configuration file called three
@@ -1032,3 +1041,57 @@ observed. The figures the indexer works to are still the conservative ones set
 while the true cost was unknown; now that it can be measured, they can be set
 from evidence.
 <!-- assembled-fragment: 2221-indexer-subrequest-counter.md sha256=e169fb7633944626c5ad02738b9f44d0ccb163b0fa258c57fbdc503668e3052e -->
+
+## Payment reminders again go out nearest-deadline-first after a busy run (PR #2229, issue #2219)
+
+The service that reminds people about an upcoming interest payment works
+through a list of loans ordered by how soon the payment is due, nearest first,
+and stops when it has used its allowance for that run. It then records where it
+stopped, so the next run picks up rather than starting over.
+
+What it recorded was a **position in the list** — "I stopped at the sixth". The
+list is rebuilt from scratch each run, and a loan reminded on the previous run
+is no longer in it. So the sixth place in the new list is not the sixth loan
+from before: it is the eleventh. The five loans in between — the nearest
+remaining deadlines, the very ones that should have been next — were stepped
+over.
+
+Under sustained load this ran the service's own rule backwards: reminders about
+payments further away went out while nearer ones waited.
+
+Whether any reminder was actually missed is **not known, and is not claimed
+here**. The reasoning that made this look harmless was that the position wraps
+to the front when it runs off the end, so a stepped-over loan is reached on a
+later pass — but that argument holds only if the list is worked through. If
+loans enter the list about as fast as they are handled, its end keeps moving,
+the wrap may not come, and a loan stepped over near the front can pass its
+deadline and leave the window before anything reaches it. That is the same
+sustained load the fault needs to appear in the first place. Establishing
+which of those actually happened would take production evidence nobody has
+gathered, so this is recorded as an ordering fault of unknown consequence
+rather than as one known to be harmless.
+
+It now records **the deadline** it stopped at, and resumes at the first loan due
+at or after that moment. A deadline does not move when other loans are reminded,
+settled, or pass out of the window, so the resumption is exact rather than
+approximate — and the note in the code claiming an exact resumption was
+impossible here has been corrected, because it was wrong about why.
+
+Two consequences worth stating. Where the recorded place cannot be read at all —
+a database problem, or a deployment that arrives before the schema change it
+needs — the run starts at the nearest deadline instead. For any one run that
+repeats work already done rather than stepping over anything, which is the only
+acceptable direction for that failure. It is not harmless if it persists: a
+service that always restarts at the same place never works its way down the
+list, so loans further along stop being reached. That is why the run says so
+every time rather than falling back quietly.
+
+And the old recorded positions are cleared rather than left behind: a stale
+number in a table other things still read is how a later reader comes to trust
+a position that means nothing. That clearing is best-effort rather than
+guaranteed, which is worth stating plainly — the schema change is applied
+before the new service is deployed, so a last run of the old one can write its
+position back in between. A row written back that way is inert, because
+nothing reads it any more, and an operator can remove it once the new service
+is live.
+<!-- assembled-fragment: 2219-prenotify-deadline-cursor.md sha256=9282e48e9103a808ffb997efe5f02cb6543ae901524fd2795f7e1f0efbd5822c -->

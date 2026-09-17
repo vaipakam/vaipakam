@@ -36,8 +36,23 @@ export function createSqliteD1(ddl: string[]): SqliteD1 {
       const info = db.prepare(sql).run(...args);
       return { meta: { changes: Number(info.changes) } };
     },
-    /** Consumed by the adapter's batch() below. */
-    __exec: () => db.prepare(sql).run(...args),
+    /**
+     * Consumed by the adapter's batch() below.
+     *
+     * `.all()`, not `.run()`, so a statement carrying `RETURNING` hands its
+     * rows back the way D1 does (#2231 r7). The quarantine's settle-release
+     * decides what to disclose from exactly those rows, and a fake that
+     * dropped them could not be used to test the code that reads them — the
+     * same reason `meta.changes` is carried per statement below.
+     *
+     * `changes` still comes from a `run()`-shaped read of the same handle:
+     * node:sqlite's `all()` does not report it, and D1 carries both.
+     */
+    __exec: () => {
+      const stmt = db.prepare(sql);
+      const rows = stmt.all(...args);
+      return { rows, changes: db.prepare('SELECT changes() AS c').get() as { c: number } };
+    },
   });
   const d1 = {
     prepare(sql: string) {
@@ -58,9 +73,10 @@ export function createSqliteD1(ddl: string[]): SqliteD1 {
         // repaired from the FIRST statement's change count. A fake that
         // drops a field the real thing carries cannot be used to test the
         // code that reads it.
-        return results.map((info) => ({
-          meta: { changes: Number((info as { changes: number | bigint }).changes) },
-        }));
+        return results.map((info) => {
+          const r = info as { rows: unknown[]; changes: { c: number | bigint } };
+          return { results: r.rows, meta: { changes: Number(r.changes.c) } };
+        });
       } catch (err) {
         db.exec('ROLLBACK');
         throw err;

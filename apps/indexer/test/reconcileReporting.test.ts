@@ -293,10 +293,18 @@ describe('the join, not just the wording', () => {
     await _reportQuarantineForChain(env, CHAIN);
     // THE REPORTER'S OWN QUERY, not any query naming the table. Three
     // different statements mention it now — the availability probe via
-    // `sqlite_master`, the release sweep's DELETE, and the report's COUNT —
-    // so each loosening of this assertion has found a new way to pass while
-    // the thing it names never ran. This matches the COUNT, which only the
-    // reporter issues.
+    // `sqlite_master`, the release sweep's DELETE, and the report's own SELECT
+    // — so each loosening of this assertion has found a new way to pass while
+    // the thing it names never ran.
+    //
+    // This matches the `COUNT(*)`, which only the reporter issues and which it
+    // issues FIRST — so it is reached whatever the stub answers. It briefly
+    // matched the `LEFT JOIN` instead, while #2231 r6 had folded the count
+    // into the page's own statement; r7 unfolded it again rather than run a
+    // window function D1 does not document, and the signature came back with
+    // it. The join would be a WORSE pin now: it sits behind an early return on
+    // a zero count, so a stub reporting no held rows would fail this test for
+    // a reason that has nothing to do with whether the reporter ran.
     expect(
       seen.some((q) => /SELECT\s+COUNT\(\*\)[\s\S]*FROM loan_reconcile_quarantine/.test(q)),
     ).toBe(true);
