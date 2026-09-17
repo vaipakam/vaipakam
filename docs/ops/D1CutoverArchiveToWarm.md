@@ -282,7 +282,9 @@ First, the concrete pair that was executed, with its **verbatim** output —
 `apps/indexer`, on 2026-09-17:
 
 ```bash
-# [run] — exactly these two commands, exactly this output.
+# [run] — exactly these two commands, exactly this STDOUT. wrangler also
+# writes a banner and config warnings to stderr; they are not reproduced here
+# and the `grep` does not suppress them.
 $ cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1
 Created:     2026-09-17T16:09:37.144Z
 
@@ -290,7 +292,11 @@ $ TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- app
 838c25cf3 2026-09-17T16:08:34+00:00
 ```
 
-Deployment 63 seconds after the commit: that Worker is current.
+**What that example does and does not show**, since it is the wrong way round
+from the heading and it would be easy to misread. The deployment is 63 seconds
+NEWER than the commit, so the test returns nothing: it is consistent with the
+Worker being current and does not establish it, for the four reasons below. It
+is quoted because it is what a healthy reading looks like — not as a pass.
 
 And the generic form, which is a **template and was not executed as written**
 — `<worker-dir>` is a placeholder, not a path:
