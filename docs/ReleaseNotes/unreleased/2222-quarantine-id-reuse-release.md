@@ -87,7 +87,10 @@ smaller form: where a number has been reused, it establishes that the
 replacement ended rather than that the original position did. It is recorded as
 a known limit rather than presented as settled, **and it is the release itself
 that says so**, giving a count where the store reports one — and saying so
-plainly where it does not — alongside a bounded roster of what it removed.
+plainly where it does not — alongside a bounded roster of the CANDIDATES it
+read immediately before removing. Not of what it removed: the removal re-checks
+its condition, so fewer can go than were listed, and where that happens it says
+how many and that it does not know which, or why.
 Leaving that to the held-entry report would have disclosed nothing in the one
 case that matters: a release can clear the last held entry, and the report says
 nothing when nothing is held.
@@ -141,8 +144,16 @@ done one at a time, as each was noticed. That is how the third one stayed
 silent: in the very case worth disclosing, a reused number's replacement
 closing normally, the entry vanished without a word while the other two paths
 announced themselves. The missing piece was never a case, it was a rule. There
-is now a single shared way to write such a release, and it reports what it
-removed, and a new route cannot be added without deciding what it announces.
+is now a single shared way to write the release of ONE entry, and it reports
+what it removed, and a new route cannot be added without deciding what it
+announces.
+
+The periodic sweep is the exception, and saying so matters more than a tidy
+rule would. It removes a batch in one instruction, so it cannot use a
+per-entry form — a check demanding one would force it back into removing rows
+one at a time, which is what several rounds of this change were spent getting
+away from. It carries its own announcement instead, and it is the only such
+place.
 
 That is a strong default, not a guarantee, and the difference is worth stating
 because the first version of this paragraph claimed the stronger thing. A route

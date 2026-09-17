@@ -637,7 +637,14 @@ describe('the table, over the real migrated schema', () => {
     // Both ids were listed, and the shortfall is stated rather than left for
     // the reader to spot by counting.
     expect(said).toContain('1 of those 2 did NOT go');
-    expect(said).toContain('Which ones is not recorded');
+    // The COUNT is stated and the cause is NOT invented (#2231 r18
+    // `4037733381`). A shortfall can mean the loan stopped being terminal —
+    // hold stays — or that an operator's own clear removed the row between
+    // the read and the delete, in which case it is gone. This pass does not
+    // re-read, so it must not pick one.
+    expect(said).toContain('WHY is not recorded');
+    expect(said).toContain('cleared by an operator or another invocation');
+    expect(said).not.toContain('so the hold stays and the next pass looks again');
     // And the over-count wording that could never happen is gone.
     expect(said).not.toContain('more, not named here');
   });

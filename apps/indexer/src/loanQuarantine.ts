@@ -662,15 +662,29 @@ export async function releaseTerminalQuarantine(
   // The roster is printed beside the count. Left alone, an operator reads 90
   // ids and a count of 88 and has no way to know the two do not describe the
   // same set. Which two did not go is not something this pass knows — the
-  // statement reports a number, not a set — so it says how many and why,
-  // and does not invent the subset.
+  // statement reports a number, not a set — so it says how many, and does not
+  // invent the subset.
+  //
+  // NOR THE REASON (#2231 r18 `4037733381`). The first version of this said
+  // the missing rows' loans had changed and their holds therefore stay. That
+  // is one cause of a shortfall and not the only one: an operator running the
+  // very command this report prints, or another invocation, can clear a row
+  // between the read and the delete — and then the hold does NOT stay, it is
+  // gone. Naming one cause gives a false account of the lifecycle of rows the
+  // pass never re-read, which is the same defect as inventing the count was.
+  // Both possibilities are stated, and that this pass does not distinguish
+  // them.
   const shortfall = removed === null ? 0 : named.length - removed;
   const listed =
     shortfall > 0
       ? `${named.join(', ')} — but ${shortfall} of those ${named.length} did ` +
-        `NOT go: their loan changed between the read and the delete, so the ` +
-        `hold stays and the next pass looks again. Which ones is not ` +
-        `recorded; the delete reports a count, not a set`
+        `NOT go. WHY is not recorded, and there is more than one ` +
+        `possibility: the loan may have stopped being terminal, in which case ` +
+        `the hold stays and a later pass looks again; or the entry may have ` +
+        `been cleared by an operator or another invocation between the read ` +
+        `and the delete, in which case it is gone. This pass does not re-read ` +
+        `to find out, so it reports neither the cause nor the ids — the ` +
+        `delete gives back a count, not a set`
       : named.join(', ');
   const howMany =
     removed === null
