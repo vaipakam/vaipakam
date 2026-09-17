@@ -129,28 +129,21 @@ export function spent(
 
 // ── The D1 wrapper ────────────────────────────────────────────────────────
 //
-// Only the surface this lane actually uses is wrapped, and the types are
-// structural rather than imported from `@cloudflare/workers-types`, so the unit
-// tests can pass a plain object. Anything the lane does not call is passed
-// through untouched by `Proxy`, which keeps this from becoming a second
-// enumeration to maintain — the failure mode being fixed.
+// The wrapped types are PASS-THROUGH GENERICS rather than a local restatement
+// of D1's interface, and that is a deliberate choice rather than laziness.
+// Declaring the shape here would mean maintaining a second copy of someone
+// else's API — a list that has to be updated whenever `@cloudflare/workers-
+// types` gains a method, and that silently stops matching when it is not. That
+// is the same enumeration-nobody-verifies failure this whole module exists to
+// remove, so it is not reintroduced at the type level to remove it at the
+// runtime level.
+//
+// `Proxy` forwards everything it is not told to charge, so methods this lane
+// never calls keep working untouched and typed exactly as their owner declared
+// them. The unit tests pass plain objects for the same reason.
 
 type Terminal = 'first' | 'run' | 'all' | 'raw';
 const TERMINALS: readonly Terminal[] = ['first', 'run', 'all', 'raw'];
-
-interface StatementLike {
-  bind?: (...args: unknown[]) => StatementLike;
-  first?: (...args: unknown[]) => Promise<unknown>;
-  run?: (...args: unknown[]) => Promise<unknown>;
-  all?: (...args: unknown[]) => Promise<unknown>;
-  raw?: (...args: unknown[]) => Promise<unknown>;
-}
-
-interface DbLike {
-  prepare: (sql: string) => StatementLike;
-  batch?: (statements: unknown[]) => Promise<unknown>;
-  exec?: (sql: string) => Promise<unknown>;
-}
 
 /**
  * Wrap one prepared statement so its terminals are charged and `bind()` is not.
@@ -159,7 +152,7 @@ interface DbLike {
  * re-wrap what it returns; forgetting that is how a bound statement — which is
  * most of them here — would slip through uncounted.
  */
-function wrapStatement(stmt: StatementLike, budget: TickBudget): StatementLike {
+function wrapStatement<T extends object>(stmt: T, budget: TickBudget): T {
   return new Proxy(stmt, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -168,7 +161,7 @@ function wrapStatement(stmt: StatementLike, budget: TickBudget): StatementLike {
       if (prop === 'bind') {
         return (...args: unknown[]) =>
           wrapStatement(
-            (value as (...a: unknown[]) => StatementLike).apply(target, args),
+            (value as (...a: unknown[]) => object).apply(target, args),
             budget,
           );
       }
@@ -182,7 +175,7 @@ function wrapStatement(stmt: StatementLike, budget: TickBudget): StatementLike {
 
       return (value as (...a: unknown[]) => unknown).bind(target);
     },
-  });
+  }) as T;
 }
 
 /**
@@ -192,7 +185,7 @@ function wrapStatement(stmt: StatementLike, budget: TickBudget): StatementLike {
  * unchanged — the point being that nobody has to know the budget exists for
  * their request to be counted.
  */
-export function meterD1<T extends DbLike>(db: T, budget: TickBudget): T {
+export function meterD1<T extends object>(db: T, budget: TickBudget): T {
   return new Proxy(db, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -201,7 +194,7 @@ export function meterD1<T extends DbLike>(db: T, budget: TickBudget): T {
       if (prop === 'prepare') {
         return (sql: string) =>
           wrapStatement(
-            (value as (s: string) => StatementLike).call(target, sql),
+            (value as (s: string) => object).call(target, sql),
             budget,
           );
       }

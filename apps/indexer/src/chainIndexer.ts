@@ -112,6 +112,15 @@ import {
   EMPTY_SWEEP,
   type CalendarSweepResult,
 } from './calendarNotifications';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  meterD1,
+  meterRpc,
+  overspent,
+  spent,
+  type TickBudget,
+} from './subrequestBudget';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -225,6 +234,13 @@ export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
   scannedTo: bigint;
+  /**
+   * Outbound requests this pass issued, MEASURED (#2221).
+   *
+   * Optional only because the several `emptyResult(...)` shapes return before a
+   * pass has spent anything worth reporting; a real pass always sets it.
+   */
+  subrequestsSpent?: number;
   newOffers: number;
   statusUpdates: number;
   detailRefreshes: number;
@@ -1644,10 +1660,25 @@ export async function _runLoanReconcilePass(input: {
 }
 
 export async function runChainIndexerForChain(
-  env: Env,
+  rawEnv: Env,
   chain: ChainConfig,
   reconcileBudget: ReconcileOptions = RECONCILE_BUDGET_SHARED_TICK,
+  budget: TickBudget = createBudget(),
 ): Promise<ChainIndexerResult> {
+  // EVERY REQUEST THIS PASS ISSUES IS COUNTED FROM HERE (#2221), and counted
+  // BECAUSE OF WHAT IT GOES THROUGH rather than because someone remembered to
+  // account for it.
+  //
+  // `env` shadows the parameter deliberately. The body below reaches D1 as
+  // `env.DB` in over two hundred places and hands `env` to the reconciliation
+  // pass, the reminder sweep and the quarantine helpers, which reach it the
+  // same way; wrapping the binding once here therefore meters all of them,
+  // including code written later that has never heard of this budget. The
+  // alternative — a decrement beside each call — is the shape the agent lane
+  // uses at fifteen sites, and at this lane's scale it would rebuild the very
+  // defect #2221 was filed for: an enumeration nothing verifies, which the
+  // hundred-and-twentieth site escapes in silence.
+  const env: Env = { ...rawEnv, DB: meterD1(rawEnv.DB, budget) };
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
   // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
@@ -1666,7 +1697,14 @@ export async function runChainIndexerForChain(
   // intentionally exposes only the runtime essentials.
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // METERED for the same reason the binding is: a chain read is a subrequest
+  // exactly as a D1 call is, and the two draw on one allowance. Counting only
+  // half of what an invocation spends would give a confident number that is
+  // still wrong — which is what this lane already had.
+  const client = meterRpc(
+    createPublicClient({ transport: http(chain.rpc) }),
+    budget,
+  );
 
   // One-time activity_events backfills, run BEFORE every return out of
   // this function — including the identity aborts just below (Codex
@@ -2271,10 +2309,29 @@ export async function runChainIndexerForChain(
     );
   }
 
+  // WHAT THIS PASS ACTUALLY SPENT (#2221). The number is now measured rather
+  // than asserted, which is the whole point: three review rounds each corrected
+  // a worst case stated in a comment and were wrong every time, because nothing
+  // in the system knew it. A figure in a log can be read against reality; a
+  // figure in a comment can only be re-derived by the next person to doubt it.
+  //
+  // Reported at WARN when the real ceiling was passed, because the consequence
+  // is not a slow pass: the invocation is killed by the platform, the cursor
+  // write below never lands, and the chain re-reads the same range forever.
+  if (overspent(budget)) {
+    console.warn(
+      `[chainIndexer] chain ${chainId}: OVER the ${MAX_SUBREQUESTS_PER_INVOCATION}-subrequest ` +
+        `ceiling — issued ${spent(budget)}. The cursor write may not have ` +
+        `landed, in which case this range will be re-read next tick. This is ` +
+        `#2221: report it with the chain and the tick.`,
+    );
+  }
+
   return {
     scannedFrom: scanFrom,
     scannedTo: scanTo,
     headBlock: head,
+    subrequestsSpent: spent(budget),
     newOffers: offerStats.newOffers,
     statusUpdates: offerStats.statusUpdates,
     detailRefreshes,

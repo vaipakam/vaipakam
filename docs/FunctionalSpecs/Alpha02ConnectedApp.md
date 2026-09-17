@@ -380,6 +380,31 @@ The app uses chain reads and indexed reads for different jobs.
   stay inside its allowance and re-read the same prefix on every later run,
   which is the starvation the remembered position exists to prevent — so the
   two requirements are held together rather than traded off.
+- **The same allowance governs the runs that keep the records current, and
+  those runs COUNT what they spend rather than estimating it.** The service
+  that follows each network and writes down what happened draws on the same
+  fixed allowance, covering its reads of the network and its reads and writes
+  of the platform's own records alike. Exceeding it does not slow that run
+  down; it ends the run before it can record how far it read, so the next run
+  begins at the same place and does the same thing — a network that has
+  stopped advancing while still appearing to run normally. Because that
+  failure is silent, the figure may not be an estimate: a run measures what it
+  actually issued and reports it, and a run that passes the limit says so and
+  names the network, so a stalled network is announced rather than inferred
+  later from records that stopped changing.
+- **A statement prepared but never sent costs nothing, and statements sent
+  together cost once.** This is stated because getting it wrong in either
+  direction produces a confident figure that is still incorrect — counting
+  work that never left the run, or counting one departure many times and
+  refusing work that would in fact have fitted. What is counted is what leaves
+  the run.
+- **No part of a run may be exempt from the count by having been overlooked.**
+  Whether a request is counted follows from the means it travels by, not from
+  a list of the places that make requests. A list has to be revised whenever a
+  new place is added and gives no sign when it has not been, which is how the
+  figure came to be wrong repeatedly while appearing settled; a request made
+  by a part of the system that knows nothing about the allowance is still
+  counted against it.
 - Anything that occupies a record slot without issuing a request cannot
   consume the allowance — a record the chain declines to confirm is the case
   that arises, since nothing is worth asking about a loan the chain has never
