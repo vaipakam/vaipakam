@@ -99,10 +99,16 @@ stopped claiming rather than for what it established. Having corrected one
 stale sentence about which services deploy themselves, the obvious next move
 was a reliable way to check. Two candidate checks were tried and both
 misled — looking for a build to have run, then reading a deployment's age —
-so what survives is deliberately one-sided: you can tell that a service is
-BEHIND, and you cannot tell that it is CURRENT. Saying only the half that
-holds is less satisfying than a green tick, and it is the only version that
-does not eventually tell somebody the wrong thing.
+so what survives is deliberately one-sided, and weaker than it first reads:
+a deployment older than the newest change is **evidence that the service may
+be behind and worth inspecting**, while a newer one establishes nothing at
+all. Not even the first half is certainty — a change can carry a timestamp
+later than the moment it landed, so a current service can compare as behind.
+Being wrong that way costs a second look; being wrong the other way is what
+the check exists to prevent. Saying only the half that holds, and saying it
+as evidence rather than as a verdict, is less satisfying than a green tick
+and is the only version that does not eventually tell somebody the wrong
+thing.
 
 ## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
 
