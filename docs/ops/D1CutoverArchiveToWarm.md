@@ -35,9 +35,12 @@ verified —
 - `docs/ops/DeploymentRunbook.md` for the per-Worker deploy commands;
 - `apps/keeper/README.md` for the kill-switch and its confirmation.
 
-Where a command does appear here it is marked **[run]** if that exact form
-was executed against the live account on 2026-08-03, or **[unrun]** if it was
-written but not executed. That distinction is the honest one, and it is the
+Where a command does appear here it is marked **[run]** if that exact form was
+executed against the live account — **each such block names its own date**, and
+most are 2026-08-03 — or **[unrun]** if it was written but not executed. The
+date moved into the blocks when a later one was added on 2026-09-17 (#2243 r5):
+a single date in this paragraph made the marker ambiguous the moment a second
+sitting contributed to the file, which is the opposite of what it is for. That distinction is the honest one, and it is the
 one the defect history above argues for: treat an unrun line as a description
 of intent to check against the canonical runbook, not as something to paste
 into a terminal during an irreversible operation.
@@ -282,10 +285,15 @@ First, the concrete pair that was executed, with its **verbatim** output —
 `apps/indexer`, on 2026-09-17:
 
 ```bash
-# [run] — exactly these two commands, exactly this STDOUT. wrangler also
-# writes a banner and config warnings to stderr; they are not reproduced here
-# and the `grep` does not suppress them.
-$ cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1
+# [run] 2026-09-17 — exactly these two commands, run in this order from the
+# repo root, exactly this STDOUT. wrangler also writes a banner and config
+# warnings to stderr; they are not reproduced here and `grep` does not
+# suppress them.
+#
+# The SUBSHELL is load-bearing (#2243 r5): without it the first command leaves
+# the shell in apps/indexer, and the second's `-- apps/indexer` pathspec then
+# resolves to apps/indexer/apps/indexer and matches nothing.
+$ ( cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
 Created:     2026-09-17T16:09:37.144Z
 
 $ TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- apps/indexer
@@ -652,17 +660,22 @@ Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
 revert is a merge like any other (#2237). Then redeploy
 `ops/offchain-data-warm` by hand, since it is not built on merge.
 
-**The two frontends are CONDITIONAL, and only on one thing** (#2243 r4):
-whether the reverted PR also moved `packages/contracts/src/deployments.json`.
+**`apps/app` is conditional. `apps/www` is not a rollback step at all**
+(#2243 r4, corrected r5).
 
-- **It did** (the single-PR flow this plan permits) — then `apps/www` rebuilds
-  automatically and must be waited for, and `apps/app` must be hand-deployed,
-  because both consume those addresses.
-- **It did not** (the separate-PR flow, equally supported) — then neither
-  frontend has a changed input. No `apps/www` build starts, so waiting for one
-  stalls the rollback on a check that will never appear; and a manual
-  `apps/app` deploy is an unnecessary production change, with the
-  nineteen-variable environment hazard below attached to it for nothing.
+- **`apps/app`** must be hand-deployed **only if** the reverted PR also moved
+  `packages/contracts/src/deployments.json`. It imports
+  `@vaipakam/contracts/deployments` in its own source, so those addresses are
+  baked into its bundle. On the separate-PR flow it has no changed input, and
+  a manual deploy is then an unnecessary production change carrying the
+  nineteen-variable environment hazard below for nothing.
+- **`apps/www` does NOT need waiting for, in either flow.** An earlier
+  revision said it did. `apps/www/src` contains **no import from
+  `@vaipakam/contracts`** — the package is a `package.json` dependency and
+  nothing more — so its bundle cannot carry contract addresses and cannot be
+  serving reverted ones. Cloudflare may still start a www build off the
+  workspace dependency; blocking an urgent rollback on a build whose output
+  is irrelevant is a cost with no corresponding risk.
 
 **Both additions matter here specifically** (#2243 r1). This step named only
 the three Workers and the backup, which is the pre-#2242 deployment set, and
@@ -675,10 +688,10 @@ the omissions bite harder on the way back than on the way out:
   NEW contract addresses against a rolled-back database and rolled-back
   Workers. The rollback then looks complete and the public surface is the one
   thing still on the other side of it.
-- **`apps/www`, when it does rebuild, is automatic but not instant** — and
-  unlike the Workers it is never re-checked afterwards, because Step 3's probes
-  are D1-binding probes and `apps/www` has no D1 binding. So nothing downstream
-  notices if its build has not landed; wait for it deliberately.
+- **`apps/www` is never re-checked by anything downstream**, because Step 3's
+  probes are D1-binding probes and `apps/www` has no D1 binding. That is worth
+  knowing in general — but it is not a reason to gate a rollback on it, since
+  its bundle carries nothing the rollback changes (see above).
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
 SOURCE, so a write must land there, and the discriminator is the source's
