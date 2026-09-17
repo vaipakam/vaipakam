@@ -620,22 +620,29 @@ The app uses chain reads and indexed reads for different jobs.
   examined again on every run. If enough such records sit ahead of a record
   that WOULD send, starting at the front every time hides it for good. So a
   run REMEMBERS where it stopped and the next one continues from there,
-  wrapping to the front when it reaches the end. Where it resumes is a
-  remembered position rather than anything derived from the time of day —
-  deliberately, because any schedule-derived position can fall into step with
-  another schedule and then never move: the platform's other rotations, or the
-  interval between runs itself. Which network a run begins with is remembered
-  for the same reason and in the same way. Where neither position can be
-  remembered, the run says so — starting from the front every time restores
-  the unfairness the memory exists to remove, and would otherwise do it
-  silently. A remembered position advances on the work
-  actually done, which nothing else can align with. When the window fits in
-  one run, which is the ordinary case, the nearest deadline is examined first
-  as before.
-- The remembered position is approximate, and the platform does not pretend
-  otherwise: the list it indexes into changes between runs as records enter
-  the window, are handled, or pass their deadline. It resumes near where it
-  stopped, which is all that forward progress requires.
+  wrapping to the front when it reaches the end. Where it resumes is
+  remembered rather than derived from the time of day — deliberately, because
+  anything schedule-derived can fall into step with another schedule and then
+  never move: the platform's other rotations, or the interval between runs
+  itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither can be remembered,
+  the run says so — starting from the front every time restores the unfairness
+  the memory exists to remove, and would otherwise do it silently. What is
+  remembered advances on the work actually done, which nothing else can align
+  with. When the window fits in one run, which is the ordinary case, the
+  nearest deadline is examined first as before.
+- **What is remembered is the DEADLINE it stopped at, not a position in the
+  list** — stated here as well as above because this bullet used to say the
+  opposite, and a specification that describes one behaviour in two
+  incompatible ways invites the defect back. It said the remembered place was
+  approximate, on the reasoning that the list it indexed into changes between
+  runs, and that resuming *near* where it stopped was all forward progress
+  required. Forward progress was not all that was required: the list is
+  rebuilt each run and the records handled last run are gone from it, so an
+  index resumed past exactly as many of the nearest remaining deadlines as
+  were handled — running the nearest-first rule backwards, which is the one
+  guarantee this part of the platform makes. A deadline is not approximate and
+  does not move when other records are handled or leave.
 - A run that stops early says which limit stopped it, where in the window it
   resumed, and separates what it found — examined, reminded, reached nobody,
   had nobody to tell, declined by the chain, and unreadable — so the categories

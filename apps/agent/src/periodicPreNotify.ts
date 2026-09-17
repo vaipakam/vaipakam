@@ -1411,8 +1411,16 @@ async function saveScanResumeKey(
  *
  * ABSENT OR UNREADABLE RESUMES AT THE TOP, and the direction of that failure
  * is the point: starting at the nearest deadline re-reads a prefix, it never
- * steps over one. A cursor that cannot be read costs duplicated work and never
- * a missed nearer reminder.
+ * steps over one.
+ *
+ * THAT IS A PROPERTY OF ONE TICK, and this contract said it as an absolute
+ * until #2229 r3 (`4034598839`) — in the same function whose warnings had
+ * just been corrected for the same overstatement. A read that fails on EVERY
+ * tick is a different thing entirely: each tick then reprocesses the same
+ * allowance-filling prefix, the scan never advances, and loans in the tail can
+ * pass their deadline. Duplicated work is the cost of one failed read; a
+ * persistent one costs reminders, which is precisely why both non-throwing
+ * paths below announce themselves rather than absorbing it.
  */
 interface ScanResume {
   checkpoint: number;
