@@ -45,10 +45,23 @@ CREATE TABLE IF NOT EXISTS prenotify_scan_cursor (
 -- ends rather than assumed from one.
 STRICT;
 
--- The positional cursor this replaces. Left in place it would be a row whose
--- value means nothing to anything that still reads that table, which is how a
--- later reader comes to interpret a stale index as a live position. The lane
--- tolerates the row being gone: an absent cursor starts at the nearest
--- deadline, which for that tick re-reads a prefix rather than skipping one,
--- and says so — a cursor that stays absent stops the scan progressing at all.
+-- The positional cursor this replaces. Left in place it is a row whose value
+-- means nothing to anything that still reads that table, which is how a later
+-- reader comes to interpret a stale index as a live position. The lane
+-- tolerates it being gone: an absent cursor starts at the nearest deadline and
+-- says so.
+--
+-- THIS DELETE IS NOT FINAL, and saying so is the point (#2229 r4
+-- `4034676702`). Every deploy path applies indexer migrations BEFORE deploying
+-- the agent, so a cron tick of the OLD agent can run in between and write the
+-- row straight back. The new agent never writes that kind again, so a
+-- recreated row is inert — nothing reads it — but it is residue this statement
+-- cannot promise to have removed. An operator who wants it gone runs the same
+-- DELETE after the agent cutover has landed:
+--
+--   wrangler d1 execute vaipakam-archive --remote \
+--     --command="DELETE FROM indexer_cursor WHERE kind = 'prenotify_scan'"
+--
+-- Deleting it here anyway is still worth doing: it clears the row on every
+-- deployment where no old tick interleaves, which is most of them.
 DELETE FROM indexer_cursor WHERE kind = 'prenotify_scan';

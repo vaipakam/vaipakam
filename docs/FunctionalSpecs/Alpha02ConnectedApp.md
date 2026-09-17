@@ -388,13 +388,24 @@ The app uses chain reads and indexed reads for different jobs.
   — past exactly as many of the nearest remaining deadlines as were handled.
   A deadline does not move when other records are handled or leave. Where the
   recorded place cannot be read at all, the run begins at the nearest
-  deadline. For that run, this repeats work already done rather than stepping
-  over anything, which is the direction the failure must take — but repeated
-  across runs it is not harmless: a run always restarting at the same place
-  makes no progress through the list, so records further down are not reached
-  and can pass their deadlines. The run therefore says each time that the
-  place could not be read, rather than falling back quietly on the strength of
-  a single run being safe.
+  deadline.
+- **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
+  surface that describes a run beginning at the nearest deadline — because the
+  place was missing, unreadable, malformed, or deliberately cleared during a
+  restore — means exactly this and nothing more: *for that run*, beginning at
+  the front repeats work already done rather than stepping over anything,
+  which is the direction the failure must take. It is **not** a guarantee that
+  no reminder is missed. A run that always restarts at the same place makes no
+  progress through the list, so records further down are not reached and can
+  pass their deadlines; and a single restarted run whose front fills the whole
+  allowance leaves the tail for a later one that may arrive too late. The run
+  therefore announces each time that the place could not be read, rather than
+  falling back quietly on the strength of one run being safe.
+
+  This is written here once because it was written in five places and was
+  wrong in all of them, in four consecutive reviews: the per-run property was
+  stated as an absolute, corrected where it was flagged, and re-derived in the
+  next surface. Anything needing it points here instead of restating it.
 - **What "nearest first" does and does not promise, stated exactly.** Within
   one pass through the list, records are taken nearest deadline first. Across
   passes, the saved place means the run continues rather than restarting, so

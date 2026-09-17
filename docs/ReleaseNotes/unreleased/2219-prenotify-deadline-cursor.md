@@ -40,6 +40,13 @@ repeats work already done rather than stepping over anything, which is the only
 acceptable direction for that failure. It is not harmless if it persists: a
 service that always restarts at the same place never works its way down the
 list, so loans further along stop being reached. That is why the run says so
-every time rather than falling back quietly. And the old recorded positions are deleted rather than left
-behind: a stale number in a table that other things still read is how a later
-reader comes to trust a position that means nothing.
+every time rather than falling back quietly.
+
+And the old recorded positions are cleared rather than left behind: a stale
+number in a table other things still read is how a later reader comes to trust
+a position that means nothing. That clearing is best-effort rather than
+guaranteed, which is worth stating plainly — the schema change is applied
+before the new service is deployed, so a last run of the old one can write its
+position back in between. A row written back that way is inert, because
+nothing reads it any more, and an operator can remove it once the new service
+is live.

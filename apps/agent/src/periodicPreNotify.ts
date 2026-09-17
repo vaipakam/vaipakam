@@ -1413,14 +1413,19 @@ async function saveScanResumeKey(
  * is the point: starting at the nearest deadline re-reads a prefix, it never
  * steps over one.
  *
- * THAT IS A PROPERTY OF ONE TICK, and this contract said it as an absolute
- * until #2229 r3 (`4034598839`) — in the same function whose warnings had
- * just been corrected for the same overstatement. A read that fails on EVERY
- * tick is a different thing entirely: each tick then reprocesses the same
+ * THAT IS A PROPERTY OF ONE TICK, never an absolute. A read that fails on
+ * EVERY tick is a different thing entirely: each tick reprocesses the same
  * allowance-filling prefix, the scan never advances, and loans in the tail can
  * pass their deadline. Duplicated work is the cost of one failed read; a
  * persistent one costs reminders, which is precisely why both non-throwing
  * paths below announce themselves rather than absorbing it.
+ *
+ * The full statement lives ONCE, in `docs/FunctionalSpecs/
+ * Alpha02ConnectedApp.md` under "THE RESTART PROPERTY", and is not restated
+ * here or in the migration, the restore runbook or the release note. Four
+ * consecutive review rounds each caught this property overstated in a
+ * different surface, every one of them written by re-deriving it locally
+ * instead of pointing at it (#2229 r1-r4).
  */
 interface ScanResume {
   checkpoint: number;
