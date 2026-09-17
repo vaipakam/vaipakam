@@ -238,7 +238,10 @@ The test the old wording named is the right one; keep it and re-run it rather
 than trusting either answer:
 
 ```bash
-# Does a build check appear on a main commit that touched the Worker?
+# [unrun] — the EQUIVALENT REST call produced the evidence on 2026-09-17, but
+# this exact `gh api` form was not the one executed, and the convention above
+# means exactly what it says. Does a build check appear on a main commit that
+# touched the Worker?
 gh api repos/vaipakam/vaipakam/commits/<sha>/check-runs --paginate \
   --jq '.check_runs[] | select(.name | test("Workers Builds")) | .name'
 ```
@@ -247,6 +250,7 @@ On the four most recent main commits touching `ops/offchain-data-warm`, no
 `vaipakam-offchain-data-warm` build appears, so it still needs a hand:
 
 ```bash
+# [unrun here] — verified form, from OffChainRestore.md §7b.
 # NOT `npx wrangler` from the repo root: this package is outside the
 # pnpm workspace, so that would be an unpinned download.
 ( cd ops/offchain-data-warm && npm ci && npm run deploy )
@@ -254,27 +258,45 @@ On the four most recent main commits touching `ops/offchain-data-warm`, no
 
 Do this in the same sitting as the merge.
 
-**The user-visible split this step used to warn about is gone with the
-correction**, and that matters more than the command list. It said agent would
-read and write the OLD database while the other two used the new one, so a
-threshold set or a support ticket filed in the gap would land in a database
-about to be deleted. Agent now moves with them. The hazard was real when
-written; leaving the warning in place would send an operator to guard a window
-that no longer opens, and — worse — imply agent is stale when it is live.
+### The user-visible split is NARROWED by the correction, not closed
+
+An intermediate revision of this step said the split was "gone". **It is not,
+and the difference matters** (#2238 r1 P1). The three Workers are built and
+deployed by three INDEPENDENT Workers Builds jobs. Automatic triggering makes
+them start without a person; it does not make them finish together. On
+`819623903` the indexer's build completed at `08:54:56Z` and the agent's at
+`08:55:39Z` — **43 seconds apart**, measured, on an ordinary merge.
+
+For those 43 seconds agent was serving on the old binding while the indexer
+was on the new one. A threshold set, a Telegram link made or a support ticket
+filed in that interval lands in the database about to be deleted: the user
+watches it succeed, and it then vanishes. "We are not migrating data" covers
+rows a redeploy obsoletes; it does not cover a write the user watched succeed
+a minute ago.
+
+So the protection stays, re-based on what is actually observable:
+
+- **Shortest window (chosen 2026-08-03, and still the default).** Previously
+  this meant having agent's deploy ready to run at the moment of merge. It now
+  means merging when someone is watching, and **confirming all three
+  deployments are on the target before treating the cutover as done** — Step 3
+  is that confirmation. The exposure is the spread between build completions,
+  which is tens of seconds rather than however long a person takes to
+  remember.
+- **No window.** Put agent's mutating routes behind a `503` across the
+  interval (unbind the route, or deploy a rejecting build), then restore them.
+  A user told "try again shortly" has lost nothing; one whose ticket silently
+  disappeared has. This is the option to take if real users are on the
+  deployment.
+
+What the correction genuinely removes is the *unbounded* window — the one that
+stayed open until a person remembered to run a command, and which the old
+wording made worse by implying agent was stale when it was live. A bounded
+window still needs guarding; it does not need a manual deploy.
 
 `ops/offchain-data-warm` writes no user-facing rows — it is the nightly
 backup Worker — so its lag is an operator concern rather than a user-visible
 split.
-
-> **Superseded, kept for the record.** Until #2237 this step continued: a
-> threshold set, a Telegram link made, or a support ticket filed in the gap
-> would land in the database about to be deleted, and the operator chose
-> between "shortest window" (deploy agent the moment the merge lands) and "no
-> window" (503 agent's mutating routes across the interval). The decision
-> recorded on 2026-08-03 was the shortest window. None of it applies now that
-> agent auto-deploys with the other two — but the reasoning is worth keeping,
-> because the same choice returns the moment any user-writing Worker is
-> deployed out of step with the database it binds.
 
 ### Step 3 — confirm from behaviour, not configuration
 
@@ -320,8 +342,13 @@ empty, its emptiness is the discriminator:
   Use it when no observable write is available, and prefer the write when one
   is.
 - **agent** — perform one threshold write through the API, then read it back
-  from `$TARGET_DB` directly. If it landed in the source instead, its manual
-  deploy did not take.
+  from `$TARGET_DB` directly. If it landed in the source instead, **its
+  Workers Builds deployment has not completed, or it failed** — agent is not
+  hand-deployed on this path (#2237). Check the `Workers Builds:
+  vaipakam-agent` check on the merge commit: still running means wait and
+  re-test, `failure` means the build is the thing to fix. This is also the
+  test that closes the deployment window above, so run it before calling the
+  cutover done rather than only if something looks wrong.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the
@@ -332,8 +359,15 @@ empty, its emptiness is the discriminator:
 ## 4. Rollback
 
 **Free until the Workers start writing to the target.** Until then the source
-is untouched and current: revert the binding PR, redeploy `apps/agent` and
-`ops/offchain-data-warm` by hand, done.
+is untouched and current: revert the binding PR, which re-deploys
+`apps/indexer`, `apps/keeper` and `apps/agent` automatically through Workers
+Builds — the revert is a merge like any other (#2237). Then redeploy
+`ops/offchain-data-warm` by hand, since that one is not built on merge.
+
+The revert carries the same bounded window as the rollout, in the same
+direction: three independent builds, tens of seconds apart, with agent
+possibly last. Confirm all three are back on the source with the Step 3 probes
+before treating the rollback as complete.
 
 **After that it is not free, and this plan does not offer a clean one.**
 New support tickets, thresholds, signed offers, notification state and
