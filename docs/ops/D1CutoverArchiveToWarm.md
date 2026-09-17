@@ -272,28 +272,60 @@ shape of commit on `main` got none at all. Whatever governs these triggers,
 reported success on `06d657b9f` (2026-09-13) and that Worker's latest
 deployment is still `2026-09-10T00:38:56Z` (#2241).
 
-**Test the deployment timestamp instead**, which is the thing you actually
-need to know:
+### The deployment timestamp can prove a Worker is BEHIND. It cannot prove one is CURRENT.
+
+That asymmetry is the whole of what this step can offer, and stating it as a
+symmetric test is the mistake this section has now made twice — first with
+build checks, then with timestamps (#2243 r1, six findings, four of them this).
 
 ```bash
 # [unrun] — this exact form was not executed; the equivalent
-# `wrangler deployments list` per Worker produced the table below on
-# 2026-09-17. Compare each Worker's latest deployment against the newest
-# commit touching its tree.
+# `wrangler deployments list` per Worker produced the figures below on
+# 2026-09-17.
+git fetch origin main                      # the left side goes stale silently
 ( cd <worker-dir> && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
 git log -1 --date=iso-strict-local --format='%h %ad' origin/main -- <worker-dir>
 ```
 
-Measured on 2026-09-17, every automatic Worker deployed **63–151 seconds**
-after the commit that touched it. A Worker more than a few minutes behind its
-newest commit is not on the automatic path, whatever any list says — including
-this one.
+**A deployment older than the newest commit is decisive: that code is not
+live.** Use it that way and it will not mislead you.
 
-As of that measurement, `ops/offchain-data-warm` was **28 days stale** (newest
+**A deployment NEWER than the newest commit establishes nothing**, for four
+separate reasons, all of which produce a false "current":
+
+- **The left side is not the build input set.** Every workspace Worker depends
+  on `@vaipakam/contracts`, and this cutover explicitly allows
+  `packages/contracts/deployments.json` to change without touching a Worker's
+  own directory. `apps/www` can then pass while serving old addresses.
+- **`origin/main` is a cached ref.** A clone last fetched before the merge
+  compares against a commit that predates it. Hence the `git fetch` above, and
+  the reason it is the first line rather than assumed.
+- **A rollback creates a fresh deployment pointing at OLD code.** `wrangler
+  rollback` makes a new deployment record for a previously built version, so
+  `Created:` is recent and the running code is not. `grep '^Created:'` reads
+  exactly the field that lies here; the per-version timestamps underneath it
+  are what to read during any rollback or recovery.
+- **A failed automatic build looks exactly like a Worker that is behind** —
+  because it is one.
+
+**Do NOT infer the deployment MECHANISM from staleness.** An earlier revision
+said "a Worker more than a few minutes behind is not on the automatic path".
+That is wrong and it is actively harmful: a Worker whose automatic build
+FAILED is also behind, and this document says elsewhere that the mixed state
+then persists until someone repairs the build. Reading staleness as "this one
+is manual" sends an operator to hand-deploy around a broken build instead of
+fixing it. Staleness says *the code is not live*, and nothing about why.
+
+For reference, when every automatic Worker was healthy on 2026-09-17 each had
+deployed **63–151 seconds** after the commit touching it. That is a sense of
+the normal gap, not a classifier.
+
+As of that measurement, `ops/offchain-data-warm` was **28 days behind** (newest
 commit `d5d3b3083` 2026-08-31, last deployment 2026-08-03) and `apps/app`
-**4 days stale** (#2242). `ops/mesh-watcher` does not exist on the account at
-all, which is the expected pre-arm state — GovernanceRunbook Step 3f deploys
-it as part of the arming ceremony — and is not a drift to act on here.
+**4 days behind** (#2242) — both in the direction the test can prove.
+`ops/mesh-watcher` does not exist on the account at all, which is the expected
+pre-arm state — GovernanceRunbook Step 3f deploys it as part of the arming
+ceremony — and is not a drift to act on here.
 
 Both hand-deployed Workers need a hand in the same sitting as the merge.
 
@@ -306,11 +338,22 @@ Both hand-deployed Workers need a hand in the same sitting as the merge.
 
 ```bash
 # [unrun] — apps/app is operator-deployed because its build env lives in a
-# gitignored `apps/app/.env.local`, which a build from a git clone cannot
-# see. `run deploy` carries `REQUIRE_INDEXER_ORIGIN=1`, so a missing
-# VITE_INDEXER_ORIGIN fails the build rather than shipping a broken origin.
+# gitignored `apps/app/.env.local`, which a build from a git clone cannot see.
 pnpm --filter @vaipakam/app run deploy
 ```
+
+**That command is NOT sufficient on its own, and the guard does not make it
+so** (#2243 r1). `run deploy` carries `REQUIRE_INDEXER_ORIGIN=1`, which checks
+exactly one variable. `docs/ops/DeploymentRunbook.md` lists a deployable
+`.env.local` as **nineteen** operator variables — keyed RPC endpoints, the
+WalletConnect project id, the agent origin, feature flags and the rest. A file
+carrying only the indexer origin passes the guard and deploys **successfully**,
+replacing the live app with a preview-grade configuration.
+
+So follow DeploymentRunbook's full procedure for this one. An earlier revision
+of this step implied the guard was the safety net; it is a single assertion
+about a single variable, and reading it as coverage is how a four-day-stale app
+gets replaced by something worse.
 
 **Neither is optional here**, and the staleness figures above are the reason
 to check rather than assume: both were behind on the day this step was
@@ -552,9 +595,26 @@ the free period can leave it while it runs, and nothing after the fact undoes
 that.
 
 Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
-`apps/keeper` and `apps/agent` automatically through Workers Builds — the
-revert is a merge like any other (#2237). Then redeploy
-`ops/offchain-data-warm` by hand, since that one is not built on merge.
+`apps/keeper`, `apps/agent` **and `apps/www`** automatically through Workers
+Builds — the revert is a merge like any other (#2237). Then redeploy
+**`apps/app` and `ops/offchain-data-warm`** by hand, since neither is built on
+merge.
+
+**Both additions matter here specifically** (#2243 r1). This step named only
+the three Workers and the backup, which is the pre-#2242 deployment set, and
+the omissions bite harder on the way back than on the way out:
+
+- **`apps/app` is the public surface an operator is least likely to remember**,
+  because nothing on the automatic path reminds them. If the reverted PR also
+  changed `packages/contracts/deployments.json` — which this plan explicitly
+  permits in one PR — then leaving the app unredeployed leaves it serving the
+  NEW contract addresses against a rolled-back database and rolled-back
+  Workers. The rollback then looks complete and the public surface is the one
+  thing still on the other side of it.
+- **`apps/www` is automatic but not instant**, and unlike the Workers it is
+  never re-checked afterwards: Step 3's probes are D1-binding probes, and
+  `apps/www` has no D1 binding to probe. Its build has to be waited for
+  deliberately, because nothing downstream will notice if it has not landed.
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
 SOURCE, so a write must land there, and the discriminator is the source's

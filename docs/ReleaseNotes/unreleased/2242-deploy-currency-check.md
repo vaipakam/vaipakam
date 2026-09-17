@@ -20,11 +20,20 @@ might have salvaged the signal. Worse, a **successful build does not mean
 anything was deployed**: one service's build reported success four days after
 its last deployment, and that deployment is still the one serving.
 
-**The deployment timestamp is the thing worth reading**, because it is the
-question actually being asked. Compared against the newest change touching each
-service, every automatic service had deployed within **63 to 151 seconds**. A
-service further behind than a few minutes is not deploying itself, whatever any
-list says — including the corrected one.
+**The deployment timestamp is the thing worth reading — in one direction
+only.** If a service's last deployment is older than the newest change
+affecting it, that change is definitely not live, and nothing can make that
+reading wrong. The reverse does not hold: a recent-looking deployment proves
+nothing, because the comparison can be made against a stale local copy of the
+project's history, because a service can be affected by changes outside its own
+folder, and because undoing a deployment creates a *new, recent* record that
+points at *old* code.
+
+An intermediate version of this change also used staleness to infer that a
+service must be hand-deployed. That is wrong in a way worth naming: a service
+whose automatic deployment **failed** is also behind, and reading that as "this
+one is manual" sends someone to deploy around a broken build instead of fixing
+it. Being behind says the code is not live and says nothing about why.
 
 Running that comparison found two services behind: the connected app by four
 days, and the nightly backup worker by twenty-eight. Both are hand-deployed by
