@@ -106,66 +106,24 @@ export function quarantineStatements(
   chainId: number,
   report: ReconcileReport,
   nowSec: number,
-  /**
-   * The block this pass has established, or NULL to leave the column out of
-   * the statement entirely.
-   *
-   * Recorded so the id-reuse release has a discriminator that cannot be a
-   * sentinel: a loan's `start_at` may hold a local clock reading when a
-   * block-timestamp lookup failed during ingest, but its `start_block` comes
-   * from the log and is never substituted (#2231 r1 `4035070199`).
-   *
-   * NULL IS THE DEPLOY WINDOW (#2231 r2 `4035186343`). The canonical rollout
-   * deploys the Worker BEFORE applying migrations, so this code can run while
-   * migration 0049's table exists and 0051's column does not. Naming a column
-   * that is not there fails the whole batch — and that batch is what STARTS
-   * the withholding, so the loans it was meant to protect would be left to a
-   * later pass while reminders could go out meanwhile. The old-shape
-   * statement is valid against both schemas, and the column's DEFAULT 0 lands
-   * as "no evidence", which the release already refuses to act on.
-   */
-  lastSeenBlock: number | null,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   for (const { loanId, reason } of unsettledRows(report)) {
-    // `first_seen_at` is deliberately NOT in either update list. It is the
+    // `first_seen_at` is deliberately NOT in the update list. It is the
     // operator's whole signal — minutes means a transient read, days means a
     // ghost nobody resolved — and an upsert that refreshed it on every
     // re-observation would erase exactly that.
-    //
-    // `last_seen_block` IS refreshed, and the opposite rule is the point
-    // (#2231 r2 `4035186370`). It answers "what had the chain reached when we
-    // last confirmed this was still wrong", so freezing it would let a stale
-    // answer authorise a release: an entry still being re-observed as
-    // unsettled would keep a boundary from long ago, and a replacement loan
-    // that is ITSELF unsettled could then satisfy the comparison and release
-    // a hold about itself. An entry nobody re-observes — the orphan whose
-    // `loans` row an operator deleted, which is the case #2222 is about —
-    // keeps its last boundary, which is exactly when the release should fire.
     statements.push(
-      lastSeenBlock === null
-        ? db
-            .prepare(
-              `INSERT INTO loan_reconcile_quarantine
-                 (chain_id, loan_id, reason, first_seen_at, last_seen_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
-                 reason = excluded.reason,
-                 last_seen_at = excluded.last_seen_at`,
-            )
-            .bind(chainId, loanId, reason, nowSec, nowSec)
-        : db
-            .prepare(
-              `INSERT INTO loan_reconcile_quarantine
-                 (chain_id, loan_id, reason, first_seen_at, last_seen_at,
-                  last_seen_block)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
-                 reason = excluded.reason,
-                 last_seen_at = excluded.last_seen_at,
-                 last_seen_block = excluded.last_seen_block`,
-            )
-            .bind(chainId, loanId, reason, nowSec, nowSec, lastSeenBlock),
+      db
+        .prepare(
+          `INSERT INTO loan_reconcile_quarantine
+             (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(chain_id, loan_id) DO UPDATE SET
+             reason = excluded.reason,
+             last_seen_at = excluded.last_seen_at`,
+        )
+        .bind(chainId, loanId, reason, nowSec, nowSec),
     );
   }
   // ONE STATEMENT PER ROW, not an interpolated `IN (...)` list. The pass
@@ -226,65 +184,36 @@ export async function releaseTerminalQuarantine(
   // where a person needs to see it. A blanket release would delete precisely
   // the rows the quarantine exists to surface, and do it silently.
   //
-  // THE SECOND CLAUSE IS ID REUSE, and it closes the harmful half of that
-  // residual concern (#2222). Once an operator resolves an orphan the
-  // documented way — by deleting the fabricated `loans` row — this entry has
-  // nothing left to match, and "row absent" cannot tell that resolved orphan
-  // from the unresolved one above, because in both cases there is no row. So
-  // the predicate does not ask about absence at all. It asks whether a loan
-  // now EXISTS whose own start is later than the moment this entry was first
-  // seen.
+  // WHAT IT DELIBERATELY DOES NOT DO IS INFER A REUSED ID (#2222, #2231 r1-r4).
   //
-  // That can only be a different position. An entry is created about a loan
-  // the pass was already examining, so that loan's start is necessarily in
-  // the past relative to `first_seen_at`: a loan cannot start after it was
-  // quarantined. A row for the same `(chain_id, loan_id)` that started AFTER
-  // is a new position that has taken the id — a chain redeploy, a partial
-  // reset — and holding it would suppress reminders for a legitimate loan on
-  // the strength of a finding about a different one. That suppression is
-  // silent, which is why it is the half worth fixing.
+  // Once an operator resolves an orphan the documented way — by deleting the
+  // fabricated `loans` row — this entry matches nothing and lingers. That is
+  // not inert: `quarantineExclusionSql` matches on `(chain_id, loan_id)`
+  // alone, so a lingering entry withholds reminders from WHATEVER loan later
+  // bears that id.
   //
-  // THE COMPARISON IS ON BLOCKS, NOT SECONDS (#2231 r1 `4035070199`). The
-  // first version compared `loans.start_at`, and that column can hold a LOCAL
-  // CLOCK READING rather than a chain time: when a block-timestamp lookup
-  // fails during ingest the scan stamps `Date.now()` as a sentinel, and the
-  // loan insert persists it. A replayed ORIGINAL loan whose lookup hiccuped
-  // would then look newer than the entry about it, and an RPC failure would
-  // release a hold that should stand — the exact direction this rule must
-  // never fail in. A block number comes from the log and is never
-  // substituted.
+  // Three revisions of this PR tried to detect that automatically — "release
+  // when a loan with this id started after the finding" — and review found a
+  // different unsound input each round, four in total:
   //
-  // `updated_at` is wrong for a different reason worth keeping: an ordinary
-  // re-index of the SAME loan bumps it, which would release an entry still
-  // about that loan.
+  //   - `loans.start_at` can be a LOCAL CLOCK reading, because ingest stamps
+  //     `Date.now()` when a block-timestamp lookup fails.
+  //   - A recorded block boundary goes STALE whenever the marker is rewritten
+  //     by a path that cannot also rewrite it.
+  //   - Block heights RESET on a test-network wipe, so a legitimate
+  //     replacement can sit below the boundary.
+  //   - `loans.start_block` itself can be REORG RESIDUE: the scan's fallback
+  //     head is documented as unsafe, the cursor never revisits a
+  //     reorganised-out block, and the row "stays wrong for good".
   //
-  // WHERE BLOCK NUMBERS RESET — a testnet wipe — a new loan's block can be
-  // LOWER than the recorded one, so this simply does not fire and the entry
-  // stays held. Clutter in the report, never a live position suppressed.
-  //
-  // `last_seen_block = 0` means the entry predates the column (migration
-  // 0051), or was written by a deployment that arrived before it. Either way
-  // it carries no evidence. Read as a block it would be below every real loan
-  // and release every held entry on the chain, so it is excluded explicitly
-  // rather than left to arithmetic.
-  //
-  // WHAT THIS STILL DOES NOT COVER, and the PR says so rather than implying
-  // otherwise (#2231 r2 `4035186353`): where a test network's block height
-  // RESETS, a legitimate replacement loan can start at a LOWER block than the
-  // boundary, so the entry is retained — and because the exclusion matches on
-  // `(chain_id, loan_id)` alone, retaining it SUPPRESSES that replacement's
-  // reminders rather than merely cluttering a report. Telling the two apart
-  // through a height that has restarted is not possible; it needs a
-  // deployment identity the platform does not record today, which is #2222's
-  // remaining scope.
-  //
-  // What this deliberately does NOT do is release an entry whose row is
-  // simply gone. An unresolved orphan staying held and visible in the stale
-  // report is the single most useful thing this table does, and a replayed
-  // old loan re-indexed after a reset carries its original `start_at`, so it
-  // does not satisfy this clause either — clutter in the report, never
-  // suppression of a live position. The clutter half is #2222's stated
-  // remainder.
+  // Each fix exposed the next, which is the signal to stop. The inference is
+  // being asked to establish that two positions are different using stored
+  // data the platform cannot vouch for, and no column available here is sound
+  // for it. So the release stays on the one thing that IS established — the
+  // loan ended — and the ambiguity is REPORTED to a person instead, by
+  // `reportStaleQuarantine` naming the loan a held id now points at. A
+  // suppression a person can see and clear is worth more than an automatic
+  // release built on evidence that has been wrong four different ways.
   await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
@@ -293,13 +222,7 @@ export async function releaseTerminalQuarantine(
             SELECT 1 FROM loans l
              WHERE l.chain_id = loan_reconcile_quarantine.chain_id
                AND l.loan_id  = loan_reconcile_quarantine.loan_id
-               AND (
-                 l.status NOT IN ('active', 'fallback_pending')
-                 OR (
-                   loan_reconcile_quarantine.last_seen_block > 0
-                   AND l.start_block > loan_reconcile_quarantine.last_seen_block
-                 )
-               )
+               AND l.status NOT IN ('active', 'fallback_pending')
           )`,
     )
     .bind(chainId)
@@ -351,15 +274,38 @@ export async function reportStaleQuarantine(
     .first<{ n: number }>();
   const n = total?.n ?? 0;
   if (n === 0) return;
+  // THE LOAN THE HELD ID POINTS AT NOW, carried alongside (#2231 r4).
+  //
+  // A held entry withholds reminders from whatever loan currently bears its
+  // id, and the platform cannot soundly establish whether that loan is the
+  // one the finding was about — four different columns were tried and each
+  // can be substituted, reset, gone stale or left behind by a reorg. What it
+  // CAN do is say what it sees and let a person judge, which is the whole
+  // reason this report exists. Without this, an operator reading the report
+  // has no way to tell a finding still doing its job from one suppressing a
+  // position it was never about.
+  //
+  // A LEFT JOIN, so an entry whose loan row is absent — the orphan, the case
+  // that lingers — is still listed, with nothing claimed about it.
   const rows = await db
     .prepare(
-      `SELECT loan_id, reason, first_seen_at, last_seen_at
-         FROM loan_reconcile_quarantine
-        WHERE chain_id = ? AND first_seen_at <= ?
-        ORDER BY first_seen_at ASC LIMIT ?`,
+      `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at,
+              l.status AS loan_status, l.start_block AS loan_start_block
+         FROM loan_reconcile_quarantine q
+         LEFT JOIN loans l
+           ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
+        WHERE q.chain_id = ? AND q.first_seen_at <= ?
+        ORDER BY q.first_seen_at ASC LIMIT ?`,
     )
     .bind(chainId, cutoff, STALE_REPORT_LIMIT)
-    .all<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>();
+    .all<{
+      loan_id: number;
+      reason: string;
+      first_seen_at: number;
+      last_seen_at: number;
+      loan_status: string | null;
+      loan_start_block: number | null;
+    }>();
   const shown = rows.results ?? [];
   const described = shown
     .map((r) => {
@@ -375,9 +321,18 @@ export async function reportStaleQuarantine(
       // row is merely waiting for the rotation — the one reading that sends
       // them away from a row whose bookkeeping is broken.
       const sinceRecorded = Math.floor((nowSec - r.last_seen_at) / 3600);
+      // STATED, NEVER INFERRED. "no loan row" is the orphan an operator may
+      // already have resolved by deleting it; a row that IS there is what the
+      // id currently points at, and naming its state and start block is what
+      // lets a person decide whether this entry is still about that position.
+      // The platform draws no conclusion from either — see the release above.
+      const points =
+        r.loan_status === null
+          ? 'no loan row for this id'
+          : `id now held by a ${r.loan_status} loan from block ${r.loan_start_block ?? '?'}`;
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
-        `last recorded unsettled ${sinceRecorded}h ago)`
+        `last recorded unsettled ${sinceRecorded}h ago; ${points})`
       );
     })
     .join('; ');
@@ -388,7 +343,14 @@ export async function reportStaleQuarantine(
       `A row recorded recently is still failing; one recorded long ago is ` +
       `either waiting for the rotation to reach it or being examined and not ` +
       `written — the quarantine WRITE failure above says which, and this ` +
-      `column cannot. An orphan needs a person either way.`,
+      `column cannot. An orphan needs a person either way — and because a held ` +
+      `entry withholds reminders from whatever loan now bears its id, an entry ` +
+      `whose id is held by a loan the finding was plainly not about is a ` +
+      `position going without reminders. The platform does not release those ` +
+      `automatically: every way it could establish "this is a different loan" ` +
+      `from stored data has proved unsound (#2222). Clearing such an entry is ` +
+      `a deliberate act: DELETE FROM loan_reconcile_quarantine WHERE ` +
+      `chain_id = <chain> AND loan_id = <id>.`,
   );
 }
 
@@ -425,9 +387,6 @@ export function quarantineExclusionSql(loansAlias = 'loans'): string {
                AND q.loan_id = ${loansAlias}.loan_id
           )`;
 }
-
-/** Migration 0051's column, named once so the probe and the writers agree. */
-const BLOCK_COLUMN = 'last_seen_block';
 
 /** The single D1 method the probe needs, so this stays runtime-agnostic. */
 export interface QuarantineProbeDb {
@@ -502,67 +461,23 @@ export interface QuarantineAvailabilityProbe {
   (db: QuarantineProbeDb): Promise<QuarantineAvailability>;
   /** Forget a cached `absent`/`unknown`; a cached `present` survives. */
   beginPass(): void;
-  /**
-   * Has migration 0051's `last_seen_block` been established on the live table?
-   *
-   * FALSE MEANS "not established", never "absent": before the first probe, and
-   * during the window where the Worker is deployed but the migration has not
-   * run, the writer omits the column rather than naming one that may not
-   * exist. That statement is valid against both schemas.
-   */
-  hasBlockColumn(): boolean;
 }
 
 export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   let seen = false;
   let passOpen = false;
   let thisPass: QuarantineAvailability | null = null;
-  // Whether migration 0051's column is there yet, learned from the SAME read
-  // that establishes the table (#2231 r2 `4035186343`). The canonical rollout
-  // deploys the Worker before applying migrations, so "the table exists" and
-  // "the column exists" are genuinely different questions during that window,
-  // and a writer that assumed the second from the first would fail its whole
-  // batch — the batch that STARTS the withholding.
-  //
-  // Only ever set to true. A `false` reading means "not established", which
-  // makes the writer omit the column: valid against both schemas.
-  let blockColumn = false;
   const probe = async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
-    // CACHING THE TABLE MUST NOT CACHE THE SCHEMA (#2231 r3 `4035338761`).
-    // The first probe of the deploy window sees 0049's table and none of
-    // 0051's column, and `seen` is permanent — so returning early here left
-    // this isolate writing the old-shape statement for its whole life, even
-    // after the migration landed. Every row it recorded then carried the
-    // default-zero boundary, which the reuse sweep is required to refuse, so
-    // the fix this PR exists for would have been silently off until the
-    // isolate happened to recycle.
-    //
-    // The re-read costs one `sqlite_master` row PER PASS — not per call —
-    // and stops for good the moment the column is observed. Per call would
-    // reintroduce the probe-per-close-out spam #2213 r28 removed, which is
-    // why `present` now joins `absent` and `unknown` in the per-pass cache
-    // instead of bypassing it. A question whose answer can still change is
-    // not answered by a permanent cache; it is answered once a pass.
-    if (seen && blockColumn) return 'present';
+    if (seen) return 'present';
     if (thisPass !== null) return thisPass;
     try {
       const row = await db
         .prepare(
-          `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
         )
-        .first<{ sql: string | null }>();
+        .first<{ name: string }>();
       if (row) {
         seen = true;
-        // The table's own CREATE statement carries its columns, so this costs
-        // no extra read. `ALTER TABLE ... ADD COLUMN` rewrites that statement,
-        // so the text is current rather than the shape at creation.
-        if (typeof row.sql === 'string' && row.sql.includes(BLOCK_COLUMN)) {
-          blockColumn = true;
-        } else if (passOpen) {
-          // Present, but the column is not established. Hold the answer for
-          // THIS pass and ask again on the next one.
-          thisPass = 'present';
-        }
         return 'present';
       }
       if (passOpen) thisPass = 'absent';
@@ -581,6 +496,5 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
     passOpen = true;
     thisPass = null;
   };
-  probe.hasBlockColumn = () => blockColumn;
   return probe as QuarantineAvailabilityProbe;
 }

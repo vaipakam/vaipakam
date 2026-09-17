@@ -1,67 +1,45 @@
-### A held record stops suppressing a different loan that reuses its number — where the platform can tell it is different
+### A held record now says what its loan number points at, instead of silently withholding
 
-When the platform cannot confirm what happened to a loan, it remembers that
-and holds that loan's reminders back rather than sending ones it cannot stand
-behind. The memory is released when the loan is settled, or when it is found
-to have ended.
+When the platform cannot confirm what happened to a loan, it remembers that and
+holds that loan's reminders back rather than sending ones it cannot stand
+behind. The memory is released when the loan is settled, or found to have
+ended.
 
-One case released neither: a loan the network denies exists, which may have no
+One case releases neither: a loan the network denies exists, which may have no
 stored record either. That is deliberate — nothing proves such a position
 ended, and keeping it held and visible in the report a person reads is the most
 useful thing this memory does. But the documented way for an operator to
-resolve one of those is to delete the fabricated record, and once they do, the
-held entry matches nothing and stays forever.
+resolve one is to delete the fabricated record, and once they do, the held
+entry matches nothing and stays.
 
-Left alone, that has a harmless consequence and a harmful one. The harmless
-one is clutter: an entry sitting in a report, burying the ones that need
-attention. The harmful one is that loan numbers can come round again — a
-network redeployment, a partial reset — and a stale entry would then withhold
-reminders from a **different, legitimate** loan, without saying so.
+That is worse than untidy, and the reason is the part worth stating. A held
+entry withholds reminders from **whatever loan currently bears that number** —
+so if the number ever comes round again, after a network redeployment or a
+reset, a real loan goes without reminders and nothing says so.
 
-The second is closed for replacements the platform can recognise as newer,
-which is the ordinary case and not all of them; the exception is stated below
-rather than left in the small print. A held entry is released as soon as a loan bearing
-the same number appears that began later in the network's own sequence than
-the point the platform had reached when it recorded the entry. That can only
-be a different loan: a loan cannot begin after it was held. A loan replayed
-from history keeps its original place in the sequence and so is still
-recognised as the same position, and stays held.
+The obvious remedy is for the platform to notice that the loan bearing the
+number now is a different one and release the entry by itself. That was built,
+and then removed, because every way of establishing "this is a different loan"
+from what the platform has stored turned out to be unsound:
 
-The comparison deliberately uses that sequence rather than a time. When the
-platform cannot read a timestamp from the network while recording a loan, it
-substitutes its own clock — so a replayed original loan can carry a time later
-than the finding about it, and a decision made on times would have released a
-hold because a read had failed. A position's place in the sequence comes from
-the record itself and is never substituted.
+- the recorded start time can be the platform's own clock, substituted when the
+  network could not be read at the moment the loan was recorded;
+- a recorded place in the network's sequence goes stale as soon as an entry is
+  rewritten by a path that cannot rewrite it too;
+- that sequence restarts on a test-network reset, so a newer loan can appear
+  older;
+- and the sequence value itself can be left behind by a reorganisation the
+  platform is documented as never revisiting.
 
-The point it is compared against is the last time the platform confirmed the
-entry was still unresolved, not the first time it noticed. An entry nobody
-re-examines — the case this fixes — keeps its last point, and the rule fires.
-An entry still being found unresolved keeps moving its point forward, so a
-replacement that is itself unresolved cannot release the hold about itself.
+Each of those was found by review after the previous one was fixed. Acting on
+any of them would have released a hold — and resumed reminders — on the
+strength of a read that failed, which is precisely what the memory exists to
+prevent.
 
-Two cases are **not** fixed, and they are worth being plain about because the
-first version of this note implied otherwise.
-
-Where a test network's block height restarts, a replacement loan can sit below
-the recorded point, so the rule does not fire and the entry is kept.
-Distinguishing a restarted sequence from an ordinary one needs an identity for
-the deployment that the platform does not record today.
-
-And an entry carrying no recorded point at all — one written before this
-change, or during the window where the service is running but the schema
-change has not been applied — is deliberately never released by this rule,
-because treating its absence as the start of the sequence would release every
-held entry at once.
-
-In both cases a kept entry withholds reminders from whatever loan now bears
-that number. That is not clutter; it is the same silent suppression this change
-set out to remove, in the situations the comparison cannot see. What the change
-does is remove it from the ordinary case and state where it remains, rather
-than leave the whole of it unexamined.
-
-The clutter is deliberately left. Removing it would mean either releasing
-entries merely because their record is absent — which drops exactly the cases
-this memory exists to surface — or ageing them out on a timer, which trades a
-real signal for tidiness. An entry a person has resolved can be cleared by that
-person; an entry nobody has resolved should still be in front of them.
+So the platform does not guess. The report a person reads now names, for every
+long-held entry, what its number points at today: no loan at all, or a loan in
+a given state that began at a given point. Someone reading it can see whether
+the entry is still about the loan it was made for, and clear it if not — a
+deliberate act, spelled out in the report itself. A suppression a person can
+see and undo is worth more than an automatic release built on evidence that has
+been wrong four different ways.

@@ -62,16 +62,8 @@ const quarantined = (h: SqliteD1) =>
     )
     .all() as Array<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>;
 
-/** `lastSeenBlock` is the head the pass established — what the id-reuse
- *  release compares a later loan's `start_block` against (#2231 r1). `null`
- *  writes the pre-0051 statement, which is the deploy window (#2231 r2). */
-async function apply(
-  h: SqliteD1,
-  r: ReconcileReport,
-  nowSec = NOW,
-  lastSeenBlock: number | null = 1_000,
-) {
-  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec, lastSeenBlock);
+async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW) {
+  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec);
   if (writes.length > 0) await (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
 }
 
@@ -223,107 +215,6 @@ describe('the table, over the real migrated schema', () => {
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
   });
 
-  it('releases a held row once a NEWER loan has taken its id (#2222)', async () => {
-    // The operator remedy for an orphan is to delete the fabricated `loans`
-    // row. After that the entry matches nothing and "row absent" cannot tell
-    // it from an unresolved orphan — so if the id is ever reused, the stale
-    // entry would suppress reminders for a DIFFERENT, legitimate position,
-    // silently. The discriminator is the new loan's own start: a loan cannot
-    // start after it was quarantined, so a later start is a different loan.
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
-    expect(quarantined(h)).toHaveLength(1);
-    // A new, ACTIVE loan takes id 99, started at a LATER block than the one
-    // the finding was made against.
-    seedLoanRow(h, 99, 'active', 1_001);
-    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
-    expect(quarantined(h)).toEqual([]);
-  });
-
-  it('keeps holding when the loan that reappears started BEFORE the entry', async () => {
-    // A replayed old loan — re-indexed after a reset — carries its original
-    // start BLOCK, so it is the same position the entry is about and the
-    // finding still stands. Releasing on mere reappearance would drop exactly
-    // the row the quarantine exists to surface. Blocks rather than seconds
-    // because ingest can stamp a local clock into `start_at` when a
-    // block-timestamp lookup fails, and an RPC hiccup must not release a hold
-    // (#2231 r1 `4035070199`).
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
-    seedLoanRow(h, 99, 'active', 999);
-    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
-    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
-  });
-
-  it('is not fooled by a wall-clock sentinel in the loan start (#2231 r1)', async () => {
-    // Ingest stamps `Date.now()` into a loan's `start_at` when a
-    // block-timestamp lookup fails, so a REPLAYED ORIGINAL loan can carry a
-    // start later than the finding about it. Comparing seconds would release
-    // the hold on the strength of an RPC hiccup — the one direction this rule
-    // must never fail in. The block comes from the log and cannot be
-    // substituted.
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
-    // The original loan, re-indexed: real block, sentinel timestamp.
-    h.db
-      .prepare(
-        `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
-           principal, collateral_amount, asset_type, collateral_asset_type,
-           lending_asset, collateral_asset, duration_days, token_id,
-           collateral_token_id, lender_token_id, borrower_token_id,
-           lender_current_owner, borrower_current_owner, interest_rate_bps,
-           start_time, start_block, start_at, updated_at)
-         VALUES (?, ?, 1, 'active', '0xl', '0xb', '100', '200', 0, 0, '0xa',
-           '0xc', 30, '0', '0', '1', '2', '0xl', '0xb', 500, ?, ?, ?, ?)`,
-      )
-      .run(CHAIN, 99, NOW, 900, NOW + 86_400, NOW);
-    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
-    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
-  });
-
-  it('treats an entry recorded before the block column as no evidence', async () => {
-    // `last_seen_block = 0` means "recorded before migration 0051, or by a
-    // deployment that arrived before it". Read as a block it sits below every
-    // real loan, so arithmetic alone would release every held entry on the
-    // chain the moment the column landed.
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, null);
-    seedLoanRow(h, 99, 'active', 5_000);
-    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
-    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
-  });
-
-  it('moves the boundary on every re-observation, so a live finding cannot release itself', async () => {
-    // #2231 r2 `4035186370`. If the boundary were frozen at the FIRST sighting,
-    // an entry still being re-observed as unsettled would carry a line from
-    // long ago — and a REPLACEMENT loan that is itself unsettled could start
-    // after it and so release the hold about itself. `last_seen_at` and
-    // `last_seen_block` move together for that reason; `first_seen_at`, which
-    // answers "how long has this been wrong", does not.
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
-    // Re-observed later, with the chain further along.
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW + 600, 9_000);
-    // A loan starting after the FIRST sighting but before the latest one is
-    // not evidence of anything: the finding was still standing at 9_000.
-    seedLoanRow(h, 99, 'active', 5_000);
-    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
-    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
-    // ...and the age an operator reads is still the first sighting.
-    expect(quarantined(h)[0]).toMatchObject({ first_seen_at: NOW });
-  });
-
-  it('still records marks when the deploy arrives before migration 0051', async () => {
-    // The canonical rollout deploys the Worker before applying migrations, so
-    // this code can run while 0049's table exists and 0051's column does not.
-    // Naming a missing column would fail the whole batch — and that batch is
-    // what STARTS the withholding, so the loans it protects would be left
-    // exposed while reminders could go out (#2231 r2 `4035186343`).
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, null);
-    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
-  });
-
   it('releases the row once a later pass settles it', async () => {
     // Without this the fix is worse than the defect: a loan withheld forever
     // on the strength of one bad read.
@@ -372,6 +263,42 @@ describe('telling the operator about a row that stays', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('loan 99');
     expect(said).toContain('orphan');
+    warn.mockRestore();
+  });
+
+  it('names the loan a held id points at NOW, so the suppression is visible', async () => {
+    // #2231 r4. A held entry withholds reminders from whatever loan currently
+    // bears its id, and the platform cannot soundly establish whether that
+    // loan is the one the finding was about — four different columns were
+    // tried and every one can be substituted, reset, gone stale or left
+    // behind by a reorg. So it reports what it sees and a person decides.
+    // Without this line an operator cannot tell a finding still doing its job
+    // from one suppressing a position it was never about.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
+    seedLoanRow(h, 99, 'active', 5_000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('id now held by a active loan from block 5000');
+    // And how to clear it, since the platform will not do so on its own.
+    expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
+    warn.mockRestore();
+  });
+
+  it('still names an entry whose loan row is gone, claiming nothing about it', async () => {
+    // The orphan an operator may already have resolved by deleting the row.
+    // A LEFT JOIN keeps it in the report — dropping it would hide exactly the
+    // entry most likely to be suppressing something.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('loan 99');
+    expect(said).toContain('no loan row for this id');
     warn.mockRestore();
   });
 
@@ -439,34 +366,17 @@ describe('how often the table is probed for', () => {
    * A `sqlite_master` read is a D1 binding call and therefore one of the
    * Worker's ~50 subrequests. The costs below are counted, not assumed.
    */
-  /**
-   * `present` is the table's own CREATE text, which is what the probe reads —
-   * `true` means "present WITH migration 0051's column", `'pre0051'` means
-   * present without it, so the two can be told apart (#2231 r3).
-   */
-  function countingDb(present: boolean | 'throws' | 'pre0051') {
+  function countingDb(present: boolean | 'throws') {
     let probes = 0;
-    const state = { present };
     return {
       probes: () => probes,
-      /** The migration lands mid-test. */
-      migrate: () => {
-        state.present = true;
-      },
       db: {
         prepare() {
           return {
             async first<T>(): Promise<T | null> {
               probes += 1;
-              if (state.present === 'throws') {
-                throw new Error('D1_ERROR: unavailable');
-              }
-              if (state.present === false) return null;
-              const sql =
-                state.present === 'pre0051'
-                  ? 'CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER)'
-                  : 'CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER, last_seen_block INTEGER)';
-              return { sql } as unknown as T;
+              if (present === 'throws') throw new Error('D1_ERROR: unavailable');
+              return present ? ({ name: 'loan_quarantine' } as unknown as T) : null;
             },
           };
         },
@@ -519,38 +429,6 @@ describe('how often the table is probed for', () => {
     probe.beginPass();
     expect(await probe(db)).toBe('present');
     expect(probes()).toBe(1);
-    expect(probe.hasBlockColumn()).toBe(true);
-  });
-
-  it('keeps asking while the table is there but 0051 is not (#2231 r3)', async () => {
-    // Caching the TABLE must not cache the SCHEMA. The first probe of a
-    // deploy-before-migration window sees 0049's table and none of 0051's
-    // column; latching that would leave this isolate writing the old-shape
-    // statement for its whole life, so every row it recorded would carry the
-    // default-zero boundary and the reuse sweep — the point of the change —
-    // would be silently off until the isolate recycled.
-    const { db, probes, migrate } = countingDb('pre0051');
-    const probe = createQuarantineAvailability();
-
-    probe.beginPass();
-    expect(await probe(db)).toBe('present');
-    expect(probe.hasBlockColumn()).toBe(false);
-    // ONCE per pass, not once per call — per call is the probe spam #2213 r28
-    // removed, and a close-out reaches this helper more than once.
-    for (let i = 0; i < 5; i++) await probe(db);
-    expect(probes()).toBe(1);
-
-    // The migration lands. The next pass sees it...
-    migrate();
-    probe.beginPass();
-    expect(await probe(db)).toBe('present');
-    expect(probe.hasBlockColumn()).toBe(true);
-    expect(probes()).toBe(2);
-
-    // ...and then stops asking for good.
-    probe.beginPass();
-    await probe(db);
-    expect(probes()).toBe(2);
   });
 
   it('caches NOTHING negative for a caller that never opens a pass', async () => {

@@ -295,54 +295,27 @@ The app uses chain reads and indexed reads for different jobs.
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.
-- **A held record is also released once a NEWER position has taken its
-  identifier.** A record is held about a position the platform was already
-  examining, so that position began earlier in the network's own sequence than
-  the point the platform had reached when it held it. A position bearing the
-  same identifier that began AFTER that point therefore cannot be the same one
-  — it is a new position on an identifier that has come round again, which a
-  network redeployment or a partial reset can do. Continuing to hold then
-  would withhold reminders from a legitimate position on the strength of a
-  finding about a different one, and it would do it silently, which is what
-  makes it worth ruling out.
-- **That comparison uses the network's own sequence, never a clock.** Where a
-  timestamp cannot be read from the network during recording, the platform
-  substitutes its own clock — so a position re-recorded during such a failure
-  can carry a time later than the finding about it, and a decision made on
-  times would release a hold because a read failed. A position's place in the
-  network's sequence is taken from the record itself and is never substituted.
-- **The point compared against is the LAST time the platform confirmed the
-  record was still unresolved**, not the first time it noticed. Those are
-  different questions and they refresh differently: how long something has
-  been wrong must not move, or the age a person reads is erased; what the
-  network had reached when it was last confirmed wrong must move, or a
-  replacement position that is ITSELF unresolved could satisfy the comparison
-  and release the hold about itself.
-- **A record held before the platform began keeping that point carries no
-  evidence either way**, and is never released on this rule. Treating its
-  absence as the start of the sequence would release every held record at
-  once, since every real position began after it.
-- **Holding a record is NOT free where an identifier has been reused, and the
-  platform does not pretend otherwise.** A held record suppresses reminders
-  for whatever position currently bears that identifier, so where the rule
-  above cannot fire — the network's sequence has restarted, or the record
-  predates the platform keeping that point — a legitimate replacement position
-  goes without reminders rather than merely leaving clutter in a report.
-  Telling a restarted sequence from an ordinary one is not possible from the
-  sequence alone; it needs an identity for the deployment, which the platform
-  does not record today. This is stated as an open limit rather than resolved,
-  because the alternative — releasing whenever the comparison cannot be made —
-  would drop exactly the records this memory exists to surface.
-- **Being absent is NOT release.** Where the platform holds a record about a
-  position that has no stored loan at all — the case where the network denies
-  a position the platform recorded — nothing establishes that it ended, and it
-  stays held and visible. That is the single most useful thing this memory
-  does, so a rule that released on absence would drop precisely the records it
-  exists to surface. The consequence is stated rather than hidden: where a
-  person resolves such a case by deleting the stored position, the held record
-  remains in the report as clutter until the identifier is reused or a person
-  clears it. Clutter in a report a person reads is the acceptable side of that
-  trade; silent suppression of a live position is not.
+- **A held record is NEVER released on an inference that the position has
+  changed.** A record is released when the position it names is settled, or
+  found to have ended — facts the platform establishes. It is not released on
+  a judgement that "the identifier must belong to something else now", because
+  every basis for that judgement available to the platform has proved unsound:
+  a recorded start time may be the platform's own clock substituted when the
+  network could not be read; a recorded place in the network's sequence goes
+  stale, restarts on a test-network reset, and can be left behind by a
+  reorganisation the platform never revisits. Acting on any of them would
+  release a record — and resume reminders — on the strength of a read that
+  failed.
+- **Holding a record is NOT free, and the platform says so rather than
+  inferring its way out.** A held record withholds reminders from whatever
+  position currently bears that identifier, so where an identifier has come
+  round again — after a network redeployment or a reset — a legitimate
+  position goes without reminders. The report a person reads therefore names,
+  for every long-held record, what that identifier points at now: no position
+  at all, or a position in a given state that began at a given point. A person
+  can see from that whether the record is still about the position it was
+  made for, and clear it if not. Clearing is a deliberate act, because the
+  platform will not do it on evidence it cannot stand behind.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.
