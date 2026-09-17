@@ -64,6 +64,13 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     /// @dev #1566 closure 2 cutover PR 1 — the transport id the receiver
     ///      passed through, the Diamond's ingress stamp.
     bytes32 public lastTransportMessageId;
+    /// @dev #1566 transport epochs PR 3b — whether the receiver said the WIRE
+    ///      carried the split. It is the fact the Diamond cannot recover on
+    ///      its own (a d5 remittance that was wholly recycled arrives with the
+    ///      same two zero components as a legacy one), so asserting on it here
+    ///      pins the "the receiver decides the accounting path" rule to the
+    ///      receiver, exactly as `lastFreshShare` pins the composition rule.
+    bool public lastSplitTyped;
 
     function onRewardBudgetReceived(
         address token,
@@ -74,9 +81,11 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         address remitter,
         uint256 recycledShare,
         uint256 freshShare,
-        bytes32 transportMessageId
+        bytes32 transportMessageId,
+        bool splitTyped
     ) external override {
         require(token == vpfi, "ingress: token");
+        lastSplitTyped = splitTyped;
         lastTransportMessageId = transportMessageId;
         lastAmount = amount;
         lastSourceChainId = sourceChainId;
@@ -240,6 +249,8 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(
             diamond.lastRecycledShare(), 120e18, "recycled share surfaced"
         );
+        // #1566 transport epochs PR 3b — the d5 wire carried the split.
+        assertTrue(diamond.lastSplitTyped(), "d5: the wire carried the split");
         // #1434 P1-a — the fresh component is the declared remainder, and it
         // is stated rather than left for the Diamond to infer.
         assertEq(diamond.lastFreshShare(), 380e18, "fresh share surfaced");
@@ -254,6 +265,48 @@ contract RewardRemittanceReceiverTest is Test {
         // split, so the receiver is where the honest zero comes from.
         assertEq(diamond.lastFreshShare(), 0, "legacy declares no fresh");
         assertEq(diamond.lastAmount(), 10e18, "the delivery itself is intact");
+        // #1566 transport epochs PR 3b — and the receiver states WHICH WIRE
+        // each came off, which is a different fact from what the wire
+        // declared. It decides the delivery's accounting path on the Diamond:
+        // the legacy one opens a transport epoch, the d5 one must not.
+        assertFalse(diamond.lastSplitTyped(), "legacy: the wire carried no split");
+    }
+
+    /// @dev #1566 transport epochs PR 3b — THE case the `splitTyped` flag
+    ///      exists for, and the reason it cannot be inferred downstream: a d5
+    ///      delivery whose components BOTH floor to zero. Declared 1000 with
+    ///      1 recycled, of which 1 lands: 1×1/1000 and 999×1/1000 both floor
+    ///      away, so the Diamond receives two zeros off a wire that carried a
+    ///      split — byte-for-byte what a legacy delivery looks like.
+    ///
+    ///      Inferring "untyped" from the two zeros would open a transport
+    ///      epoch for a delivery whose components were already credited to the
+    ///      shared ledgers, making one delivery spendable twice. The receiver
+    ///      is the only party that saw the wire, so the receiver is where the
+    ///      answer comes from.
+    function test_Deliver_StatesTheWireEvenWhenBothComponentsFloorAway() public {
+        vpfi.mint(address(receiver), 1);
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            abi.encode(
+                RemitWire.REMIT_WIRE_TAG_D5,
+                _days(1, 2),
+                uint256(1000),
+                uint256(91),
+                address(0xD1A),
+                uint256(1)
+            ),
+            _tokens(address(vpfi), 1000)
+        );
+        assertEq(diamond.lastAmount(), 1, "one wei landed");
+        assertEq(diamond.lastRecycledShare(), 0, "the recycled component floored away");
+        assertEq(diamond.lastFreshShare(), 0, "and so did the fresh one");
+        assertTrue(
+            diamond.lastSplitTyped(),
+            "the wire is still d5, and only the receiver can say so"
+        );
     }
 
     /// @dev B2-d5 — the declared recycled share is a component of the

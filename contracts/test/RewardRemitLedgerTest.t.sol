@@ -1628,7 +1628,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         LibVaipakam.ReceivedRemit memory rec =
             rlens.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -1654,7 +1654,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         assertEq(
             rlens.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
@@ -1679,7 +1679,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         // Owner rotates the canonical deployment — through Detached, as
         // #1566 slice 4 PR B requires of a mirror's source; the freeze is
         // lifted raw (the stale-receipt rule is what this test pins).
@@ -1734,10 +1734,10 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         assertEq(
             rlens.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
@@ -1760,7 +1760,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
         assertEq(
             rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
@@ -1850,7 +1850,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0, bytes32(0));
+        , 0, bytes32(0), true);
 
         // Bucket grew by exactly the recycled share — the claim path is backed.
         assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
@@ -1896,7 +1896,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0, bytes32(0));
+        , 0, bytes32(0), true);
         assertEq(cfg.getRecycleBucket(), 63e18, "backed");
 
         // The mirror's claims now consume the WHOLE recycled payout — the
@@ -1929,7 +1929,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             8e18
-        , 0, bytes32(0));
+        , 0, bytes32(0), true);
     }
 
     /// @dev Backward-decodability: a delayed pre-d5 delivery arrives with a
@@ -1942,7 +1942,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0, bytes32(0));
+        , 0, bytes32(0), false);
 
         assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
         (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
@@ -2174,7 +2174,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0, bytes32(0));
+        , 0, bytes32(0), true);
         (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
@@ -2931,7 +2931,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 7e18
-        , bytes32(0));
+        , bytes32(0), true);
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 7e18, "armed-day delivery counts in full");
@@ -2955,7 +2955,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 0
-        , bytes32(0));
+        , bytes32(0), false);
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "unknown composition contributes no fresh");
@@ -2980,13 +2980,13 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 3e18
-        , bytes32(0));
+        , bytes32(0), true);
         (uint256 counted, ) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 3e18, "armed-day delivery counts as before");
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 100e18
-        , bytes32(0));
+        , bytes32(0), true);
         uint256 uncounted;
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 103e18, "pre-arming funding enters the same ledger");
@@ -3005,14 +3005,14 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 8e18
-        , bytes32(0));
+        , bytes32(0), true);
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 8e18, "a straddling batch counts its fresh share");
         assertEq(uncounted, 0, "nothing refused");
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 8e18
-        , bytes32(0));
+        , bytes32(0), true);
         (counted, ) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 16e18, "an all-armed batch counts the same way");
     }
@@ -3032,7 +3032,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
             address(0xBA5E), 0, 5e18
-        , bytes32(0));
+        , bytes32(0), true);
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted - baseline, 5e18, "an unarmed chain counts its fresh share");
         assertEq(uncounted, 0, "nothing refused");
@@ -3041,7 +3041,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 6e18, new uint256[](0), CHAIN_BASE, 43,
             address(0xBA5E), 0, 6e18
-        , bytes32(0));
+        , bytes32(0), true);
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted - baseline, 11e18, "an empty day set changes nothing about counting");
         assertEq(uncounted, 0, "still nothing refused");
@@ -3062,7 +3062,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 43,
             address(0xBA5E), 4e18, 6e18
-        , bytes32(0));
+        , bytes32(0), true);
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
@@ -3086,15 +3086,15 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 7e18
-        , bytes32(0));
+        , bytes32(0), true);
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(dStar - 2), CHAIN_BASE, 43,
             address(0xBA5E), 0, 5e18
-        , bytes32(0));
+        , bytes32(0), true);
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(dStar), CHAIN_BASE, 44,
             address(0xBA5E), 4e18, 5e18
-        , bytes32(0));
+        , bytes32(0), true);
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         // 7 + 5 + 5 = 17 counted, 0 uncounted (vintage-blind); the 4e18
@@ -3127,7 +3127,7 @@ contract RewardRemitLedgerTest is SetupTest {
         ingress.onRewardBudgetReceived(
             address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 45,
             address(0xBA5E), 4e18, 7e18
-        , bytes32(0));
+        , bytes32(0), true);
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

@@ -16,6 +16,7 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -198,7 +199,13 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
         _ingress().onRewardBudgetReceived(
-            address(vpfi), amount, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, id
+            address(vpfi), amount, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, id,
+            // #1566 transport epochs PR 3b — the wire's own fact, derived
+            // from what this delivery states: a named component could only
+            // have come off a wire that carried the split, and a delivery
+            // naming neither is the untyped legacy/d2 shape whose value the
+            // transport epochs make spendable.
+            fresh != 0 || recycled != 0
         );
     }
 
@@ -1142,8 +1149,33 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
     /// An untyped (old-wire) delivery: no shares, the whole amount lands in
     /// the `Unclassified` row on an activated deployment.
+    ///
+    /// #1566 transport epochs PR 3b — such a delivery now also opens a
+    /// TRANSPORT EPOCH, and its packet is not classifiable until that epoch is
+    /// released. This section's subject is classification, so the release is
+    /// done here rather than in each test; the gate's own behaviour — refusing
+    /// before the release and admitting after it — is pinned in
+    /// `RewardTransportEpochTest`, where it is the subject.
     function _untyped(uint256 amount, uint256 remitId, bytes32 id) internal {
         _deliverStamped(amount, 0, 0, remitId, id);
+        _releaseEpoch(_packetHash(id));
+    }
+    /// @dev Park a batch's remainder and record the acknowledgment — the two
+    ///      halves of the release, which together are what make an old-wire
+    ///      packet classifiable.
+    /// An untyped delivery that KEEPS its transport epoch — no park, no
+    /// acknowledgment. Section 9's subject is the attestation, and an
+    /// attestation is about a packet whose epoch still stands: it is
+    /// permissionless and may land in either order with the release (design
+    /// §5c), which is exactly why the bound it feeds is derived at use time
+    /// rather than snapshotted.
+    function _untypedHeld(uint256 amount, uint256 remitId, bytes32 id) internal {
+        _deliverStamped(amount, 0, 0, remitId, id);
+    }
+    function _releaseEpoch(bytes32 batchId) internal {
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        ep.parkTransportBatchRemainder(batchId);
+        ep.acknowledgeTransportBatchRemainder(batchId);
     }
     /// The packet's authenticated fresh figure, as the transport attestation
     /// would write it (the test-only writer; production has none yet).
@@ -2741,12 +2773,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// SNAPSHOTTED into the packet's authenticated figure: the caps stay
     /// immutable and the bound is derived from them at use time, so a late
     /// attestation is effective whenever the batch lifecycle admits it.
-    function test_Attest_ScalesBothCaps_StaysDark_AndSnapshotsNothing() public {
+    function test_Attest_ScalesBothCaps_StaysDarkUntilReleased_AndSnapshotsNothing() public {
         _activatedMirror();
         _seedDiamond(10e18);
         MockRewardMessenger m = _attestMessenger();
         bytes32 id = keccak256("att");
-        _untyped(10e18, 210, id); // a d2-shaped arrival: a receipt, no split on the wire
+        _untypedHeld(10e18, 210, id); // a d2-shaped arrival: a receipt, no split on the wire
         bytes32 h = _packetHash(id);
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LibRewardCustody.IngressPacketSplitAttested(h, REMITTER, 210, 6e18, 4e18);
@@ -2758,8 +2790,14 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(p.recycledAttested, 4e18, "recycled, scaled to what landed");
         assertEq(p.freshAuthenticated, 0, "nothing snapshotted: the bound is derived, not written");
         assertEq(_authenticated(h), 0, "dark: the derived bound is unchanged");
+        // #1566 transport epochs PR 3b — while the epoch stands the packet is
+        // not classifiable AT ALL, so the refusal here is the epoch gate and
+        // no longer the evidence bound. The evidence refusal is still real and
+        // is reached below, once the release lets a classification get that
+        // far: an attestation lifts no bound by itself, and neither does a
+        // release.
         _admin().pause();
-        vm.expectRevert(abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, h, 1e18, 0));
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotReleased.selector, h, h));
         _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
         _admin().unpause();
         // Codex #2224 r2 — the source entry is deliberately re-sendable, so an
@@ -2777,6 +2815,25 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_pkt(id).freshAttested, 6e18, "an equivalent record is the same record");
         vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 50e18, 50e18);
+
+        // #1566 transport epochs PR 3b — the OTHER side of the seam, which is
+        // what 3a built these two predicates for and could not yet exercise.
+        // Releasing the packet's transport epoch makes the derived bound the
+        // attested cap, NET of the batch's own fresh leg (still zero: no draw
+        // exists until 3b-ii). Nothing was snapshotted along the way, so the
+        // order of attestation and release never mattered — which is the
+        // property the derivation exists to guarantee.
+        _releaseEpoch(h);
+        assertEq(_authenticated(h), 6e18, "released: the derived bound is the attested cap");
+        assertEq(_pkt(id).freshAuthenticated, 0, "and still nothing is snapshotted");
+        _admin().pause();
+        // The evidence bound is still a bound, and it is the attested cap:
+        // past it the classification is refused for the reason it always was.
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, h, 7e18, 6e18));
+        _recon().classifyLegacyPacket(h, 7e18, 0, keccak256("e-att-over"));
+        _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
+        _admin().unpause();
+        assertEq(_pkt(id).classifiedFresh, 1e18, "the fresh share the evidence now admits");
     }
 
     /// PR 3a — a short delivery shrinks BOTH caps and neither underflows:
@@ -2786,7 +2843,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _seedDiamond(7e18);
         MockRewardMessenger m = _attestMessenger();
         bytes32 id = keccak256("att-short");
-        _untyped(7e18, 211, id);
+        _untypedHeld(7e18, 211, id);
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 211, 20e18, 10e18);
         LibVaipakam.IngressPacket memory p = _pkt(id);
         assertEq(p.freshAttested, (uint256(7e18) * 20) / 30);
@@ -2809,7 +2866,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(ReceivedRemitNotFound.selector, 999));
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 999, 1, 1);
         bytes32 id = keccak256("att-2");
-        _untyped(10e18, 221, id);
+        _untypedHeld(10e18, 221, id);
         // Codex #2224 r6 — an attestation from a chain that is not this
         // mirror's canonical chain is refused on the RECEIVING-DOMAIN rule,
         // before any receipt is consulted: messenger authentication proves a

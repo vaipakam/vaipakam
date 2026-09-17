@@ -7521,6 +7521,22 @@ library LibVaipakam {
         mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
         uint256 recycleReattributedInCumulative;
         uint256 recycleReattributedOutCumulative;
+        /// @dev #1566 transport epochs PR 3b — the transport epochs.
+        ///      `transportBatches` is keyed by the batch id the admission
+        ///      derives; `transportBatchesByDay` is each day's
+        ///      ARRIVAL-ORDERED index of the batches listing it, and
+        ///      `transportDayCursor` that day's consumption cursor, so
+        ///      allocation resumes where it left off instead of rescanning a
+        ///      history the legacy lane can grow without bound. A bare
+        ///      oldest-first scan is unbounded on a hot path: the lane can
+        ///      mint arbitrarily many small batches listing one day, and a
+        ///      claim or permissionless sweep forced to traverse all of them
+        ///      exceeds the block gas limit — permanently blocking an
+        ///      obligation behind backing that exists.
+        mapping(bytes32 => TransportBatch) transportBatches;
+        mapping(uint256 => bytes32[]) transportBatchesByDay;
+        mapping(uint256 => uint256) transportDayCursor;
+        mapping(bytes32 => TransportRemainder) transportRemainders;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7672,6 +7688,109 @@ library LibVaipakam {
         uint256 freshAttested;
         uint256 recycledAttested;
         bool attested;
+        /// @dev #1566 transport epochs PR 3b — the TRANSPORT BATCH this
+        ///      delivery opened, appended. Zero means the packet holds no
+        ///      batch balance, and that is the answer for two populations
+        ///      that must keep behaving exactly as they do today: a d5
+        ///      packet, whose components are typed on the wire and credited
+        ///      to the shared live/bucket ledgers at ingress (§5c's
+        ///      one-accounting-path rule — admitting it as a batch as well
+        ///      would make one delivery spendable twice), and every packet
+        ///      that arrived before this ledger existed.
+        ///
+        ///      The link lives on the PACKET because 3a fixed the evidence
+        ///      seam's signature at `(IngressPacket storage)` — no hash, no
+        ///      storage handle — while requiring the released flag itself to
+        ///      live on the BATCH, a batch being released by its obligations
+        ///      terminating rather than by anything about the delivery. One
+        ///      appended word satisfies both and keeps
+        ///      {LibRewardCustody.packetBatchReleased} a single storage read,
+        ///      which it must remain: classification reaches it through
+        ///      `authenticatedFresh`, and `RewardReconciliationFacet` has
+        ///      under 2 KB of EIP-170 headroom left.
+        bytes32 batchId;
+    }
+
+    /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
+    ///         old-wire delivery: an UNTYPED balance, spendable only by the
+    ///         obligations whose day the delivery listed.
+    /// @dev    The unit is the PACKET and not the day, because the old wire
+    ///         is batched and carries no per-day split (§5c): a legacy
+    ///         remittance is one aggregate over many days, so crediting it to
+    ///         every listed day would duplicate the backing and splitting it
+    ///         would assert a fact the packet never carried. The listed
+    ///         `dayIds` are therefore a MEMBERSHIP FILTER over one balance.
+    ///
+    ///         `balance` is bounded by the packet's `actualReceived`, never
+    ///         its declared total — a short delivery must shrink the funding,
+    ///         not the obligations.
+    ///
+    ///         `oversize` records which admission this batch took. The fan-out
+    ///         cap is enforced at DISPATCH, but a CCIP payload is immutable, so
+    ///         a receive-side refusal of an over-cap packet would retry the
+    ///         same message forever: the receiver admits any transport-
+    ///         authentic packet, and an over-cap one takes the COMPACT
+    ///         admission whose storage cost does not scale with the list. Its
+    ///         per-day index is then materialized in bounded pages against the
+    ///         day list's 3a commitment, and it retires through the resumable
+    ///         RETIRING path — the settlement that exhausts it commits without
+    ///         attempting the full fan-out, which is what keeps an admitted
+    ///         oversize batch from parking at the front of every member cursor
+    ///         forever.
+    ///
+    ///         `consumedFresh` / `consumedRecycled` are the transport LEG
+    ///         COUNTERS: what this packet's own draws have already spent of
+    ///         each component. They are read by
+    ///         {LibRewardCustody.transportConsumedFresh} so a classification
+    ///         can never republish fresh value the batch already paid a listed
+    ///         obligation with. No draw exists until PR 3b-ii, so they are
+    ///         zero until then — a real read of a real zero, not a stub.
+    struct TransportBatch {
+        /// @dev The delivery that opened it. One batch per old-wire packet.
+        bytes32 packetHash;
+        uint256 balance;
+        /// @dev What admission recorded, immutable afterwards — the
+        ///      conservation anchor every draw, restore and disposition is
+        ///      checked against.
+        uint256 admitted;
+        uint32 dayCount;
+        /// @dev How many listed days carry an index entry. Equal to
+        ///      `dayCount` for a within-cap batch from admission onward; it
+        ///      climbs one page at a time for an oversize one.
+        uint32 indexedDays;
+        bool oversize;
+        /// @dev Whether the batch's remainder has been parked WITH its
+        ///      acknowledgment, which is the sole route by which what remains
+        ///      of an old-wire packet becomes classifiable (§5c). Read by
+        ///      {LibRewardCustody.packetBatchReleased}.
+        bool released;
+        uint256 consumedFresh;
+        uint256 consumedRecycled;
+    }
+
+    /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:
+    ///         what was left when its obligations were done with it, parked
+    ///         under the batch's own key with the membership that still binds
+    ///         it.
+    /// @dev    Keyed by the batch and not by the packet's remainder as a
+    ///         whole, because a late obligation whose day is in this
+    ///         membership must be able to reach it: the restore is
+    ///         MEMBERSHIP-BOUND, putting value back into the epoch it came
+    ///         from rather than into a general pool. `dayListHash` is the
+    ///         same flat commitment 3a stamped on the packet, carried here so
+    ///         a restore proves membership against the list it was parked
+    ///         with even after the batch's index has been retired.
+    ///
+    ///         `acknowledged` is what releases the batch. Parking alone does
+    ///         not: classification is gated behind the parked remainder AND
+    ///         its recorded acknowledgment (§5c), so an operator cannot make a
+    ///         packet classifiable merely by draining it.
+    struct TransportRemainder {
+        bytes32 batchId;
+        uint256 amount;
+        bytes32 dayListHash;
+        uint32 dayCount;
+        bool acknowledged;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy

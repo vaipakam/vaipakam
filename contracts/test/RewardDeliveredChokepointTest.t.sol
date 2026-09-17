@@ -124,8 +124,15 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
         _ingress().onRewardBudgetReceived(
-            address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh
-        , bytes32(0));
+            address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh,
+            bytes32(0),
+            // #1566 transport epochs PR 3b — the wire's own fact, derived
+            // from what this delivery states: a named component could only
+            // have come off a wire that carried the split, and a delivery
+            // naming neither is the untyped legacy/d2 shape whose value the
+            // transport epochs make spendable.
+            fresh != 0 || recycled != 0
+        );
     }
 
     function _seedPayable(address user, uint64 loanId)
@@ -256,7 +263,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         days_[0] = 1;
         _ingress().onRewardBudgetReceived(
             address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0
-        , bytes32(0)); // old wire: no split stated
+        , bytes32(0), false); // old wire: no split stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(counted, 5e18, "an unstated composition counts nothing");
         assertEq(uncounted, 3e18, "...and lands whole in uncounted");

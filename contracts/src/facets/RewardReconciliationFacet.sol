@@ -160,6 +160,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
         if (freshShare + recycledShare == 0) revert InvalidAmount();
+        // #1566 transport epochs PR 3b — an old-wire packet is classifiable
+        // only once its TRANSPORT EPOCH has been released: the batch's
+        // remainder parked, with its acknowledgment recorded (§5c names that
+        // the only route). Classifying earlier would spend value the batch's
+        // own listed obligations can still draw. A packet holding no batch —
+        // a d5 delivery, whose components were typed on the wire, or one that
+        // landed before the ledger existed — passes untouched.
+        LibRewardCustody.requireClassifiable(s, packetHash);
         if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {
             LibVaipakam.StrandedRecovery storage sr =
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];
