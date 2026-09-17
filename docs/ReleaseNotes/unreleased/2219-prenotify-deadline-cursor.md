@@ -35,9 +35,11 @@ impossible here has been corrected, because it was wrong about why.
 
 Two consequences worth stating. Where the recorded place cannot be read at all —
 a database problem, or a deployment that arrives before the schema change it
-needs — the run starts at the nearest deadline instead. That repeats work
-already done and never steps over a nearer deadline, which is the only
-acceptable direction for that failure, and the run says so each time rather than
-degrading quietly. And the old recorded positions are deleted rather than left
+needs — the run starts at the nearest deadline instead. For any one run that
+repeats work already done rather than stepping over anything, which is the only
+acceptable direction for that failure. It is not harmless if it persists: a
+service that always restarts at the same place never works its way down the
+list, so loans further along stop being reached. That is why the run says so
+every time rather than falling back quietly. And the old recorded positions are deleted rather than left
 behind: a stale number in a table that other things still read is how a later
 reader comes to trust a position that means nothing.

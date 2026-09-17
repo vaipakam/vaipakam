@@ -1503,6 +1503,31 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped.length).toBe(LOANS_PER_TICK);
   });
 
+  it('refuses a cursor that is not a pair of whole numbers, and says so', async () => {
+    // #2229 r2 `4034537653`. A non-STRICT SQLite column accepts a REAL, and
+    // `(deadline, 7.5)` is finite: it sorts between loan 7 and loan 8, so the
+    // scan would resume just past loan 7 and step over it — the exact defect
+    // the cursor exists to remove, arriving through the type system. The
+    // migration makes the table STRICT; this is the reader's half, for a
+    // table a restore or a hand-run statement produced instead.
+    loanRows = tenLoans();
+    scanKeys.set(84532, { ...resumeKeyForNth(7), loanId: 93.5 });
+    const { stamped, said } = await run();
+    // Fell back to the nearest deadline rather than resuming past loan 93.
+    expect(stamped[0]).toBe(100);
+    expect(said).toContain('not a pair of whole numbers');
+  });
+
+  it('says so when there is no stored cursor at all', async () => {
+    // #2229 r1 `4034434474`. Falling back silently contradicted this lane's
+    // own promise that an unavailable position is announced — and a row being
+    // deleted repeatedly is precisely what an operator would never otherwise
+    // hear about.
+    loanRows = tenLoans();
+    const { said } = await run();
+    expect(said).toContain('no stored scan position');
+  });
+
   it('resumes at the nearest REMAINING deadline after a stamped prefix (#2219)', async () => {
     // THE DEFECT THIS REPLACED. The lane stamped the nearest few and stored
     // its POSITION; next tick those loans were gone from the list, so the same

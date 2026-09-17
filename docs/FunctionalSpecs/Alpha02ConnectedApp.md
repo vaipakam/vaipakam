@@ -388,9 +388,13 @@ The app uses chain reads and indexed reads for different jobs.
   — past exactly as many of the nearest remaining deadlines as were handled.
   A deadline does not move when other records are handled or leave. Where the
   recorded place cannot be read at all, the run begins at the nearest
-  deadline: that repeats work already done and never steps over a nearer
-  deadline, which is the direction this failure must take, and the run says
-  so rather than falling back quietly.
+  deadline. For that run, this repeats work already done rather than stepping
+  over anything, which is the direction the failure must take — but repeated
+  across runs it is not harmless: a run always restarting at the same place
+  makes no progress through the list, so records further down are not reached
+  and can pass their deadlines. The run therefore says each time that the
+  place could not be read, rather than falling back quietly on the strength of
+  a single run being safe.
 - **What "nearest first" does and does not promise, stated exactly.** Within
   one pass through the list, records are taken nearest deadline first. Across
   passes, the saved place means the run continues rather than restarting, so

@@ -30,11 +30,25 @@ CREATE TABLE IF NOT EXISTS prenotify_scan_cursor (
   -- a resume cannot land in the middle of a group ambiguously.
   loan_id         INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
-);
+)
+-- STRICT, so the column types are ENFORCED rather than advisory (#2229 r2
+-- `4034537653`). Ordinary SQLite lets a REAL sit in an INTEGER column, and a
+-- cursor of `(deadline, 7.5)` is not a loan id — it compares as ordering
+-- between loan 7 and loan 8 and steps over loan 7 silently, which is the
+-- defect this whole table exists to remove, reintroduced through the type
+-- system. Cheap here because the table is new: there is no existing copy for
+-- `IF NOT EXISTS` to leave un-STRICT.
+--
+-- The reader validates anyway. It cannot see which statement created the
+-- table it is reading — a restore, or a hand-run `wrangler d1 execute`, can
+-- produce one this migration did not — so the guarantee is asserted at both
+-- ends rather than assumed from one.
+STRICT;
 
 -- The positional cursor this replaces. Left in place it would be a row whose
 -- value means nothing to anything that still reads that table, which is how a
 -- later reader comes to interpret a stale index as a live position. The lane
 -- tolerates the row being gone: an absent cursor starts at the nearest
--- deadline, which re-reads a prefix rather than skipping one.
+-- deadline, which for that tick re-reads a prefix rather than skipping one,
+-- and says so — a cursor that stays absent stops the scan progressing at all.
 DELETE FROM indexer_cursor WHERE kind = 'prenotify_scan';

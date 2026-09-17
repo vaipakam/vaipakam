@@ -1422,6 +1422,18 @@ interface ScanResume {
 /** Before every real deadline, so it resumes at the nearest one. */
 const SCAN_FROM_TOP: ScanResume = { checkpoint: 0, loanId: 0 };
 
+/**
+ * One rule for both halves of the key, so they cannot drift apart.
+ *
+ * `Number.isSafeInteger` covers whole, exact and within the range where
+ * integer comparison means what it says; the sign check covers the rest,
+ * since neither a unix second nor a loan id is negative and a negative key
+ * would sort before every candidate and silently disable the resume.
+ */
+function isCursorNumber(v: number): boolean {
+  return Number.isSafeInteger(v) && v >= 0;
+}
+
 async function scanResumeKey(
   env: Env,
   chainId: number,
@@ -1456,15 +1468,22 @@ async function scanResumeKey(
     }
     const checkpoint = Number(row.next_checkpoint);
     const loanId = Number(row.loan_id);
-    // A stored pair that is not a pair of numbers is not a position. Falling
-    // back to the top is the same safe direction as an absent row.
-    if (!Number.isFinite(checkpoint) || !Number.isFinite(loanId)) {
+    // A WHOLE, NON-NEGATIVE, EXACTLY-REPRESENTABLE pair, or it is not a
+    // position (#2229 r2 `4034537653`). Finiteness alone was not enough: an
+    // ordinary SQLite column accepts a REAL, and `(deadline, 7.5)` is finite
+    // and sorts between loan 7 and loan 8 — so the scan would resume just past
+    // loan 7 and step over it, silently, which is the defect this cursor
+    // exists to remove. The table is STRICT so this should be unreachable
+    // through the migration; a restored or hand-made table is why it is
+    // checked here too.
+    if (!isCursorNumber(checkpoint) || !isCursorNumber(loanId)) {
       console.warn(
         `[periodicPreNotify] chain ${chainId}: the stored scan position is ` +
-          `not a pair of numbers (${String(row.next_checkpoint)}, ` +
-          `${String(row.loan_id)}); starting from the nearest deadline. That ` +
-          `re-reads a prefix rather than skipping one, but the position is ` +
-          `not being kept and the tail will not be reached until it is.`,
+          `not a pair of whole numbers (${String(row.next_checkpoint)}, ` +
+          `${String(row.loan_id)}); starting from the nearest deadline. THIS ` +
+          `tick re-reads a prefix rather than skipping one, but the position ` +
+          `is not being kept: until it is, the tail is not reached and loans ` +
+          `in it can pass their deadline.`,
       );
       return SCAN_FROM_TOP;
     }
@@ -1481,9 +1500,10 @@ async function scanResumeKey(
     console.warn(
       `[periodicPreNotify] chain ${chainId}: could not read the stored scan ` +
         `position (${describeFailure(err)}); starting from the nearest ` +
-        `deadline. That re-reads a prefix rather than skipping one, so no ` +
-        `reminder is missed — but repeated appearances mean loans behind a ` +
-        `run of unreachable ones are not being reached.`,
+        `deadline. THIS tick re-reads a prefix rather than skipping one. If ` +
+        `this keeps appearing the position is not being kept at all, and a ` +
+        `prefix that fills a tick then holds the allowance every tick — the ` +
+        `tail is not reached, and loans in it can pass their deadline.`,
     );
     return SCAN_FROM_TOP;
   }
