@@ -1,27 +1,40 @@
 # Release Notes — 2026-09-17
 
 Three entries. The first opens the transport epochs, the last part of the
-#1566 programme before the role carry-forward, and it is deliberately dark:
-nothing it adds changes what the platform does today. It supplies the one
-thing the previous release left missing — a mirror holding value whose
+#1566 programme before the role carry-forward, and what it adds is
+deliberately inert where it counts: no ledger arithmetic moves, and no
+classification comes out differently than it would have yesterday. It is
+not inert in the sense of adding nothing — anyone may now ask the sending
+chain to attest a delivery's composition, pay the quoted transport fee for
+it, and have the receiving chain record the figures. That supplies the one
+thing the previous release left missing: a mirror holding value whose
 composition it was never told can now be told, by the chain that sent it,
 what that chain recorded when it sent. The figures are kept and not yet
-consulted, because the step that would consult them does not exist until the
-next change; what a classification may treat as evidence is worked out from
-them when it is asked rather than frozen in advance, since asking the source
-and releasing the value are both open to anyone and can happen in either
-order. Alongside it, every arrival now commits to the days it names, so the
-ledger that comes next can check a re-supplied list against the chain's own
-record rather than against an event.
+consulted, because the step that would consult them does not exist until
+the next change; and what a classification may treat as evidence is worked
+out from them when it is asked rather than frozen in advance, since asking
+the source and releasing the value are both open to anyone and can happen
+in either order. Alongside it, every arrival now commits to the days it
+names, so the ledger that comes next can check a re-supplied list against
+the chain's own record rather than against an event.
 
 The other two are corrections where a record and the thing it described had
-drifted apart. A Worker's configuration file called three arming flags plain
-settings when they are secrets, which matters to anyone reconstructing what a
-deployment actually holds — and two of the three turn out not to be unreadable
-live state at all, simply unset. And a reminder could still be sent about a
-loan nobody had confirmed: a record the periodic check could not settle stays
-stored as open, which is exactly what a permanently missed ending looks like,
-so those records are now withheld from reminders rather than read as ordinary.
+drifted apart. A Worker's configuration file called three arming flags
+plain settings when they are secrets, which matters to anyone
+reconstructing what a deployment actually holds. Two of the three were
+found unset at the last live check, over a month before this correction;
+whether the deployed keeper is armed today is not something this change
+establishes, and the entry says so rather than letting a stale observation
+read as current posture.
+
+And a reminder could still be sent about a loan nobody had confirmed: a
+record the periodic check could not settle stays stored as open, which is
+exactly what a permanently missed ending looks like, so those records are
+withheld from reminders rather than read as ordinary. The memory of which
+records are unconfirmed is written after each turn rather than within it,
+so a turn interrupted in between loses its entry and leaves that turn's
+worth of exposure — the next turn to examine the record writes it again.
+The entry states that limit rather than leaving it to be discovered.
 
 ## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
 
