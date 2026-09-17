@@ -73,7 +73,7 @@ number points at today and lets them decide, and labels that description as
 stored and unverified rather than presenting the same record it refused to act
 on as settled fact.
 
-The last two entries are both about a claim that was true when it was written
+The seventh and eighth entries are both about a claim that was true when it was written
 and had stopped being true, which is the day's recurring shape. One is a
 question the platform asks its own store about many records at once: it can be
 refused for naming too many things, and the refusal arrives exactly when a
