@@ -311,13 +311,28 @@ The app uses chain reads and indexed reads for different jobs.
   can carry a time later than the finding about it, and a decision made on
   times would release a hold because a read failed. A position's place in the
   network's sequence is taken from the record itself and is never substituted.
-  Where that sequence restarts — a test network reset — the comparison simply
-  does not apply and the record stays held, which is the direction this
-  failure must take.
-- **A record held before the platform began keeping that sequence carries no
+- **The point compared against is the LAST time the platform confirmed the
+  record was still unresolved**, not the first time it noticed. Those are
+  different questions and they refresh differently: how long something has
+  been wrong must not move, or the age a person reads is erased; what the
+  network had reached when it was last confirmed wrong must move, or a
+  replacement position that is ITSELF unresolved could satisfy the comparison
+  and release the hold about itself.
+- **A record held before the platform began keeping that point carries no
   evidence either way**, and is never released on this rule. Treating its
-  absence as a position at the start of the sequence would release every held
-  record at once, since every real position began after it.
+  absence as the start of the sequence would release every held record at
+  once, since every real position began after it.
+- **Holding a record is NOT free where an identifier has been reused, and the
+  platform does not pretend otherwise.** A held record suppresses reminders
+  for whatever position currently bears that identifier, so where the rule
+  above cannot fire — the network's sequence has restarted, or the record
+  predates the platform keeping that point — a legitimate replacement position
+  goes without reminders rather than merely leaving clutter in a report.
+  Telling a restarted sequence from an ordinary one is not possible from the
+  sequence alone; it needs an identity for the deployment, which the platform
+  does not record today. This is stated as an open limit rather than resolved,
+  because the alternative — releasing whenever the comparison cannot be made —
+  would drop exactly the records this memory exists to surface.
 - **Being absent is NOT release.** Where the platform holds a record about a
   position that has no stored loan at all — the case where the network denies
   a position the platform recorded — nothing establishes that it ended, and it

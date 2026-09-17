@@ -1,0 +1,40 @@
+-- #2222 / #2231 — the id-reuse release needs a boundary that is provenance-
+-- clean AND current.
+--
+-- Releasing a held entry when a loan bearing the same id started SINCE the
+-- entry was last observed is the rule: a loan cannot start after a pass that
+-- was still finding the old one unsettled, so a later start is a different
+-- position on an id that has come round again.
+--
+-- TWO THINGS THE FIRST VERSION GOT WRONG, both found in review, both fixed by
+-- what this column IS:
+--
+-- 1. It compared `loans.start_at`, and that column can hold a LOCAL CLOCK
+--    reading rather than a chain time: when a block-timestamp lookup fails
+--    during ingest the scan stamps `Date.now()` and the loan insert persists
+--    it. A replayed ORIGINAL loan whose lookup hiccuped would then look newer
+--    than the finding about it, so an RPC failure would release a hold that
+--    should stand. A block number comes from the log and is never
+--    substituted.
+--
+-- 2. It froze the boundary at the FIRST observation, like `first_seen_at`.
+--    That is right for the age an operator reads and wrong for this: an entry
+--    still being re-observed as unsettled would keep a boundary from long ago,
+--    so a replacement loan that is ITSELF unsettled could satisfy the
+--    comparison and release a hold about itself. The boundary therefore
+--    tracks the LAST observation — which is why this is `last_seen_block` and
+--    not `first_seen_block`, and why it is updated on conflict alongside
+--    `last_seen_at` while `first_seen_at` stays frozen.
+--
+--    The two refresh rules are deliberately opposite. `first_seen_at` answers
+--    "how long has this been wrong", and moving it would erase that.
+--    `last_seen_block` answers "what had the chain reached when we last
+--    confirmed it was still wrong", and freezing it would make a stale answer
+--    authorise a release.
+--
+-- DEFAULT 0 means "recorded before this column existed, or written by a
+-- deployment that arrived before this migration". The release treats 0 as NO
+-- EVIDENCE rather than as block zero — read as a block it sits below every
+-- real loan and would release every held entry on the chain at once.
+ALTER TABLE loan_reconcile_quarantine
+  ADD COLUMN last_seen_block INTEGER NOT NULL DEFAULT 0;

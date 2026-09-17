@@ -1570,13 +1570,16 @@ export async function _runLoanReconcilePass(input: {
       try {
         // The head this pass established is the block the finding was made
         // AGAINST, which is what the id-reuse release compares a later loan's
-        // start to (#2231 r1 `4035070199`).
+        // start to (#2231 r1 `4035070199`) — and `null` while the column has
+        // not been established, so a deploy that arrives before its migration
+        // still writes the marks rather than failing the batch that starts
+        // the withholding (#2231 r2 `4035186343`).
         const writes = quarantineStatements(
           env.DB,
           chainId,
           report,
           nowSec,
-          Number(head),
+          quarantineAvailableForWrites.hasBlockColumn() ? Number(head) : null,
         );
         if (writes.length > 0) await env.DB.batch(writes);
       } catch (err) {

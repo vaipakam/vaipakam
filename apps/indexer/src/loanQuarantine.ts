@@ -107,39 +107,65 @@ export function quarantineStatements(
   report: ReconcileReport,
   nowSec: number,
   /**
-   * The block this pass had established when it held these rows (#2231 r1
-   * `4035070199`).
+   * The block this pass has established, or NULL to leave the column out of
+   * the statement entirely.
    *
    * Recorded so the id-reuse release has a discriminator that cannot be a
    * sentinel: a loan's `start_at` may hold a local clock reading when a
    * block-timestamp lookup failed during ingest, but its `start_block` comes
-   * from the log and is never substituted.
+   * from the log and is never substituted (#2231 r1 `4035070199`).
+   *
+   * NULL IS THE DEPLOY WINDOW (#2231 r2 `4035186343`). The canonical rollout
+   * deploys the Worker BEFORE applying migrations, so this code can run while
+   * migration 0049's table exists and 0051's column does not. Naming a column
+   * that is not there fails the whole batch — and that batch is what STARTS
+   * the withholding, so the loans it was meant to protect would be left to a
+   * later pass while reminders could go out meanwhile. The old-shape
+   * statement is valid against both schemas, and the column's DEFAULT 0 lands
+   * as "no evidence", which the release already refuses to act on.
    */
-  firstSeenBlock: number,
+  lastSeenBlock: number | null,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   for (const { loanId, reason } of unsettledRows(report)) {
+    // `first_seen_at` is deliberately NOT in either update list. It is the
+    // operator's whole signal — minutes means a transient read, days means a
+    // ghost nobody resolved — and an upsert that refreshed it on every
+    // re-observation would erase exactly that.
+    //
+    // `last_seen_block` IS refreshed, and the opposite rule is the point
+    // (#2231 r2 `4035186370`). It answers "what had the chain reached when we
+    // last confirmed this was still wrong", so freezing it would let a stale
+    // answer authorise a release: an entry still being re-observed as
+    // unsettled would keep a boundary from long ago, and a replacement loan
+    // that is ITSELF unsettled could then satisfy the comparison and release
+    // a hold about itself. An entry nobody re-observes — the orphan whose
+    // `loans` row an operator deleted, which is the case #2222 is about —
+    // keeps its last boundary, which is exactly when the release should fire.
     statements.push(
-      db
-        .prepare(
-          `INSERT INTO loan_reconcile_quarantine
-             (chain_id, loan_id, reason, first_seen_at, last_seen_at,
-              first_seen_block)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(chain_id, loan_id) DO UPDATE SET
-             reason = excluded.reason,
-             last_seen_at = excluded.last_seen_at`,
-        )
-        // `first_seen_at` is deliberately NOT in the update list. It is the
-        // operator's whole signal — minutes means a transient read, days
-        // means a ghost nobody resolved — and an upsert that refreshed it on
-        // every re-observation would erase exactly that.
-        //
-        // `first_seen_block` is out of it for the same reason and a sharper
-        // one: refreshing it would move the line that decides whether a loan
-        // started BEFORE or AFTER this finding, so a re-observation could
-        // walk the line past a reused id and turn a release back into a hold.
-        .bind(chainId, loanId, reason, nowSec, nowSec, firstSeenBlock),
+      lastSeenBlock === null
+        ? db
+            .prepare(
+              `INSERT INTO loan_reconcile_quarantine
+                 (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
+                 reason = excluded.reason,
+                 last_seen_at = excluded.last_seen_at`,
+            )
+            .bind(chainId, loanId, reason, nowSec, nowSec)
+        : db
+            .prepare(
+              `INSERT INTO loan_reconcile_quarantine
+                 (chain_id, loan_id, reason, first_seen_at, last_seen_at,
+                  last_seen_block)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(chain_id, loan_id) DO UPDATE SET
+                 reason = excluded.reason,
+                 last_seen_at = excluded.last_seen_at,
+                 last_seen_block = excluded.last_seen_block`,
+            )
+            .bind(chainId, loanId, reason, nowSec, nowSec, lastSeenBlock),
     );
   }
   // ONE STATEMENT PER ROW, not an interpolated `IN (...)` list. The pass
@@ -236,10 +262,21 @@ export async function releaseTerminalQuarantine(
   // LOWER than the recorded one, so this simply does not fire and the entry
   // stays held. Clutter in the report, never a live position suppressed.
   //
-  // `first_seen_block = 0` means the entry predates the column (migration
-  // 0051) and carries no evidence. Read as a block it would be below every
-  // real loan and release every held entry on the chain, so it is excluded
-  // explicitly rather than left to arithmetic.
+  // `last_seen_block = 0` means the entry predates the column (migration
+  // 0051), or was written by a deployment that arrived before it. Either way
+  // it carries no evidence. Read as a block it would be below every real loan
+  // and release every held entry on the chain, so it is excluded explicitly
+  // rather than left to arithmetic.
+  //
+  // WHAT THIS STILL DOES NOT COVER, and the PR says so rather than implying
+  // otherwise (#2231 r2 `4035186353`): where a test network's block height
+  // RESETS, a legitimate replacement loan can start at a LOWER block than the
+  // boundary, so the entry is retained — and because the exclusion matches on
+  // `(chain_id, loan_id)` alone, retaining it SUPPRESSES that replacement's
+  // reminders rather than merely cluttering a report. Telling the two apart
+  // through a height that has restarted is not possible; it needs a
+  // deployment identity the platform does not record today, which is #2222's
+  // remaining scope.
   //
   // What this deliberately does NOT do is release an entry whose row is
   // simply gone. An unresolved orphan staying held and visible in the stale
@@ -259,8 +296,8 @@ export async function releaseTerminalQuarantine(
                AND (
                  l.status NOT IN ('active', 'fallback_pending')
                  OR (
-                   loan_reconcile_quarantine.first_seen_block > 0
-                   AND l.start_block > loan_reconcile_quarantine.first_seen_block
+                   loan_reconcile_quarantine.last_seen_block > 0
+                   AND l.start_block > loan_reconcile_quarantine.last_seen_block
                  )
                )
           )`,
@@ -389,6 +426,9 @@ export function quarantineExclusionSql(loansAlias = 'loans'): string {
           )`;
 }
 
+/** Migration 0051's column, named once so the probe and the writers agree. */
+const BLOCK_COLUMN = 'last_seen_block';
+
 /** The single D1 method the probe needs, so this stays runtime-agnostic. */
 export interface QuarantineProbeDb {
   prepare(query: string): { first<T>(): Promise<T | null> };
@@ -462,23 +502,48 @@ export interface QuarantineAvailabilityProbe {
   (db: QuarantineProbeDb): Promise<QuarantineAvailability>;
   /** Forget a cached `absent`/`unknown`; a cached `present` survives. */
   beginPass(): void;
+  /**
+   * Has migration 0051's `last_seen_block` been established on the live table?
+   *
+   * FALSE MEANS "not established", never "absent": before the first probe, and
+   * during the window where the Worker is deployed but the migration has not
+   * run, the writer omits the column rather than naming one that may not
+   * exist. That statement is valid against both schemas.
+   */
+  hasBlockColumn(): boolean;
 }
 
 export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   let seen = false;
   let passOpen = false;
   let thisPass: QuarantineAvailability | null = null;
+  // Whether migration 0051's column is there yet, learned from the SAME read
+  // that establishes the table (#2231 r2 `4035186343`). The canonical rollout
+  // deploys the Worker before applying migrations, so "the table exists" and
+  // "the column exists" are genuinely different questions during that window,
+  // and a writer that assumed the second from the first would fail its whole
+  // batch — the batch that STARTS the withholding.
+  //
+  // Only ever set to true. A `false` reading means "not established", which
+  // makes the writer omit the column: valid against both schemas.
+  let blockColumn = false;
   const probe = async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
     if (seen) return 'present';
     if (thisPass !== null) return thisPass;
     try {
       const row = await db
         .prepare(
-          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
+          `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${QUARANTINE_TABLE}'`,
         )
-        .first<{ name: string }>();
+        .first<{ sql: string | null }>();
       if (row) {
         seen = true;
+        // The table's own CREATE statement carries its columns, so this costs
+        // no extra read. `ALTER TABLE ... ADD COLUMN` rewrites that statement,
+        // so the text is current rather than the shape at creation.
+        if (typeof row.sql === 'string' && row.sql.includes(BLOCK_COLUMN)) {
+          blockColumn = true;
+        }
         return 'present';
       }
       if (passOpen) thisPass = 'absent';
@@ -497,5 +562,6 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
     passOpen = true;
     thisPass = null;
   };
+  probe.hasBlockColumn = () => blockColumn;
   return probe as QuarantineAvailabilityProbe;
 }

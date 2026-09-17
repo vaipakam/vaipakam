@@ -62,15 +62,16 @@ const quarantined = (h: SqliteD1) =>
     )
     .all() as Array<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>;
 
-/** `firstSeenBlock` is the head the pass established — what the id-reuse
- *  release compares a later loan's `start_block` against (#2231 r1). */
+/** `lastSeenBlock` is the head the pass established — what the id-reuse
+ *  release compares a later loan's `start_block` against (#2231 r1). `null`
+ *  writes the pre-0051 statement, which is the deploy window (#2231 r2). */
 async function apply(
   h: SqliteD1,
   r: ReconcileReport,
   nowSec = NOW,
-  firstSeenBlock = 1_000,
+  lastSeenBlock: number | null = 1_000,
 ) {
-  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec, firstSeenBlock);
+  const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec, lastSeenBlock);
   if (writes.length > 0) await (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
 }
 
@@ -281,13 +282,45 @@ describe('the table, over the real migrated schema', () => {
   });
 
   it('treats an entry recorded before the block column as no evidence', async () => {
-    // `first_seen_block = 0` means "recorded before migration 0051". Read as a
-    // block it sits below every real loan, so arithmetic alone would release
-    // every held entry on the chain the moment the column landed.
+    // `last_seen_block = 0` means "recorded before migration 0051, or by a
+    // deployment that arrived before it". Read as a block it sits below every
+    // real loan, so arithmetic alone would release every held entry on the
+    // chain the moment the column landed.
     const h = createSqliteD1(ALL_MIGRATIONS);
-    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 0);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, null);
     seedLoanRow(h, 99, 'active', 5_000);
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
+  });
+
+  it('moves the boundary on every re-observation, so a live finding cannot release itself', async () => {
+    // #2231 r2 `4035186370`. If the boundary were frozen at the FIRST sighting,
+    // an entry still being re-observed as unsettled would carry a line from
+    // long ago — and a REPLACEMENT loan that is itself unsettled could start
+    // after it and so release the hold about itself. `last_seen_at` and
+    // `last_seen_block` move together for that reason; `first_seen_at`, which
+    // answers "how long has this been wrong", does not.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, 1_000);
+    // Re-observed later, with the chain further along.
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW + 600, 9_000);
+    // A loan starting after the FIRST sighting but before the latest one is
+    // not evidence of anything: the finding was still standing at 9_000.
+    seedLoanRow(h, 99, 'active', 5_000);
+    await releaseTerminalQuarantine(h.d1 as never, CHAIN);
+    expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
+    // ...and the age an operator reads is still the first sighting.
+    expect(quarantined(h)[0]).toMatchObject({ first_seen_at: NOW });
+  });
+
+  it('still records marks when the deploy arrives before migration 0051', async () => {
+    // The canonical rollout deploys the Worker before applying migrations, so
+    // this code can run while 0049's table exists and 0051's column does not.
+    // Naming a missing column would fail the whole batch — and that batch is
+    // what STARTS the withholding, so the loans it protects would be left
+    // exposed while reminders could go out (#2231 r2 `4035186343`).
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [99], unresolvable: [99] }), NOW, null);
     expect(quarantined(h).map((r) => r.loan_id)).toEqual([99]);
   });
 

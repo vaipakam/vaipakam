@@ -30,8 +30,22 @@ platform cannot read a timestamp from the network while recording a loan, it
 substitutes its own clock — so a replayed original loan can carry a time later
 than the finding about it, and a decision made on times would have released a
 hold because a read had failed. A position's place in the sequence comes from
-the record itself and is never substituted. Where that sequence restarts, on a
-test network reset, the rule simply does not apply and the entry stays held.
+the record itself and is never substituted.
+
+The point it is compared against is the last time the platform confirmed the
+entry was still unresolved, not the first time it noticed. An entry nobody
+re-examines — the case this fixes — keeps its last point, and the rule fires.
+An entry still being found unresolved keeps moving its point forward, so a
+replacement that is itself unresolved cannot release the hold about itself.
+
+One case is **not** fixed, and it is worth being plain about because the first
+version of this note implied otherwise. Where a test network's block height
+restarts, a replacement loan can sit below the recorded point, so the rule does
+not fire and the entry is kept — and a kept entry withholds reminders from
+whatever loan now bears that number. That is not clutter; it is the same
+silent suppression this change set out to remove, in the one situation the
+comparison cannot see. Distinguishing a restarted sequence from an ordinary one
+needs an identity for the deployment that the platform does not record today.
 
 The clutter is deliberately left. Removing it would mean either releasing
 entries merely because their record is absent — which drops exactly the cases
