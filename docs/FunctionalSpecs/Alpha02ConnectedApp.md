@@ -287,10 +287,12 @@ The app uses chain reads and indexed reads for different jobs.
   never refreshed by a later sighting of the same problem.
 - A record is released as soon as a turn settles it, by any route: corrected,
   found genuinely running, or ended by someone else. It is ALSO released by a
-  standing sweep over every held record whose loan is no longer running, so a
+  standing sweep over held records whose loan is no longer running, so a
   release missed at close-out — for any reason, including one nobody
   anticipated — is picked up later rather than leaving the record held for
-  good. A loan that has ended can generate no reminders, so holding its record
+  good. The sweep runs on every turn and clears a limited number each time,
+  so "picked up later" can mean several turns where many are waiting; it is
+  not a promise that one turn catches them all. A loan that has ended can generate no reminders, so holding its record
   withholds nothing and only buries the records that do need a person. Holding a record back
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
@@ -451,15 +453,21 @@ The app uses chain reads and indexed reads for different jobs.
   rest, returning for each the value its safe removal needs rather than the
   identifier alone. A listing that simply stopped would
   be the silent truncation everything here is written to avoid.
-- **Every route that releases a held record announces it, and there is only
-  one way to write such a release.** The platform releases records from more
-  than one place — a periodic sweep, a run that settles the position, and the
-  close-out that ends it — and disclosure was added to those one at a time as
-  each was noticed, which is precisely how one of them stayed silent. A
-  release of a SINGLE record is now expressible only through one shared form
-  that always carries back what it removed, so no route has to remember to ask
-  for that, and a new route cannot be added without deciding what it
-  discloses.
+- **Every route that releases a LONG-HELD record announces it, and there is
+  only one way to write a single-record release.** The qualifier is not
+  hedging: a record released before it was ever reported is deliberately NOT
+  announced, because that is the ordinary case this memory is built around — a
+  reading failed, the record was held for a turn, the next turn settled it —
+  and a line for each would bury the ones that need a person. What must never
+  be silent is the release of a record a person has been reading about.
+
+  The platform releases records from more than one place — a periodic sweep, a
+  run that settles the position, and the close-out that ends it — and
+  disclosure was added to those one at a time as each was noticed, which is
+  precisely how one of them stayed silent. A release of a SINGLE record is now
+  expressible only through one shared form that always carries back what it
+  removed, so no route has to remember to ask for that, and a new route cannot
+  be added without deciding what it discloses.
 
   The periodic sweep is the exception, and naming it is the point. It removes
   a batch in one instruction, so it cannot use a per-record form and a check

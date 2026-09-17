@@ -37,13 +37,15 @@ strength of a read that failed, which is precisely what the memory exists to
 prevent.
 
 So the platform does not guess. The report a person reads now names, for every
-long-held entry, what its number points at today: no stored loan at all, or a
+long-held entry IT DESCRIBES, what its number points at today: no stored loan at all, or a
 stored loan in a given state that began at a given point. That description is
 explicitly labelled as **stored and unverified** — the same record that proved
 unsound to act on is not then presented as settled fact — and held numbers are
 listed even when there are more than the report describes in full, up to a
 stated limit, because an entry left out entirely would be withholding reminders
-with nothing anywhere naming it.
+with nothing anywhere naming it. Those listed-but-undescribed numbers get no
+such lookup, and the report says so in terms: being named is not being
+examined, and nothing above one of them says what it points at now.
 
 Someone reading it can see whether the entry is still about the loan it was
 made for, and clear it if not. That is a deliberate act, spelled out in the
@@ -100,8 +102,9 @@ named at most a set number of entries — but only after asking the database for
 every single one and holding them all in memory, so the *appearance* of a limit
 sat on top of work that still grew without one. A limit that only shortens the
 message is not a limit; it hides the cost rather than removing it. The entries
-are now read back under a limit the database itself applies, while the count
-stays exact, and the roster is described for what it is: what the sweep was
+are now read back under a limit the database itself applies; the count is
+exact where the store reports one, and where it does not the report says so
+rather than supplying a number. The roster is described for what it is: what the sweep was
 about to release, read immediately beforehand, rather than a claim about the
 removal itself.
 
