@@ -1,26 +1,28 @@
 # Release Notes — 2026-09-17
 
-Three entries. The first opens the transport epochs, the last part of the
-#1566 programme before the role carry-forward, and what it adds is
-deliberately inert where it counts: no ledger arithmetic moves, and no
-classification comes out differently than it would have yesterday. It is
-not inert in the sense of adding nothing — anyone may now ask the sending
-chain to attest a delivery's composition, pay the quoted transport fee for
-it, and have the receiving chain record the figures. That supplies the one
-thing the previous release left missing: a mirror holding value whose
-composition it was never told can now be told, by the chain that sent it,
-what that chain recorded when it sent. The figures are kept and not yet
-consulted, because the step that would consult them does not exist until
-the next change; and what a classification may treat as evidence is worked
-out from them when it is asked rather than frozen in advance, since asking
-the source and releasing the value are both open to anyone and can happen
-in either order. Alongside it, every arrival now commits to the days it
-names, so the ledger that comes next can check a re-supplied list against
-the chain's own record rather than against an event.
+Three entries, in the order the file assembles them: the keeper's arming
+flags, the transport epochs, the reminder hold. The transport epochs are
+the substantial one — the last part of the #1566 programme before the role
+carry-forward — and what that change adds is deliberately inert where it
+counts: no ledger arithmetic moves, and no classification comes out
+differently than it would have yesterday. It is not inert in the sense of
+adding nothing — anyone may now ask the sending chain to attest a
+delivery's composition, pay the quoted transport fee for it, and have the
+receiving chain record the figures. That supplies the one thing the
+previous release left missing: a mirror holding value whose composition it
+was never told can now be told, by the chain that sent it, what that chain
+recorded when it sent. The figures are kept and not yet consulted, because
+the step that would consult them does not exist until the next change; and
+what a classification may treat as evidence is worked out from them when it
+is asked rather than frozen in advance, since asking the source and
+releasing the value are both open to anyone and can happen in either order.
+Alongside it, every arrival now commits to the days it names, so the ledger
+that comes next can check a re-supplied list against the chain's own record
+rather than against an event.
 
-The other two are corrections where a record and the thing it described had
-drifted apart. A Worker's configuration file called three arming flags
-plain settings when they are secrets, which matters to anyone
+The two corrections are both cases where a record and the thing it
+described had drifted apart. A Worker's configuration file called three
+arming flags plain settings when they are secrets, which matters to anyone
 reconstructing what a deployment actually holds. Two of the three were
 found unset at the last live check, over a month before this correction;
 whether the deployed keeper is armed today is not something this change
