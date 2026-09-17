@@ -24,10 +24,18 @@ marketplace.
 
 Two details are worth stating because they are what made hand-counting
 unreliable in the first place. Several database statements sent together travel
-as a single request, not one each, so they are counted once. And a statement
-that is prepared but never sent on its own costs nothing. A count that got
-either of those wrong would be a confident number that was still incorrect,
-which is what was there before.
+as a single request, not one each. And a statement that is prepared but never
+sent on its own costs nothing. A count that got either of those wrong would be
+a confident number that was still incorrect, which is what was there before.
+
+Those statements are also why there are now **two** counts rather than one.
+The platform sets two separate allowances — how many requests a run may send,
+and how many database statements it may submit — and they are the same size on
+the tier this is built for. A batch sent together is one request but many
+statements, so one number would have had to be wrong about one of the two: it
+would have reported a comfortable figure for a run about to be stopped for its
+statement count. Both are counted and both are reported, and a run that passes
+either one says so.
 
 A third detail was found by review of the first attempt, and it is the reason
 this note no longer claims more than it should. The counting originally wrapped

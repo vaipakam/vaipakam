@@ -393,11 +393,18 @@ The app uses chain reads and indexed reads for different jobs.
   names which run it was, so a stalled network is announced rather than
   inferred later from records that stopped changing.
 - **A statement prepared but never sent costs nothing, and statements sent
-  together cost once.** This is stated because getting it wrong in either
-  direction produces a confident figure that is still incorrect — counting
-  work that never left the run, or counting one departure many times and
-  refusing work that would in fact have fitted. What is counted is what leaves
-  the run.
+  together cost one departure but not one allowance.** This is stated because
+  getting it wrong in either direction produces a confident figure that is
+  still incorrect — counting work that never left the run, or counting one
+  departure many times and refusing work that would in fact have fitted.
+- **There are TWO allowances, and a run is held to both.** One bounds the
+  requests a run may send; the other bounds the database statements it may
+  submit. A batch of statements sent together is a single request but many
+  statements, so the two allowances legitimately disagree about it, and a
+  single figure would have to be wrong about one of them. Both are counted,
+  both are reported, and a run that has passed either says so — a report that
+  answered for requests alone would read as comfortable on a run about to be
+  stopped for its statement count.
 - **No part of a run may be exempt from the count by having been overlooked.**
   Whether a request is counted follows from the means it travels by, not from
   a list of the places that make requests. A list has to be revised whenever a

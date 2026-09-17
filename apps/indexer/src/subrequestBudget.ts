@@ -77,30 +77,62 @@
 import { createPublicClient, http } from 'viem';
 
 /**
- * What the invocation has left. One object, threaded, mutated in place — so no
- * caller has to remember to report its spending upward.
+ * One ceiling, and what is left of it.
  *
- * It carries its own `limit` (#2227 r1 `4033546291`): a budget created with a
- * limit and a `spent()` that assumed the default reported a figure neither
+ * Each meter carries its own `limit` (#2227 r1 `4033546291`): a budget created
+ * with a limit and a reader that assumed the default reported a figure neither
  * true nor obviously false — 45 spent on a 5-limit budget that had issued 5.
- * One object knowing its own ceiling makes that unsayable.
+ * A meter that knows its own ceiling makes that unsayable.
  */
-export interface TickBudget {
-  remaining: number;
+export interface Meter {
+  /** What this counts, for the log line and the warning. */
+  readonly what: string;
   readonly limit: number;
-  /** For the log line, so an operator knows WHICH invocation overspent. */
-  readonly label: string;
-  /** Internal — so the ceiling is announced exactly once, at the crossing. */
-  ceilingAnnounced: boolean;
+  remaining: number;
+  /** Internal — so a ceiling is announced exactly once, at the crossing. */
+  announced: boolean;
 }
 
 /**
- * The tier ceiling this lane sizes against.
+ * What the invocation has left. One object, threaded, mutated in place — so no
+ * caller has to remember to report its spending upward.
  *
- * It is the REAL limit, not a self-imposed one, which is why nothing here may
- * quietly exceed it.
+ * TWO METERS, because the platform enforces two ceilings and one number cannot
+ * be honest about both (#2227 r4 `4034041832`). A `batch()` of nine statements
+ * is ONE subrequest and NINE D1 queries. Counting it as one under-reports the
+ * query ceiling — which on the free tier is also 50, so a lane batching freely
+ * can be killed with the counter reading comfortable. Counting it as nine
+ * over-reports the subrequest ceiling and would refuse work that fits. Both
+ * are true at once, so both are kept, and neither is asked to stand in for the
+ * other.
+ */
+export interface TickBudget {
+  /** For the log line, so an operator knows WHICH invocation overspent. */
+  readonly label: string;
+  /** Requests that leave the Worker: `fetch`, and every binding call. */
+  readonly subrequests: Meter;
+  /** SQL statements submitted to D1, batched or not. */
+  readonly d1Queries: Meter;
+}
+
+/**
+ * The tier ceilings this lane sizes against — both REAL limits, not
+ * self-imposed ones, which is why nothing here may quietly exceed either.
+ *
+ * Cloudflare documents "Subrequests per invocation: 50" (Free) and counts "any
+ * request a Worker makes using the Fetch API or to Cloudflare services like
+ * R2, KV, or D1", with "each subrequest in a redirect chain" counting too. D1
+ * separately documents "Queries per Worker invocation: 1000 (Workers Paid) /
+ * 50 (Free)" and says the per-query limits "apply to each individual statement
+ * contained within a batch statement".
+ *
+ * Sized to the FREE tier deliberately. A paid deployment has more room than
+ * this counter believes, which costs a tick some work it could have done;
+ * believing the paid figure on a free deployment freezes a chain. The
+ * direction of the error is chosen, not inherited.
  */
 export const MAX_SUBREQUESTS_PER_INVOCATION = 50;
+export const MAX_D1_QUERIES_PER_INVOCATION = 50;
 
 /**
  * Held back so a pass can always record where it got to.
@@ -115,8 +147,18 @@ export const CURSOR_WRITE_RESERVE = 1;
 export function createBudget(
   limit: number = MAX_SUBREQUESTS_PER_INVOCATION,
   label = 'invocation',
+  queryLimit: number = MAX_D1_QUERIES_PER_INVOCATION,
 ): TickBudget {
-  return { remaining: limit, limit, label, ceilingAnnounced: false };
+  return {
+    label,
+    subrequests: { what: 'subrequest', limit, remaining: limit, announced: false },
+    d1Queries: {
+      what: 'D1 query',
+      limit: queryLimit,
+      remaining: queryLimit,
+      announced: false,
+    },
+  };
 }
 
 /**
@@ -129,24 +171,43 @@ export function createBudget(
  * `reserve` is what must still be affordable AFTER the work — the cursor write,
  * normally — so the caller expresses "I need n, and I must still be able to
  * record progress" in one question rather than two that can drift apart.
+ *
+ * SUBREQUESTS, because that is the ceiling a unit of work is sized in here.
+ * A caller whose work is D1-statement-heavy asks about that meter directly.
  */
 export function canAfford(
   budget: TickBudget,
   cost: number,
   reserve: number = CURSOR_WRITE_RESERVE,
 ): boolean {
-  return budget.remaining >= cost + reserve;
+  return budget.subrequests.remaining >= cost + reserve;
 }
 
 /**
- * Spend, and say whether it was affordable.
+ * Spend a subrequest, and say whether it was affordable.
  *
  * DELIBERATELY NOT A THROW. This lane's callers are a scan, a reconciliation
  * pass and a reminder sweep, and an exception in any of them unwinds past the
  * cursor write — the frozen chain again, arrived at by the mechanism meant to
  * prevent it. The counter goes negative, the fact is reported, and the caller
  * decides.
+ */
+export function spend(budget: TickBudget, cost = 1): boolean {
+  return draw(budget, budget.subrequests, cost);
+}
+
+/**
+ * Spend D1 QUERIES — the second ceiling, which a `batch()` draws on by its
+ * length while costing only one subrequest.
  *
+ * Separate from `spend` rather than folded into it because the ceilings are
+ * separate. A single number would have to pick one to be wrong about.
+ */
+export function spendD1Queries(budget: TickBudget, count: number): boolean {
+  return draw(budget, budget.d1Queries, count);
+}
+
+/**
  * THE CEILING IS ANNOUNCED HERE, AT THE CROSSING, not at the end of a pass
  * (#2227 r1 `4033546277`). A check that ran after the work could not fire in
  * the case that matters: the platform kills the invocation at the request that
@@ -154,30 +215,35 @@ export function canAfford(
  * BEFORE the offending request is issued, which is the last moment anything in
  * this Worker is guaranteed to execute.
  */
-export function spend(budget: TickBudget, cost = 1): boolean {
-  budget.remaining -= cost;
-  if (budget.remaining < 0 && !budget.ceilingAnnounced) {
-    budget.ceilingAnnounced = true;
+function draw(budget: TickBudget, meter: Meter, cost: number): boolean {
+  meter.remaining -= cost;
+  if (meter.remaining < 0 && !meter.announced) {
+    meter.announced = true;
     // eslint-disable-next-line no-console
     console.warn(
-      `[subrequests] ${budget.label}: OVER the ${budget.limit}-subrequest ` +
-        `ceiling — issuing request ${spent(budget)}. The platform may kill ` +
-        `this invocation here, in which case the cursor write does not land ` +
-        `and this range is re-read next tick. This is #2221: report it with ` +
-        `the label and the tick.`,
+      `[subrequests] ${budget.label}: OVER the ${meter.limit}-${meter.what} ` +
+        `ceiling — issuing ${meter.what} ${meter.limit - meter.remaining}. ` +
+        `The platform may kill this invocation here, in which case the cursor ` +
+        `write does not land and this range is re-read next tick. This is ` +
+        `#2221: report it with the label and the tick.`,
     );
   }
-  return budget.remaining >= 0;
+  return meter.remaining >= 0;
 }
 
-/** Has this invocation already exceeded the real ceiling? */
+/** Has this invocation exceeded EITHER ceiling? */
 export function overspent(budget: TickBudget): boolean {
-  return budget.remaining < 0;
+  return budget.subrequests.remaining < 0 || budget.d1Queries.remaining < 0;
 }
 
-/** How many requests this invocation has issued so far. */
+/** How many subrequests this invocation has issued so far. */
 export function spent(budget: TickBudget): number {
-  return budget.limit - budget.remaining;
+  return budget.subrequests.limit - budget.subrequests.remaining;
+}
+
+/** How many D1 statements this invocation has submitted so far. */
+export function spentD1Queries(budget: TickBudget): number {
+  return budget.d1Queries.limit - budget.d1Queries.remaining;
 }
 
 /**
@@ -188,6 +254,9 @@ export function spent(budget: TickBudget): number {
  * and in which fields they carried, which is the small version of the problem
  * this module exists for. `at` names the exit, because the same counter is
  * legitimately read at more than one moment on one invocation.
+ *
+ * BOTH meters are in the line. A figure that reported subrequests alone would
+ * read as comfortable on an invocation about to be killed for its query count.
  *
  * The key is `invocationSpent`, not `spent`: on the cron path several passes
  * share one counter, so a figure printed beside a chain id is the TICK's total
@@ -201,7 +270,9 @@ export function reportSpend(budget: TickBudget, at: string): void {
       scope: budget.label,
       at,
       invocationSpent: spent(budget),
-      limit: budget.limit,
+      limit: budget.subrequests.limit,
+      d1QueriesSpent: spentD1Queries(budget),
+      d1QueryLimit: budget.d1Queries.limit,
       over: overspent(budget),
     })}`,
   );
@@ -264,7 +335,9 @@ function wrapStatement<T extends object>(stmt: T, budget: TickBudget): T {
 
       if (TERMINALS.includes(prop as Terminal)) {
         return (...args: unknown[]) => {
+          // One statement, sent on its own: one subrequest AND one query.
           spend(budget);
+          spendD1Queries(budget, 1);
           return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
       }
@@ -297,11 +370,29 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
           );
       }
 
-      // ONE request for the whole array. Charging per statement would make the
-      // counter overstate a batch badly enough to refuse work that fits.
-      if (prop === 'batch' || prop === 'exec') {
+      // ONE subrequest for the whole array — it is one round trip — and as
+      // many D1 QUERIES as it carries statements. Cloudflare's own limits say
+      // both: a batch is one request, and the per-query limits "apply to each
+      // individual statement contained within a batch statement" (#2227 r4
+      // `4034041832`). Charging one of each would let a batching lane reach
+      // the 50-query ceiling with the counter reading comfortable; charging
+      // the length to BOTH would refuse work that fits.
+      if (prop === 'batch') {
         return (...args: unknown[]) => {
           spend(budget);
+          const statements = args[0];
+          spendD1Queries(budget, Array.isArray(statements) ? statements.length : 1);
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      }
+
+      // `exec` takes one or more statements separated by newlines, so its
+      // query cost is the number of non-empty lines. Counted from what was
+      // actually submitted rather than assumed to be one.
+      if (prop === 'exec') {
+        return (...args: unknown[]) => {
+          spend(budget);
+          spendD1Queries(budget, countExecStatements(args[0]));
           return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
       }
@@ -309,6 +400,23 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
       return (value as (...a: unknown[]) => unknown).bind(target);
     },
   }) as T;
+}
+
+/**
+ * How many statements a `.exec()` call submits.
+ *
+ * D1 splits the string on newlines, so that is what is counted — blank lines
+ * excluded. An unrecognisable argument counts as one rather than zero: a cost
+ * this cannot read is still a cost, and guessing low is the direction that
+ * freezes a chain.
+ */
+function countExecStatements(sql: unknown): number {
+  if (typeof sql !== 'string') return 1;
+  const statements = sql
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return Math.max(1, statements.length);
 }
 
 /**
@@ -382,13 +490,38 @@ export function meterFetch(
       // eslint-disable-next-line no-console
       console.warn(
         `[subrequests] ${budget.label}: ${response.status} redirect NOT ` +
-          `followed, to ${response.headers.get('location') ?? '(no Location)'}` +
-          `. This lane does not chase redirects — the caller sees the 3xx. If ` +
+          `followed, to ${safeDestination(response.headers.get('location'))}. ` +
+          `This lane does not chase redirects — the caller sees the 3xx. If ` +
           `this is a provider that has moved, update the configured URL.`,
       );
     }
     return response;
   }) as typeof fetch;
+}
+
+/**
+ * A redirect destination an operator can act on, WITHOUT its credentials.
+ *
+ * The `RPC_*` secrets carry billable API keys, normally in the path (#2227 r4
+ * `4034041828`), and a `Location` can echo them straight back — so the origin
+ * is printed and everything after it is not. That is enough to act on: it
+ * names the host the provider is sending traffic to, which is the fact that
+ * decides whether the configured URL should change.
+ *
+ * The same rule and the same reason are already recorded in `settledHead.ts`,
+ * where viem's error text was refused for putting a request URL in a log.
+ */
+function safeDestination(location: string | null): string {
+  if (!location) return '(no Location)';
+  try {
+    const url = new URL(location);
+    // Never the userinfo, never the path, never the query.
+    return `${url.protocol}//${url.host}/… (path and query withheld)`;
+  } catch {
+    // A relative Location resolves against a URL that itself carries the key,
+    // so not even the fragment of it that was sent back is printed.
+    return '(a relative Location, withheld)';
+  }
 }
 
 /** Redirects a `fetch` would have followed. 304 is deliberately absent — it is

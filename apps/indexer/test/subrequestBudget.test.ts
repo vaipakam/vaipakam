@@ -6,11 +6,14 @@ import {
   canAfford,
   createBudget,
   meterD1,
+  MAX_D1_QUERIES_PER_INVOCATION,
   meterEnv,
   meterFetch,
   overspent,
   spend,
+  spendD1Queries,
   spent,
+  spentD1Queries,
 } from '../src/subrequestBudget';
 
 /**
@@ -63,7 +66,9 @@ function fakeDb() {
 
 describe('subrequest budget', () => {
   it('starts at the tier ceiling', () => {
-    expect(createBudget().remaining).toBe(MAX_SUBREQUESTS_PER_INVOCATION);
+    expect(createBudget().subrequests.remaining).toBe(
+      MAX_SUBREQUESTS_PER_INVOCATION,
+    );
     expect(MAX_SUBREQUESTS_PER_INVOCATION).toBe(50);
   });
 
@@ -72,7 +77,7 @@ describe('subrequest budget', () => {
     spend(budget);
     spend(budget);
     expect(spent(budget)).toBe(2);
-    expect(budget.remaining).toBe(48);
+    expect(budget.subrequests.remaining).toBe(48);
   });
 
   it('does NOT throw when exhausted — it reports', () => {
@@ -92,9 +97,9 @@ describe('subrequest budget', () => {
     const budget = createBudget(5);
     spend(budget);
     spend(budget);
-    expect(budget.limit).toBe(5);
+    expect(budget.subrequests.limit).toBe(5);
     expect(spent(budget)).toBe(2);
-    expect(budget.remaining).toBe(3);
+    expect(budget.subrequests.remaining).toBe(3);
   });
 
   it('announces the ceiling AT the crossing, once, naming the scope', () => {
@@ -144,10 +149,10 @@ describe('meterD1 cost model', () => {
     const metered = meterD1(db, budget);
 
     metered.prepare('SELECT 1');
-    expect(budget.remaining).toBe(50); // built locally, sent nothing
+    expect(budget.subrequests.remaining).toBe(50); // built locally, sent nothing
 
     void metered.prepare('SELECT 2').run!();
-    expect(budget.remaining).toBe(49);
+    expect(budget.subrequests.remaining).toBe(49);
     expect(calls).toContain('run:SELECT 2');
   });
 
@@ -181,9 +186,13 @@ describe('meterD1 cost model', () => {
     expect(spent(budget)).toBe(0);
   });
 
-  it('charges a batch ONCE, whatever its length', () => {
-    // The whole array travels as one subrequest. Charging per statement would
-    // make the counter refuse work that actually fits.
+  it('charges a batch ONE subrequest and ONE QUERY PER STATEMENT', () => {
+    // #2227 r4 `4034041832` — both ceilings are real and they disagree about
+    // a batch. It is one round trip, so one subrequest; Cloudflare's D1 limits
+    // apply per statement inside a batch, so nine queries. Charging one of
+    // each would let a batching lane reach the 50-query ceiling with the
+    // counter reading comfortable; charging nine to both would refuse work
+    // that fits.
     const { db } = fakeDb();
     const budget = createBudget();
     const metered = meterD1(db, budget);
@@ -192,6 +201,24 @@ describe('meterD1 cost model', () => {
     );
     void metered.batch!(statements);
     expect(spent(budget)).toBe(1);
+    expect(spentD1Queries(budget)).toBe(9);
+  });
+
+  it('charges a single statement one of each', () => {
+    const { db } = fakeDb();
+    const budget = createBudget();
+    void meterD1(db, budget).prepare('SELECT ?').bind!(1).run!();
+    expect(spent(budget)).toBe(1);
+    expect(spentD1Queries(budget)).toBe(1);
+  });
+
+  it('charges exec() by the statements it submits', () => {
+    // D1 splits `exec` on newlines, so a three-line call is three queries.
+    const { db } = fakeDb();
+    const budget = createBudget();
+    void meterD1(db, budget).exec!('DELETE FROM a;\nDELETE FROM b;\n\nDELETE FROM c;');
+    expect(spent(budget)).toBe(1);
+    expect(spentD1Queries(budget)).toBe(3);
   });
 
   it('charges exec() one request', () => {
@@ -199,6 +226,7 @@ describe('meterD1 cost model', () => {
     const budget = createBudget();
     void meterD1(db, budget).exec!('PRAGMA foo');
     expect(spent(budget)).toBe(1);
+    expect(spentD1Queries(budget)).toBe(1);
   });
 
   it('counts a call site nobody updated — the point of the wrapper', async () => {
@@ -228,6 +256,44 @@ describe('meterD1 cost model', () => {
     await expect(metered.prepare('SELECT 1').first!()).resolves.toEqual({
       sql: 'SELECT 1',
     });
+  });
+});
+
+describe('the D1 query meter — the second ceiling', () => {
+  it('starts at the documented free-tier ceiling', () => {
+    expect(createBudget().d1Queries.remaining).toBe(
+      MAX_D1_QUERIES_PER_INVOCATION,
+    );
+    expect(MAX_D1_QUERIES_PER_INVOCATION).toBe(50);
+  });
+
+  it('is over when EITHER ceiling is crossed', () => {
+    // A figure that answered for subrequests alone would read as comfortable
+    // on an invocation about to be killed for its query count.
+    const budget = createBudget(50, 'test', 2);
+    spendD1Queries(budget, 3);
+    expect(spent(budget)).toBe(0);
+    expect(overspent(budget)).toBe(true);
+  });
+
+  it('announces the query ceiling separately, naming what it counts', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const budget = createBudget(50, 'cron tick', 2);
+      spendD1Queries(budget, 3);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('D1 query');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not charge fetch against it', () => {
+    const budget = createBudget();
+    void meterFetch(budget, (async () => new Response('ok')) as typeof fetch)(
+      'https://rpc.test',
+    );
+    expect(spentD1Queries(budget)).toBe(0);
   });
 });
 
@@ -287,7 +353,7 @@ describe('meterFetch — the egress rule', () => {
         seen.push(String(url));
         return new Response(null, {
           status: 302,
-          headers: { location: 'https://elsewhere.test/moved' },
+          headers: { location: 'https://elsewhere.test/moved?key=SECRET' },
         });
       }) as unknown as typeof fetch;
 
@@ -297,9 +363,12 @@ describe('meterFetch — the egress rule', () => {
       expect(spent(budget)).toBe(1);
       // Loud, and names where it was being sent, so the configured URL can be
       // fixed rather than the failure being opaque.
-      expect(String(warn.mock.calls[0]?.[0])).toContain(
-        'https://elsewhere.test/moved',
-      );
+      // The HOST, so an operator can act — and nothing after it, because a
+      // Location can echo a credential-bearing path straight back.
+      const warned = String(warn.mock.calls[0]?.[0]);
+      expect(warned).toContain('elsewhere.test');
+      expect(warned).not.toContain('/moved');
+      expect(warned).toContain('path and query withheld');
     } finally {
       warn.mockRestore();
     }
