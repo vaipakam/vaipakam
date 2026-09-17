@@ -235,32 +235,59 @@ sections below are about.
 Update the docs that describe the live binding in the same PR — the same
 check scans `wrangler d1` commands in scripts and runbooks.
 
-### Step 2 — deploy the one that does not auto-deploy
+### Step 2 — deploy the ones that do not auto-deploy
 
-`apps/indexer`, `apps/keeper` **and `apps/agent`** deploy automatically on
-merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm` does not.**
+`apps/indexer`, `apps/keeper`, `apps/agent` **and `apps/www`** deploy
+automatically on merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm`
+does not, and `apps/app` is operator-deployed by design.**
 
-**Corrected 2026-09-17 (#2237): this step used to name `apps/agent` as not
-auto-deploying**, on the evidence that no `Workers Builds: vaipakam-agent`
-check appeared on any recent main commit. That was true when written and is
-not now. The check appears on the merge commits that touch it, and the live
-Worker matches — `vaipakam-agent`'s deployment at `2026-09-17T08:55:34Z` sits
-five seconds before its build check on `819623903` completed.
+**Corrected twice on 2026-09-17, in opposite directions**, which is why the
+test below matters more than the list:
 
-The test the old wording named is the right one; keep it and re-run it rather
-than trusting either answer:
+- **#2237** — this step named `apps/agent` as not auto-deploying. It does.
+- **#2242** — the corrected list then omitted `apps/www`, which also does.
+
+**Do not test this by looking for a build check.** That is what #2237's
+correction used, and measuring every Worker afterwards showed it misleads in
+both directions:
+
+| Commit | Touched | Build checks that ran |
+| --- | --- | --- |
+| `9623117ac` | `CLAUDE.md` only | **all five** |
+| `7a3545b58` | `docs/` only | **none** |
+| `51c21a4b6` | `apps/indexer`, `docs/` | indexer only |
+
+A root-level file change triggers every Worker's build; a `docs/`-only change
+triggers none. So "a check appeared" can be true of a Worker the commit never
+touched, and "no check appeared" can be true of one that is on the automatic
+path. Worse, a **green check does not imply a deployment** — `apps/app`'s build
+reported success on `06d657b9f` (2026-09-13) and that Worker's latest
+deployment is still `2026-09-10T00:38:56Z` (#2241).
+
+**Test the deployment timestamp instead**, which is the thing you actually
+need to know:
 
 ```bash
-# [unrun] — the EQUIVALENT REST call produced the evidence on 2026-09-17, but
-# this exact `gh api` form was not the one executed, and the convention above
-# means exactly what it says. Does a build check appear on a main commit that
-# touched the Worker?
-gh api repos/vaipakam/vaipakam/commits/<sha>/check-runs --paginate \
-  --jq '.check_runs[] | select(.name | test("Workers Builds")) | .name'
+# [unrun] — this exact form was not executed; the equivalent
+# `wrangler deployments list` per Worker produced the table below on
+# 2026-09-17. Compare each Worker's latest deployment against the newest
+# commit touching its tree.
+( cd <worker-dir> && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
+git log -1 --date=iso-strict-local --format='%h %ad' origin/main -- <worker-dir>
 ```
 
-On the four most recent main commits touching `ops/offchain-data-warm`, no
-`vaipakam-offchain-data-warm` build appears, so it still needs a hand:
+Measured on 2026-09-17, every automatic Worker deployed **63–151 seconds**
+after the commit that touched it. A Worker more than a few minutes behind its
+newest commit is not on the automatic path, whatever any list says — including
+this one.
+
+As of that measurement, `ops/offchain-data-warm` was **28 days stale** (newest
+commit `d5d3b3083` 2026-08-31, last deployment 2026-08-03) and `apps/app`
+**4 days stale** (#2242). `ops/mesh-watcher` does not exist on the account at
+all, which is the expected pre-arm state — GovernanceRunbook Step 3f deploys
+it as part of the arming ceremony — and is not a drift to act on here.
+
+Both hand-deployed Workers need a hand in the same sitting as the merge.
 
 ```bash
 # [unrun here] — verified form, from OffChainRestore.md §7b.
@@ -269,7 +296,17 @@ On the four most recent main commits touching `ops/offchain-data-warm`, no
 ( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
-Do this in the same sitting as the merge.
+```bash
+# [unrun] — apps/app is operator-deployed because its build env lives in a
+# gitignored `apps/app/.env.local`, which a build from a git clone cannot
+# see. `run deploy` carries `REQUIRE_INDEXER_ORIGIN=1`, so a missing
+# VITE_INDEXER_ORIGIN fails the build rather than shipping a broken origin.
+pnpm --filter @vaipakam/app run deploy
+```
+
+**Neither is optional here**, and the staleness figures above are the reason
+to check rather than assume: both were behind on the day this step was
+written, so "somebody will have deployed it" is not a safe default for either.
 
 ### A binding change puts the deployment set in a MIXED STATE — this is the rule everything else follows from
 
