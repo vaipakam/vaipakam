@@ -380,6 +380,44 @@ The app uses chain reads and indexed reads for different jobs.
   stay inside its allowance and re-read the same prefix on every later run,
   which is the starvation the remembered position exists to prevent — so the
   two requirements are held together rather than traded off.
+- **The place it saves is a DEADLINE, not a position in a list.** The run
+  resumes at the first record whose deadline is at or after the one it
+  recorded. This is what stops the saved place drifting: the list of records
+  awaiting a reminder is rebuilt each run, and the ones reminded last time are
+  no longer in it, so a remembered *position* points further along than it did
+  — past exactly as many of the nearest remaining deadlines as were handled.
+  A deadline does not move when other records are handled or leave. Where the
+  recorded place cannot be read at all, the run begins at the nearest
+  deadline.
+- **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
+  surface that describes a run beginning at the nearest deadline — because the
+  place was missing, unreadable, malformed, or deliberately cleared during a
+  restore — means exactly this and nothing more: *for that run*, beginning at
+  the front repeats work already done rather than stepping over anything,
+  which is the direction the failure must take. It is **not** a guarantee that
+  no reminder is missed. A run that always restarts at the same place makes no
+  progress through the list, so records further down are not reached and can
+  pass their deadlines; and a single restarted run whose front fills the whole
+  allowance leaves the tail for a later one that may arrive too late. The run
+  therefore announces each time that the place could not be read, rather than
+  falling back quietly on the strength of one run being safe.
+
+  This is written here once because it was written in five places and was
+  wrong in all of them, in four consecutive reviews: the per-run property was
+  stated as an absolute, corrected where it was flagged, and re-derived in the
+  next surface. Anything needing it points here instead of restating it.
+- **What "nearest first" does and does not promise, stated exactly.** Within
+  one pass through the list, records are taken nearest deadline first. Across
+  passes, the saved place means the run continues rather than restarting, so
+  every record gets its turn within one pass of the list rather than
+  competing forever with the nearest ones. It does NOT promise preemption: a
+  record that becomes known *after* the run has already passed its deadline in
+  the order waits for the next pass rather than jumping the queue. That
+  matters only where a pass takes longer than the notice period itself — a
+  backlog deep enough that the list cannot be worked through in the days the
+  reminder window covers — and in that state the service is under-provisioned
+  in a way no ordering can conceal. The honest statement is that this is
+  bounded by how long a pass takes, not that it cannot happen.
 - **The same allowance governs the runs that keep the records current, and
   those runs COUNT what they spend rather than estimating it.** The service
   that follows each network and writes down what happened draws on the same
@@ -593,22 +631,29 @@ The app uses chain reads and indexed reads for different jobs.
   examined again on every run. If enough such records sit ahead of a record
   that WOULD send, starting at the front every time hides it for good. So a
   run REMEMBERS where it stopped and the next one continues from there,
-  wrapping to the front when it reaches the end. Where it resumes is a
-  remembered position rather than anything derived from the time of day —
-  deliberately, because any schedule-derived position can fall into step with
-  another schedule and then never move: the platform's other rotations, or the
-  interval between runs itself. Which network a run begins with is remembered
-  for the same reason and in the same way. Where neither position can be
-  remembered, the run says so — starting from the front every time restores
-  the unfairness the memory exists to remove, and would otherwise do it
-  silently. A remembered position advances on the work
-  actually done, which nothing else can align with. When the window fits in
-  one run, which is the ordinary case, the nearest deadline is examined first
-  as before.
-- The remembered position is approximate, and the platform does not pretend
-  otherwise: the list it indexes into changes between runs as records enter
-  the window, are handled, or pass their deadline. It resumes near where it
-  stopped, which is all that forward progress requires.
+  wrapping to the front when it reaches the end. Where it resumes is
+  remembered rather than derived from the time of day — deliberately, because
+  anything schedule-derived can fall into step with another schedule and then
+  never move: the platform's other rotations, or the interval between runs
+  itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither can be remembered,
+  the run says so — starting from the front every time restores the unfairness
+  the memory exists to remove, and would otherwise do it silently. What is
+  remembered advances on the work actually done, which nothing else can align
+  with. When the window fits in one run, which is the ordinary case, the
+  nearest deadline is examined first as before.
+- **What is remembered is the DEADLINE it stopped at, not a position in the
+  list** — stated here as well as above because this bullet used to say the
+  opposite, and a specification that describes one behaviour in two
+  incompatible ways invites the defect back. It said the remembered place was
+  approximate, on the reasoning that the list it indexed into changes between
+  runs, and that resuming *near* where it stopped was all forward progress
+  required. Forward progress was not all that was required: the list is
+  rebuilt each run and the records handled last run are gone from it, so an
+  index resumed past exactly as many of the nearest remaining deadlines as
+  were handled — running the nearest-first rule backwards, which is the one
+  guarantee this part of the platform makes. A deadline is not approximate and
+  does not move when other records are handled or leave.
 - A run that stops early says which limit stopped it, where in the window it
   resumed, and separates what it found — examined, reminded, reached nobody,
   had nobody to tell, declined by the chain, and unreadable — so the categories
