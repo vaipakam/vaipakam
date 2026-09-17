@@ -19,8 +19,13 @@ what actually landed in the same proportion, so a short delivery shrinks both
 and never leaves one larger than the whole. It refuses what it cannot
 honestly attest: a packet whose wire already carried its split, a receipt
 whose delivery came from a chain other than the attesting one, a receipt that
-predates packet stamping, an empty split, and a second attestation. A refused
-message stays re-executable, so a repeat send is a retry, not a grief.
+predates packet stamping, an empty split, and a second attestation that
+disagrees with the first — the first record is the source's, and a differing
+one is a faulty source rather than a correction. A second attestation that
+says the same thing changes nothing and is accepted, because asking again is
+how a sender handles a delivery it cannot confirm, and the transport fee is
+paid whether or not the message lands. A refused message stays re-executable,
+so a repeat send is a retry, not a grief.
 
 Only a remittance that carried its own identity on the wire can be attested.
 The oldest wire shape carried none — no receipt exists for it, and the
