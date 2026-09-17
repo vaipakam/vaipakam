@@ -311,12 +311,19 @@ The app uses chain reads and indexed reads for different jobs.
   position currently bears that identifier, so where an identifier has come
   round again — after a network redeployment or a reset — a legitimate
   position goes without reminders. The report a person reads therefore names,
-  for every long-held record, what its identifier points at now: no stored
-  position at all, or a stored position in a given state that began at a given
-  point — **labelled as stored and unverified**, because that record may itself
-  be stale or left behind by a reorganisation, which is the same unsoundness
-  that stopped the platform acting on it. A person can see from that whether
-  the record is still about the position it was made for, and clear it if not.
+  for every long-held record it DESCRIBES, what its identifier points at now:
+  no stored position at all, or a stored position in a given state that began
+  at a given point — **labelled as stored and unverified**, because that record
+  may itself be stale or left behind by a reorganisation, which is the same
+  unsoundness that stopped the platform acting on it. A person can see from
+  that whether the record is still about the position it was made for, and
+  clear it if not.
+
+  Records past the described page are named but not described, and the report
+  says so in those terms: being named is not being examined, and nothing above
+  such an identifier says what it points at now. That is the check the
+  described records got and these did not — see the bounded-report point
+  below, which this one does not override.
   Clearing is a deliberate act, and names the exact record that was read, so
   that a re-observation arriving between the reading and the clearing is not
   silently discarded.
@@ -499,10 +506,11 @@ The app uses chain reads and indexed reads for different jobs.
   not have a verifiable identity for a position and so cannot tell the two
   apart; this is recorded as a known limit rather than presented as a settled
   outcome. **The disclosure is made where the assumption is exercised**: the
-  release names the records it removed — a count where the store reports one,
-  and a roster bounded by a stated limit and read immediately before the
-  removal, so it describes what was about to be released rather than claiming
-  to be the removal itself. Where the store reports no count, that is said:
+  release names the CANDIDATES it read immediately before removing — a roster
+  bounded by a stated limit — together with a count of what went, where the
+  store reports one. Not a list of what it removed: the removal re-checks its
+  condition, so fewer can go than were listed, and the platform then knows
+  only how many, never which, and not why. Where the store reports no count, that is said:
   the number that qualified a moment earlier is given as exactly that, and
   explicitly not as a count of what went, because any of them may have been
   cleared or become live in between. The removal also re-checks its condition,

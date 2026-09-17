@@ -536,6 +536,12 @@ describe('the table, over the real migrated schema', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
     expect(said).toContain('an unreported number of held entries');
+    // And the CLOSING sentence does not then declare a lifecycle outcome the
+    // pass cannot substantiate (#2231 r19 `4037922879`). With the count
+    // unknown, "it is no longer held" is an assertion about every id in the
+    // roster that the statement may not have released at all.
+    expect(said).not.toContain('it is no longer held');
+    expect(said).toContain('cannot tell you whether any PARTICULAR id was');
     // NOT "at least N" — the roster and the delete are separate statements,
     // so rows can be cleared or turn active in between and the roster is no
     // lower bound on what went (#2231 r16 `4037430426`).

@@ -704,7 +704,10 @@ export async function releaseTerminalQuarantine(
       `satisfies it just as well — releasing a finding about the position ` +
       `before it. Nothing here distinguishes the two; every column that might ` +
       `has proved unsound (#2222). If one of these ids was under ` +
-      `investigation, it is no longer held.`,
+      `investigation, check the count and the shortfall above before ` +
+      `concluding it is gone: where the count is unknown, or fewer went than ` +
+      `were listed, this pass cannot tell you whether any PARTICULAR id was ` +
+      `released — only how many were, when the store says.`,
   );
 }
 
