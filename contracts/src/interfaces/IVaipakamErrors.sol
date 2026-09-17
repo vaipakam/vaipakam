@@ -527,6 +527,13 @@ interface IVaipakamErrors {
     ///         caller has paid a transport fee for a message the destination
     ///         must reject.
     error RemitSplitAlreadyOnWire(uint256 remitId);
+    /// @notice A split attestation arrived from a chain that is not this
+    ///         deployment's canonical (Base) chain. Messenger authentication
+    ///         proves a message came from a configured peer, never that the
+    ///         peer is the right one for this kind: an extra or stale peer
+    ///         would otherwise be able to decide a packet's fresh/recycled
+    ///         split once the attested caps become usable.
+    error SplitAttestationNotFromBase(uint32 sourceChainId, uint32 baseChainId);
     /// @notice This reservation moved no value, so it dispatched no packet and
     ///         wrote no receipt on the destination — there is nothing for an
     ///         attestation to name.

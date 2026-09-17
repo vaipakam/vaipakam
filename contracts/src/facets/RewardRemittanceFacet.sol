@@ -827,8 +827,10 @@ contract RewardRemittanceFacet is
      *         before any fee is paid, for a reservation the destination could
      *         only reject: one whose own wire carried the split, and one that
      *         moved no value and so wrote no receipt
-     *         ({LibRewardCustody.requireAttestableReservation}, the same rule
-     *         the fee quote reads).
+     *         ({LibRewardCustody.requireAttestable}, which holds EVERY
+     *         precondition — the canonical role, the messenger, and the
+     *         reservation rules — and is the same call the fee quote makes,
+     *         so a quote can never price what a send would refuse).
      */
     function attestRemitSplit(
         uint256 remitId,
@@ -841,11 +843,8 @@ contract RewardRemittanceFacet is
         returns (bytes32 messageId)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.isCanonicalRewardChain) revert NotCanonicalRewardChain();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        LibRewardCustody.requireAttestableReservation(r, remitId);
+        (address messenger, LibVaipakam.RemitReservation storage r) =
+            LibRewardCustody.requireAttestable(s, remitId);
         messageId = IRewardMessenger(messenger).sendSplitAttestation{value: msg.value}(
             r.dstChainId, address(this), remitId, r.fresh, r.recycled, refundAddress
         );

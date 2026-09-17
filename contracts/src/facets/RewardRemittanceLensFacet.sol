@@ -551,12 +551,15 @@ contract RewardRemittanceLensFacet {
     /// @notice #1566 transport epochs PR 3a — quote the native transport fee
     ///         for {RewardRemittanceFacet.attestRemitSplit} on `remitId`: this
     ///         reservation's recorded split, toward the mirror it was sent to.
+    /// @dev    Refuses exactly what the send refuses, by calling the same
+    ///         rule rather than restating it (Codex #2224 r6) — including the
+    ///         canonical-role gate, which matters because a demoted
+    ///         deployment KEEPS its historical reservations and would
+    ///         otherwise price an operation it can no longer perform.
     function quoteSplitAttestationFee(uint256 remitId) external view returns (uint256 fee) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        LibRewardCustody.requireAttestableReservation(r, remitId);
+        (address messenger, LibVaipakam.RemitReservation storage r) =
+            LibRewardCustody.requireAttestable(s, remitId);
         fee = IRewardMessenger(messenger).quoteSendSplitAttestation(
             r.dstChainId, address(this), remitId, r.fresh, r.recycled
         );

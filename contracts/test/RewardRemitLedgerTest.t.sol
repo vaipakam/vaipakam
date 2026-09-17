@@ -185,6 +185,28 @@ contract RewardRemitLedgerTest is SetupTest {
         rlens.quoteSplitAttestationFee(77);
     }
 
+    /// Codex #2224 r6 — the fee quote refuses exactly what the send refuses,
+    /// because both read ONE rule. A demoted deployment keeps its historical
+    /// reservations, so without the shared role gate the quote would price an
+    /// operation the send already knows it cannot perform.
+    function test_AttestRemitSplit_QuoteRefusesWhateverTheSendRefuses() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        mutator.setRemitSplitOnWireRaw(1, false);
+        rewardMessenger.setQuoteNative(0.003 ether);
+        assertGt(rlens.quoteSplitAttestationFee(1), 0, "priced while canonical");
+
+        // Demote. The production setter is frozen until the era carry-forward
+        // exists, so the raw role writer stands in for the state a demotion
+        // reaches — which is precisely the state this gate is about: the
+        // historical reservations stay in storage after the role leaves.
+        mutator.setRewardRoleRaw(CHAIN_BASE, false, true);
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        rlens.quoteSplitAttestationFee(1);
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+    }
+
     /// Codex #2224 r2 — EVERY path that creates a reservation marks it as
     /// dispatched on a wire that carries its split, because every payload
     /// this deployment builds does. The budget remittance marked its rows

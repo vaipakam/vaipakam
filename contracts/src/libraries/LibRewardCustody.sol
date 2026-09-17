@@ -1132,10 +1132,22 @@ library LibRewardCustody {
     ///         up front and is not refunded by a destination revert: a
     ///         re-sendable message is a retry lever only while the retry can
     ///         one day land.
-    function requireAttestableReservation(
-        LibVaipakam.RemitReservation storage r,
+    function requireAttestable(
+        LibVaipakam.Storage storage s,
         uint256 remitId
-    ) internal view {
+    ) internal view returns (address messenger, LibVaipakam.RemitReservation storage r) {
+        // EVERY precondition, in one place, returning what each caller needs
+        // (Codex #2224 r6). An earlier revision shared only the reservation
+        // rules and left the role and messenger gates to each path, and the
+        // fee quote promptly drifted: on a demoted deployment it priced an
+        // operation the send would refuse, because the historical reservations
+        // are deliberately kept in storage. A caller that cannot obtain the
+        // messenger without passing the gates cannot quote what it would not
+        // send.
+        if (!s.isCanonicalRewardChain) revert IVaipakamErrors.NotCanonicalRewardChain();
+        messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert IVaipakamErrors.RewardMessengerNotSet();
+        r = s.remitReservations[remitId];
         if (r.status == 0) revert IVaipakamErrors.RemitReservationUnknown(remitId);
         if (r.fresh + r.recycled == 0) revert IVaipakamErrors.RemitReservationCarriesNoSplit(remitId);
         if (r.splitOnWire) revert IVaipakamErrors.RemitSplitAlreadyOnWire(remitId);
@@ -1180,6 +1192,18 @@ library LibRewardCustody {
         uint256 fresh,
         uint256 recycled
     ) internal returns (bytes32 h, uint256 freshAttested, uint256 recycledAttested) {
+        // The RECEIVING-DOMAIN rule (Codex #2224 r6): messenger authentication
+        // proves the message came from a configured peer, never that the peer
+        // is the legitimate source for this kind. Only the canonical chain
+        // records the split an attestation carries, so only the canonical
+        // chain may assert one — otherwise an extra or stale peer, with a
+        // receipt of its own delivery to point at, could decide this packet's
+        // fresh and recycled caps the moment 3b makes them usable. Checked
+        // HERE, beside the receipt rules, so a future caller cannot reach the
+        // write without it.
+        if (sourceChainId != s.baseChainId) {
+            revert IVaipakamErrors.SplitAttestationNotFromBase(sourceChainId, uint32(s.baseChainId));
+        }
         LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitReceiptKey(remitter, remitId)];
         if (rec.receivedAt == 0) revert IVaipakamErrors.ReceivedRemitNotFound(remitId);
         if (rec.srcChainId != sourceChainId) revert IVaipakamErrors.ReceivedRemitStale(remitId, rec.srcChainId);

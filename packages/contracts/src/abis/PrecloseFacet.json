@@ -3456,6 +3456,22 @@
   },
   {
     "type": "error",
+    "name": "SplitAttestationNotFromBase",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "baseChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StrandedReturnAwaitingAck",
     "inputs": [
       {

@@ -2810,7 +2810,16 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 999, 1, 1);
         bytes32 id = keccak256("att-2");
         _untyped(10e18, 221, id);
-        vm.expectRevert(abi.encodeWithSelector(ReceivedRemitStale.selector, 221, uint32(CHAIN_BASE)));
+        // Codex #2224 r6 — an attestation from a chain that is not this
+        // mirror's canonical chain is refused on the RECEIVING-DOMAIN rule,
+        // before any receipt is consulted: messenger authentication proves a
+        // configured peer sent it, never that the peer is the right source
+        // for this kind.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SplitAttestationNotFromBase.selector, uint32(CHAIN_BASE) + 1, uint32(CHAIN_BASE)
+            )
+        );
         m.deliverSplitAttestation(uint32(CHAIN_BASE) + 1, REMITTER, 221, 1, 1);
         vm.expectRevert(abi.encodeWithSelector(SplitAttestationEmpty.selector, 221));
         m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 221, 0, 0);
