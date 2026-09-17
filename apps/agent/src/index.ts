@@ -164,26 +164,31 @@ export default {
     // identical copy so the watcher still sweeps once rescheduled;
     // both are idempotent, so overlapping runs are harmless.
     //
-    // REQUIRES A DEPLOY OF THIS WORKER TO TAKE EFFECT (Codex #1924 r17).
-    // `apps/agent` does NOT auto-deploy on merge — see
-    // `docs/ops/D1CutoverArchiveToWarm.md` step 2 — while `apps/keeper`
-    // does. So the merge that empties the keeper's schedule removes the
-    // only live sweep and does NOT start this one: without an explicit
-    // `pnpm --filter @vaipakam/agent run deploy` in the same sitting, the
-    // migration makes the leak worse rather than fixing it.
+    // THIS WORKER AUTO-DEPLOYS ON MERGE, so this sweep goes live with the
+    // merge that adds it (#2237, correcting Codex #1924 r17).
     //
-    // `run deploy`, NOT `exec wrangler deploy` — the line above used to spell
-    // the unsafe form, and r31 added this correction BENEATH it instead of
-    // replacing it, leaving one comment that gave two different commands with
-    // the wrong one first (Codex #1924 r32). There is now one instruction.
-    // This Worker has the same var
-    // hazard the keeper does: `env.ts` reads `RECIPIENT_VALIDATING_TOKENS`
-    // and `OPENSEA_OFFERS_MAX_PAGES`, neither of which is declared in
-    // `wrangler.jsonc`, so a bare deploy would delete them — silently
-    // disabling recipient-token validation and resetting OpenSea pagination
-    // while trying to turn this sweep on. The package script now carries the
-    // flag; `--keep-vars` only skips the DELETE step, so the config's own
-    // vars are still applied.
+    // What stood here said the opposite — "`apps/agent` does NOT auto-deploy
+    // on merge", citing `docs/ops/D1CutoverArchiveToWarm.md` step 2 — and
+    // concluded that without a hand-run deploy in the same sitting, the
+    // migration that moved this sweep off the keeper made the leak worse
+    // rather than fixing it. That was true when written and is not now:
+    // Cloudflare Workers Builds posts a `Workers Builds: vaipakam-agent`
+    // check on the merge commits that touch this Worker, and the live
+    // deployment timestamps line up with those checks to the second. The
+    // runbook step it cited is corrected in the same change.
+    //
+    // Believing the old line is worse than the hazard it warned about: it
+    // tells a reader that a merged agent change is NOT live when it is, and
+    // nobody looks for the effects of a change they think never shipped.
+    //
+    // THE VAR HAZARD IS REAL AND IS HANDLED STRUCTURALLY, which matters more
+    // now, not less — an automatic deploy passes no flags at all. `env.ts`
+    // reads `RECIPIENT_VALIDATING_TOKENS` and `OPENSEA_OFFERS_MAX_PAGES`,
+    // neither declared in `wrangler.jsonc`'s `vars`, and wrangler deletes
+    // undeclared vars on deploy. `"keep_vars": true` in that config is what
+    // stops it, on every route including Workers Builds; the package script's
+    // `--keep-vars` is belt-and-braces for a hand-run deploy. See CLAUDE.md,
+    // "Dashboard-managed vars survive a deploy — declared, not remembered".
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console

@@ -222,47 +222,59 @@ because migrations and reads would target different databases.
 Update the docs that describe the live binding in the same PR — the same
 check scans `wrangler d1` commands in scripts and runbooks.
 
-### Step 2 — deploy the two that do not auto-deploy
+### Step 2 — deploy the one that does not auto-deploy
 
-`apps/indexer` and `apps/keeper` deploy automatically on merge.
-**`apps/agent` and `ops/offchain-data-warm` do not** — no
-`Workers Builds: vaipakam-agent` check appears on any recent main commit, and
-its last deploy predates several merges.
+`apps/indexer`, `apps/keeper` **and `apps/agent`** deploy automatically on
+merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm` does not.**
+
+**Corrected 2026-09-17 (#2237): this step used to name `apps/agent` as not
+auto-deploying**, on the evidence that no `Workers Builds: vaipakam-agent`
+check appeared on any recent main commit. That was true when written and is
+not now. The check appears on the merge commits that touch it, and the live
+Worker matches — `vaipakam-agent`'s deployment at `2026-09-17T08:55:34Z` sits
+five seconds before its build check on `819623903` completed.
+
+The test the old wording named is the right one; keep it and re-run it rather
+than trusting either answer:
 
 ```bash
-pnpm --filter @vaipakam/agent run deploy
-# `run deploy`, not `exec wrangler deploy`: the package script carries
-# --keep-vars. A bare deploy deletes RECIPIENT_VALIDATING_TOKENS and
-# OPENSEA_OFFERS_MAX_PAGES, which env.ts reads and the config does not declare.
-# [unrun here] — verified form, from OffChainRestore.md §7b.
+# Does a build check appear on a main commit that touched the Worker?
+gh api repos/vaipakam/vaipakam/commits/<sha>/check-runs --paginate \
+  --jq '.check_runs[] | select(.name | test("Workers Builds")) | .name'
+```
+
+On the four most recent main commits touching `ops/offchain-data-warm`, no
+`vaipakam-offchain-data-warm` build appears, so it still needs a hand:
+
+```bash
 # NOT `npx wrangler` from the repo root: this package is outside the
 # pnpm workspace, so that would be an unpinned download.
 ( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
-Do this in the same sitting as the merge. Until it is done, **agent reads and
-writes the old database while the other two use the new one** — and that
-split is user-visible, independently of the no-migration decision.
+Do this in the same sitting as the merge.
 
-A threshold set, a Telegram link made, or a support ticket filed in that
-window lands in the database about to be deleted. The user sees it succeed;
-it then vanishes. "We are not migrating data" covers rows that a redeploy
-obsoletes — it does not cover a write the user watched succeed minutes ago.
+**The user-visible split this step used to warn about is gone with the
+correction**, and that matters more than the command list. It said agent would
+read and write the OLD database while the other two used the new one, so a
+threshold set or a support ticket filed in the gap would land in a database
+about to be deleted. Agent now moves with them. The hazard was real when
+written; leaving the warning in place would send an operator to guard a window
+that no longer opens, and — worse — imply agent is stale when it is live.
 
-Two ways to close it, and the choice is the operator's:
+`ops/offchain-data-warm` writes no user-facing rows — it is the nightly
+backup Worker — so its lag is an operator concern rather than a user-visible
+split.
 
-- **Shortest window.** Have the `wrangler deploy` for agent ready to run
-  before merging, and run it the moment the merge lands. The exposure is the
-  couple of minutes it takes.
-- **No window.** Put agent's mutating routes behind a `503` for the interval
-  (unbind the route, or deploy a rejecting build), then restore them after
-  the redeploy. A user who is told "try again shortly" has lost nothing; one
-  whose ticket silently disappeared has.
-
-**Chosen 2026-08-03: the shortest window.** Have the agent deploy ready to
-run and execute it the moment the merge lands. Defensible pre-live, and the
-exposure is a couple of minutes. If circumstances change — real users, a
-support queue in use — revisit it rather than inheriting this line.
+> **Superseded, kept for the record.** Until #2237 this step continued: a
+> threshold set, a Telegram link made, or a support ticket filed in the gap
+> would land in the database about to be deleted, and the operator chose
+> between "shortest window" (deploy agent the moment the merge lands) and "no
+> window" (503 agent's mutating routes across the interval). The decision
+> recorded on 2026-08-03 was the shortest window. None of it applies now that
+> agent auto-deploys with the other two — but the reasoning is worth keeping,
+> because the same choice returns the moment any user-writing Worker is
+> deployed out of step with the database it binds.
 
 ### Step 3 — confirm from behaviour, not configuration
 
