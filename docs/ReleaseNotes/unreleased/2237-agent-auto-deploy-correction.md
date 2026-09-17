@@ -66,41 +66,35 @@ What the automatic deployment genuinely changes is *who* closes the window — i
 no longer waits on somebody remembering a command. It does not make the window
 zero, bounded, or safe to leave unguarded.
 
-Stating the rule plainly enough to be tested against then found three holes in
-it, each the same hole: it was written as an instruction about **routes**, so
-every review round found another way a service reaches the database that a
-route does not cover. It is now written as a **state** to establish — no
-writer can reach either database, by any entry point, from before the first
-binding changes until every binding is confirmed — and the holes close
-together:
+Trying to state that protection precisely enough to be tested against is where
+this change stopped. Each review round found another way a service reaches the
+database that the previous wording had not covered — a second service's public
+routes, then diagnostic routes, then work scheduled on a timer, then a
+self-rearming background alarm, then work already in flight when the closure
+went up, then addresses that bypass it, then the fifteen minutes a schedule
+change takes to take effect.
 
-- **Scheduled work is not a route.** Every service here also runs on a timer,
-  and closing a public endpoint does nothing to that. One of those timers
-  sends payment reminders and records that it sent them; if it records only
-  into the database being abandoned, the next run after the change sends the
-  same reminder again — and a reminder cannot be taken back.
-- **The closure has to be in place before the first binding moves.** Shipping
-  it together with the binding change does not work: each service takes both
-  in the same independent deployment, so the moment one switches, another that
-  has not is both unguarded and on the old database. It takes three changes in
-  order — close, switch, reopen — each confirmed before the next.
-- **The closure must survive the deployment.** Two obvious mechanisms do not,
-  because one service declares its own public route in the file that gets
-  deployed, and a deployment replaces a rejecting build with the normal one.
+**Listing the ways code can reach a database is not a finishable task**, and a
+list that reads authoritative while being incomplete is worse than none: an
+operator follows it, believes the writers are stopped, and loses exactly the
+records the step exists to protect. So the document now states the hazard and
+says plainly that the procedure is unspecified, with the requirements and the
+decisions it needs recorded separately. One of those decisions is whether the
+closure should work by removing the database from the service entirely rather
+than by naming its entry points — the only formulation that does not depend on
+having listed them all correctly.
 
-And **the checks that prove a binding moved cannot all run while the routes
-are closed**, since two of them work by writing through those very routes.
-Confirmation is now in two passes: read each service's binding directly while
-the gate holds — that is what authorises lifting it — then run the write
-checks afterwards as the final confirmation.
+What did get settled: the checks that prove a binding moved cannot all run
+while writes are closed, since two of them work by writing. Confirmation is in
+two passes — read each service's binding directly, which is what authorises
+restoring traffic, then run the write checks afterwards.
 
 None of these mechanics has been exercised on the live account; they are
 reasoned from how the deployments work, and the document says so.
 
-One service is currently outside the gate because its schedule is empty and it
-therefore writes nothing at all. That is recorded as a fact about today rather
-than a property of the service: restore the schedule and it writes
-user-visible alerts that a later re-check cannot reconstruct, because the
-condition they describe may have passed.
+One service writes nothing at all today because its schedule is empty. That is
+recorded as a fact about today rather than a property of the service: restore
+the schedule and it writes user-visible alerts that a later re-check cannot
+reconstruct, because the condition they describe may have passed.
 
 Closes #2237.
