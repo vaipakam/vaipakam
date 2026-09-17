@@ -278,9 +278,25 @@ That asymmetry is the whole of what this step can offer, and stating it as a
 symmetric test is the mistake this section has now made twice — first with
 build checks, then with timestamps (#2243 r1, six findings, four of them this).
 
+First, the concrete pair that was executed, with its **verbatim** output —
+`apps/indexer`, on 2026-09-17:
+
 ```bash
-# [run] — this exact form was executed on 2026-09-17 for `apps/indexer` and
-# `ops/offchain-data-warm`; its output is quoted below the block.
+# [run] — exactly these two commands, exactly this output.
+$ cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1
+Created:     2026-09-17T16:09:37.144Z
+
+$ TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- apps/indexer
+838c25cf3 2026-09-17T16:08:34+00:00
+```
+
+Deployment 63 seconds after the commit: that Worker is current.
+
+And the generic form, which is a **template and was not executed as written**
+— `<worker-dir>` is a placeholder, not a path:
+
+```bash
+# [unrun] — parameterised. The concrete instance above is the executed one.
 git fetch origin main                      # the left side goes stale silently
 
 # In-workspace Workers (apps/*): pnpm has already installed wrangler.
@@ -298,14 +314,12 @@ git fetch origin main                      # the left side goes stale silently
 TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- <worker-dir>
 ```
 
-Its output on the day this was written, one Worker of each kind:
-
-```
-apps/indexer             deployed=2026-09-17T16:09:37.144Z
-                         commit  =838c25cf3 2026-09-17T16:08:34+00:00
-ops/offchain-data-warm   deployed=2026-08-03T10:11:14.470Z
-                         commit  =d5d3b3083 2026-08-31T07:35:18+00:00
-```
+**The split is the point** (#2243 r4). An earlier revision marked the whole
+block `[run]` and pasted a hand-aligned summary underneath — text neither
+wrangler nor git emits — which presents a template and a reconstruction as
+execution evidence. In a runbook whose only validation is that its commands
+were tested, that is the marker meaning less than it says, one round after
+this PR corrected the same slip elsewhere.
 
 **`%cd` under `TZ=UTC`, not `%ad` and not `%cI`** (#2243 r2, r3). An author date
 is user-controlled and survives rebase, so a commit can carry one LATER than
@@ -628,10 +642,21 @@ the free period can leave it while it runs, and nothing after the fact undoes
 that.
 
 Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
-`apps/keeper`, `apps/agent` **and `apps/www`** automatically through Workers
-Builds — the revert is a merge like any other (#2237). Then redeploy
-**`apps/app` and `ops/offchain-data-warm`** by hand, since neither is built on
-merge.
+`apps/keeper` and `apps/agent` automatically through Workers Builds — the
+revert is a merge like any other (#2237). Then redeploy
+`ops/offchain-data-warm` by hand, since it is not built on merge.
+
+**The two frontends are CONDITIONAL, and only on one thing** (#2243 r4):
+whether the reverted PR also moved `packages/contracts/src/deployments.json`.
+
+- **It did** (the single-PR flow this plan permits) — then `apps/www` rebuilds
+  automatically and must be waited for, and `apps/app` must be hand-deployed,
+  because both consume those addresses.
+- **It did not** (the separate-PR flow, equally supported) — then neither
+  frontend has a changed input. No `apps/www` build starts, so waiting for one
+  stalls the rollback on a check that will never appear; and a manual
+  `apps/app` deploy is an unnecessary production change, with the
+  nineteen-variable environment hazard below attached to it for nothing.
 
 **Both additions matter here specifically** (#2243 r1). This step named only
 the three Workers and the backup, which is the pre-#2242 deployment set, and
@@ -644,16 +669,10 @@ the omissions bite harder on the way back than on the way out:
   NEW contract addresses against a rolled-back database and rolled-back
   Workers. The rollback then looks complete and the public surface is the one
   thing still on the other side of it.
-- **`apps/www` is automatic but not instant — WHEN it rebuilds at all.**
-  Builds are input-filtered (see the table in Step 2), so a revert that touches
-  only the D1 apps and the backup config starts no `apps/www` build and there
-  is nothing to wait for. It DOES rebuild when the reverted PR also moved
-  `packages/contracts/src/deployments.json`, which this plan permits in one PR.
-  Check whether the revert touches its inputs before waiting (#2243 r3) —
-  waiting for a build that will never appear is its own way to stall a
-  rollback. When it does rebuild, wait for it deliberately: Step 3's probes are
-  D1-binding probes and `apps/www` has no D1 binding, so nothing downstream
-  notices if it has not landed.
+- **`apps/www`, when it does rebuild, is automatic but not instant** — and
+  unlike the Workers it is never re-checked afterwards, because Step 3's probes
+  are D1-binding probes and `apps/www` has no D1 binding. So nothing downstream
+  notices if its build has not landed; wait for it deliberately.
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
 SOURCE, so a write must land there, and the discriminator is the source's

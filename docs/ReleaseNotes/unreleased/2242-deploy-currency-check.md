@@ -12,9 +12,14 @@ test it used to name turns out not to work.
 
 **Looking for a build to have run misleads in both directions.** A change to a
 single file at the top of the repository starts a build for every one of the
-five services that build automatically — not for the two that are deployed by
-hand, which have no automatic build to start; a change confined to the
-documentation folder starts none at all. So "a build ran" can
+five services that build automatically; a change confined to the documentation
+folder starts none at all.
+
+And **building is not deploying** — which is the distinction that matters most
+here, and the easiest to lose. One of those five builds automatically and is
+still deployed **by hand**: its build reported success four days after its last
+deployment, and that deployment is still the one serving. Only the nightly
+backup worker has no automatic build at all. So "a build ran" can
 be true of a service the change never touched, and "no build ran" can be true
 of one that does deploy itself. The same kind of change behaves differently
 again on a branch than on the main line, which removes the last way a reader
