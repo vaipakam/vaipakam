@@ -67,11 +67,30 @@ that says so**, naming the entries it removed. Leaving that to the held-entry
 report would have disclosed nothing in the one case that matters: a release can
 clear the last held entry, and the report says nothing when nothing is held.
 
-Reporting also costs the same fixed amount of work however many entries are
-held. It briefly did not — listing the overflow was extra work done only when
-there was an overflow — and that is backwards: the run holding the most entries
-is the one least able to afford extra work, and the one whose failure would
-leave the network reading position unrecorded and the chain's view frozen.
+There is a second way a held entry clears by itself, and it is the sound one:
+a run examines the number, the network answers, and the entry goes. That is
+deliberately left alone — the network's own answer about a number is the only
+solid evidence in any of this, and every basis the platform declines to act on
+is a stored value standing in for exactly that answer. Blocking it would leave
+a live, settled loan without reminders indefinitely on the strength of a
+finding about a loan that no longer exists. But where the entry had been held
+long enough to be appearing in the report a person reads, its release is now
+announced, together with what that release cannot establish: if the number had
+come round, the answer concerns the loan bearing it now, and the earlier
+unresolved finding has gone with it. An entry cleared before it was ever
+reported stays unannounced — that is the everyday case of a reading that failed
+once and succeeded next time, and a line for each would bury the ones that
+need a person.
+
+Reporting costs the same fixed amount of work however many entries are held,
+and this took two goes to get right. The first fix made the number of database
+enquiries constant and left the amount READ and PRINTED growing with the
+number of entries — so the report would still have failed on exactly the
+network that most needed it, inside the run that must also record how far the
+chain has been read. It now names at most a set number of entries, says
+**exactly** how many more are held, and hands over the enquiry that lists them.
+A listing that simply stopped would be the silent truncation this whole change
+exists to avoid.
 
 A suppression a person can see and undo is worth more than an automatic release
 built on evidence that has been wrong four different ways.

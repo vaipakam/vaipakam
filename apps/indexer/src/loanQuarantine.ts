@@ -41,6 +41,32 @@ export const QUARANTINE_STALE_SECONDS = 6 * 60 * 60;
  */
 export const STALE_REPORT_LIMIT = 20;
 
+/**
+ * How many held ids to NAME in one warning, described or not.
+ *
+ * The roll call exists because a held id that appears nowhere suppresses
+ * reminders with nothing anywhere saying which position it concerns (#2231
+ * r5). One revision then read and named EVERY held id with no bound at all,
+ * which trades that defect for a worse one (#2231 r7 `4035821168`): rows
+ * materialised, memory, CPU and log bytes all growing with the size of the
+ * problem, so the report fails exactly on the chain that most needs it — and
+ * it fails inside the invocation that must still write the scan cursor.
+ *
+ * A bound is therefore not optional. What IS optional is whether crossing it
+ * is silent, and it must not be: past this many, the report says how many
+ * more are held — the count is EXACT, taken in the same statement via
+ * `COUNT(*) OVER ()` rather than inferred from a truncated page — and gives
+ * the query that lists them. "More than I will name here, and here is how to
+ * see them" is an honest bound; a page that stops without saying so is the
+ * silent truncation this whole module exists to avoid.
+ *
+ * The number is a judgement about one log line, not a protocol constant:
+ * 200 ids is roughly 1.5 KB, which a log surface carries intact, and a chain
+ * holding more than 200 has a systemic fault where the exact roster matters
+ * less than the magnitude does.
+ */
+export const STALE_ROLL_CALL_LIMIT = 200;
+
 /** Which of the four ways a row failed to settle. Kept, not flattened. */
 export type QuarantineReason = 'unread' | 'write-failed' | 'orphan' | 'unknown-status';
 
@@ -134,13 +160,117 @@ export function quarantineStatements(
   // own escape hatch ("raise the pin with a test covering the dynamic
   // shape") is for cases that cannot be written statically. This can.
   for (const loanId of settledRows(report)) {
+    // `RETURNING first_seen_at`, so this release can be DISCLOSED when it is
+    // worth disclosing (#2231 r7 `4035821181`).
+    //
+    // The overwhelming majority of these deletes are no-ops against a marker
+    // that was never there, and the rest are the healthy case the module is
+    // built around: a read failed, the row was held for a lap, this pass
+    // settled it. Announcing those would bury the ones that matter.
+    //
+    // What a returned row gives is the one fact that separates them —
+    // `first_seen_at`. A marker held past the stale threshold has been named
+    // in the operator's report on every pass since, and this delete is the
+    // last thing that ever happens to it. `discloseSettledReleases` below
+    // decides; the statement only has to bring back what that decision needs,
+    // which it does at no extra cost, inside a batch that already ran.
     statements.push(
       db
-        .prepare(`DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ?`)
+        .prepare(
+          `DELETE FROM loan_reconcile_quarantine
+            WHERE chain_id = ? AND loan_id = ?
+            RETURNING loan_id, reason, first_seen_at`,
+        )
         .bind(chainId, loanId),
     );
   }
   return statements;
+}
+
+/** One released marker, as the batch hands it back. */
+interface ReleasedMarker {
+  loan_id: number;
+  reason: string;
+  first_seen_at: number;
+}
+
+/**
+ * Say which LONG-HELD markers a pass's own settle released (#2231 r7
+ * `4035821181`).
+ *
+ * The finding this answers is correct on the facts and wrong on the remedy,
+ * and the difference is worth stating because the remedy was "prevent this".
+ *
+ * THE FACTS. A held marker is deleted by the ordinary settle path as soon as
+ * the rotation examines its id and gets an answer — including when the id has
+ * come round again and the answer is about a DIFFERENT position from the one
+ * the marker was made for. That is a release on a reused id, it is not the
+ * terminal sweep, and until now it was silent.
+ *
+ * WHY IT IS NOT PREVENTED. Preventing it would be the mirror-image bug this
+ * module opens by naming: a marker that is never cleared withholds a healthy
+ * loan's reminders forever. The rotation examined the id and READ THE CHAIN
+ * for it — which is evidence about what that id is right now, and the only
+ * sound evidence available anywhere in this file. Every release basis that
+ * was removed (#2222) was a STORED column standing in for a chain read; this
+ * is the chain read itself. Blocking it would suspend reminders for a live,
+ * settled position on the strength of a finding about a position that no
+ * longer exists, pending a person who may never come.
+ *
+ * WHAT IS TRUE, AND SO IS SAID. The release erases an unresolved finding
+ * about whatever bore that id before, and nothing here can tell whether there
+ * WAS an earlier position — that is the identity question the platform cannot
+ * answer. So a release of a marker held past the stale threshold is reported:
+ * those are the ones a person has been reading about on every pass, and this
+ * is the last thing that happens to them.
+ *
+ * A marker younger than the threshold is not reported, for the same reason it
+ * was never reported while it was held.
+ *
+ * Reads the batch results and needs no index arithmetic: only the deletes
+ * carry `RETURNING`, so a result with rows IS a release. Degrades to silence
+ * rather than throwing if a driver hands back no `results` — this is a log,
+ * and it must never be the reason a pass fails.
+ */
+export function discloseSettledReleases(
+  chainId: number,
+  results: unknown,
+  nowSec: number,
+): void {
+  if (!Array.isArray(results)) return;
+  const cutoff = nowSec - QUARANTINE_STALE_SECONDS;
+  const stale: ReleasedMarker[] = [];
+  for (const entry of results) {
+    const rows = (entry as { results?: unknown } | null)?.results;
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const r = row as Partial<ReleasedMarker>;
+      if (typeof r.loan_id !== 'number' || typeof r.first_seen_at !== 'number') continue;
+      if (r.first_seen_at <= cutoff) {
+        stale.push({ loan_id: r.loan_id, reason: String(r.reason ?? 'unknown'), first_seen_at: r.first_seen_at });
+      }
+    }
+  }
+  if (stale.length === 0) return;
+  const described = stale
+    .map(
+      (r) =>
+        `loan ${r.loan_id} (${r.reason}, held ` +
+        `${Math.floor((nowSec - r.first_seen_at) / 3600)}h)`,
+    )
+    .join('; ');
+  console.warn(
+    `[loanQuarantine] chain ${chainId}: released ${stale.length} long-held ` +
+      `entr${stale.length === 1 ? 'y' : 'ies'} because this pass examined the ` +
+      `id and the chain answered: ${described}. This is the soundest release ` +
+      `the platform makes — a chain read about the id, not a stored column ` +
+      `standing in for one — and reminders for that id resume, correctly. It ` +
+      `is stated because these are the entries the stale report has been ` +
+      `naming, and this is the last thing that happens to them: if the id had ` +
+      `come round again, the answer is about the position bearing it NOW and ` +
+      `the earlier unresolved finding is gone with it. Nothing here can tell ` +
+      `whether there was an earlier position (#2222).`,
+  );
 }
 
 /**
@@ -313,9 +443,17 @@ export async function reportStaleQuarantine(
   // the first `STALE_REPORT_LIMIT` of them, and the roll call is the rest.
   // Constant cost, and one subrequest LESS than the old no-overflow case.
   //
-  // The result set is unbounded in rows, which is not a new bound: the roll
-  // call already read every held id, and the warning already names every one
-  // of them. What is new is four more columns per row beyond the twentieth.
+  // AND THE ROWS ARE BOUNDED, which the first version of this was not
+  // (#2231 r7 `4035821168`). Folding three statements into one fixed the
+  // ROUND-TRIP count and left the VOLUME growing with the size of the
+  // problem — so the report would fail on exactly the chain that most needs
+  // it, inside the invocation that must still write the scan cursor. Those
+  // are two different costs and only one of them had been addressed.
+  //
+  // `COUNT(*) OVER ()` is what makes the bound honest rather than a silent
+  // truncation: the total comes back EXACT in the same statement, so the
+  // report can say how many it is not naming. A `LIMIT` alone would have to
+  // infer "there are more" from a full page and could never say how many.
   //
   // THE LOAN THE HELD ID POINTS AT NOW, carried alongside (#2231 r4).
   //
@@ -333,14 +471,16 @@ export async function reportStaleQuarantine(
   const rows = await db
     .prepare(
       `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at,
-              l.status AS loan_status, l.start_block AS loan_start_block
+              l.status AS loan_status, l.start_block AS loan_start_block,
+              COUNT(*) OVER () AS held_total
          FROM loan_reconcile_quarantine q
          LEFT JOIN loans l
            ON l.chain_id = q.chain_id AND l.loan_id = q.loan_id
         WHERE q.chain_id = ? AND q.first_seen_at <= ?
-        ORDER BY q.first_seen_at ASC`,
+        ORDER BY q.first_seen_at ASC
+        LIMIT ?`,
     )
-    .bind(chainId, cutoff)
+    .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT)
     .all<{
       loan_id: number;
       reason: string;
@@ -348,10 +488,13 @@ export async function reportStaleQuarantine(
       last_seen_at: number;
       loan_status: string | null;
       loan_start_block: number | null;
+      held_total: number;
     }>();
   const held = rows.results ?? [];
-  const n = held.length;
-  if (n === 0) return;
+  if (held.length === 0) return;
+  // The EXACT total, from the window function — not `held.length`, which is
+  // capped, and not a separate count, which would put the cost back.
+  const n = held[0].held_total;
   const shown = held.slice(0, STALE_REPORT_LIMIT);
   const described = shown
     .map((r) => {
@@ -409,12 +552,27 @@ export async function reportStaleQuarantine(
   // thing the operator should be doing anyway.
   let overflow = '';
   if (n > shown.length) {
-    const ids = held.slice(STALE_REPORT_LIMIT).map((r) => r.loan_id).join(', ');
+    const named = held.slice(STALE_REPORT_LIMIT);
+    const ids = named.map((r) => r.loan_id).join(', ');
+    // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
+    // count is exact even here, so this is a stated limit rather than a page
+    // that quietly ended (#2231 r7 `4035821168`).
+    const unnamed = n - held.length;
+    const beyond =
+      unnamed > 0
+        ? ` — and ${unnamed} further held entr${unnamed === 1 ? 'y' : 'ies'} ` +
+          `NOT named here, because this report is bounded at ` +
+          `${STALE_ROLL_CALL_LIMIT} ids and will not grow with the fault. ` +
+          `List them with: SELECT loan_id FROM loan_reconcile_quarantine ` +
+          `WHERE chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
+          `ORDER BY first_seen_at ASC`
+        : '';
     overflow =
-      ` (+${n - shown.length} more, each also holding reminders back and each ` +
-      `named here but NOT described: ${ids} — the detail above is the oldest ` +
-      `${STALE_REPORT_LIMIT} and does not rotate, so these stay ` +
-      `identifier-only until an entry ahead of them is resolved)`;
+      ` (+${n - shown.length} more, each also holding reminders back; ` +
+      `${named.length} of them named here but NOT described: ${ids} — the ` +
+      `detail above is the oldest ${STALE_REPORT_LIMIT} and does not rotate, ` +
+      `so these stay identifier-only until an entry ahead of them is ` +
+      `resolved${beyond})`;
   }
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +

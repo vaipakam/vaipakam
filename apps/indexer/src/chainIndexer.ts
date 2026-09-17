@@ -59,6 +59,7 @@ import {
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import {
   quarantineStatements,
+  discloseSettledReleases,
   releaseTerminalQuarantine,
   reportStaleQuarantine,
   settledRows,
@@ -1575,7 +1576,14 @@ export async function _runLoanReconcilePass(input: {
     if (writeAvailability !== 'absent') {
       try {
         const writes = quarantineStatements(env.DB, chainId, report, nowSec);
-        if (writes.length > 0) await env.DB.batch(writes);
+        if (writes.length > 0) {
+          const outcome = await env.DB.batch(writes);
+          // The settle path releases held markers too, including on an id
+          // that has come round again, and it did so silently (#2231 r7
+          // `4035821181`). The batch already carries back which rows it
+          // deleted; this only decides which of them are worth a line.
+          discloseSettledReleases(chainId, outcome, nowSec);
+        }
       } catch (err) {
         // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
         // batch carries two opposite operations — marks that START withholding

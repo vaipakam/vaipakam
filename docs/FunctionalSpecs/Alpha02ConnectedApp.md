@@ -329,10 +329,16 @@ The app uses chain reads and indexed reads for different jobs.
   the longest-held records and do not take turns, and that resolving one of
   those is what brings the next into view. It does not promise detail that a
   later run would supply, because no later run would.
-- **The report's cost does not depend on how much is being held.** Reporting
-  is bounded work whatever the data says, because the run that holds the most
-  records is the one least able to afford extra work and the one whose failure
-  would leave the network's reading position unrecorded — freezing it.
+- **The report is bounded, and says so where the bound bites.** Reporting is
+  fixed work — a single enquiry, and a listing that does not grow past a
+  stated number of identifiers however many records are held. The run holding
+  the most records is the one least able to afford extra work, and the one
+  whose failure would leave the network's reading position unrecorded and its
+  view frozen; a report that grew with the fault would fail on the only
+  network that needed it. Where more are held than it will name, it states
+  **how many** — an exact figure, not "at least" — and gives the enquiry that
+  lists the rest. A listing that simply stopped would be the silent truncation
+  everything here is written to avoid.
 - **One automatic release remains an identity assumption, and is stated as
   one — by the release itself.** A record is released when a stored position
   bearing its identifier is no longer running. Where an identifier has been
@@ -344,6 +350,23 @@ The app uses chain reads and indexed reads for different jobs.
   release names the records it removed. Leaving it to the held-record report
   would disclose nothing in the very case that matters, since a release can
   empty the report it would have appeared in.
+- **A record is also released, correctly, the moment a run examines its
+  identifier and the network answers — and that release is announced when the
+  record was long-held.** This is a second path on which a reused identifier
+  clears a record, and it is deliberately not prevented: the network's own
+  answer about that identifier is the only sound evidence the platform has,
+  and every basis it declines to act on is a stored value standing in for
+  exactly this. Blocking it would withhold reminders indefinitely from a live,
+  settled position on the strength of a finding about a position that no
+  longer exists — the mirror-image fault this memory was built to avoid.
+  What it must not be is invisible: where the record had been held long enough
+  to appear in the report a person reads, its release is stated, along with
+  the fact that if the identifier had come round, the answer concerns the
+  position bearing it now and the earlier unresolved finding is gone with it.
+  A record released before it was ever reported is not announced, for the same
+  reason it was never reported: the ordinary case is a reading that failed
+  once and succeeded on the next run, and announcing those would bury the
+  records that need a person.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.

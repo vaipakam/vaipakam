@@ -20,6 +20,8 @@ import {
   releaseTerminalQuarantine,
   reportStaleQuarantine,
   STALE_REPORT_LIMIT,
+  STALE_ROLL_CALL_LIMIT,
+  discloseSettledReleases,
   settledRows,
   unsettledRows,
 } from '../src/loanQuarantine';
@@ -63,9 +65,10 @@ const quarantined = (h: SqliteD1) =>
     )
     .all() as Array<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>;
 
-async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW) {
+async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW): Promise<unknown> {
   const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec);
-  if (writes.length > 0) await (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
+  if (writes.length === 0) return [];
+  return (h.d1 as never as { batch: (s: unknown[]) => Promise<unknown> }).batch(writes);
 }
 
 describe('what counts as unsettled', () => {
@@ -231,6 +234,50 @@ describe('the table, over the real migrated schema', () => {
     expect(said).toContain('identity assumption');
     // And it does not claim more than it knows.
     expect(said).toContain('Nothing here distinguishes the two');
+    warn.mockRestore();
+  });
+
+  it('says when the pass SETTLING an id released a long-held entry', async () => {
+    // #2231 r7 `4035821181`. The ordinary settle path deletes a held marker
+    // the moment the rotation examines its id and the chain answers —
+    // including when the id has come round again and the answer is about a
+    // different position. That is a release on a reused id, it is not the
+    // terminal sweep, and it was silent.
+    //
+    // It is NOT prevented, and that is the deliberate half: a chain read of
+    // the id is the only sound evidence anywhere in this module, and blocking
+    // it would withhold a live settled position's reminders forever on the
+    // strength of a finding about a position that no longer exists. What it
+    // must not be is unannounced.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [77], unresolvable: [77] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const later = NOW + QUARANTINE_STALE_SECONDS + 1;
+    const outcome = await apply(h, report({ examined: [77] }), later);
+    discloseSettledReleases(CHAIN, outcome, later);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('released 1 long-held entry');
+    expect(said).toContain('loan 77');
+    expect(said).toContain('the chain answered');
+    // It says what it cannot know, rather than implying identity.
+    expect(said).toContain('Nothing here can tell whether there was an earlier position');
+    expect(quarantined(h)).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it('stays quiet when a settle releases a mark that was never long-held', async () => {
+    // The silent-by-design case: a read fails, the row is held for a lap, the
+    // next lap settles it. Announcing those would bury the ones that matter —
+    // and the overwhelming majority of these deletes are no-ops against a
+    // marker that was never there at all.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [77], unread: [77] }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const outcome = await apply(h, report({ examined: [77, 78] }), NOW + 300);
+    discloseSettledReleases(CHAIN, outcome, NOW + 300);
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -401,6 +448,38 @@ describe('telling the operator about a row that stays', () => {
     };
     expect(await statements(STALE_REPORT_LIMIT - 1)).toBe(1);
     expect(await statements(STALE_REPORT_LIMIT + 3)).toBe(1);
+  });
+
+  it('bounds the roll call, and says exactly how many it is not naming', async () => {
+    // #2231 r6 fixed the round-TRIP count and left the VOLUME growing with the
+    // number of held rows — every row materialised and every id joined into
+    // one line — so the report would fail on exactly the chain that most needs
+    // it, inside the invocation that must still write the scan cursor (#2231
+    // r7 `4035821168`). A bound is mandatory; a bound that is SILENT is the
+    // truncation this module exists to avoid.
+    //
+    // So the two properties are asserted together: the naming stops at the
+    // cap, and the count of what is past it is EXACT — which is only possible
+    // because the total comes from `COUNT(*) OVER ()` in the same statement
+    // rather than from the size of a truncated page.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const extra = 5;
+    const ids = Array.from({ length: STALE_ROLL_CALL_LIMIT + extra }, (_, k) => 5000 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // The TOTAL is exact past the cap — the window function, not the page.
+    expect(said).toContain(`${STALE_ROLL_CALL_LIMIT + extra} loan(s) held back`);
+    // Exactly the cap's worth of ids are named, not all of them.
+    const named = ids.filter((id) => new RegExp(`\\b${id}\\b`).test(said));
+    expect(named).toHaveLength(STALE_ROLL_CALL_LIMIT);
+    // And the shortfall is STATED, with the query that closes it.
+    expect(said).toContain(`${extra} further held entries NOT named here`);
+    expect(said).toContain(`bounded at ${STALE_ROLL_CALL_LIMIT} ids`);
+    expect(said).toContain('SELECT loan_id FROM loan_reconcile_quarantine');
+    warn.mockRestore();
   });
 
   it('does not promise the overflow will be described later', async () => {
