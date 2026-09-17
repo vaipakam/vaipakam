@@ -338,7 +338,11 @@ export function meterFetch(
     init?: Parameters<typeof fetch>[1],
   ) => {
     // `redirect: 'manual'` is what makes the count exact (#2227 r2
-    // `4033723749`). Left on the default 'follow', the runtime chases a
+    // `4033723749`). Note this reads on WORKERS semantics, which are not the
+    // browser's: a browser hands back an opaque redirect with status 0, while
+    // the Workers runtime returns the real 3xx with its `Location` — which is
+    // what the loop below needs, and why this approach is available here at
+    // all. Left on the default 'follow', the runtime chases a
     // redirect chain on our behalf and bills every hop, while this wrapper
     // charges once and reports a figure it cannot know is wrong — the
     // confident-but-incorrect number this module exists to retire. Taking each
@@ -349,7 +353,7 @@ export function meterFetch(
     // then high by the number of redirects, which on this lane is normally
     // zero. A ceiling guard that errs high does less work than it could; one
     // that errs low freezes a chain.
-    let hop = normaliseHop(input, init);
+    let hop = await normaliseHop(input, init);
 
     for (let hops = 0; ; hops += 1) {
       spend(budget);
@@ -390,20 +394,38 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  *  marketplace API is a misconfiguration, and the caller sees the 3xx. */
 const MAX_REDIRECT_HOPS = 5;
 
-function normaliseHop(
+/**
+ * Flatten whatever a caller passed into a URL and a plain init.
+ *
+ * ASYNC because of the body. A `Request` carries its body as a stream, and
+ * carrying the method across while leaving the body behind would silently send
+ * a POST with nothing in it — so the body is buffered here, once, and the hop
+ * becomes re-sendable in the same move. Nothing on this lane passes a
+ * `Request` today; it is handled because losing a body is not the kind of
+ * thing that should depend on nobody trying.
+ */
+async function normaliseHop(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
-): Hop {
+): Promise<Hop> {
   const asRequest =
     typeof input === 'string' || input instanceof URL
       ? null
       : (input as Request);
+  let fromRequest: RequestInit = {};
+  if (asRequest) {
+    const carriesBody =
+      asRequest.method !== 'GET' && asRequest.method !== 'HEAD';
+    fromRequest = {
+      method: asRequest.method,
+      headers: new Headers(asRequest.headers),
+      ...(carriesBody ? { body: await asRequest.clone().arrayBuffer() } : {}),
+    };
+  }
   return {
     url: asRequest ? asRequest.url : String(input),
     init: {
-      ...(asRequest
-        ? { method: asRequest.method, headers: new Headers(asRequest.headers) }
-        : {}),
+      ...fromRequest,
       ...((init ?? {}) as RequestInit),
       redirect: 'manual',
     },
@@ -462,11 +484,21 @@ function redirectedHop(
   };
 }
 
+/**
+ * Can this body be sent a second time?
+ *
+ * A stored value can; a stream cannot, because the attempt that produced the
+ * redirect consumed it. The list is what can be re-sent, not what this lane
+ * happens to send, so a caller that starts sending form data is followed
+ * correctly rather than quietly handed back a 3xx.
+ */
 function isReplayable(body: BodyInit): boolean {
   return (
     body instanceof ArrayBuffer ||
     ArrayBuffer.isView(body) ||
-    body instanceof URLSearchParams
+    body instanceof URLSearchParams ||
+    body instanceof Blob ||
+    body instanceof FormData
   );
 }
 

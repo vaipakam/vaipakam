@@ -362,6 +362,28 @@ describe('meterFetch — the egress rule', () => {
     expect(spent(budget)).toBe(6);
   });
 
+  it('keeps a Request input’s body — carrying the method alone would send an empty POST', async () => {
+    // Found by re-reading the round-2 diff, not reported: the flattening
+    // carried a Request's method and headers and left its body behind, so a
+    // POST would have gone out empty. Nothing on this lane passes a Request;
+    // losing a body should not depend on nobody trying.
+    let sent: unknown;
+    const base = (async (url: string, init?: RequestInit) => {
+      sent = init?.body;
+      return new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await meterFetch(createBudget(), base)(
+      new Request('https://api.test/orders', {
+        method: 'POST',
+        body: '{"listing":1}',
+      }),
+    );
+    expect(new TextDecoder().decode(sent as ArrayBuffer)).toBe(
+      '{"listing":1}',
+    );
+  });
+
   it('passes the response through untouched', async () => {
     const send = meterFetch(
       createBudget(),
