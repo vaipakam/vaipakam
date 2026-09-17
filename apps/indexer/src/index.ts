@@ -71,6 +71,14 @@ import {
   type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  meterEnv,
+  meterFetch,
+  overspent,
+  spent,
+} from './subrequestBudget';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   pruneOldCancelledOffers,
@@ -153,9 +161,31 @@ export default {
     if (!shouldRunCronTick(controller.scheduledTime, doIngestEnabled(env))) {
       return;
     }
+    // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point
+    // because the ceiling it tracks is the INVOCATION's, not any one pass's.
+    // Every pass below draws on this one object, so the figure reported is
+    // the tick's total — which is the number the platform is comparing
+    // against 50. A per-pass budget would give each pass a fresh 50 and
+    // report four comfortable numbers for an invocation that had already
+    // been killed (#2194 is that condition, measured rather than argued).
+    const budget = createBudget(MAX_SUBREQUESTS_PER_INVOCATION, 'cron tick');
+    // Every pass registered below is ALSO collected here, so the tick can
+    // report what it spent once they have all settled (#2227 r1
+    // `4033546280`). Reporting it is the point of measuring it: the passes
+    // run concurrently and share one allowance, so no single pass can say
+    // what the invocation cost, and until something says it out loud the
+    // constants this lane is tuned to stay arguments rather than evidence.
+    const passes: Promise<unknown>[] = [];
+    const runPass = (p: Promise<unknown>): void => {
+      passes.push(p);
+      ctx.waitUntil(p);
+    };
     // T-078 — resolve the Secrets Store RPC bindings once, here at
     // the entry point; both passes get the plain resolved env.
-    const resolved = await resolveEnv(env);
+    //
+    // COUNTED: up to a dozen Secrets Store reads happen here, before any pass
+    // starts, and they come out of the same allowance.
+    const resolved = meterEnv(await resolveEnv(env, budget), budget);
     // #757 — chain ingest. When the per-chain ingest Durable Object is bound,
     // the cron PINGS each chain's DO (target 0 ⇒ "scan to safe head"): every
     // chain is serviced each minute (not one per round-robin tick), and the DO
@@ -203,7 +233,7 @@ export default {
       const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
       const ordinal = Math.floor(minute / tickMinutes);
       const target = backingChains[Math.abs(ordinal) % backingChains.length];
-      ctx.waitUntil(
+      runPass(
         captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
@@ -216,36 +246,39 @@ export default {
       const ns = env.CHAIN_INGEST_DO;
       for (const chain of getChainConfigs(resolved)) {
         const stub = ns.get(ns.idFromName(String(chain.id)));
-        ctx.waitUntil(
-          stub
-            .fetch('https://chain-ingest-do/trigger', {
-              method: 'POST',
-              body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
-            })
-            .catch((err) => {
-              // eslint-disable-next-line no-console
-              console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
-            }),
+        // A DO ping is an outbound request like any other, so it goes through
+        // the same counted sender rather than a second mechanism that could
+        // drift from it. `meterFetch` takes the sender to wrap precisely so a
+        // non-global one can be counted (#2227 r1's rule 2).
+        const send = meterFetch(budget, stub.fetch.bind(stub));
+        runPass(
+          send('https://chain-ingest-do/trigger', {
+            method: 'POST',
+            body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+          }),
         );
       }
     } else {
       // Each pass is wrapped so a transient D1 / RPC blip on one pass can't
       // wedge the next — ticks fail one-at-a-time rather than tick-wide.
-      ctx.waitUntil(
-        runChainIndexer(resolved).catch((err) => {
+      runPass(
+        runChainIndexer(resolved, budget).catch((err) => {
           // eslint-disable-next-line no-console
           console.error('[indexer] runChainIndexer pass failed:', err);
         }),
       );
     }
-    ctx.waitUntil(
+    runPass(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).
-    ctx.waitUntil(
+    runPass(
       pruneOldWebhookDeliveries(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
@@ -265,10 +298,26 @@ export default {
     // DROP the OpenSea retry safety net the moment an operator enables DO
     // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
     // DO remains a nice-to-have follow-up, no longer a correctness gate.)
-    ctx.waitUntil(
-      sweepUnpublishedListings(resolved).catch((err) => {
+    runPass(
+      sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+      }),
+    );
+    // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
+    // rather than `all`: a failed pass still spent what it spent, and the
+    // number is most worth having on the tick that went wrong.
+    ctx.waitUntil(
+      Promise.allSettled(passes).then(() => {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[indexer] subrequests ${JSON.stringify({
+            scope: budget.label,
+            spent: spent(budget),
+            limit: budget.limit,
+            over: overspent(budget),
+          })}`,
+        );
       }),
     );
   },

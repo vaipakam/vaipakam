@@ -12,11 +12,15 @@ a run slower; it stops the run before it records how far it got. The next run
 starts from the same place and does the same thing, so a chain can stop moving
 forward entirely while appearing to run normally.
 
-The indexer now keeps a live count. Every request it issues is counted as it
-happens — reads from the chain and reads and writes to its own database alike —
-and each run reports what it actually spent. When a run does pass the ceiling,
-it now says so plainly, naming the chain, rather than leaving a stalled chain to
-be noticed later.
+The indexer now keeps a live count of what a whole scheduled run spends. The
+allowance belongs to the run, not to any one job inside it, and a run does
+several things at once — reading the chain, catching up records, retrying an
+earlier listing that failed to publish, tidying old rows. Counting each job
+separately would have produced several comfortable-looking numbers for a run
+that had already been stopped. There is now one count, and every job draws on
+it: reads from the chain, reads and writes to the indexer's own database, the
+credentials it fetches at the start, and the listings it sends to the
+marketplace.
 
 Two details are worth stating because they are what made hand-counting
 unreliable in the first place. Several database statements sent together travel
@@ -25,11 +29,25 @@ that is prepared but never sent on its own costs nothing. A count that got
 either of those wrong would be a confident number that was still incorrect,
 which is what was there before.
 
-The counting is built into the connection the indexer uses rather than written
-beside each place a request is made. That is deliberate: this part of the system
-makes requests from well over a hundred places, and a list maintained by hand is
-exactly what fails when someone later adds the hundred-and-twenty-first. A
-request added by code that knows nothing about the allowance is still counted.
+A third detail was found by review of the first attempt, and it is the reason
+this note no longer claims more than it should. The counting originally wrapped
+the two objects the run was known to use, and was described as if it counted
+everything the run sent. It did not: a failed read is retried automatically up
+to three more times, and those attempts were invisible; a second reader built
+elsewhere in the run was invisible; and the message sent to the marketplace was
+invisible. The counting now happens where requests actually leave — so a retry
+costs what a retry costs, and code that knows nothing about the allowance is
+counted anyway.
+
+Two things follow from that, and both are deliberate. Every run reports what it
+spent, including runs that end early or fail — the ordinary figure is the one
+worth having, and it was previously reported only on the busiest path. And when
+a run does pass its allowance, it says so at the moment it happens rather than
+at the end, because by the end the run may no longer be alive to say anything.
+
+What is still not counted is stated in the code rather than left to be
+discovered: requests served to visitors of the public read endpoints are a
+separate allowance and a separate count.
 
 This is the groundwork for the allowance being enforced rather than only
 observed. The figures the indexer works to are still the conservative ones set

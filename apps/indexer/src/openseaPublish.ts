@@ -304,7 +304,13 @@ export async function indexerPublishPrepayListing(
     //    `OrderComponents` Seaport hashes, but the API uses it to
     //    validate the payload). Codex round-1 P2 fix on PR #312.
     const url = `https://${chain.host}/api/v2/orders/${chain.slug}/seaport/listings`;
-    const res = await fetch(url, {
+    // THROUGH THE INVOCATION'S COUNTED SENDER (#2227 r1 `4033546284`).
+    // This POST used to go out on the global `fetch` — invisible to a chain
+    // pass that nonetheless reported a request count, which is precisely the
+    // confident-but-wrong figure #2221 exists to retire. `env.fetchFn` is the
+    // counted one where the caller runs inside a counted invocation; the
+    // fallback is for callers that do not.
+    const res = await (env.fetchFn ?? fetch)(url, {
       method: 'POST',
       headers: {
         'X-API-KEY': env.OPENSEA_API_KEY,

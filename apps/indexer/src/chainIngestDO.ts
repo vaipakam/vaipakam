@@ -38,6 +38,11 @@
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  meterEnv,
+} from './subrequestBudget';
 import type { PushHints } from './pushHints';
 import {
   RECONCILE_BUDGET_OWN_INVOCATION,
@@ -450,8 +455,17 @@ export class ChainIngestDO {
       let scannedTo: bigint | null = null;
       let headBlock: bigint | undefined;
       let retryableFailure = false;
+      // THIS INVOCATION'S COUNTER (#2221), created before the first request so
+      // the Secrets Store reads at the top of the alarm are counted too — the
+      // scan is not the only thing that spends here. The DO owns its
+      // invocation, so the whole allowance is its own; that is the same fact
+      // the note below states about the reconcile budget, now measured.
+      const budget = createBudget(
+        MAX_SUBREQUESTS_PER_INVOCATION,
+        `chain ${chainId} ingest DO`,
+      );
       try {
-        const resolved = await resolveEnv(this.env);
+        const resolved = meterEnv(await resolveEnv(this.env, budget), budget);
         const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
         if (!chain) {
           // Chain not configured here (no RPC / no deployment) — nothing to do.
@@ -469,6 +483,7 @@ export class ChainIngestDO {
           resolved,
           chain,
           RECONCILE_BUDGET_OWN_INVOCATION,
+          budget,
         );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;

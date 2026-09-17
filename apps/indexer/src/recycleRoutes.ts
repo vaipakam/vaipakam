@@ -71,7 +71,8 @@
  * computed in BigInt. Reads are open-CORS like every other indexer read.
  */
 
-import { createPublicClient, http, type Address } from 'viem';
+import { type Address } from 'viem';
+import { createChainClient } from './subrequestBudget';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   InteractionRewardsLensFacetABI,
@@ -360,11 +361,17 @@ export async function captureBackingSnapshot(
   }
   if (!chain?.rpc) return;
 
-  const client = createPublicClient({
-    // No retry: a retry doubles this capture's subrequest count inside an
-    // invocation whose budget the ingest pass already reserves most of.
-    // A missed capture is picked up on the chain's next turn.
-    transport: http(chain.rpc, { timeout: 10_000, retryCount: 0 }),
+  // Sent through the INVOCATION's counted sender when there is one (#2221):
+  // this capture shares one cron tick with the ingest pass and the listing
+  // sweep, so its reads belong in the same count rather than in a second
+  // estimate beside it.
+  //
+  // No retry: a retry doubles this capture's subrequest count inside an
+  // invocation whose budget the ingest pass already reserves most of.
+  // A missed capture is picked up on the chain's next turn.
+  const client = createChainClient(chain.rpc, env.fetchFn, {
+    timeout: 10_000,
+    retryCount: 0,
   });
   // Identity BEFORE trust: a secret pointed at the wrong network still
   // answers, and a fork or a matching deterministic address would store

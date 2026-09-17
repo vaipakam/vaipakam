@@ -390,8 +390,8 @@ The app uses chain reads and indexed reads for different jobs.
   stopped advancing while still appearing to run normally. Because that
   failure is silent, the figure may not be an estimate: a run measures what it
   actually issued and reports it, and a run that passes the limit says so and
-  names the network, so a stalled network is announced rather than inferred
-  later from records that stopped changing.
+  names which run it was, so a stalled network is announced rather than
+  inferred later from records that stopped changing.
 - **A statement prepared but never sent costs nothing, and statements sent
   together cost once.** This is stated because getting it wrong in either
   direction produces a confident figure that is still incorrect — counting
@@ -405,6 +405,22 @@ The app uses chain reads and indexed reads for different jobs.
   figure came to be wrong repeatedly while appearing settled; a request made
   by a part of the system that knows nothing about the allowance is still
   counted against it.
+- **The count is the whole run's, and an automatic retry is a request.** The
+  limit applies to a scheduled run, and a run does several things at once —
+  following the network, catching records up, retrying a listing that failed
+  to publish, tidying old rows. Counting each of those separately would report
+  several comfortable figures for a run that had already been stopped, so they
+  share one count. For the same reason, a read that fails and is retried costs
+  what the attempts cost: an attempt that reaches the network is a request
+  whether or not the caller asked for it, and the attempts a failing provider
+  causes are exactly the ones that decide whether a run survives.
+- **Every run reports what it spent, including the ones that end early or
+  fail, and a run that passes the limit says so at the moment it happens.**
+  The ordinary figure is the one that makes the limits re-settable from
+  evidence, so reporting it only on the busiest path leaves the common case
+  unmeasured. And the announcement cannot wait for the end of the run: the
+  platform ends a run AT the request that passes the limit, so anything said
+  afterwards is said by something that may no longer be running.
 - Anything that occupies a record slot without issuing a request cannot
   consume the allowance — a record the chain declines to confirm is the case
   that arises, since nothing is worth asking about a loan the chain has never

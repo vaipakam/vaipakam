@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   CURSOR_WRITE_RESERVE,
@@ -6,7 +6,8 @@ import {
   canAfford,
   createBudget,
   meterD1,
-  meterRpc,
+  meterEnv,
+  meterFetch,
   overspent,
   spend,
   spent,
@@ -81,6 +82,41 @@ describe('subrequest budget', () => {
     expect(spend(budget)).toBe(true);
     expect(() => spend(budget)).not.toThrow();
     expect(overspent(budget)).toBe(true);
+  });
+
+  it('counts against ITS OWN limit, not the default one', () => {
+    // #2227 r1 `4033546291`: a budget created with a limit of 5 that had
+    // issued 5 requests reported 45 spent, because the reporter subtracted
+    // from the default 50. A figure neither true nor obviously false is the
+    // worst kind, and one object knowing its own ceiling makes it unsayable.
+    const budget = createBudget(5);
+    spend(budget);
+    spend(budget);
+    expect(budget.limit).toBe(5);
+    expect(spent(budget)).toBe(2);
+    expect(budget.remaining).toBe(3);
+  });
+
+  it('announces the ceiling AT the crossing, once, naming the scope', () => {
+    // #2227 r1 `4033546277`: the announcement used to sit after the pass's
+    // work, where it could not run — the platform kills the invocation at the
+    // request that crosses the ceiling. Announcing inside `spend()` happens
+    // BEFORE that request is issued, which is the last moment anything here
+    // is guaranteed to execute.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const budget = createBudget(2, 'chain 84532 pass');
+      spend(budget);
+      spend(budget);
+      expect(warn).not.toHaveBeenCalled();
+      spend(budget); // the crossing
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('chain 84532 pass');
+      spend(budget); // still over — but already announced
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -195,29 +231,90 @@ describe('meterD1 cost model', () => {
   });
 });
 
-describe('meterRpc', () => {
-  it('charges one request per chain read', async () => {
+describe('meterFetch — the egress rule', () => {
+  it('charges one request per outbound call, whoever makes it', async () => {
     const budget = createBudget();
-    const client = meterRpc(
-      {
-        async getBlock() {
-          return { number: 1n };
-        },
-        async getLogs() {
-          return [];
-        },
-      },
-      budget,
-    );
-    await client.getBlock();
-    await client.getLogs();
+    const send = meterFetch(budget, (async () => new Response('ok')) as typeof fetch);
+    await send('https://example.test/a');
+    await send('https://example.test/b');
     expect(spent(budget)).toBe(2);
   });
 
-  it('leaves non-function properties alone', () => {
+  it('charges EACH ATTEMPT, which is what object-metering missed', async () => {
+    // #2227 r1 `4033546264`: viem retries a failed request up to three more
+    // times underneath ONE client method call. Counting the method call gave
+    // 1 where the platform counted 4 — and only when a provider was failing,
+    // i.e. exactly when the number mattered. At egress there is no such gap:
+    // an attempt is a call.
     const budget = createBudget();
-    const client = meterRpc({ chainId: 8453 } as { chainId: number }, budget);
-    expect(client.chainId).toBe(8453);
-    expect(spent(budget)).toBe(0);
+    let attempts = 0;
+    const flaky = (async () => {
+      attempts += 1;
+      if (attempts < 4) throw new Error('rate limited');
+      return new Response('ok');
+    }) as typeof fetch;
+    const send = meterFetch(budget, flaky);
+    for (let i = 0; i < 4; i += 1) {
+      try {
+        await send('https://example.test/rpc');
+      } catch {
+        /* the retry loop viem runs for us */
+      }
+    }
+    expect(attempts).toBe(4);
+    expect(spent(budget)).toBe(4);
+  });
+
+  it('meters a non-global sender, so a DO ping counts too', async () => {
+    const budget = createBudget();
+    const stub = { fetch: async () => new Response('pong') };
+    const send = meterFetch(budget, stub.fetch.bind(stub) as typeof fetch);
+    await send('https://chain-ingest-do/trigger');
+    expect(spent(budget)).toBe(1);
+  });
+
+  it('passes the response through untouched', async () => {
+    const send = meterFetch(
+      createBudget(),
+      (async () => new Response('body')) as typeof fetch,
+    );
+    await expect((await send('https://example.test')).text()).resolves.toBe(
+      'body',
+    );
+  });
+});
+
+describe('meterEnv', () => {
+  it('meters both handles the invocation actually uses', async () => {
+    const { db } = fakeDb();
+    const budget = createBudget();
+    const env = meterEnv(
+      { DB: db, other: 'untouched' },
+      budget,
+    ) as unknown as {
+      DB: ReturnType<typeof fakeDb>['db'];
+      fetchFn: typeof fetch;
+      other: string;
+    };
+    await env.DB.prepare('SELECT 1').first();
+    // A sender is present on the env, which is the whole reason a helper five
+    // calls deep can be counted without being handed a budget.
+    expect(typeof env.fetchFn).toBe('function');
+    expect(env.other).toBe('untouched');
+    expect(spent(budget)).toBe(1);
+  });
+
+  it('is idempotent — metering twice counts once', async () => {
+    // The cron entry point meters the env and hands it to a pass that meters
+    // what it is given. Double-counting there would inflate every tick's
+    // figure by the share of its work that is D1.
+    const { db } = fakeDb();
+    const budget = createBudget();
+    const once = meterEnv({ DB: db }, budget);
+    const twice = meterEnv(once, budget);
+    await (
+      twice as unknown as { DB: ReturnType<typeof fakeDb>['db'] }
+    ).DB.prepare('SELECT 1').first();
+    expect(spent(budget)).toBe(1);
   });
 });
