@@ -605,7 +605,7 @@ export interface ScanReconcileContext {
    *  place. A new context now fails to COMPILE without it, which is the only
    *  part of "discloses by construction" a type system can actually deliver;
    *  a context with nothing to disclose supplies a no-op and says so. */
-  discloseSideTableBatch(results: unknown): void;
+  discloseSideTableBatch(results: unknown, wonTheCas: boolean): void;
   /** Everything a repair to `to` owes this loan's HOLDERS, as STATEMENTS
    *  for the same transaction as the write: the refreshed
    *  `*_current_owner` columns and the inbox rows. Async because it reads
@@ -799,7 +799,17 @@ export async function reconcileAfterScan(
       // returned, and UNCONDITIONALLY — the side tables are cleared whether
       // or not the loan row itself changed, so gating this on the repair
       // verdict would drop the disclosure in the commonest case (#2231 r9).
-      ctx.discloseSideTableBatch(results);
+      //
+      // The compare-and-set's OUTCOME is passed along, because it changes
+      // what the platform may claim (#2231 r14 `4037027847`). This pass read
+      // the chain and found the loan terminal; if its update also CHANGED the
+      // row then this pass is the one that recorded it, and no terminal event
+      // had arrived. If the update changed nothing, another writer got there
+      // first — and on this path that writer may well have been the event
+      // handler, which is the race the compare-and-set exists for. Saying
+      // "no terminal event arrived" in that case asserts the absence of
+      // exactly the thing that probably just happened.
+      ctx.discloseSideTableBatch(results, (results[0]?.meta?.changes ?? 0) > 0);
       // The FIRST result is the loan row's, and only it decides whether
       // this was a repair. The deletes run regardless — see the module
       // header: what licenses clearing the side tables is the chain having

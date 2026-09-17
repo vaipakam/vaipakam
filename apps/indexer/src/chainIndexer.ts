@@ -1486,14 +1486,25 @@ export async function _runLoanReconcilePass(input: {
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
-        discloseSideTableBatch: (results) =>
-          // `reconciled`, NOT `closed-out` (#2231 r11 `4036569613`). The
-          // repair reaches this list from a safe-head chain READ that found
-          // the loan already terminal — the terminal event is the thing that
-          // was MISSED, which is why the repair exists. Claiming an event
-          // arrived would misdescribe the evidence on the one path whose
-          // defining feature is its absence.
-          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000), 'reconciled'),
+        discloseSideTableBatch: (results, wonTheCas) =>
+          // `reconciled` when this pass's own write landed, NOT `closed-out`
+          // (#2231 r11 `4036569613`): the repair reaches this list from a
+          // safe-head chain READ that found the loan already terminal — the
+          // terminal event is the thing that was MISSED, which is why the
+          // repair exists.
+          //
+          // But only when the write landed. A compare-and-set that changed
+          // nothing means another writer terminalized the row first, and on
+          // this path that writer may have been the event handler — so
+          // claiming no event arrived would assert the absence of the very
+          // thing the race is about (#2231 r14 `4037027847`). Then the honest
+          // basis is the weaker one: a chain read, nothing said about events.
+          discloseQuarantineReleases(
+            chainId,
+            results,
+            Math.floor(Date.now() / 1000),
+            wonTheCas ? 'reconciled' : 'chain-read',
+          ),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the

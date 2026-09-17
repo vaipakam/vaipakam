@@ -126,7 +126,20 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // it noticed, and it should have. The shape runs against the real
     // migrated schema in `calendarNotifications.test.ts` and
     // `loanQuarantine.test.ts`.
-    expect(skipped.length).toBeLessThanOrEqual(15);
+    // Raised 15 → 16 for #2231 r14 (`4037027829`): the terminal quarantine
+    // sweep's DELETE now names the exact ids its bounded roster returned,
+    // `WHERE loan_id IN (?, ?, …)`, with one placeholder per id. It repeated
+    // the roster's two-table `EXISTS` before, which meant a SECOND unbounded
+    // walk of every held row on each sweep — the bound applied to what came
+    // back, never to the work. Binding the ids is what makes the statement
+    // dynamic; the values are still bound, never interpolated.
+    //
+    // The guard's own "raise the pin with a test covering the dynamic shape"
+    // route, and the covering test is unusually direct: `loanQuarantine.test`
+    // runs the sweep against the REAL migrated schema and asserts exactly
+    // which rows go and which remain, so a mis-built `IN` list fails loudly
+    // rather than silently clearing too much.
+    expect(skipped.length).toBeLessThanOrEqual(16);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

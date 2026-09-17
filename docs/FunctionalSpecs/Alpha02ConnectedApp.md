@@ -333,14 +333,20 @@ The app uses chain reads and indexed reads for different jobs.
   no more, says exactly how many it is not naming, and gives the enquiry that
   lists them — see the bounded-report point below, which this one does not
   override.
-- **A named record can be cleared without waiting to be described, and the
-  value that makes that safe changes on every sighting.** Clearing safely
-  requires quoting a value the report holds for that record, so each
-  identifier in the undescribed remainder is listed together with it. Naming a
-  record while withholding what is needed to act on it would, in practice,
-  push a person toward the unguarded removal this report spends a paragraph
-  warning against — and because the described page does not rotate, it would
-  push them there indefinitely.
+- **A described record's removal is written out in full, to be run exactly as
+  printed.** Nothing is left for a person to assemble. Printing the *pieces*
+  of a removal and describing how to combine them was tried three times and
+  failed three different ways, each only noticed by a reader; the platform now
+  emits a finished instruction, and it is checked by being executed rather
+  than by being read.
+
+  Records named but not described do not carry one — there is no room for
+  hundreds of finished instructions in one message — so the report gives them
+  an enquiry that returns everything a removal needs, and the described
+  records show the finished form it goes into. Naming a record while leaving
+  it unactionable would, in practice, push a person toward the unguarded
+  removal this report spends a paragraph warning against, and because the
+  described page does not rotate it would push them there indefinitely.
 
   That value is a fresh token written on each sighting **together with** the
   time of that sighting, and it takes both. A time recorded to the second
@@ -372,7 +378,12 @@ The app uses chain reads and indexed reads for different jobs.
   withheld position leaves the next run free to remind on it — the exact
   failure this memory exists to prevent, arriving during its own upgrade. The
   platform asks the store which shape it has rather than assuming, and keeps
-  asking until the newer one appears.
+  asking until the newer one appears. Where the sweep that releases records
+  must read the store to find them, what it REMOVES is bounded together with
+  what it reads, so one run clears up to a stated number and the rest wait for
+  the next — the sweep runs on every run. The reading itself still grows with
+  how much is held, and that is stated rather than claimed away: no index can
+  bound a question that spans two records and is not stored anywhere.
 
   While the older shape is in use, the report still names every withheld
   position — a deployment is exactly when a suppression most needs to be

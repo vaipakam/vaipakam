@@ -58,15 +58,22 @@ resolving one of those is what brings the next into view. It would be easy to
 write "described next time" there, and it would be untrue — nothing would ever
 supply that detail.
 
-Each of those numbers is listed together with the value its safe-removal
-command needs, and that value is a fresh token written on every sighting
-rather than the time of the last one. A time recorded to the second cannot
-tell two sightings within the same second apart, so a removal quoting it could
+Each described entry carries its removal command already written out, to be
+run exactly as printed. That is deliberate and it replaced three earlier
+attempts to print the *pieces* and let a person assemble them — each of which
+turned out not to run, in a different way each time. The command is checked by
+being executed: the tests take the text the report emits and run it.
+
+The value it quotes is two values, not one: a token written afresh on every
+sighting, and the time of that sighting. A time recorded to the second cannot
+tell two sightings within the same second apart, and a token cannot be
+refreshed by the older write shape, so either on its own would let a removal
 delete a finding recorded *after* the person read the report — resuming
 reminders for a loan nothing has settled, which is exactly the harm this
-memory exists to prevent. The window is narrow, and that is no defence: the
-whole value of a safety check is that it can be trusted without being checked,
-so one that can fail silently is worse than none. Naming an entry while withholding what it takes to act on it
+memory exists to prevent. One narrow gap remains and is written down further
+below. The window is narrow, and that is no defence: the whole value of a
+safety check is that it can be trusted without being checked, so one that can
+fail silently is worse than none. Naming an entry while withholding what it takes to act on it
 sounds harmless and is not: because the described page does not take turns,
 the entry would stay unactionable indefinitely, and a person who needed it
 gone would be pushed toward exactly the unguarded removal this report spends a
@@ -162,11 +169,14 @@ against the older shape — and a run that cannot record a withheld loan lets
 the next run remind on it, which is the failure this memory exists to prevent,
 arriving during its own upgrade. Recording is therefore written to succeed
 against both shapes, and the platform asks the store which shape it has rather
-than assuming. While the older shape is in use the report still names every
-withheld loan — a deployment is exactly when a suppression most needs to be
-visible — but offers no removal command at all, and says why: every such
-command names something the older shape does not have, so printing one would
-hand a person an instruction that cannot run.
+than assuming. While the older shape is in use the report still names
+withheld loans on the same terms as ever — up to its stated limit, with an
+exact count of any beyond it, because a deployment is exactly when a
+suppression most needs to be visible — but offers no removal command at all,
+and says why: every such command names something the older shape does not
+have, so printing one would hand a person an instruction that cannot run. The
+enquiry that fetches the values for entries past the limit is withheld there
+too, for the same reason.
 
 The safety value also had to become two values rather than one. The older
 write shape cannot refresh the token, so a token on its own would go on

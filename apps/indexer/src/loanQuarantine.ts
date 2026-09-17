@@ -358,6 +358,15 @@ export type ReleaseBasis =
    * evidence the operator is being asked to weigh.
    */
   | 'reconciled'
+  /**
+   * A pass read the chain, found the loan terminal, and ANOTHER writer had
+   * already recorded it — so nothing here can say whether a terminal event
+   * arrived or not (#2231 r14 `4037027847`). The weakest of the four, and
+   * the right one when a compare-and-set loses: the race the CAS exists for
+   * is precisely the event handler getting there first, so `reconciled`
+   * would assert the absence of the likeliest explanation.
+   */
+  | 'chain-read'
   /** A terminal event for this id arrived and the close-out cleared it. */
   | 'closed-out';
 
@@ -395,6 +404,14 @@ export function discloseQuarantineReleases(
         `${described}. That is the soundest release the platform makes — a ` +
         `chain read about the id, not a stored column standing in for one — ` +
         `and reminders for that id resume, correctly.`
+      : basis === 'chain-read'
+      ? `because a pass read the chain and found the loan terminal, though ` +
+        `another writer had already recorded it: ${described}. Which writer, ` +
+        `and whether a terminal event arrived at all, is not something this ` +
+        `pass can say — it lost the race it runs to detect. The evidence is ` +
+        `the chain read alone, and it establishes the state of the position ` +
+        `CURRENTLY bearing the id, not that the entry being released was ` +
+        `about that position.`
       : basis === 'reconciled'
       ? `because a pass read the chain at a safe head and found the loan ` +
         `already terminal, with no terminal event having arrived: ` +
@@ -507,6 +524,24 @@ export async function releaseTerminalQuarantine(
   // and the ids come back instead of a count nobody can audit. Not a new bet
   // on D1 — `consumeTelegramLinkCode` has run `DELETE … RETURNING` on this
   // same database since the handshake was built.
+  // WHAT IS AND IS NOT BOUNDED HERE, said plainly (#2231 r14 `4037027829`).
+  //
+  // Rows RETURNED are capped, and the delete below is capped with them. The
+  // roster's own SCAN is not: with nothing terminal to find, SQLite walks the
+  // chain's held rows — an index walk with one primary-key probe into `loans`
+  // each — before concluding there is nothing. No index can bound that,
+  // because the condition spans two tables and the answer is not stored.
+  //
+  // It is left that way deliberately, and the alternatives were weighed. A
+  // durably cursored sweep would bound the scan and make a release wait
+  // several passes for a table whose size is bounded by the number of
+  // UNSETTLED loans — which in a healthy system is a handful, and when it is
+  // not, the held rows themselves are the fault being reported. Trading
+  // prompt releases for a bound on work that only matters in the state the
+  // sweep exists to clear is the wrong way round. What is not acceptable is
+  // claiming a bound that is not there, which is why this note exists rather
+  // than a sentence saying the sweep is bounded.
+  //
   // BOUNDED AT THE DATABASE, not in the string (#2231 r8 `4036084552`).
   //
   // The previous revision took `RETURNING loan_id` on the DELETE and sliced
@@ -540,18 +575,29 @@ export async function releaseTerminalQuarantine(
     .all<{ loan_id: number }>();
   const named = (roster.results ?? []).map((r) => r.loan_id);
   if (named.length === 0) return;
+  // DELETES EXACTLY THE ROSTER, by id, and nothing else (#2231 r14
+  // `4037027829`).
+  //
+  // It repeated the `EXISTS` condition, which meant a SECOND unbounded walk
+  // of the chain's held rows on every sweep that had anything to do — the
+  // bounded roster in front of it bounded only what came back, not the work.
+  // Naming the ids turns it into `STALE_ROLL_CALL_LIMIT` primary-key deletes.
+  //
+  // It also settles something the previous shape could only hedge: the roster
+  // and the count are now THE SAME SET, so `meta.changes` describes the rows
+  // just listed rather than a superset read a moment later. A sweep with more
+  // than the cap to clear takes another pass, which this sweep is built for —
+  // it is the durable cleanup path and runs every pass.
+  //
+  // A `?` per id rather than an interpolated list: the #1149 guard reads
+  // static prepare sites, and an interpolated `IN (...)` leaves its reach.
+  const placeholders = named.map(() => '?').join(', ');
   const outcome = await db
     .prepare(
       `DELETE FROM loan_reconcile_quarantine
-        WHERE chain_id = ?
-          AND EXISTS (
-            SELECT 1 FROM loans l
-             WHERE l.chain_id = loan_reconcile_quarantine.chain_id
-               AND l.loan_id  = loan_reconcile_quarantine.loan_id
-               AND l.status NOT IN ('active', 'fallback_pending')
-          )`,
+        WHERE chain_id = ? AND loan_id IN (${placeholders})`,
     )
-    .bind(chainId)
+    .bind(chainId, ...named)
     .run();
   // NO INVENTED COUNT when the driver reports none.
   //
@@ -625,8 +671,23 @@ export async function releaseTerminalQuarantine(
  *    overflow is stated, so "20 shown" can never read as "20 exist".
  */
 /**
- * A guard rendered as the SQL PREDICATE the operator pastes (#2231 r12
- * `4036719806`, r13 `4036869950`).
+ * THE WHOLE COMMAND, finished, for one entry — not a fragment to assemble
+ * (#2231 r14 `4037027842`, and the four rounds before it).
+ *
+ * This has been a value, then a quoted value, then a predicate in brackets,
+ * and every round found another way the operator's assembly came out wrong:
+ * a word that matched nothing, quotes that doubled, and finally brackets that
+ * SQLite reads as an identifier so the advertised command failed with "no
+ * such column". Each fix was to the fragment; the defect was the assembly.
+ *
+ * So nothing is left to assemble. The report prints a statement that runs as
+ * printed, and `test/loanQuarantine.test.ts` EXECUTES the statements it finds
+ * in the emitted message against the real migrated schema. That test is the
+ * actual fix here — a string this module merely describes can be wrong in
+ * ways only a reader notices, and four rounds of readers did.
+ *
+ * Why both `obs` and `last_seen_at` are in it (#2231 r12 `4036719806`,
+ * r13 `4036869950`).
  *
  * BOTH the token and the sighting time, because neither alone covers every
  * way a row can be re-observed. The token changes on every GUARDED write and
@@ -657,8 +718,13 @@ export async function releaseTerminalQuarantine(
  * empty case work: a template that wrapped the printed value in quotes would
  * turn an empty guard into four quote characters and match nothing again.
  */
-function sqlGuard(obs: string, lastSeenAt: number): string {
-  return `obs = '` + obs.replace(/'/g, `''`) + `' AND last_seen_at = ` + String(lastSeenAt);
+function clearCommand(chainId: number, loanId: number, obs: string, lastSeenAt: number): string {
+  return (
+    `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ${chainId} ` +
+    `AND loan_id = ${loanId} AND obs = '` +
+    obs.replace(/'/g, `''`) +
+    `' AND last_seen_at = ${lastSeenAt};`
+  );
 }
 /**
  * How to clear ONE entry, when the guard column is there to guard with.
@@ -671,13 +737,13 @@ const CLEAR_INSTRUCTION =
   `Clearing one is a deliberate act, and MUST name the exact entry that ` +
   `was read — a pass between your reading this and running it can ` +
   `re-observe the id as unsettled, and an unconditional delete would then ` +
-  `drop that fresh finding instead: DELETE FROM loan_reconcile_quarantine ` +
-  `WHERE chain_id = <chain> AND loan_id = <id> AND <the guard shown in ` +
-  `brackets for that row, pasted whole>. The guard is a token that changes ` +
-  `on every sighting AND the time of that sighting: the token alone would ` +
-  `miss a sighting recorded while the guard column was not yet in place, ` +
-  `and the time alone cannot separate two sightings inside one second. If ` +
-  `it deletes nothing, the entry changed under you and wants re-reading.`;
+  `drop that fresh finding instead. Each described entry above carries the ` +
+  `command for it, finished: run it as printed, changing nothing. It quotes ` +
+  `a token that changes on every sighting AND the time of that sighting — ` +
+  `the token alone would miss a sighting recorded while the guard column ` +
+  `was not yet in place, and the time alone cannot separate two sightings ` +
+  `inside one second. If it deletes nothing, the entry changed under you ` +
+  `and wants re-reading.`;
 export async function reportStaleQuarantine(
   db: D1Database,
   chainId: number,
@@ -840,11 +906,17 @@ export async function reportStaleQuarantine(
           : `stored row for this id: ${r.loan_status}, from block ` +
             `${r.loan_start_block ?? '?'} (UNVERIFIED — may be stale or ` +
             `reorg residue; canonical identity unknown)`;
+      // The command only when there IS a guard column to guard with; on a
+      // pre-0053 database every statement naming `obs` fails outright, so
+      // printing one is worse than printing none (#2231 r13 `4036869959`,
+      // r14 `4037027817`).
+      const clear = withGuard
+        ? ` — clear with: ${clearCommand(chainId, r.loan_id, r.obs, r.last_seen_at)}`
+        : '';
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
-        `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}, ` +
-        `guard [${sqlGuard(r.obs, r.last_seen_at)}]; ` +
-        `${points})`
+        `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}; ` +
+        `${points})${clear}`
       );
     })
     .join('; ');
@@ -866,22 +938,22 @@ export async function reportStaleQuarantine(
   let overflow = '';
   if (n > shown.length) {
     const named = held.slice(STALE_REPORT_LIMIT);
-    // `id@last_seen_at`, NOT the id alone (#2231 r8 `4036084570`).
+    // IDS ONLY here, whatever the schema (#2231 r14 `4037027842`,
+    // `4037027817`).
     //
-    // The clearing instruction below is deliberately compare-and-delete and
-    // needs the exact `last_seen_at` of the row being cleared. Printing only
-    // ids here meant an overflow entry could be named and still be
-    // unclearable by the documented route — and since the detail page does
-    // not rotate, unclearable indefinitely. An operator who needs it out
-    // would have had to invent a command, which in practice means the
-    // unguarded delete this report spends a paragraph warning against.
+    // r8 paired each overflow id with the value its clear needs, so that a
+    // named entry was not also an unactionable one. That was right about the
+    // problem and wrong about the remedy: it left the operator assembling a
+    // command out of parts, which is the thing that has now gone wrong four
+    // rounds running — a word that matched nothing, doubled quotes, brackets
+    // SQLite reads as an identifier. And on a pre-0053 database the printed
+    // guard named a column that does not exist.
     //
-    // The value is already in hand: the same statement selects it for every
-    // row it returns. Pairing it costs bytes, not a query.
-    const ids = named
-      .map((r) => `${r.loan_id}@[${sqlGuard(r.obs, r.last_seen_at)}]`)
-      .join(', ');
-    // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
+    // There is no room for 180 finished commands in one line, so these ids
+    // get what CAN be finished: the enquiry below returns everything a clear
+    // needs, and the described entries above show the command already built.
+    const ids = named.map((r) => String(r.loan_id)).join(', ');
+    // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE ENQUIRY. The
     // count is exact even here, so this is a stated limit rather than a page
     // that quietly ended (#2231 r7 `4035821168`).
     const unnamed = n - held.length;
@@ -889,30 +961,28 @@ export async function reportStaleQuarantine(
       unnamed > 0
         ? ` — and ${unnamed} further held entr${unnamed === 1 ? 'y' : 'ies'} ` +
           `NOT named here, because this report is bounded at ` +
-          `${STALE_ROLL_CALL_LIMIT} ids and will not grow with the fault. ` +
-          // `last_seen_at` HERE TOO (#2231 r9 `4036242397`). r8 paired the
-          // guard value with the ids held in memory and left the query
-          // offered for everything past the cap selecting the id alone — so
-          // the entries FURTHEST from ever being described were the ones
-          // still unclearable by the documented route. Fixing the near half
-          // of a problem and not the far half is the shape this PR has
-          // produced repeatedly; the query returns what the DELETE wants.
-          `List them, with the value each one's guarded DELETE needs, using: ` +
-          `SELECT loan_id, obs FROM loan_reconcile_quarantine ` +
-          `WHERE chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
-          `ORDER BY first_seen_at ASC`
+          `${STALE_ROLL_CALL_LIMIT} ids and will not grow with the fault.`
         : '';
+    // BOTH guard fields, and only where the column exists (#2231 r14
+    // `4037027810`, `4037027817`). The enquiry is itself a finished statement
+    // and is executed by the tests, like every other statement this report
+    // emits.
+    const lookup = withGuard
+      ? ` To clear any of them you need the two values a clear quotes, which ` +
+        `are not shown above; this enquiry returns them, and the described ` +
+        `entries show the command they go into: SELECT loan_id, obs, ` +
+        `last_seen_at FROM loan_reconcile_quarantine WHERE ` +
+        `chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
+        `ORDER BY first_seen_at ASC;`
+      : '';
     overflow =
       ` (+${n - shown.length} more, each also holding reminders back; ` +
-      `${named.length} of them listed here as id@guard but NOT ` +
-      `described: ${ids} — the detail above is the oldest ` +
-      `${STALE_REPORT_LIMIT} and does not rotate, so these stay undescribed ` +
-      `until an entry ahead of them is resolved. The value after @ is the ` +
-      `one the guarded DELETE below wants for that row, so removing one of ` +
-      `these is SAFE against a pass re-observing it — which is not the same ` +
-      `as its being examined: nothing above says what these ids point at now, ` +
-      `and that is the check the described entries got and these did ` +
-      `not${beyond})`;
+      `${named.length} of them named here but NOT described: ${ids} — the ` +
+      `detail above is the oldest ${STALE_REPORT_LIMIT} and does not rotate, ` +
+      `so these stay undescribed until an entry ahead of them is resolved. ` +
+      `Being named is not being examined: nothing above says what these ids ` +
+      `point at now, and that is the check the described entries got and ` +
+      `these did not.${beyond}${lookup})`;
   }
   // NO CLEARING INSTRUCTION AT ALL while the guard column has not been
   // observed (#2231 r13 `4036869959`). On a database still at 0049 every

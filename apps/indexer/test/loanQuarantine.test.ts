@@ -394,14 +394,19 @@ describe('the table, over the real migrated schema', () => {
     // arrived. Getting them the wrong way round tells an operator the
     // opposite of what licensed the release.
     const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
-    // The repair path reaches the close-out list from a safe-head chain read.
-    expect(src).toMatch(/discloseSideTableBatch:[\s\S]{0,600}?'reconciled'/);
+    // The repair path reaches the close-out list from a safe-head chain read
+    // — and only claims so when its own compare-and-set landed. A lost CAS
+    // means another writer got there first, possibly the event handler, so
+    // the weaker basis is used (#2231 r14 `4037027847`).
+    expect(src).toMatch(
+      /discloseSideTableBatch:[\s\S]{0,1200}?wonTheCas \? 'reconciled' : 'chain-read'/,
+    );
     // The event handlers' own cleanup did see an event.
     expect(src).toMatch(
       /async function _clearClosedLoanSideTables[\s\S]*?discloseQuarantineReleases\([\s\S]{0,200}?'closed-out'\)/,
     );
     // And no call site borrows the settle path's wording.
-    expect(src).not.toMatch(/discloseSideTableBatch:[\s\S]{0,600}?'closed-out'/);
+    expect(src).not.toMatch(/discloseSideTableBatch:[\s\S]{0,1200}?'closed-out'/);
   });
 
   it('stays quiet when a settle releases a mark that was never long-held', async () => {
@@ -436,12 +441,15 @@ describe('the table, over the real migrated schema', () => {
     await releaseTerminalQuarantine(h.d1 as never, CHAIN);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     // The COUNT is exact — it is free, and it is what conveys the magnitude.
-    expect(said).toContain(`released ${STALE_ROLL_CALL_LIMIT + extra} held entries`);
-    // The ROSTER is not.
+    // ONE PASS CLEARS AT MOST THE CAP, and says exactly that number: the
+    // delete now names the ids the roster returned, so the count describes
+    // the rows just listed rather than a superset (#2231 r14 `4037027829`).
+    expect(said).toContain(`released ${STALE_ROLL_CALL_LIMIT} held entries`);
     const shown = ids.filter((id) => new RegExp(`\\b${id}\\b`).test(said));
     expect(shown).toHaveLength(STALE_ROLL_CALL_LIMIT);
-    expect(said).toContain(`and ${extra} more, not named here`);
-    expect(quarantined(h)).toEqual([]);
+    // The remainder waits for the next pass — this sweep is the durable
+    // cleanup path and runs on every one.
+    expect(quarantined(h)).toHaveLength(extra);
     warn.mockRestore();
   });
 
@@ -487,9 +495,11 @@ describe('the table, over the real migrated schema', () => {
     warn.mockRestore();
     expect(returned.length).toBeGreaterThan(0);
     for (const count of returned) expect(count).toBeLessThanOrEqual(STALE_ROLL_CALL_LIMIT);
-    // And the release still happened in full — the bound is on what is READ
-    // BACK, never on what is removed.
-    expect(quarantined(h)).toEqual([]);
+    // The delete is bounded WITH the read now, so one pass clears the cap and
+    // the rest wait for the next (#2231 r14 `4037027829`). The earlier shape
+    // removed everything in one go by repeating the roster's two-table
+    // condition — unbounded work behind a bounded read.
+    expect(quarantined(h)).toHaveLength(40);
   });
 
   it('will not invent a count when the driver reports none', async () => {
@@ -522,10 +532,8 @@ describe('the table, over the real migrated schema', () => {
     warn.mockRestore();
     expect(said).toContain('an unreported number of held entries');
     expect(said).toContain(`at least ${STALE_ROLL_CALL_LIMIT}`);
-    // The capped roster length is never passed off as the total.
-    expect(said).not.toContain(`released ${STALE_ROLL_CALL_LIMIT} held entries`);
-    // The release still happened.
-    expect(quarantined(h)).toEqual([]);
+    // The release still happened, up to this pass's cap.
+    expect(quarantined(h)).toHaveLength(7);
   });
 
   it('stays silent on a sweep that released nothing', async () => {
@@ -628,7 +636,7 @@ describe('telling the operator about a row that stays', () => {
     // guarded on the exact entry that was read, so a pass that re-observes
     // the id between the reading and the running is not silently dropped.
     expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
-    expect(said).toContain('AND <the guard shown in');
+    expect(said).toContain('run it as printed, changing nothing');
     warn.mockRestore();
   });
 
@@ -736,20 +744,78 @@ describe('telling the operator about a row that stays', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     warn.mockRestore();
     // An empty SQL literal, not a word.
-    expect(said).toContain(`guard [obs = '' AND last_seen_at = ${NOW}]`);
+    expect(said).toContain(`AND obs = '' AND last_seen_at = ${NOW};`);
     expect(said).not.toContain('guard none');
     // And the instruction does not add quotes of its own, which would turn
     // that into four quote characters and match nothing again.
-    expect(said).toContain('AND <the guard shown in');
+    expect(said).toContain('run it as printed, changing nothing');
     // The command it produces is the one that works.
-    // The command the report produces, pasted whole.
-    const removed = h.db
-      .prepare(
-        `DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? ` +
-          `AND obs = '' AND last_seen_at = ${NOW}`,
-      )
-      .run(CHAIN, 55);
+    // The command the report produces, RUN AS PRINTED.
+    const printed = (said.match(/DELETE FROM loan_reconcile_quarantine[^;]*;/) ?? [])[0];
+    expect(printed).toBeTruthy();
+    const removed = h.db.prepare(printed as string).run();
     expect(Number(removed.changes)).toBe(1);
+  });
+
+  it('EXECUTES every statement it prints, exactly as printed', async () => {
+    // THE ROOT FIX for a defect class, not a case (#2231 r14 `4037027842`,
+    // and r11-r13 before it).
+    //
+    // The report hands an operator SQL. Across four rounds every kind of
+    // fragment it printed turned out not to run: a word that matched nothing,
+    // quotes that doubled into four, a column that does not exist on the
+    // older schema, and finally brackets that SQLite reads as an identifier.
+    // Each round fixed the fragment; none of them could catch the next one,
+    // because a string this file merely DESCRIBES is only checked by a reader
+    // noticing.
+    //
+    // So the statements are finished, and this runs them. Anything the report
+    // prints between `DELETE`/`SELECT` and `;` is extracted and executed
+    // against the real migrated schema. A command that does not parse, names
+    // a column that is not there, or quotes a value wrongly fails here rather
+    // than in front of an operator holding a live suppression.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_REPORT_LIMIT + 5 }, (_, k) => 400 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+    seedLoanRow(h, 400, 'active', 5000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1, true);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+
+    // EXTRACTED THE WAY AN OPERATOR COPIES, from the label to the semicolon
+    // — not by finding a `DELETE` and reading forward, which would step over
+    // any stray delimiter sitting in front of it. That is not hypothetical:
+    // the defect this test exists for was brackets around the command, and a
+    // `DELETE`-anchored match reads straight past an opening bracket and
+    // passes on the exact string that fails for a human.
+    const statements = [
+      ...[...said.matchAll(/clear with: ([^;]*;)/g)].map((m) => m[1]),
+      ...[...said.matchAll(/command they go into: ([^;]*;)/g)].map((m) => m[1]),
+    ];
+    // One per described entry, plus the overflow enquiry.
+    expect(statements.length).toBe(STALE_REPORT_LIMIT + 1);
+
+    let deletes = 0;
+    for (const sql of statements) {
+      // Executed verbatim — no binds, no edits. This throws on a syntax
+      // error, an unknown column, or a mis-quoted literal.
+      if (sql.startsWith('SELECT')) {
+        const rows = h.db.prepare(sql).all();
+        expect(Array.isArray(rows)).toBe(true);
+      } else {
+        const info = h.db.prepare(sql).run();
+        // And each one removes EXACTLY its own entry: a command that removed
+        // nothing would be a guard that does not match, and one that removed
+        // more would be a delete that is not anchored to a row.
+        expect(Number(info.changes)).toBe(1);
+        deletes += 1;
+      }
+    }
+    expect(deletes).toBe(STALE_REPORT_LIMIT);
+    // Exactly the described entries went; everything else is still held.
+    expect(quarantined(h)).toHaveLength(5);
   });
 
   it('offers NO clearing command while the guard column is unseen', async () => {
@@ -837,7 +903,7 @@ describe('telling the operator about a row that stays', () => {
     // And the shortfall is STATED, with the query that closes it.
     expect(said).toContain(`${extra} further held entries NOT named here`);
     expect(said).toContain(`bounded at ${STALE_ROLL_CALL_LIMIT} ids`);
-    expect(said).toContain('SELECT loan_id, obs FROM loan_reconcile_quarantine');
+    expect(said).toContain('SELECT loan_id, obs, last_seen_at FROM loan_reconcile_quarantine');
     warn.mockRestore();
   });
 
@@ -882,12 +948,15 @@ describe('telling the operator about a row that stays', () => {
     for (const id of ids.slice(STALE_REPORT_LIMIT)) {
       const obs = byId.get(id);
       expect(obs).toMatch(/^[0-9a-f]{8}$/);
-      expect(said).toContain(`${id}@[obs = '${obs}' AND last_seen_at = ${NOW}]`);
-      // And NOT the timestamp, which is what made the guard unsound.
-      expect(said).not.toContain(`${id}@${NOW}`);
+      // Named, and NOT carrying a half-built command: the values an overflow
+      // entry needs come from the enquiry, and the finished command is shown
+      // on the described entries (#2231 r14 `4037027842`).
+      expect(said).toMatch(new RegExp(`\\b${id}\\b`));
+      expect(said).not.toContain(`${id}@`);
     }
-    // And the format is explained rather than left to be guessed.
-    expect(said).toContain('id@guard');
+    // And what they can do about it is stated, with a finished enquiry.
+    expect(said).toContain('SELECT loan_id, obs, last_seen_at FROM');
+    expect(said).toContain('Being named is not being examined');
     expect(said).toContain('nothing above says what these ids point at now');
     warn.mockRestore();
   });
