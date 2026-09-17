@@ -35,12 +35,18 @@ verified —
 - `docs/ops/DeploymentRunbook.md` for the per-Worker deploy commands;
 - `apps/keeper/README.md` for the kill-switch and its confirmation.
 
-Where a command does appear here it is marked **[run]** if that exact form was
-executed against the live account — **each such block names its own date**, and
-most are 2026-08-03 — or **[unrun]** if it was written but not executed. The
-date moved into the blocks when a later one was added on 2026-09-17 (#2243 r5):
-a single date in this paragraph made the marker ambiguous the moment a second
-sitting contributed to the file, which is the opposite of what it is for. That distinction is the honest one, and it is the
+Where a command does appear here it is marked **[run] `<date>`** if that exact
+form was executed against the live account on that date, or **[unrun]** if it
+was written but not executed. Every `[run]` block carries its date — there are
+no undated ones and no relative words like "today", which say nothing to
+someone reading on another day.
+
+The date moved into the blocks when a later one was added on 2026-09-17
+(#2243 r5): a single date in this paragraph made the marker ambiguous the
+moment a second sitting contributed to the file, which is the opposite of what
+it is for. The existing blocks were dated in the same change (#2243 r6) —
+changing the convention without migrating its instances would have left the
+marker exactly as ambiguous, by a different route. That distinction is the honest one, and it is the
 one the defect history above argues for: treat an unrun line as a description
 of intent to check against the canonical runbook, not as something to paste
 into a terminal during an irreversible operation.
@@ -108,8 +114,8 @@ person waiting for a reply, and a contract redeploy does not change that. If
 those are real, export that one table before starting:
 
 ```bash
-install -m 700 -d ~/vaipakam-cutover        # [run] private directory FIRST
-# [run]
+install -m 700 -d ~/vaipakam-cutover        # [run] 2026-08-03 — private dir FIRST
+# [run] 2026-08-03
 (cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
 chmod 600 ~/vaipakam-cutover/tickets.sql
@@ -202,7 +208,10 @@ preparation and execution, the Workers will come up against a database
 missing its schema.
 
 ```bash
-# [run] — this exact form was used on the source today
+# [run] 2026-08-03 — this exact form was used on the source that day
+# ("today" until #2243 r6: a relative word in a file read on other days says
+# nothing about when the command was verified, which is the whole job of the
+# marker)
 (cd apps/indexer && npx wrangler d1 migrations apply "$TARGET_DB" --remote)
 (cd apps/indexer && npx wrangler d1 migrations list "$TARGET_DB" --remote)   # expect none pending
 ```
