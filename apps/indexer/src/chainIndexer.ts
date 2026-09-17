@@ -735,8 +735,15 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       return every deleted id, and the Worker to materialise them all, on
  *       a sweep that can cover thousands. A `LIMIT` the database honours
  *       costs one statement and removes a linear response
- * - 2 — the stale report: its count, and its bounded listing. TWO WHATEVER
- *       THE DATA SAYS, and the constancy is the point rather than the number
+ * - 1 — the stale report: its count and its bounded listing, in ONE
+ *       `batch()`. Two statements, one round trip — and a transaction, which
+ *       is why they were folded together (#2231 r11 `4036569628`): read
+ *       separately, the exact total could be taken before an operator's
+ *       guarded clear and the page after it, so the report would describe
+ *       overflow entries that no longer existed. The snapshot was the
+ *       requirement; costing one subrequest instead of two came with it.
+ *       CONSTANT WHATEVER THE DATA SAYS, and the constancy is the point
+ *       rather than the number
  *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
  *       a chain holding more rows than one page fits paid for a roll call of
  *       the remainder — a cost that VARIED with the data, under a ceiling
@@ -746,8 +753,8 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *       listing with a window function; that is reverted because D1
  *       documents no version and nothing here has run one against it, and
  *       this is the one statement whose failure would make every suppression
- *       invisible. Two constant statements settle the dependency just as
- *       well as one
+ *       invisible. A constant cost settles that dependency whatever the
+ *       number is
  * - 1 — the repair's own quarantine writes, when a repair happened
  *
  * The close-out statements themselves are folded into batches that already
@@ -760,7 +767,7 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  * edited. Sharing one answer between the lanes would remove the entry
  * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 7;
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**
@@ -1475,10 +1482,13 @@ export async function _runLoanReconcilePass(input: {
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
         discloseSideTableBatch: (results) =>
-          // `closed-out`: this list runs because the chain reported the loan
-          // ENDED, which is a different basis from the settle path's read and
-          // carries an identity assumption the settle path's does not.
-          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000), 'closed-out'),
+          // `reconciled`, NOT `closed-out` (#2231 r11 `4036569613`). The
+          // repair reaches this list from a safe-head chain READ that found
+          // the loan already terminal — the terminal event is the thing that
+          // was MISSED, which is why the repair exists. Claiming an event
+          // arrived would misdescribe the evidence on the one path whose
+          // defining feature is its absence.
+          discloseQuarantineReleases(chainId, results, Math.floor(Date.now() / 1000), 'reconciled'),
         // The holders of a ghost position got NO terminal inbox row: the
         // event was missed for good, so the event materializer never saw
         // one, and the correction is the only chance left to keep the

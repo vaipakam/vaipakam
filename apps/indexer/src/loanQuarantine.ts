@@ -127,6 +127,21 @@ export function settledRows(report: ReconcileReport): number[] {
  * exclusion this replaces, and not a guarantee, and the difference is worth
  * a reader's time.
  */
+/**
+ * A fresh token for one observation, for the report's guarded clear.
+ *
+ * `last_seen_at` used to serve, and cannot: it is whole seconds, so two
+ * observations inside one second leave it identical and the operator's
+ * compare-and-delete removes a finding it never saw (#2231 r11
+ * `4036569620`). See migration 0053 for why a counter is not the answer
+ * either, and why eight hex characters are enough.
+ */
+function observationToken(): string {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function quarantineStatements(
   db: D1Database,
   chainId: number,
@@ -143,13 +158,14 @@ export function quarantineStatements(
       db
         .prepare(
           `INSERT INTO loan_reconcile_quarantine
-             (chain_id, loan_id, reason, first_seen_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?)
+             (chain_id, loan_id, reason, first_seen_at, last_seen_at, obs)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(chain_id, loan_id) DO UPDATE SET
              reason = excluded.reason,
-             last_seen_at = excluded.last_seen_at`,
+             last_seen_at = excluded.last_seen_at,
+             obs = excluded.obs`,
         )
-        .bind(chainId, loanId, reason, nowSec, nowSec),
+        .bind(chainId, loanId, reason, nowSec, nowSec, observationToken()),
     );
   }
   // ONE STATEMENT PER ROW, not an interpolated `IN (...)` list. The pass
@@ -307,6 +323,15 @@ interface ReleasedMarker {
 export type ReleaseBasis =
   /** A pass read the chain for this id and got an answer. */
   | 'examined'
+  /**
+   * A pass read the chain at a safe head, found the loan already terminal,
+   * and repaired the stored row — with NO terminal event having arrived
+   * (#2231 r11 `4036569613`). Distinct from `closed-out`, which this path
+   * borrowed for one round: saying "a terminal event arrived" on a path
+   * whose whole purpose is that the event was MISSED misdescribes the very
+   * evidence the operator is being asked to weigh.
+   */
+  | 'reconciled'
   /** A terminal event for this id arrived and the close-out cleared it. */
   | 'closed-out';
 
@@ -344,6 +369,13 @@ export function discloseQuarantineReleases(
         `${described}. That is the soundest release the platform makes — a ` +
         `chain read about the id, not a stored column standing in for one — ` +
         `and reminders for that id resume, correctly.`
+      : basis === 'reconciled'
+      ? `because a pass read the chain at a safe head and found the loan ` +
+        `already terminal, with no terminal event having arrived: ` +
+        `${described}. The evidence is a chain read, not an event — the ` +
+        `event is precisely what was missed — and it establishes the state ` +
+        `of the position CURRENTLY bearing the id, not that the entry being ` +
+        `released was about that position.`
       : `because a terminal event for the id arrived and the close-out ` +
         `cleared it: ${described}. Note what that event establishes and what ` +
         `it does not: the position CURRENTLY bearing the id ended. It does ` +
@@ -607,15 +639,12 @@ export async function reportStaleQuarantine(
   // defect this whole module exists to prevent, reintroduced by the fix for
   // it. One saved subrequest does not buy that risk, and the count returns
   // to what `main` already budgets.
-  const total = await db
+  const countStatement = db
     .prepare(
       `SELECT COUNT(*) AS n FROM loan_reconcile_quarantine
         WHERE chain_id = ? AND first_seen_at <= ?`,
     )
-    .bind(chainId, cutoff)
-    .first<{ n: number }>();
-  const n = total?.n ?? 0;
-  if (n === 0) return;
+    .bind(chainId, cutoff);
   // AND THE ROWS ARE BOUNDED, which the first version of this was not
   // (#2231 r7 `4035821168`). Folding the statements together fixed the
   // ROUND-TRIP count and left the VOLUME growing with the size of the
@@ -634,9 +663,9 @@ export async function reportStaleQuarantine(
   //
   // A LEFT JOIN, so an entry whose loan row is absent — the orphan, the case
   // that lingers — is still listed, with nothing claimed about it.
-  const rows = await db
+  const pageStatement = db
     .prepare(
-      `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at,
+      `SELECT q.loan_id, q.reason, q.first_seen_at, q.last_seen_at, q.obs,
               l.status AS loan_status, l.start_block AS loan_start_block
          FROM loan_reconcile_quarantine q
          LEFT JOIN loans l
@@ -645,16 +674,33 @@ export async function reportStaleQuarantine(
         ORDER BY q.first_seen_at ASC
         LIMIT ?`,
     )
-    .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT)
-    .all<{
-      loan_id: number;
-      reason: string;
-      first_seen_at: number;
-      last_seen_at: number;
-      loan_status: string | null;
-      loan_start_block: number | null;
-    }>();
-  const held = rows.results ?? [];
+    .bind(chainId, cutoff, STALE_ROLL_CALL_LIMIT);
+  // ONE SNAPSHOT, because the count and the page describe the same moment or
+  // they describe nothing (#2231 r11 `4036569628`).
+  //
+  // Run separately, the exact total could be taken before an operator's
+  // guarded clear and the page after it — leaving the report claiming
+  // overflow entries that no longer exist, or describing more rows than its
+  // own stated total. "Exact" was the word used, and two reads cannot be.
+  //
+  // `batch()` is D1's transaction, so both statements see one state. It is
+  // also ONE subrequest rather than two, so the report's cost returns to what
+  // it was before r7 split it — the snapshot is free, and then some.
+  const [countResult, pageResult] = await db.batch<Record<string, unknown>>([
+    countStatement,
+    pageStatement,
+  ]);
+  const n = Number((countResult?.results?.[0] as { n?: number } | undefined)?.n ?? 0);
+  if (n === 0) return;
+  const held = (pageResult?.results ?? []) as unknown as Array<{
+    loan_id: number;
+    reason: string;
+    first_seen_at: number;
+    last_seen_at: number;
+    obs: string;
+    loan_status: string | null;
+    loan_start_block: number | null;
+  }>;
   const shown = held.slice(0, STALE_REPORT_LIMIT);
   const described = shown
     .map((r) => {
@@ -690,7 +736,8 @@ export async function reportStaleQuarantine(
             `reorg residue; canonical identity unknown)`;
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
-        `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}; ` +
+        `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}, ` +
+        `guard ${r.obs || 'none'}; ` +
         `${points})`
       );
     })
@@ -725,7 +772,7 @@ export async function reportStaleQuarantine(
     //
     // The value is already in hand: the same statement selects it for every
     // row it returns. Pairing it costs bytes, not a query.
-    const ids = named.map((r) => `${r.loan_id}@${r.last_seen_at}`).join(', ');
+    const ids = named.map((r) => `${r.loan_id}@${r.obs || 'none'}`).join(', ');
     // PAST THE ROLL CALL'S OWN BOUND, SAY SO AND HAND OVER THE QUERY. The
     // count is exact even here, so this is a stated limit rather than a page
     // that quietly ended (#2231 r7 `4035821168`).
@@ -743,13 +790,13 @@ export async function reportStaleQuarantine(
           // of a problem and not the far half is the shape this PR has
           // produced repeatedly; the query returns what the DELETE wants.
           `List them, with the value each one's guarded DELETE needs, using: ` +
-          `SELECT loan_id, last_seen_at FROM loan_reconcile_quarantine ` +
+          `SELECT loan_id, obs FROM loan_reconcile_quarantine ` +
           `WHERE chain_id = ${chainId} AND first_seen_at <= ${cutoff} ` +
           `ORDER BY first_seen_at ASC`
         : '';
     overflow =
       ` (+${n - shown.length} more, each also holding reminders back; ` +
-      `${named.length} of them listed here as id@last_seen_at but NOT ` +
+      `${named.length} of them listed here as id@guard but NOT ` +
       `described: ${ids} — the detail above is the oldest ` +
       `${STALE_REPORT_LIMIT} and does not rotate, so these stay undescribed ` +
       `until an entry ahead of them is resolved. The value after @ is the ` +
@@ -775,9 +822,11 @@ export async function reportStaleQuarantine(
       `between your reading this and running it can re-observe the id as ` +
       `unsettled, and an unconditional delete would then drop that fresh ` +
       `finding instead: DELETE FROM loan_reconcile_quarantine WHERE ` +
-      `chain_id = <chain> AND loan_id = <id> AND last_seen_at = <the value ` +
-      `shown above for that row>. If it deletes nothing, the entry changed ` +
-      `under you and wants re-reading. Note also that an entry IS released ` +
+      `chain_id = <chain> AND loan_id = <id> AND obs = '<the guard shown ` +
+      `above for that row>'. The guard changes on EVERY observation, which ` +
+      `a timestamp does not — two sightings in one second leave a timestamp ` +
+      `identical and would let this delete a finding you never saw. If it ` +
+      `deletes nothing, the entry changed under you and wants re-reading. Note also that an entry IS released ` +
       `automatically when a stored loan with its id is terminal, and that too ` +
       `is an identity assumption the platform cannot verify — a replacement ` +
       `that started and ended would release a finding about the position ` +

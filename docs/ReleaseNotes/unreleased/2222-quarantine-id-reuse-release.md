@@ -59,7 +59,14 @@ write "described next time" there, and it would be untrue — nothing would ever
 supply that detail.
 
 Each of those numbers is listed together with the value its safe-removal
-command needs. Naming an entry while withholding what it takes to act on it
+command needs, and that value is a fresh token written on every sighting
+rather than the time of the last one. A time recorded to the second cannot
+tell two sightings within the same second apart, so a removal quoting it could
+delete a finding recorded *after* the person read the report — resuming
+reminders for a loan nothing has settled, which is exactly the harm this
+memory exists to prevent. The window is narrow, and that is no defence: the
+whole value of a safety check is that it can be trusted without being checked,
+so one that can fail silently is worse than none. Naming an entry while withholding what it takes to act on it
 sounds harmless and is not: because the described page does not take turns,
 the entry would stay unactionable indefinitely, and a person who needed it
 gone would be pushed toward exactly the unguarded removal this report spends a
@@ -136,14 +143,23 @@ changed is that staying silent is now a deliberate act rather than an
 oversight, and a check refuses any release written by hand. A guarantee a
 reader trusts without checking is worse than one they check.
 
-What a release says also depends on what licensed it. A run that read the
-network for a number and got an answer holds the soundest evidence in any of
-this, and says so. A close-out is weaker: the ending it reports establishes
-that the loan CURRENTLY bearing the number ended, never that the entry being
-released was about that loan — so it names that limit instead of borrowing the
-stronger wording. Sharing a mechanism does not license sharing a claim, and
-wiring one announcement to every route briefly made it say the strong thing on
-the weak path.
+What a release says also depends on what licensed it, and there turned out to
+be three different licences rather than two. A run that read the network for a
+number and got an answer holds the soundest evidence in any of this, and says
+so. A repair is a network read too, but of a loan whose ending was never
+announced — so it says the ending was FOUND, rather than claiming one arrived,
+which on the one path defined by a missing announcement would have described
+the opposite of what happened. A close-out did see the ending announced, and
+establishes that the loan CURRENTLY bearing the number ended, never that the
+entry being released was about that loan. Each names its own basis and none
+borrows another's. Sharing a mechanism does not license sharing a claim, and
+one announcement wired to every route briefly said the strongest of the three
+on all of them.
+
+The count of how many entries are held and the list of them are also now read
+in the same instant. Taken separately, a removal happening in between left the
+report claiming entries that no longer existed — an "exact" figure that
+described no moment that ever was.
 
 Finally, the report's promises and its behaviour are now the same size. Three
 separate rounds each bounded a different cost of the same report — the length

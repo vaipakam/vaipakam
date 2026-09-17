@@ -66,6 +66,17 @@ const quarantined = (h: SqliteD1) =>
     )
     .all() as Array<{ loan_id: number; reason: string; first_seen_at: number; last_seen_at: number }>;
 
+/** The per-observation guard token, read separately so the shape assertions
+ *  on `quarantined()` stay exact. */
+const guardTokens = (h: SqliteD1) =>
+  new Map(
+    (
+      h.db
+        .prepare('SELECT loan_id, obs FROM loan_reconcile_quarantine')
+        .all() as Array<{ loan_id: number; obs: string }>
+    ).map((r) => [r.loan_id, r.obs]),
+  );
+
 async function apply(h: SqliteD1, r: ReconcileReport, nowSec = NOW): Promise<unknown> {
   const writes = quarantineStatements(h.d1 as never, CHAIN, r, nowSec);
   if (writes.length === 0) return [];
@@ -192,6 +203,36 @@ describe('the table, over the real migrated schema', () => {
     expect(quarantined(h)[0]).toMatchObject({ reason: 'orphan', first_seen_at: NOW });
   });
 
+  it('changes the guard on a SAME-SECOND re-observation, which a timestamp does not', async () => {
+    // #2231 r11 `4036569620`. The report tells an operator to clear an entry
+    // with a compare-and-delete so a pass re-observing it in between is not
+    // discarded. Guarded on `last_seen_at`, two sightings inside one second
+    // leave the value identical — the guard passes and the FRESH finding is
+    // deleted, while the message promises it would delete nothing.
+    //
+    // This is the exact case, written at one fixed second so it cannot pass
+    // by accident: the timestamp is unchanged and the guard is not.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await apply(h, report({ examined: [42], unread: [42] }), NOW);
+    const before = quarantined(h)[0];
+    const guardBefore = guardTokens(h).get(42);
+    await apply(h, report({ examined: [42], unread: [42] }), NOW);
+    const after = quarantined(h)[0];
+    const guardAfter = guardTokens(h).get(42);
+    // The timestamp cannot tell the two observations apart...
+    expect(after.last_seen_at).toBe(before.last_seen_at);
+    // ...and the guard can, which is the whole point.
+    expect(guardAfter).not.toBe(guardBefore);
+    expect(guardAfter).toMatch(/^[0-9a-f]{8}$/);
+    // So the operator's guarded delete, holding the OLD guard, removes
+    // nothing — and the fresh finding survives.
+    const removed = h.db
+      .prepare('DELETE FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = ? AND obs = ?')
+      .run(CHAIN, 42, guardBefore as string);
+    expect(Number(removed.changes)).toBe(0);
+    expect(quarantined(h)).toHaveLength(1);
+  });
+
   it('releases a held row whose loan has since ended, however it ended', async () => {
     // #2213 r15 `4013952990`. The durable cleanup path. A release missed at
     // close-out — because the table's existence could not be established, or
@@ -300,6 +341,28 @@ describe('the table, over the real migrated schema', () => {
       prepare: (sql: string) => ({ bind: () => sql }),
     } as never, CHAIN, 7) as unknown as string;
     expect(built).toContain('RETURNING');
+  });
+
+  it('wires each release path to ITS OWN basis, not a borrowed one', async () => {
+    // The basis is chosen at the CALL SITE, and every behavioural test for it
+    // supplies its own — so reverting a call site to the wrong basis broke
+    // nothing, which I found by mutation-checking rather than by a round.
+    // A test that passes because it stubbed the thing under test is the
+    // failure this file has already hit twice (#2231 r8, r9).
+    //
+    // The wiring is the claim: `reconciled` where a chain read found the loan
+    // terminal with the event MISSED, `closed-out` where an event actually
+    // arrived. Getting them the wrong way round tells an operator the
+    // opposite of what licensed the release.
+    const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    // The repair path reaches the close-out list from a safe-head chain read.
+    expect(src).toMatch(/discloseSideTableBatch:[\s\S]{0,600}?'reconciled'/);
+    // The event handlers' own cleanup did see an event.
+    expect(src).toMatch(
+      /async function _clearClosedLoanSideTables[\s\S]*?discloseQuarantineReleases\([\s\S]{0,200}?'closed-out'\)/,
+    );
+    // And no call site borrows the settle path's wording.
+    expect(src).not.toMatch(/discloseSideTableBatch:[\s\S]{0,600}?'closed-out'/);
   });
 
   it('stays quiet when a settle releases a mark that was never long-held', async () => {
@@ -526,7 +589,7 @@ describe('telling the operator about a row that stays', () => {
     // guarded on the exact entry that was read, so a pass that re-observes
     // the id between the reading and the running is not silently dropped.
     expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
-    expect(said).toContain('AND last_seen_at = <the value');
+    expect(said).toContain("AND obs = '<the guard shown");
     warn.mockRestore();
   });
 
@@ -575,24 +638,45 @@ describe('telling the operator about a row that stays', () => {
     // So the assertion is on the COST, and it is the same number on both
     // sides of the page boundary. Re-budgeting for a variable cost would have
     // satisfied the finding and left the dependency in place.
-    const statements = async (count: number): Promise<number> => {
+    // Counted as SUBREQUESTS, which is what the ceiling is about: a `batch()`
+    // is one round trip however many statements it carries. Counting
+    // `prepare` calls would have reported 2 for a report that makes a single
+    // trip (#2231 r11 `4036569628` folded the count and the page into one
+    // transactional batch, for the snapshot — and got the cost back too).
+    const subrequests = async (count: number): Promise<number> => {
       const h = createSqliteD1(ALL_MIGRATIONS);
       const ids = Array.from({ length: count }, (_, k) => 500 + k);
       await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
-      let prepared = 0;
+      let trips = 0;
+      const inner = h.d1 as {
+        prepare: (s: string) => never;
+        batch: (st: unknown[]) => Promise<unknown>;
+      };
       const counting = {
         prepare: (sql: string) => {
-          prepared += 1;
-          return (h.d1 as { prepare: (s: string) => unknown }).prepare(sql);
+          const st = inner.prepare(sql) as unknown as Record<string, unknown>;
+          const wrap = (o: Record<string, unknown>): Record<string, unknown> => ({
+            ...o,
+            bind: (...a: unknown[]) =>
+              wrap((o.bind as (...x: unknown[]) => Record<string, unknown>)(...a)),
+            first: async () => { trips += 1; return (o.first as () => Promise<unknown>)(); },
+            all: async () => { trips += 1; return (o.all as () => Promise<unknown>)(); },
+            run: async () => { trips += 1; return (o.run as () => Promise<unknown>)(); },
+          });
+          return wrap(st);
+        },
+        batch: async (st: unknown[]) => {
+          trips += 1;
+          return inner.batch(st);
         },
       };
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       await reportStaleQuarantine(counting as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
       warn.mockRestore();
-      return prepared;
+      return trips;
     };
-    expect(await statements(STALE_REPORT_LIMIT - 1)).toBe(2);
-    expect(await statements(STALE_REPORT_LIMIT + 3)).toBe(2);
+    expect(await subrequests(STALE_REPORT_LIMIT - 1)).toBe(1);
+    expect(await subrequests(STALE_REPORT_LIMIT + 3)).toBe(1);
   });
 
   it('bounds the roll call, and says exactly how many it is not naming', async () => {
@@ -623,7 +707,7 @@ describe('telling the operator about a row that stays', () => {
     // And the shortfall is STATED, with the query that closes it.
     expect(said).toContain(`${extra} further held entries NOT named here`);
     expect(said).toContain(`bounded at ${STALE_ROLL_CALL_LIMIT} ids`);
-    expect(said).toContain('SELECT loan_id, last_seen_at FROM loan_reconcile_quarantine');
+    expect(said).toContain('SELECT loan_id, obs FROM loan_reconcile_quarantine');
     warn.mockRestore();
   });
 
@@ -661,12 +745,19 @@ describe('telling the operator about a row that stays', () => {
     warn.mockClear();
     await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
-    // Every undescribed id carries its own last_seen_at, not just an id.
+    // Every undescribed id carries its own GUARD value, not just an id — and
+    // the guard is the per-observation token, not the whole-second timestamp
+    // it replaced (#2231 r11 `4036569620`).
+    const byId = guardTokens(h);
     for (const id of ids.slice(STALE_REPORT_LIMIT)) {
-      expect(said).toContain(`${id}@${NOW}`);
+      const obs = byId.get(id);
+      expect(obs).toMatch(/^[0-9a-f]{8}$/);
+      expect(said).toContain(`${id}@${obs}`);
+      // And NOT the timestamp, which is what made the guard unsound.
+      expect(said).not.toContain(`${id}@${NOW}`);
     }
     // And the format is explained rather than left to be guessed.
-    expect(said).toContain('id@last_seen_at');
+    expect(said).toContain('id@guard');
     expect(said).toContain('nothing above says what these ids point at now');
     warn.mockRestore();
   });

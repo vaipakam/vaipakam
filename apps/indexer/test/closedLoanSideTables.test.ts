@@ -389,7 +389,7 @@ describe('reconcileAfterScan against a real database', () => {
         // (#2231 r9 `4036242408`). `discloseAt` lets one test push the clock
         // past the stale threshold; the rest keep the default and stay quiet.
         discloseSideTableBatch: (results) =>
-          discloseQuarantineReleases(CHAIN, results, discloseAt, 'closed-out'),
+          discloseQuarantineReleases(CHAIN, results, discloseAt, 'reconciled'),
         mutableColumns: (d: Record<string, unknown>) => ({
           assignments: ['principal = ?', 'collateral_amount = ?'],
           values: [String(d.principal), String(d.collateralAmount)],
@@ -433,8 +433,12 @@ describe('reconcileAfterScan against a real database', () => {
     // The CLOSE-OUT wording, not the settle path's (#2231 r10 `4036448029`):
     // a terminal event proves the position currently bearing the id ended,
     // never that the released entry was about that position.
-    expect(said).toContain('a terminal event for the id arrived');
-    expect(said).toContain('It does NOT establish');
+    // The RECONCILED wording (#2231 r11 `4036569613`): this path reached the
+    // close-out list from a chain read, and the terminal event is precisely
+    // what was missed — so claiming one arrived would misdescribe it.
+    expect(said).toContain('found the loan already terminal');
+    expect(said).toContain('no terminal event having arrived');
+    expect(said).not.toContain('a terminal event for the id arrived');
     expect(said).not.toContain('soundest release');
     // And the marker really is gone — the disclosure is about a release that
     // happened, not a release that was contemplated.
