@@ -2706,8 +2706,17 @@ revision unimplementable:
      `(tag, dayIds, total, remitId, remitter, recycledShare)` and
      carries neither root nor extent, so reusing its tag would fail
      in-flight d5 packets forever or leave them page-unauthenticated;
-     **existing d5 packets are admitted through the compact flat-hash
-     path exactly as the older wires are**) embeds a **Merkle root over
+     **a d5 packet is never admitted as a batch in any case** — its
+     components are typed on the wire and credited to the shared
+     live/bucket ledgers at ingress, so it holds no batch balance to
+     index and the admission question does not arise for it, per the
+     one-accounting-path rule in §5d's transport-epoch plan. An earlier
+     revision of this parenthetical said d5 packets take the compact
+     flat-hash path "exactly as the older wires are", which would have
+     made one delivery spendable through both the batch and the ledgers
+     it was already credited to (Codex #2224 r2, r3). The compact path is
+     for the UNTYPED pre-d6 wires, whose value is in no shared ledger)
+     embeds a **Merkle root over
      fixed-size chunks TOGETHER WITH the authenticated EXTENT — element
      count, chunk count, and the indexed-leaf encoding** (a root alone proves a
      submitted chunk belongs to SOME tree, never that every member day
@@ -6672,21 +6681,37 @@ ledger arithmetic changes, no classification outcome changes.
   (§5c: the component caps are denominated in the destination-observed
   basis; a short delivery shrinks both and never underflows one; 3b's leg
   reconciliation needs both, and the attestation is one-shot, so both are
-  written here; review r1) — ONCE: refused for an unknown packet, for a
-  packet whose wire already carried the split, and for a second
-  attestation of the same packet (the first is the source's record; a
-  differing second one is a faulty source, not a correction).
-- **The attestation is DARK until 3b** (review r1). The two attested caps
-  are new packet fields the classification entry's evidence rule does not
-  read; `freshAuthenticated` — the bound classification reads — is written
-  by 3b's parking step, when a batch's remainder is parked with its
-  acknowledgment (§5c: a batch with outstanding listed obligations is not
-  classifiable at all; the only route to classification is the
-  acknowledged parked-remainder path), from the attested caps net of the
-  packet's transport legs. Deploying 3a alone therefore changes no
-  classification outcome: an attested packet still classifies recycled
-  only, exactly as today, until the batch lifecycle exists to say its
-  listed obligations are done.
+  written here; review r1) — ONCE, and the FIRST record is the one that
+  stands: refused for an unknown packet and for a packet whose wire
+  already carried the split, and for a second attestation whose scaled
+  caps DIVERGE from the stored ones (the first is the source's record; a
+  differing one is a faulty source, not a correction). A second
+  attestation that scales to the SAME caps is accepted as a no-op and
+  changes nothing — the send entry is deliberately re-sendable and the
+  transport fee is paid up front and never refunded, so refusing a repeat
+  of the same record would make the retry lever a fee-burning trap
+  (review r2; the comparison is on the SCALED caps, so the same split
+  expressed differently is recognised as the same record).
+- **The attested caps are IMMUTABLE and the bound is DERIVED from them at
+  use time** (review r1, r3). An earlier revision had 3b's parking step
+  WRITE `freshAuthenticated` from the caps; that is wrong, and the reason
+  generalizes: attesting is permissionless and parking is permissionless,
+  so they occur in either order, and a bound snapshotted at parking from
+  caps that were still zero reads as "no evidence" FOR EVER — the
+  attestation is one-shot and no second parking transition exists, so
+  exactly the packets an attestation was sent to evidence would be the
+  ones it could never help. Nothing writes `freshAuthenticated` for an
+  attested packet. The evidence rule calls one derivation
+  (`LibRewardCustody.authenticatedFresh`) which reads the immutable caps
+  behind ONE gate — the batch's acknowledged parked remainder (§5c: a
+  batch with outstanding listed obligations is not classifiable at all)
+  — so a late attestation is effective the moment it lands, whatever the
+  order. In 3a that gate (`packetBatchReleased`) is a predicate that
+  cannot be true: no batch lifecycle exists, so every packet reads the
+  wire-typed figure alone and an attested packet still classifies
+  recycled only, exactly as today. 3b replaces the predicate's body and
+  nothing else about the evidence rule moves with it — the same shape
+  the cutover's era check already uses.
 - **The ingress records the day list's commitment for every old-wire
   arrival** (review r1): the flat hash of the payload's `dayIds` and their
   count, appended to the packet record — the same commitment 3b's compact
@@ -6695,10 +6720,41 @@ ledger arithmetic changes, no classification outcome changes.
   packet's membership is ever taken from an event.
 - Tests: a short-delivered reservation's two caps are scaled and both
   persisted; a d5 packet's attestation is refused; a pre-d2 packet has no
-  receipt and cannot be attested; a replay is refused; the mirror-side
+  receipt and cannot be attested; an identical replay is a no-op and a
+  divergent one is refused; the mirror-side
   receipt binds the attestation to exactly one packet; an attested packet
   still classifies recycled only (the bound unchanged — the lift is 3b's
   test); an old-wire arrival's day-list commitment matches its payload.
+
+> **LANDED — PR #TBD.** As planned, with three things the plan did not
+> state. **(1)** The MIRROR-SIDE INGRESS half of `RewardRemittanceFacet` —
+> the budget delivery, the compensation delivery, the compensation-day hook
+> and their helpers — moved verbatim to a new `RewardIngressFacet`: that
+> facet had 285 bytes of EIP-170 headroom, and the ingress is exactly where
+> 3b's admission and PR C's intended-era validation grow. Same selectors,
+> same storage, refreshed together (the full refresh carries both). The four
+> byte-identical copies of the receipt-key derivation collapsed into
+> `LibRewardCustody.remitReceiptKey`. The alternatives — relocating the
+> three quote views to the lens facet (their planning helpers are private
+> and would have had to move into a library, and the keeper imports the
+> quote ABI by facet), or a second receiver→Diamond call to stamp the
+> commitment (one record written in two places) — were rejected.
+> **(2)** A compensation delivery's one day is committed exactly as a budget
+> delivery's list is, so every pre-d6 arrival's packet carries
+> `dayListHash`/`dayCount`. **(3)** The evidence derivation is
+> `LibRewardCustody.authenticatedFresh` behind the `packetBatchReleased`
+> predicate (3a: `false` for every packet), and the cutover's three evidence
+> reads — the classification bound, the correction bound, the packet view —
+> all call it, so there is ONE place where evidence is decided. The
+> attestation is kind 12 on the reward wire (`(kind, remitter, remitId,
+> fresh, recycled)`, Base → mirror only), sent by
+> `RewardRemittanceFacet.attestRemitSplit` (canonical, permissionless,
+> re-sendable, quoted by `RewardRemittanceLensFacet.quoteSplitAttestationFee`),
+> received by `RewardIngressFacet.onRemitSplitAttested` (messenger-gated,
+> mirror-only), persisted by `LibRewardCustody.attestPacketSplit` as
+> `freshAttested`/`recycledAttested`/`attested`. A test pins that an
+> attestation writes nothing into `freshAuthenticated` and that a fresh
+> classification still refuses after one.
 
 **Transport epochs PR 3b — the epoch ledger and the uncontested draws.**
 The bulk of §5c's mechanism, deployable dark on every deployment (no
@@ -6716,14 +6772,27 @@ on the live era alone.
   aggregate, the token delta and the day list's flat-hash commitment (3a's
   field); each materialization call re-supplies the payload, verifies the
   hash and writes one bounded page; retirement is the resumable RETIRING
-  path. This is §5c's compact admission for EVERY pre-d6 wire — the legacy
-  and d2 shapes, and d5 too (review r2; §5c: existing d5 packets are
-  admitted through the flat-hash path exactly as the older wires are): an
-  over-cap d5 packet dispatched before the cap existed is as
-  transport-executable as any other, and its typed components change
-  nothing about the size of its day list — so 3a's day-list commitment is
-  recorded for d5 arrivals as well. It ships with the indexing it
-  protects; the d6 wire's Merkle root and extent are 3d's.
+  path. This is §5c's compact admission for the UNTYPED pre-d6 wires — the
+  legacy and d2 shapes — whose value is in no shared ledger and therefore
+  needs a batch balance to be spendable at all. It ships with the indexing
+  it protects; the d6 wire's Merkle root and extent are 3d's.
+- **A d5 packet has ONE accounting path, and it is not a batch** (review
+  r2, r3). Its components are typed on the wire and credited to the shared
+  live/bucket ledgers at ingress, today, before any of this. Admitting it
+  as a batch as well would make the same delivery spendable twice — once
+  through the batch, once through the ledgers it was already credited to —
+  and admitting it as a batch with no balance would give it a membership
+  that can reserve nothing and a retirement that retires nothing. So the
+  days a d5 packet lists are funded from the shared ledgers like any other
+  day, it takes no batch balance, no per-day index and no cursor, and the
+  bounded-admission question does not arise for it: its ingress writes no
+  per-day storage at all, exactly as it does today, and its day-list
+  commitment (3a) costs one hash of calldata the sender already paid for.
+  Review r2 asked for d5 in the compact admission on the premise that 3b
+  would index its days; 3b does not, and this is the premise being
+  corrected rather than the conclusion being dropped — the failure r2
+  named (an over-cap packet that can neither be indexed nor refused) is
+  unreachable for a wire that is never indexed.
 - **The era term before PR C** (review r1, r2). There is one era and no
   retired era row, so the middle term of `transportEpoch → eraBalance →
   liveHeadroom` is ZERO: 3b puts the read behind one interface —
@@ -6743,11 +6812,22 @@ on the live era alone.
   the only route is the acknowledged parked-remainder path). The cutover's
   classification entry refuses a packet whose batch still lists an
   outstanding obligation and admits it once the remainder is parked with
-  its acknowledgment — at which point `freshAuthenticated` is written from
-  3a's attested caps net of the packet's transport legs. A d5 packet's
+  its acknowledgment — at which point `packetBatchReleased` starts
+  answering yes for it and `authenticatedFresh` derives the bound from the
+  immutable caps NET of the packet's fresh transport leg. **Nothing writes
+  `freshAuthenticated` for an attested packet**, here or anywhere: an
+  earlier revision had parking write it, which is the ordering defect 3a's
+  note above records (review r3 — and the contradiction survived in THIS
+  paragraph after the other was fixed, Codex #2224 r1). A d5 packet's
   components are typed and credited at ingress, so it holds no untyped
-  batch balance and the gate does not concern it; its day list still
-  passes the compact admission above.
+  batch balance and the gate does not concern it. Nor is it admitted:
+  it takes no batch, no per-day index and no cursor (the rule above), and
+  the only thing 3a records for it is its day-list COMMITMENT — a hash
+  beside the packet, read by nothing, kept because a record of what a
+  delivery claimed costs one hash and answers later questions the chain
+  could not otherwise answer (Codex #2224 r2: an earlier revision said its
+  day list "passes the compact admission", which contradicted the
+  one-accounting-path rule outright).
 - The deterministic per-day allocation pass — matching transport drawn
   first per component, scarce transport split by system-wide typed
   shortfall (fresh first on ties), the unarrived-day necessity constraint
@@ -6811,20 +6891,39 @@ unwind of the loser. Lifts 3b's deferral. Must land before PR C unfreezes
 role changes — a late legacy packet after a transition is exactly the
 contended case.
 
-**Transport epochs PR 3d — the d6 wire.** The new wire version embedding
-a Merkle root over fixed-size chunks together with the authenticated
-extent, and the indexed materialization pages verified against it. The
-compact admission for the OLD wires is 3b's (above), so 3d changes no
-admission a live packet depends on; it is what lets the dispatch cap
-move. After 3b; before any change to the cap.
+**Transport epochs PR 3d — the d6 wire.** The new wire version embedding a
+Merkle root over fixed-size chunks together with the authenticated extent,
+the indexed materialization pages verified against it, **and the INTENDED
+ERA the packet was dispatched in** (review r3). The compact admission for
+the OLD wires is 3b's (above), so 3d changes no admission a live packet
+depends on; it is what lets the dispatch cap move. After 3b.
+
+- **The intended era is why 3d is a PR C dependency, not a loose end**
+  (review r3). PR C's receive ingresses are specified to validate a
+  packet's intended era against the live one and route a mismatch to
+  retry or quarantine — and no wire before d6 carries an era at all, so
+  after PR C unfreezes role changes there would be nothing authenticated
+  to validate for an ordinary remittance dispatched in one era and
+  arriving after the next transition. §5c already states the consequence
+  for the era-less shapes: a rejected d2 packet cannot be routed after
+  reattachment, which is why every detachment requires the d2 lane
+  DRAINED AND FROZEN first. That rule stands for every era-less wire and
+  is what makes the window safe until d6 replaces them. So: 3d lands
+  BEFORE PR C's unfreeze, and until every live lane speaks d6 the
+  drain-and-freeze precondition is what a role transition relies on —
+  never a validation the frame cannot support.
 
 *Order and dependencies.* 3a first (small, dark, no dependency; it records
 what 3b will need of every packet that lands meanwhile). 3b before PR C
 (PR C's intended-era validation on the receive ingresses consumes the
-epochs, and 3b's era interface is what PR C widens). 3c before PR C's
-unfreeze. 3d after 3b and before the cap moves. Role changes stay frozen
-throughout the family; nothing in it touches the era registry, which is
-PR C's.
+epochs, and 3b's era interface is what PR C widens). 3c and 3d both before
+PR C's UNFREEZE: 3c because a late legacy packet after a transition is
+exactly the contended case, 3d because the intended-era validation PR C
+promises has nothing authenticated to read until d6 carries one, and
+because the dispatch cap cannot move before it. Role changes stay frozen
+throughout the family, and every era-less lane keeps §5c's
+drain-and-freeze precondition for as long as it is live; nothing here
+touches the era registry, which is PR C's.
 
 *What stays out.* The era registry and the carry-forward (PR C); the
 parked-message lane for legacy broadcasts (§5c: state-bearing, not
@@ -6904,8 +7003,9 @@ closure 2's cutover PR.**
 reconciliation epoch second; see the LANDED note under slice 4 PR B.)
 
 **#2151 (closure 2, first PR) → slice 4 PR A → slice 4 PR B → closure 2's
-cutover apparatus (#2198, #2206) → transport epochs 3a → 3b → 3c → slice 4
-PR C; 3d (the d6 wire) after 3b and before the dispatch cap moves.** (The
+cutover apparatus (#2198, #2206) → transport epochs 3a → 3b → 3c → 3d →
+slice 4 PR C.** (3d carries the intended era PR C's ingress validation
+reads, so it precedes PR C's unfreeze; review r3. The
 transport-epoch family was cut out of the cutover by #2206's landed note
 (4) and is planned as its own note above, 2026-09-15.)
 

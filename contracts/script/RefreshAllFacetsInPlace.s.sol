@@ -88,6 +88,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -225,7 +226,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 79;
+    uint256 public constant EXPECTED_FACETS = 80;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -397,6 +398,37 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
+
+        // #1566 transport epochs PR 3a (Codex #2224 r5) — the MIRROR-SIDE
+        // INGRESS is cut FIRST, before any other item's cut goes out.
+        //
+        // Cuts are built in items[] order and sent in SELECTOR_BUDGET-sized
+        // transactions, so an item near the end of the array lands several
+        // transactions after the first. That is ordinarily harmless, but the
+        // value-bearing receive entries deliberately skip `whenNotPaused` so
+        // in-flight deliveries can still land while the Diamond is paused for
+        // migration (the migration mode) — which means the pause this script
+        // takes as its first transaction does NOT hold arrivals back. A
+        // delivery arriving mid-refresh would therefore execute whatever
+        // implementation those three selectors currently point at, and until
+        // this item's cut lands that is the OLD remittance bytecode, which
+        // records a packet with no day-list commitment for the transport
+        // epochs to materialize against — permanently, since the commitment
+        // is written once, with the record.
+        //
+        // Hoisting closes it: after the first cut transaction every arrival
+        // takes the new ingress, and before it the deployment is wholly
+        // pre-3a, where a packet without a commitment is a historical one by
+        // definition and is handled as such. The facet is safe to install
+        // ahead of the rest — its library code is inlined into its own
+        // bytecode, and the custody entry it calls is unchanged by this PR.
+        //
+        // Pausing the standalone receiver instead was considered and
+        // rejected: `unpause()` there is owner-only while `pause()` is
+        // guardian-or-owner, so a run whose broadcaster is not the owner
+        // could halt the lane and be unable to restart it — trading a
+        // bounded, self-closing window for an unbounded one.
+        _hoistFirst(items, "rewardIngressFacet");
 
         // Split each facet's canonical selector list against the live loupe:
         // routed -> Replace, unrouted -> Add.
@@ -1407,6 +1439,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address(new RewardReconciliationFacet()),
             _getRewardReconciliationSelectors()
         );
+        // Slot 79: #1566 transport epochs PR 3a — the mirror-side ingress facet,
+        // split out of the remittance facet. Its three selectors are ROUTED
+        // already (to the old remittance bytecode), so the partition cuts them
+        // as Replace toward this facet and the remittance item no longer lists
+        // them: one refresh moves both halves.
+        items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
@@ -1605,10 +1643,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new RewardRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
-                gen,
-                "-> 4) impl:",
+                string.concat(
+                    "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1627,10 +1674,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VaipakamRewardMessenger());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".rewardMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
-                gen,
-                "-> 4) impl:",
+                string.concat(
+                    "P2-w4/w5: upgraded VaipakamRewardMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REWARD_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1651,10 +1707,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnSender());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnSenderImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnSender (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnSend (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_SENDER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1672,10 +1737,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnReceiver (wire gen",
-                gen,
-                "-> 3) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1697,10 +1771,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new CcipMessenger(router));
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".ccipMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "cutover PR 1: upgraded CcipMessenger (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "cutover PR 1: upgraded CcipMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(CCIP_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1718,10 +1801,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new BuybackRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeBuybackRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "cutover PR 1: upgraded BuybackRemittanceReceiver (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "cutover PR 1: upgraded BuybackRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(BUYBACK_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1788,6 +1880,27 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             satellite.staticcall(abi.encodeWithSignature("messenger()"));
         if (!ok || ret.length != 32) return address(0);
         return abi.decode(ret, (address));
+    }
+
+    /// @dev #1566 transport epochs PR 3a — move one item to the front of the
+    ///      refresh so its cut goes out in the FIRST batch. Order is otherwise
+    ///      irrelevant here (every other consumer of `items` is a set
+    ///      operation: the write-back, the verification sweep, the parity
+    ///      test), which is why a swap is enough and no ordering machinery is
+    ///      needed. Reverts on an unknown key rather than silently leaving the
+    ///      order unchanged — a rename must not quietly reopen the window this
+    ///      exists to close.
+    function _hoistFirst(Item[] memory items, string memory key) internal pure {
+        bytes32 want = keccak256(bytes(key));
+        for (uint256 i; i < items.length; ++i) {
+            if (keccak256(bytes(items[i].key)) == want) {
+                Item memory head = items[0];
+                items[0] = items[i];
+                items[i] = head;
+                return;
+            }
+        }
+        revert("RefreshAllFacetsInPlace: _hoistFirst key not found");
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {

@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -89,6 +90,9 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
     function _remit() internal view returns (RewardRemittanceFacet) {
         return RewardRemittanceFacet(address(diamond));
     }
+    function _ingress() internal view returns (RewardIngressFacet) {
+        return RewardIngressFacet(address(diamond));
+    }
     function _rep() internal view returns (RewardReporterFacet) {
         return RewardReporterFacet(address(diamond));
     }
@@ -119,7 +123,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
     {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _remit().onRewardBudgetReceived(
+        _ingress().onRewardBudgetReceived(
             address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh
         , bytes32(0));
     }
@@ -250,7 +254,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
 
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _remit().onRewardBudgetReceived(
+        _ingress().onRewardBudgetReceived(
             address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0
         , bytes32(0)); // old wire: no split stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();

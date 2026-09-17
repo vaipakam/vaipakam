@@ -357,6 +357,31 @@
             "name": "freshAuthenticated",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "dayListHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dayCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "attested",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -729,6 +754,11 @@
             "name": "classifiedTakes",
             "type": "uint256[]",
             "internalType": "uint256[]"
+          },
+          {
+            "name": "splitOnWire",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -993,6 +1023,25 @@
   },
   {
     "type": "function",
+    "name": "quoteSplitAttestationFee",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "recoveryAttributionArmed",
     "inputs": [],
     "outputs": [
@@ -1016,6 +1065,11 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1043,6 +1097,44 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationCarriesNoSplit",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitSplitAlreadyOnWire",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardMessengerNotSet",
+    "inputs": []
   },
   {
     "type": "error",

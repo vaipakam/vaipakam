@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {
     IRewardMessenger,
     IRewardRemitAckIngress,
+    IRewardSplitAttestationIngress,
     RewardBroadcastV2,
     RewardBroadcastV3
 } from "../../src/interfaces/IRewardMessenger.sol";
@@ -334,6 +335,62 @@ contract MockRewardMessenger is IRewardMessenger {
         address
     ) external view override returns (uint256) {
         return quoteNative;
+    }
+
+    // ─── #1566 transport epochs PR 3a — split attestation spies ─────────────
+    uint32 public lastAttestDst;
+    address public lastAttestRemitter;
+    uint256 public lastAttestRemitId;
+    uint256 public lastAttestFresh;
+    uint256 public lastAttestRecycled;
+    address public lastAttestRefund;
+    uint256 public lastAttestValue;
+    uint256 public attestSendCount;
+    bytes32 public attestMessageId = keccak256("attest");
+
+    function sendSplitAttestation(
+        uint32 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled,
+        address payable refundAddress
+    ) external payable override returns (bytes32 messageId) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastAttestDst = dstChainId;
+        lastAttestRemitter = remitter;
+        lastAttestRemitId = remitId;
+        lastAttestFresh = fresh;
+        lastAttestRecycled = recycled;
+        lastAttestRefund = refundAddress;
+        lastAttestValue = msg.value;
+        attestSendCount += 1;
+        return attestMessageId;
+    }
+
+    function quoteSendSplitAttestation(
+        uint32,
+        address,
+        uint256,
+        uint256,
+        uint256
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice Drive the mirror Diamond's split-attestation ingress exactly as
+    ///         the messenger would on a kind-12 delivery.
+    function deliverSplitAttestation(
+        uint32 sourceChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled
+    ) external {
+        IRewardSplitAttestationIngress(diamond).onRemitSplitAttested(
+            sourceChainId, remitter, remitId, fresh, recycled
+        );
     }
 
     /// @notice Simulate a mirror's remit ack landing on the Base remit

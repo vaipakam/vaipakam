@@ -2419,6 +2419,26 @@ contract TestMutatorFacet {
         LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, remitId);
     }
 
+    /// @notice #1566 transport epochs PR 3a test-only — a reservation as an
+    ///         OLDER WIRE dispatched it: one whose payload carried no
+    ///         fresh/recycled split. Production sets `splitOnWire` on every
+    ///         reservation it creates (every payload it builds is d5), so the
+    ///         attestable set is exactly the rows that predate that field —
+    ///         and a test needs a way to stand in one of them.
+    function setRemitSplitOnWireRaw(uint256 remitId, bool onWire) external {
+        LibVaipakam.storageSlot().remitReservations[remitId].splitOnWire = onWire;
+    }
+
+    /// @notice #1566 transport epochs PR 3a test-only — a reservation's
+    ///         recorded split, so a row that moved no value (the close-only
+    ///         shape, born terminal) can be stood in without driving a whole
+    ///         zero-total finalization.
+    function setRemitReservationSplitRaw(uint256 remitId, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.RemitReservation storage r = LibVaipakam.storageSlot().remitReservations[remitId];
+        r.fresh = fresh;
+        r.recycled = recycled;
+    }
+
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r9) test-only — a
     ///         RELEASED reservation row as the one-time stranded seed scans
     ///         it (status 3, its recycled share), the nonce raised to cover

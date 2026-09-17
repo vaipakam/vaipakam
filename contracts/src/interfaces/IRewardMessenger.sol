@@ -131,6 +131,21 @@ interface IRewardRemitAckIngress {
     ) external;
 }
 
+/// @notice #1566 transport epochs PR 3a — the mirror Diamond's ingress for a
+///         Base → mirror SPLIT ATTESTATION
+///         (`RewardIngressFacet.onRemitSplitAttested`): the canonical chain's
+///         recorded split of remittance `remitId`, persisted once as the
+///         delivered packet's attested caps.
+interface IRewardSplitAttestationIngress {
+    function onRemitSplitAttested(
+        uint32 sourceChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled
+    ) external;
+}
+
 /**
  * @title IRewardMessenger
  * @author Vaipakam Developer Team
@@ -356,6 +371,31 @@ interface IRewardMessenger {
         uint256 remitId,
         uint256 amountReceived,
         address remitter
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1566 transport epochs PR 3a — Base → mirror split attestation ─────
+
+    /// @notice Dispatch the canonical chain's recorded split of remittance
+    ///         `remitId` (its fresh and recycled figures) toward the mirror
+    ///         `dstChainId` it was sent to. `remitter` is the sending
+    ///         deployment's own address, as the remit wire carries it —
+    ///         immutable message data the mirror resolves its receipt by.
+    function sendSplitAttestation(
+        uint32 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native transport fee for a split attestation.
+    function quoteSendSplitAttestation(
+        uint32 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 fresh,
+        uint256 recycled
     ) external view returns (uint256 nativeFee);
 
     // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────

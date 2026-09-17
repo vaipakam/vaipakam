@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -27,6 +28,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  */
 contract RewardRemittanceFacetTest is SetupTest {
     RewardRemittanceFacet internal remit;
+    RewardIngressFacet internal ingress;
     RewardRemittanceLensFacet rlens;
     MockRewardMessenger internal rewardMessenger; // data path (report/finalize)
     MockCrossChainMessenger internal ccip; // value path (token remittance)
@@ -63,6 +65,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         rewardMessenger = new MockRewardMessenger(address(diamond));
         ccip = new MockCrossChainMessenger();
         remit = RewardRemittanceFacet(address(diamond));
+        ingress = RewardIngressFacet(address(diamond));
         rlens = RewardRemittanceLensFacet(address(diamond));
 
         vm.chainId(CHAIN_BASE);
@@ -425,7 +428,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(rlens.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
         assertEq(rlens.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -434,11 +437,11 @@ contract RewardRemittanceFacetTest is SetupTest {
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RewardRemittanceFacet.NotRewardRemittanceReceiver.selector,
+                RewardIngressFacet.NotRewardRemittanceReceiver.selector,
                 stranger
             )
         );
-        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -447,12 +450,12 @@ contract RewardRemittanceFacetTest is SetupTest {
         vm.prank(rcv);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RewardRemittanceFacet.RewardBudgetTokenMismatch.selector,
+                RewardIngressFacet.RewardBudgetTokenMismatch.selector,
                 address(vpfiTok),
                 address(0xDEAD)
             )
         );
-        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
     }
 
     receive() external payable {}

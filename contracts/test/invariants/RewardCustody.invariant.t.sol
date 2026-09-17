@@ -14,6 +14,7 @@ import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../../src/facets/RewardIngressFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
@@ -437,7 +438,7 @@ contract RewardCustodyHandler is Test {
         _mint(diamond, amount);
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        try RewardRemittanceFacet(diamond).onRewardBudgetReceived(
+        try RewardIngressFacet(diamond).onRewardBudgetReceived(
             address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0)
         ) {
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));

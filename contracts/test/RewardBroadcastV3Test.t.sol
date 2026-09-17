@@ -14,6 +14,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {
@@ -1444,6 +1445,9 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
     function _remit() internal view returns (RewardRemittanceFacet) {
         return RewardRemittanceFacet(address(diamond));
     }
+    function _ingress() internal view returns (RewardIngressFacet) {
+        return RewardIngressFacet(address(diamond));
+    }
 
     function _rlens() internal view returns (RewardRemittanceLensFacet) {
         return RewardRemittanceLensFacet(address(diamond));
@@ -1494,7 +1498,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         uint32 scheduleVersion,
         uint64 lapseWindowSeconds
     ) internal {
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             lenderShare + borrowerShare,
             dayId,
@@ -1695,7 +1699,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
     /// reserves the CREDITED amount wholesale, never the pool sum.
     function testDemotionReservesFullCreditedAmount() public {
         _configureCompMirror();
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             5e18, // credited amount
             3,
@@ -1771,7 +1775,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
                 CompensationSharesExceedDelivery.selector, 3e18, 3e18, 5e18
             )
         );
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             5e18,
             3,
@@ -1794,7 +1798,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
                 CompensationHookNotSelf.selector, address(this)
             )
         );
-        _remit().onCompensationDayBroadcastArrived(3, ERA_BASE, true);
+        _ingress().onCompensationDayBroadcastArrived(3, ERA_BASE, true);
     }
 
     function testIngressIsReceiverGated() public {

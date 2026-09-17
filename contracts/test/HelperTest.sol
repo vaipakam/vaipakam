@@ -83,6 +83,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -97,7 +98,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](211); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
+        selectors = new bytes4[](213); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -155,6 +156,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
         selectors[n++] = TestMutatorFacet.consumeRecycleRawAsRemit.selector;
         selectors[n++] = TestMutatorFacet.setRemitReservationReleasedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRemitSplitOnWireRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRemitReservationSplitRaw.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
         selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
@@ -2284,19 +2287,18 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
-        selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
-        selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
-        selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
-        selectors[3] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
-        selectors[4] = RewardRemittanceFacet.quoteRewardBudget.selector;
-        selectors[5] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
-        selectors[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
-        selectors[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
-        selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors = new bytes4[](10);
+        selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
+        selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        selectors[3] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
+        selectors[4] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        selectors[5] = RewardRemittanceFacet.sendRemitAck.selector;
+        selectors[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        // #1566 transport epochs PR 3a — the canonical split attestation send.
+        selectors[9] = RewardRemittanceFacet.attestRemitSplit.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2436,6 +2438,21 @@ contract HelperTest {
         selectors[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
+    /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
+    /// remittance facet (mirrors `DeployDiamond._getRewardIngressSelectors`).
+    function getRewardIngressFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
+        selectors[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
+        selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
+        // #1566 transport epochs PR 3a — the split attestation ingress.
+        selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+    }
+
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
     /// `DeployDiamond._getRewardRemittanceLensSelectors` (SelectorCoverageTest
     /// asserts the match).
@@ -2444,7 +2461,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](38);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2499,6 +2516,8 @@ contract HelperTest {
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
         selectors[33] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
+        // #1566 transport epochs PR 3a — the split attestation fee quote.
+        selectors[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

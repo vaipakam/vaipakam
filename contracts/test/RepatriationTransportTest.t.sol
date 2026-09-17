@@ -10,6 +10,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -1171,7 +1172,7 @@ contract RepatriationTransportTest is SetupTest {
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         vpfi.mint(address(diamond), 5 ether); // the receiver forwarded the compensation here
         address base = address(0xBA5E);
-        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+        RewardIngressFacet(address(diamond)).onCompensationBudgetReceived(
             address(vpfi), 5 ether, 7, CHAIN_BASE, 11, base, 3 ether, 2 ether, 0, 1, uint64(7 days),
             uint64(24 hours), keccak256("comp-11")
         ); // finalizedAt == 0: quarantined
@@ -1217,7 +1218,7 @@ contract RepatriationTransportTest is SetupTest {
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         vpfi.mint(address(diamond), 100 ether);
         address base = address(0xBA5E);
-        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+        RewardIngressFacet(address(diamond)).onCompensationBudgetReceived(
             address(vpfi), 100 ether, 7, CHAIN_BASE, 12, base, 60 ether, 40 ether, 0, 1, uint64(7 days),
             uint64(24 hours), keccak256("comp-12")
         ); // finalizedAt == 0: quarantined, Diamond-side (not activated)

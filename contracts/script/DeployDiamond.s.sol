@@ -83,6 +83,7 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -276,6 +277,8 @@ contract DeployDiamond is Script {
         RewardCustodyFacet rewardCustodyFacet = new RewardCustodyFacet();
         // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
         RewardReconciliationFacet rewardReconciliationFacet = new RewardReconciliationFacet();
+        // #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet.
+        RewardIngressFacet rewardIngressFacet = new RewardIngressFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -310,7 +313,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](79);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](80);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -383,6 +386,9 @@ contract DeployDiamond is Script {
             address(rewardReconciliationFacet),
             _getRewardReconciliationSelectors()
         );
+        // Slot 79: #1566 transport epochs PR 3a — the mirror-side ingress facet
+        // (split out of the remittance facet; refreshed together with it).
+        cuts[79] = _buildCut(address(rewardIngressFacet), _getRewardIngressSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1037,6 +1043,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
         Deployments.writeFacet("rewardCustodyFacet",      address(rewardCustodyFacet));
         Deployments.writeFacet("rewardReconciliationFacet", address(rewardReconciliationFacet));
+        Deployments.writeFacet("rewardIngressFacet",      address(rewardIngressFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1157,6 +1164,7 @@ contract DeployDiamond is Script {
         console.log("RewardCompensationDispatchFacet:", address(rewardCompensationDispatchFacet));
         console.log("RewardCustodyFacet:   ", address(rewardCustodyFacet));
         console.log("RewardReconciliationFacet:", address(rewardReconciliationFacet));
+        console.log("RewardIngressFacet:   ", address(rewardIngressFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
         console.log("RiskAccessFacet:      ", address(riskAccessFacet));
@@ -2987,19 +2995,33 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](12);
-        s[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
-        s[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
-        s[2] = RewardRemittanceFacet.remitRewardBudget.selector;
-        s[3] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
-        s[4] = RewardRemittanceFacet.quoteRewardBudget.selector;
-        s[5] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
-        s[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
-        s[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
-        s[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        s[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        s[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        s[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        s = new bytes4[](10);
+        s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
+        s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        s[3] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
+        s[4] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        s[5] = RewardRemittanceFacet.sendRemitAck.selector;
+        s[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        s[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        // #1566 transport epochs PR 3a — the canonical split attestation send.
+        s[9] = RewardRemittanceFacet.attestRemitSplit.selector;
+    }
+
+    /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
+    /// remittance facet (same selectors, its own bytecode).
+    function _getRewardIngressSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](4);
+        s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
+        s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
+        s[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
+        // #1566 transport epochs PR 3a — the split attestation ingress.
+        s[3] = RewardIngressFacet.onRemitSplitAttested.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -3141,7 +3163,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](37);
+        s = new bytes4[](38);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3196,6 +3218,8 @@ contract DeployDiamond is Script {
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
         s[33] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
+        // #1566 transport epochs PR 3a — the split attestation fee quote.
+        s[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

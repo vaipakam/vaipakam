@@ -7642,6 +7642,36 @@ library LibVaipakam {
         uint256 classifiedRecycled;
         uint256 disposed;
         uint256 freshAuthenticated;
+        /// @dev #1566 transport epochs PR 3a, appended.
+        ///
+        ///      `dayListHash` / `dayCount` — the flat commitment to the
+        ///      payload's `dayIds` (keccak of the ABI-encoded list, and its
+        ///      length), recorded by the mirror ingress in the SAME
+        ///      transaction as the record, for every arrival on a wire older
+        ///      than d6. It is what the transport epochs' compact admission
+        ///      (3b) materializes a re-supplied list against, so a packet that
+        ///      landed before that ledger existed still carries authenticated
+        ///      membership and no membership is ever taken from an event.
+        ///
+        ///      `freshAttested` / `recycledAttested` / `attested` — the
+        ///      canonical chain's RECORDED split of a d2 remittance this
+        ///      deployment received untyped, carried by the SPLIT ATTESTATION
+        ///      and scaled to `actualReceived` by the same proportional
+        ///      flooring the d5 receiver applies (§5c: the authenticated
+        ///      component caps are denominated in the destination-observed
+        ///      basis). Written ONCE and IMMUTABLE: the evidence bounding a
+        ///      classification is DERIVED from them at use time
+        ///      ({LibRewardCustody.authenticatedFresh}), never snapshotted
+        ///      into `freshAuthenticated` by an earlier step — the attestation
+        ///      is permissionless and can land after the batch it describes
+        ///      has been parked, and a snapshot taken before it would leave
+        ///      that packet's fresh remainder permanently unusable (Codex
+        ///      #2217 r3).
+        bytes32 dayListHash;
+        uint256 dayCount;
+        uint256 freshAttested;
+        uint256 recycledAttested;
+        bool attested;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
@@ -8000,6 +8030,35 @@ library LibVaipakam {
         // (Codex #2206 r7). Cleared by the release.
         uint256 classifiedTake;
         uint256[] classifiedTakes;
+        /// @dev #1566 transport epochs PR 3a — whether this reservation's own
+        ///      wire carried its fresh/recycled split (the d5 shape, the
+        ///      compensation shape, and every shape after them). The mirror
+        ///      types such a packet at ingress, so a split ATTESTATION for it
+        ///      has nothing to add and is refused there; recording the wire
+        ///      here lets the canonical side refuse it before the caller pays
+        ///      a transport fee (Codex #2224 r1).
+        ///
+        ///      APPENDED AFTER EVERY EXISTING MEMBER, and that placement is
+        ///      load-bearing (Codex #2224 r2): an earlier revision put it
+        ///      among the bools, which shifts the packed byte offsets of
+        ///      `quarantineAcked` and `conflictClawed` for every reservation
+        ///      already in storage — an old quarantine stamp would be read as
+        ///      this flag, an old conflict stamp as the quarantine stamp, and
+        ///      the evidence behind stranded-return eligibility and
+        ///      classification-conflict handling would be corrupted by the
+        ///      upgrade itself. A new member goes at the END of a struct,
+        ///      never among it.
+        ///
+        ///      It reads FALSE for every reservation dispatched before it
+        ///      existed. The canonical side can therefore prove the wire only
+        ///      for rows it dispatched from here on; for older rows the
+        ///      destination stays the authority and a caller may still pay for
+        ///      a message the mirror refuses. That residual is accepted rather
+        ///      than papered over with an operator-set watermark: the platform
+        ///      is pre-live, so there are no older rows in practice, and a
+        ///      watermark that guessed wrong would refuse a legitimate
+        ///      attestation for good — a worse failure than a wasted fee.
+        bool splitOnWire;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
