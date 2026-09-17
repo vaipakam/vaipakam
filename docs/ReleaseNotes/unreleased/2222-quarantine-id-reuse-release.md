@@ -156,6 +156,18 @@ borrows another's. Sharing a mechanism does not license sharing a claim, and
 one announcement wired to every route briefly said the strongest of the three
 on all of them.
 
+Two things about the upgrade itself. A deployment publishes the new code
+before the store is updated to match, so for a few minutes the code runs
+against the older shape — and a run that cannot record a withheld loan lets
+the next run remind on it, which is the failure this memory exists to prevent,
+arriving during its own upgrade. Recording is therefore written to succeed
+against both shapes, and the platform asks the store which shape it has rather
+than assuming. And an entry written before the new safety value existed
+carries an empty one; the report prints that in a form that can be pasted as
+it stands, because an entry nothing ever re-examines — exactly the kind this
+report is for — would otherwise be named and permanently unremovable by the
+safe route.
+
 The count of how many entries are held and the list of them are also now read
 in the same instant. Taken separately, a removal happening in between left the
 report claiming entries that no longer existed — an "exact" figure that

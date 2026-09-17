@@ -333,13 +333,37 @@ The app uses chain reads and indexed reads for different jobs.
   no more, says exactly how many it is not naming, and gives the enquiry that
   lists them — see the bounded-report point below, which this one does not
   override.
-- **A named record can be cleared without waiting to be described.** Clearing
-  safely requires the exact value the report holds for that record's last
-  recorded sighting, so each identifier in the undescribed remainder is listed
-  together with that value. Naming a record while withholding what is needed
-  to act on it would, in practice, push a person toward the unguarded removal
-  this report spends a paragraph warning against — and because the described
-  page does not rotate, it would push them there indefinitely.
+- **A named record can be cleared without waiting to be described, and the
+  value that makes that safe changes on every sighting.** Clearing safely
+  requires quoting a value the report holds for that record, so each
+  identifier in the undescribed remainder is listed together with it. Naming a
+  record while withholding what is needed to act on it would, in practice,
+  push a person toward the unguarded removal this report spends a paragraph
+  warning against — and because the described page does not rotate, it would
+  push them there indefinitely.
+
+  That value is a fresh token written on each sighting, not the time of the
+  last one. A time recorded to the second cannot distinguish two sightings
+  within the same second, so a removal quoting it could delete a finding
+  recorded after the person read the report — resuming reminders for a
+  position nothing has settled, which is the exact harm this memory exists to
+  prevent. A guard that can silently fail is worse than none, because its
+  value is that it can be trusted without checking.
+
+  A record written before that value existed carries an empty one, and the
+  report prints it in a form that can be pasted as it stands rather than a
+  word standing in for it. A record the platform never re-examines — the very
+  case this report is for — would otherwise be named and permanently
+  unremovable by the safe route.
+- **An upgrade never costs a run its memory.** A deployment can publish new
+  platform code before the store it reads has been updated to match, so for a
+  short window the code runs against the older shape. Recording a withheld
+  position is written to succeed against BOTH shapes, and the report is
+  written to be readable against both, because a run that cannot record a
+  withheld position leaves the next run free to remind on it — the exact
+  failure this memory exists to prevent, arriving during its own upgrade. The
+  platform asks the store which shape it has rather than assuming, and keeps
+  asking until the newer one appears.
 - **The report is bounded, and says so where the bound bites — and says
   exactly what is NOT bounded.** Reporting takes the same small number of
   enquiries every run, returns no more than a stated number of records to the
