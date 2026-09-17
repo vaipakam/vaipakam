@@ -37,19 +37,33 @@ deploy, this service would read and write the *old* database while its
 neighbours used the new one — so a setting changed or a support request filed
 in that window would land in a database about to be deleted.
 
-**A first version of this change said that gap no longer opens. It does, and
-review caught the overclaim.** The three services are built and deployed by
-three independent jobs; being triggered automatically means they start without
-a person, not that they finish together. On one ordinary merge this week the
-two completed **43 seconds apart**. A user's write in that interval is lost
-exactly as before.
+**A first version of this change said that gap no longer opens; a second said
+it is now a short, measured one. Both were wrong, and review caught each in
+turn.** What is true is smaller and more useful: each service reaches a new
+database binding through its own independent build, so from the merge until
+every binding has been *checked*, the set is in a mixed state — with no
+guarantee about which services have switched, in what order, or for how long,
+and no guarantee that a given one switched at all, because a build can fail
+and leave that service on the old binding until a person repairs it.
 
-What the correction removes is the *unbounded* window — the one that stayed
-open until somebody remembered to run a command. A bounded one still needs
-guarding, so the protection stays and is re-based on something observable:
-confirm all three services are on the new database before calling the cutover
-done, or hold the writing service's routes closed across the interval if real
-users are on the deployment. This is a narrower claim than "fixed", and it is
-the true one.
+The second version's "short window" came from comparing two build-completion
+timestamps. That comparison does not measure what it was used for: a
+deployment is created *during* its build, not at the end, and the other
+service's activation time was never collected. The document now says the
+duration is not derivable rather than printing a number that was not measured
+where it matters.
+
+So the guidance is one rule covering both directions, rather than a caveat per
+path: **before any binding change is merged — the cutover or its undo — close
+the routes through which users write, and reopen them only once every
+service's binding has been confirmed on the database it is meant to be on.**
+That also corrects two narrower errors the old framing produced: it named only
+one of the two services that accept user writes, and it pointed an undo at the
+same checks as the rollout, which would have passed a service still stuck on
+the database being abandoned.
+
+What the automatic deployment genuinely changes is *who* closes the window — it
+no longer waits on somebody remembering a command. It does not make the window
+zero, bounded, or safe to leave unguarded.
 
 Closes #2237.

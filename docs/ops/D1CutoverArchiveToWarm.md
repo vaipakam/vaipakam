@@ -258,41 +258,74 @@ On the four most recent main commits touching `ops/offchain-data-warm`, no
 
 Do this in the same sitting as the merge.
 
-### The user-visible split is NARROWED by the correction, not closed
+### A binding change puts the deployment set in a MIXED STATE — this is the rule everything else follows from
 
-An intermediate revision of this step said the split was "gone". **It is not,
-and the difference matters** (#2238 r1 P1). The three Workers are built and
-deployed by three INDEPENDENT Workers Builds jobs. Automatic triggering makes
-them start without a person; it does not make them finish together. On
-`819623903` the indexer's build completed at `08:54:56Z` and the agent's at
-`08:55:39Z` — **43 seconds apart**, measured, on an ordinary merge.
+Two revisions of this step got this wrong in two different ways, and both
+errors came from the same place: they reasoned about **agent** as the odd one
+out whose lag is the risk. That frame was right while agent was hand-deployed
+and is wrong now, so it kept producing wrong conclusions — one per path — and
+review kept finding them one at a time (#2238 r1 P1, r2 × 5). Replacing the
+frame is the fix; another caveat per path is not.
 
-For those 43 seconds agent was serving on the old binding while the indexer
-was on the new one. A threshold set, a Telegram link made or a support ticket
-filed in that interval lands in the database about to be deleted: the user
-watches it succeed, and it then vanishes. "We are not migrating data" covers
-rows a redeploy obsoletes; it does not cover a write the user watched succeed
-a minute ago.
+**The frame.** A binding change reaches each Worker through its own,
+independent Workers Builds job. So from the moment the merge lands until every
+Worker's binding has been *confirmed*, the deployment set is in a mixed state
+with these properties, none of which the platform gives you any control over:
 
-So the protection stays, re-based on what is actually observable:
+| | |
+| --- | --- |
+| **Which** Workers have switched | unknown without checking each one |
+| **In what order** | not guaranteed; agent-last was one observation, not the shape |
+| **For how long** | not derivable — see below |
+| **Whether at all** | a build can FAIL, and that Worker then stays on the old binding until a person repairs it |
 
-- **Shortest window (chosen 2026-08-03, and still the default).** Previously
-  this meant having agent's deploy ready to run at the moment of merge. It now
-  means merging when someone is watching, and **confirming all three
-  deployments are on the target before treating the cutover as done** — Step 3
-  is that confirmation. The exposure is the spread between build completions,
-  which is tens of seconds rather than however long a person takes to
-  remember.
-- **No window.** Put agent's mutating routes behind a `503` across the
-  interval (unbind the route, or deploy a rejecting build), then restore them.
-  A user told "try again shortly" has lost nothing; one whose ticket silently
-  disappeared has. This is the option to take if real users are on the
-  deployment.
+That last row is the one that kills any "the window is bounded now" claim. On
+the failure path it is unbounded exactly as before, and the operator is
+investigating a build while writes keep landing in the wrong database.
 
-What the correction genuinely removes is the *unbounded* window — the one that
-stayed open until a person remembered to run a command, and which the old
-wording made worse by implying agent was stale when it was live. A bounded
-window still needs guarding; it does not need a manual deploy.
+**Why the duration is not derivable, including from this PR's own evidence.**
+An earlier revision said "43 seconds, measured", from the build-check
+completion times on `819623903` (indexer `08:54:56Z`, agent `08:55:39Z`). That
+number does not mean what it was used for (#2238 r2 P2). A deployment is
+created DURING its build — agent's live deployment is stamped `08:55:34Z`,
+five seconds before its own check reported — so check-completion spread is not
+activation spread, and the indexer's activation timestamp was never collected.
+The real interval could be shorter or longer. **Do not put a number here that
+has not been measured at the bindings themselves.**
+
+**The rule, and it is one rule for both directions.**
+
+> Before merging any change to a D1 binding — the cutover or its revert —
+> **quiesce every user-facing writer.** Restore traffic only once **every**
+> Worker's binding has been confirmed on the intended database.
+
+"Every user-facing writer" is not agent alone, which is the second thing the
+old frame got wrong (#2238 r2 P1). Both public Workers accept user writes:
+
+- **`apps/agent`** — thresholds, Telegram links, support tickets.
+- **`apps/indexer`** — `POST /signed-offers`, `POST
+  /loans/:loanId/prepay-listing/match-source`.
+
+Gating only agent leaves a user able to submit a signed order into the
+database about to be deleted, while the operator believes they chose the "no
+window" procedure. `apps/keeper` has no `fetch()` at all — cron only — and its
+writes are reconstructible from the chain, so it is not part of the gate.
+
+**The two options, restated under the rule:**
+
+- **Quiesce (the safe option, and the one to take whenever real users are on
+  the deployment).** Put BOTH public Workers' mutating routes behind a `503`
+  before the merge — unbind the route, or deploy a rejecting build — and lift
+  it only after Step 3 confirms every binding. A user told "try again shortly"
+  has lost nothing; one whose ticket silently disappeared has.
+- **Watch it through (the 2026-08-03 choice, defensible only pre-live).**
+  Merge when someone is watching and run Step 3 immediately, accepting that
+  anything written in between may be lost. This was chosen when there were no
+  real users; it is not a decision to inherit once there are.
+
+What the auto-deploy correction genuinely changes is **who** closes the
+window: it no longer waits on a person remembering a command. It does not make
+the window zero, bounded, or safe to ignore.
 
 `ops/offchain-data-warm` writes no user-facing rows — it is the nightly
 backup Worker — so its lag is an operator concern rather than a user-visible
@@ -302,7 +335,19 @@ split.
 
 `wrangler deployments list` prints deployment metadata, not bindings, and
 happily shows an older successful deploy after a failed one. Confirm each
-Worker is actually on the new database:
+Worker is actually on the database it is supposed to be on.
+
+**"Supposed to be on" is a direction, and this step is used in BOTH** (#2238
+r2 P2). On the cutover the intended database is `$TARGET_DB`; during a
+rollback it is the SOURCE. The probes below are written for the cutover
+direction and **must be inverted for a rollback** — reading them literally
+there makes a correctly rolled-back Worker fail its check, and, far worse,
+makes a Worker still stuck on the target appear to pass. The discriminator
+also inverts: on the way out the target's EMPTINESS is what proves the
+switch; on the way back it is the source's accumulated rows.
+
+Wherever this step says "the target", read "the intended database", and pick
+the discriminator that can only be true of it.
 
 **The probe must distinguish the databases.** An earlier revision listed
 checks that all pass against the OLD binding too — a keeper tick logs cleanly
@@ -342,13 +387,19 @@ empty, its emptiness is the discriminator:
   Use it when no observable write is available, and prefer the write when one
   is.
 - **agent** — perform one threshold write through the API, then read it back
-  from `$TARGET_DB` directly. If it landed in the source instead, **its
+  from the INTENDED database directly. If it landed in the other one, **its
   Workers Builds deployment has not completed, or it failed** — agent is not
   hand-deployed on this path (#2237). Check the `Workers Builds:
   vaipakam-agent` check on the merge commit: still running means wait and
-  re-test, `failure` means the build is the thing to fix. This is also the
-  test that closes the deployment window above, so run it before calling the
-  cutover done rather than only if something looks wrong.
+  re-test, `failure` means the build is the thing to fix and the mixed state
+  persists until it is. This is also the test that closes the deployment
+  window above, so run it before calling the cutover done rather than only if
+  something looks wrong.
+
+  Do the same for **indexer's** write surface, not only its ingest: it accepts
+  `POST /signed-offers` from users, so "the indexer's cursor advanced in the
+  target" proves the scan switched and says nothing about where a user's
+  signed order would land.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the
@@ -358,16 +409,29 @@ empty, its emptiness is the discriminator:
 
 ## 4. Rollback
 
-**Free until the Workers start writing to the target.** Until then the source
-is untouched and current: revert the binding PR, which re-deploys
-`apps/indexer`, `apps/keeper` and `apps/agent` automatically through Workers
-Builds — the revert is a merge like any other (#2237). Then redeploy
+**Free until the Workers start writing to the target — and staying free is
+something you have to DO, not something you observe** (#2238 r2 P1).
+
+A revert is a binding change, so §3's rule applies to it unchanged and in the
+same order: **quiesce every user-facing writer BEFORE merging the revert**,
+and lift the gate only once every binding is confirmed back on the source.
+Confirming afterwards cannot make the window safe — during the revert's own
+independent builds, a Worker still serving the target can accept the first
+threshold, signed order or support ticket written there, and that row is lost
+the moment the source becomes canonical again. A rollback that began inside
+the free period can leave it while it runs, and nothing after the fact undoes
+that.
+
+Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
+`apps/keeper` and `apps/agent` automatically through Workers Builds — the
+revert is a merge like any other (#2237). Then redeploy
 `ops/offchain-data-warm` by hand, since that one is not built on merge.
 
-The revert carries the same bounded window as the rollout, in the same
-direction: three independent builds, tens of seconds apart, with agent
-possibly last. Confirm all three are back on the source with the Step 3 probes
-before treating the rollback as complete.
+Then confirm with the Step 3 probes **inverted**: the intended database is the
+SOURCE, so a write must land there, and the discriminator is the source's
+accumulated rows rather than the target's emptiness. Running them as written
+would pass a Worker still bound to the target, which is the failure this
+rollback is trying to escape.
 
 **After that it is not free, and this plan does not offer a clean one.**
 New support tickets, thresholds, signed offers, notification state and
