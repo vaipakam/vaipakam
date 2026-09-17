@@ -6681,10 +6681,17 @@ ledger arithmetic changes, no classification outcome changes.
   (§5c: the component caps are denominated in the destination-observed
   basis; a short delivery shrinks both and never underflows one; 3b's leg
   reconciliation needs both, and the attestation is one-shot, so both are
-  written here; review r1) — ONCE: refused for an unknown packet, for a
-  packet whose wire already carried the split, and for a second
-  attestation of the same packet (the first is the source's record; a
-  differing second one is a faulty source, not a correction).
+  written here; review r1) — ONCE, and the FIRST record is the one that
+  stands: refused for an unknown packet and for a packet whose wire
+  already carried the split, and for a second attestation whose scaled
+  caps DIVERGE from the stored ones (the first is the source's record; a
+  differing one is a faulty source, not a correction). A second
+  attestation that scales to the SAME caps is accepted as a no-op and
+  changes nothing — the send entry is deliberately re-sendable and the
+  transport fee is paid up front and never refunded, so refusing a repeat
+  of the same record would make the retry lever a fee-burning trap
+  (review r2; the comparison is on the SCALED caps, so the same split
+  expressed differently is recognised as the same record).
 - **The attested caps are IMMUTABLE and the bound is DERIVED from them at
   use time** (review r1, r3). An earlier revision had 3b's parking step
   WRITE `freshAuthenticated` from the caps; that is wrong, and the reason
@@ -6713,7 +6720,8 @@ ledger arithmetic changes, no classification outcome changes.
   packet's membership is ever taken from an event.
 - Tests: a short-delivered reservation's two caps are scaled and both
   persisted; a d5 packet's attestation is refused; a pre-d2 packet has no
-  receipt and cannot be attested; a replay is refused; the mirror-side
+  receipt and cannot be attested; an identical replay is a no-op and a
+  divergent one is refused; the mirror-side
   receipt binds the attestation to exactly one packet; an attested packet
   still classifies recycled only (the bound unchanged — the lift is 3b's
   test); an old-wire arrival's day-list commitment matches its payload.
