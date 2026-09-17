@@ -439,17 +439,34 @@ describe('how often the table is probed for', () => {
    * A `sqlite_master` read is a D1 binding call and therefore one of the
    * Worker's ~50 subrequests. The costs below are counted, not assumed.
    */
-  function countingDb(present: boolean | 'throws') {
+  /**
+   * `present` is the table's own CREATE text, which is what the probe reads —
+   * `true` means "present WITH migration 0051's column", `'pre0051'` means
+   * present without it, so the two can be told apart (#2231 r3).
+   */
+  function countingDb(present: boolean | 'throws' | 'pre0051') {
     let probes = 0;
+    const state = { present };
     return {
       probes: () => probes,
+      /** The migration lands mid-test. */
+      migrate: () => {
+        state.present = true;
+      },
       db: {
         prepare() {
           return {
             async first<T>(): Promise<T | null> {
               probes += 1;
-              if (present === 'throws') throw new Error('D1_ERROR: unavailable');
-              return (present ? ({ name: 'loan_quarantine' } as unknown as T) : null);
+              if (state.present === 'throws') {
+                throw new Error('D1_ERROR: unavailable');
+              }
+              if (state.present === false) return null;
+              const sql =
+                state.present === 'pre0051'
+                  ? 'CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER)'
+                  : 'CREATE TABLE loan_reconcile_quarantine (chain_id INTEGER, last_seen_block INTEGER)';
+              return { sql } as unknown as T;
             },
           };
         },
@@ -502,6 +519,38 @@ describe('how often the table is probed for', () => {
     probe.beginPass();
     expect(await probe(db)).toBe('present');
     expect(probes()).toBe(1);
+    expect(probe.hasBlockColumn()).toBe(true);
+  });
+
+  it('keeps asking while the table is there but 0051 is not (#2231 r3)', async () => {
+    // Caching the TABLE must not cache the SCHEMA. The first probe of a
+    // deploy-before-migration window sees 0049's table and none of 0051's
+    // column; latching that would leave this isolate writing the old-shape
+    // statement for its whole life, so every row it recorded would carry the
+    // default-zero boundary and the reuse sweep — the point of the change —
+    // would be silently off until the isolate recycled.
+    const { db, probes, migrate } = countingDb('pre0051');
+    const probe = createQuarantineAvailability();
+
+    probe.beginPass();
+    expect(await probe(db)).toBe('present');
+    expect(probe.hasBlockColumn()).toBe(false);
+    // ONCE per pass, not once per call — per call is the probe spam #2213 r28
+    // removed, and a close-out reaches this helper more than once.
+    for (let i = 0; i < 5; i++) await probe(db);
+    expect(probes()).toBe(1);
+
+    // The migration lands. The next pass sees it...
+    migrate();
+    probe.beginPass();
+    expect(await probe(db)).toBe('present');
+    expect(probe.hasBlockColumn()).toBe(true);
+    expect(probes()).toBe(2);
+
+    // ...and then stops asking for good.
+    probe.beginPass();
+    await probe(db);
+    expect(probes()).toBe(2);
   });
 
   it('caches NOTHING negative for a caller that never opens a pass', async () => {

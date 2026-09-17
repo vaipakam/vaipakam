@@ -528,7 +528,22 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   // makes the writer omit the column: valid against both schemas.
   let blockColumn = false;
   const probe = async (db: QuarantineProbeDb): Promise<QuarantineAvailability> => {
-    if (seen) return 'present';
+    // CACHING THE TABLE MUST NOT CACHE THE SCHEMA (#2231 r3 `4035338761`).
+    // The first probe of the deploy window sees 0049's table and none of
+    // 0051's column, and `seen` is permanent — so returning early here left
+    // this isolate writing the old-shape statement for its whole life, even
+    // after the migration landed. Every row it recorded then carried the
+    // default-zero boundary, which the reuse sweep is required to refuse, so
+    // the fix this PR exists for would have been silently off until the
+    // isolate happened to recycle.
+    //
+    // The re-read costs one `sqlite_master` row PER PASS — not per call —
+    // and stops for good the moment the column is observed. Per call would
+    // reintroduce the probe-per-close-out spam #2213 r28 removed, which is
+    // why `present` now joins `absent` and `unknown` in the per-pass cache
+    // instead of bypassing it. A question whose answer can still change is
+    // not answered by a permanent cache; it is answered once a pass.
+    if (seen && blockColumn) return 'present';
     if (thisPass !== null) return thisPass;
     try {
       const row = await db
@@ -543,6 +558,10 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
         // so the text is current rather than the shape at creation.
         if (typeof row.sql === 'string' && row.sql.includes(BLOCK_COLUMN)) {
           blockColumn = true;
+        } else if (passOpen) {
+          // Present, but the column is not established. Hold the answer for
+          // THIS pass and ask again on the next one.
+          thisPass = 'present';
         }
         return 'present';
       }
