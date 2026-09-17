@@ -22,8 +22,11 @@ its last deployment, and that deployment is still the one serving.
 
 **The deployment timestamp is the thing worth reading — in one direction
 only.** If a service's last deployment is older than the newest change
-affecting it, that change is definitely not live, and nothing can make that
-reading wrong. The reverse does not hold: a recent-looking deployment proves
+affecting it, that change is almost certainly not live. Almost, because a
+change can carry a timestamp later than the moment it actually landed — but
+that is the safe direction to be wrong in: it costs a redundant deployment or
+a second look, where the opposite mistake costs the thing the step exists to
+prevent. The reverse does not hold: a recent-looking deployment proves
 nothing, because the comparison can be made against a stale local copy of the
 project's history, because a service can be affected by changes outside its own
 folder, and because undoing a deployment creates a *new, recent* record that

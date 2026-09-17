@@ -284,18 +284,31 @@ build checks, then with timestamps (#2243 r1, six findings, four of them this).
 # 2026-09-17.
 git fetch origin main                      # the left side goes stale silently
 ( cd <worker-dir> && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
-git log -1 --date=iso-strict-local --format='%h %ad' origin/main -- <worker-dir>
+git log -1 --date=iso-strict-local --format='%h %cI' origin/main -- <worker-dir>
 ```
 
-**A deployment older than the newest commit is decisive: that code is not
-live.** Use it that way and it will not mislead you.
+**`%cI`, not `%ad`** (#2243 r2). An author date is user-controlled and survives
+rebase and cherry-pick, so a commit can carry one LATER than the moment it
+reached `main` — which would report a deployment that already includes it as
+behind. The committer date is set when the commit object is created, and on
+this repo's squash-merge flow that is GitHub at merge time. On the five most
+recent `main` commits the two are identical, so the figures quoted below are
+unaffected; the command is corrected because the guarantee differs, not because
+the numbers do.
+
+**A deployment older than the newest commit means that code is not live** —
+and this is the direction to rely on. It is not absolutely proof: a commit
+bearing a timestamp later than when it actually landed would read as behind
+while already deployed. But that is the **safe direction to be wrong in**. A
+false "behind" costs a redundant deploy or a second look; a false "current"
+costs exactly what this whole step exists to prevent.
 
 **A deployment NEWER than the newest commit establishes nothing**, for four
 separate reasons, all of which produce a false "current":
 
 - **The left side is not the build input set.** Every workspace Worker depends
   on `@vaipakam/contracts`, and this cutover explicitly allows
-  `packages/contracts/deployments.json` to change without touching a Worker's
+  `packages/contracts/src/deployments.json` to change without touching a Worker's
   own directory. `apps/www` can then pass while serving old addresses.
 - **`origin/main` is a cached ref.** A clone last fetched before the merge
   compares against a commit that predates it. Hence the `git fetch` above, and
@@ -606,7 +619,7 @@ the omissions bite harder on the way back than on the way out:
 
 - **`apps/app` is the public surface an operator is least likely to remember**,
   because nothing on the automatic path reminds them. If the reverted PR also
-  changed `packages/contracts/deployments.json` — which this plan explicitly
+  changed `packages/contracts/src/deployments.json` — which this plan explicitly
   permits in one PR — then leaving the app unredeployed leaves it serving the
   NEW contract addresses against a rolled-back database and rolled-back
   Workers. The rollback then looks complete and the public surface is the one
