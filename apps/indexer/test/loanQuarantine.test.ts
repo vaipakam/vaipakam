@@ -19,6 +19,7 @@ import {
   quarantineStatements,
   releaseTerminalQuarantine,
   reportStaleQuarantine,
+  STALE_REPORT_LIMIT,
   settledRows,
   unsettledRows,
 } from '../src/loanQuarantine';
@@ -281,9 +282,16 @@ describe('telling the operator about a row that stays', () => {
     warn.mockClear();
     await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
-    expect(said).toContain('id now held by a active loan from block 5000');
-    // And how to clear it, since the platform will not do so on its own.
+    expect(said).toContain('stored row for this id: active, from block 5000');
+    // Labelled as stored and unverified, never as what the id "now holds" —
+    // that row can be reorg residue, which is why the automatic release went.
+    expect(said).toContain('UNVERIFIED');
+    expect(said).toContain('canonical identity unknown');
+    // And how to clear it, since the platform will not do so on its own —
+    // guarded on the exact entry that was read, so a pass that re-observes
+    // the id between the reading and the running is not silently dropped.
     expect(said).toContain('DELETE FROM loan_reconcile_quarantine');
+    expect(said).toContain('AND last_seen_at = <the value');
     warn.mockRestore();
   });
 
@@ -298,7 +306,26 @@ describe('telling the operator about a row that stays', () => {
     await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('loan 99');
-    expect(said).toContain('no loan row for this id');
+    expect(said).toContain('no stored loan row for this id');
+    warn.mockRestore();
+  });
+
+  it('names EVERY held id, not just the page it describes', async () => {
+    // #2231 r5 `4035554496`. This report is now the only surface that
+    // discloses a suppression, so a page that stopped at its limit left every
+    // id past it withholding reminders with nothing ever saying which.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ids = Array.from({ length: STALE_REPORT_LIMIT + 3 }, (_, k) => 500 + k);
+    await apply(h, report({ examined: ids, unresolvable: ids }), NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + QUARANTINE_STALE_SECONDS + 1);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    // The three past the described page are named individually.
+    for (const id of ids.slice(STALE_REPORT_LIMIT)) {
+      expect(said).toContain(String(id));
+    }
+    expect(said).toContain('also holding reminders back');
     warn.mockRestore();
   });
 

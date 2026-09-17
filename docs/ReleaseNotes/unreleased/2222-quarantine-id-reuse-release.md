@@ -37,9 +37,25 @@ strength of a read that failed, which is precisely what the memory exists to
 prevent.
 
 So the platform does not guess. The report a person reads now names, for every
-long-held entry, what its number points at today: no loan at all, or a loan in
-a given state that began at a given point. Someone reading it can see whether
-the entry is still about the loan it was made for, and clear it if not — a
-deliberate act, spelled out in the report itself. A suppression a person can
-see and undo is worth more than an automatic release built on evidence that has
-been wrong four different ways.
+long-held entry, what its number points at today: no stored loan at all, or a
+stored loan in a given state that began at a given point. That description is
+explicitly labelled as **stored and unverified** — the same record that proved
+unsound to act on is not then presented as settled fact — and every held
+number is listed even when there are more than the report describes in full,
+because an entry left out entirely would be withholding reminders with nothing
+anywhere naming it.
+
+Someone reading it can see whether the entry is still about the loan it was
+made for, and clear it if not. That is a deliberate act, spelled out in the
+report, and it names the exact entry that was read: a check that ran between
+the reading and the clearing can have recorded a fresh finding under the same
+number, and an unguarded removal would discard it.
+
+One release does still happen on its own — when a stored loan bearing the
+number is no longer running — and that carries the same identity assumption in
+smaller form: where a number has been reused, it establishes that the
+replacement ended rather than that the original position did. It is recorded as
+a known limit rather than presented as settled.
+
+A suppression a person can see and undo is worth more than an automatic release
+built on evidence that has been wrong four different ways.

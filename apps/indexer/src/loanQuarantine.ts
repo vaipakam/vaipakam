@@ -326,17 +326,47 @@ export async function reportStaleQuarantine(
       // id currently points at, and naming its state and start block is what
       // lets a person decide whether this entry is still about that position.
       // The platform draws no conclusion from either — see the release above.
+      // STORED, NOT VERIFIED, and the wording has to carry that (#2231 r5
+      // `4035554505`). A `loans` row can be residue from a scan against the
+      // documented-unsafe fallback head — the very unsoundness that removed
+      // the automatic release — so presenting it as what the id "now holds"
+      // would invite an operator to clear a marker on the same evidence the
+      // platform just refused to act on. It is what the platform has written
+      // down, and whether it is canonically true is exactly what is unknown.
       const points =
         r.loan_status === null
-          ? 'no loan row for this id'
-          : `id now held by a ${r.loan_status} loan from block ${r.loan_start_block ?? '?'}`;
+          ? 'no stored loan row for this id'
+          : `stored row for this id: ${r.loan_status}, from block ` +
+            `${r.loan_start_block ?? '?'} (UNVERIFIED — may be stale or ` +
+            `reorg residue; canonical identity unknown)`;
       return (
         `loan ${r.loan_id} (${r.reason}, held ${heldHours}h, ` +
-        `last recorded unsettled ${sinceRecorded}h ago; ${points})`
+        `last recorded unsettled ${sinceRecorded}h ago at ${r.last_seen_at}; ` +
+        `${points})`
       );
     })
     .join('; ');
-  const overflow = n > shown.length ? ` (+${n - shown.length} more not listed)` : '';
+  // EVERY HELD ID IS NAMED, not just the first page (#2231 r5 `4035554496`).
+  // This report is now the ONLY surface that discloses a suppression — the
+  // automatic release was removed because its evidence was unsound — so a
+  // page that stopped at twenty left every id past it suppressing reminders
+  // with nothing ever saying which. Ids are short; the detail is capped, the
+  // roll call is not.
+  let overflow = '';
+  if (n > shown.length) {
+    const rest = await db
+      .prepare(
+        `SELECT loan_id FROM loan_reconcile_quarantine
+          WHERE chain_id = ? AND first_seen_at <= ?
+          ORDER BY first_seen_at ASC LIMIT -1 OFFSET ?`,
+      )
+      .bind(chainId, cutoff, STALE_REPORT_LIMIT)
+      .all<{ loan_id: number }>();
+    const ids = (rest.results ?? []).map((r) => r.loan_id).join(', ');
+    overflow =
+      ` (+${n - shown.length} more, described next tick; every one of them is ` +
+      `also holding reminders back: ${ids})`;
+  }
   console.warn(
     `[loanQuarantine] chain ${chainId}: ${n} loan(s) held back from reminders ` +
       `for over ${QUARANTINE_STALE_SECONDS / 3600}h — ${described}${overflow}. ` +
@@ -348,9 +378,18 @@ export async function reportStaleQuarantine(
       `whose id is held by a loan the finding was plainly not about is a ` +
       `position going without reminders. The platform does not release those ` +
       `automatically: every way it could establish "this is a different loan" ` +
-      `from stored data has proved unsound (#2222). Clearing such an entry is ` +
-      `a deliberate act: DELETE FROM loan_reconcile_quarantine WHERE ` +
-      `chain_id = <chain> AND loan_id = <id>.`,
+      `from stored data has proved unsound (#2222). Clearing one is a ` +
+      `deliberate act, and MUST name the exact entry that was read — a pass ` +
+      `between your reading this and running it can re-observe the id as ` +
+      `unsettled, and an unconditional delete would then drop that fresh ` +
+      `finding instead: DELETE FROM loan_reconcile_quarantine WHERE ` +
+      `chain_id = <chain> AND loan_id = <id> AND last_seen_at = <the value ` +
+      `shown above for that row>. If it deletes nothing, the entry changed ` +
+      `under you and wants re-reading. Note also that an entry IS released ` +
+      `automatically when a stored loan with its id is terminal, and that too ` +
+      `is an identity assumption the platform cannot verify — a replacement ` +
+      `that started and ended would release a finding about the position ` +
+      `before it (#2222).`,
   );
 }
 

@@ -311,11 +311,27 @@ The app uses chain reads and indexed reads for different jobs.
   position currently bears that identifier, so where an identifier has come
   round again — after a network redeployment or a reset — a legitimate
   position goes without reminders. The report a person reads therefore names,
-  for every long-held record, what that identifier points at now: no position
-  at all, or a position in a given state that began at a given point. A person
-  can see from that whether the record is still about the position it was
-  made for, and clear it if not. Clearing is a deliberate act, because the
-  platform will not do it on evidence it cannot stand behind.
+  for every long-held record, what its identifier points at now: no stored
+  position at all, or a stored position in a given state that began at a given
+  point — **labelled as stored and unverified**, because that record may itself
+  be stale or left behind by a reorganisation, which is the same unsoundness
+  that stopped the platform acting on it. A person can see from that whether
+  the record is still about the position it was made for, and clear it if not.
+  Clearing is a deliberate act, and names the exact record that was read, so
+  that a re-observation arriving between the reading and the clearing is not
+  silently discarded.
+- **Every held record is named, not merely counted.** Where more are held than
+  the report describes in full, the remainder are still listed by identifier —
+  a record left out entirely would be withholding reminders with nothing
+  anywhere saying which position it concerned, and this report is the only
+  surface that discloses that at all.
+- **One automatic release remains an identity assumption, and is stated as
+  one.** A record is released when a stored position bearing its identifier is
+  no longer running. Where an identifier has been reused, that establishes the
+  replacement ended, not the position the record was about — so the original
+  unresolved finding is erased. The platform does not have a verifiable
+  identity for a position and so cannot tell the two apart; this is recorded
+  as a known limit rather than presented as a settled outcome.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.
