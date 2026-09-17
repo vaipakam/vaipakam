@@ -507,21 +507,30 @@ from the owning Worker's directory:
   (#1475).
 - `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` (keeper) — same
   mechanism, optional. Both were **absent** on the live Worker as of the
-  2026-07-30 readback (the reward passes are dark). Set them only if
-  the rollout intends to arm those passes, and only after the keeper EOA
-  is authorized on-chain.
+  2026-07-30 readback, which leaves THREE scheduled passes dark rather than
+  two — `rewardBudgetRemit` and `remitAck` both gate on
+  `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`. Set
+  them only if the rollout intends to arm those passes, and only after the
+  keeper EOA is authorized on-chain.
 
-> **Do not trust `apps/keeper/wrangler.jsonc`'s comment on these three.**
-> It describes them as "operator-managed vars (non-secret config — plain
-> `vars`)", but the committed `vars` block contains only
-> `TG_BOT_USERNAME`, and `apps/keeper/src/env.ts:76-80` states they are
-> `secret_text`. The mechanism above is the one verified against the live
-> deployment and recorded in
+> **`apps/keeper/wrangler.jsonc`'s comment on these three is now correct**
+> (#2223, closing #1465). It described them as "operator-managed vars
+> (non-secret config — plain `vars`)" while the committed `vars` block held
+> only `TG_BOT_USERNAME` and `apps/keeper/src/env.ts` stated they are
+> `secret_text`; this warning existed because that file was the one an
+> operator edits. It now names them as secrets and points at the decision
+> not to move them into `vars`.
+>
+> The mechanism above remains the authority — it is the one verified
+> against the live deployment and recorded in
 > [`docs/ops/OffChainRestore.md`](../ops/OffChainRestore.md) ("because
-> this document previously guessed, and guessed wrong"). Correcting that
-> comment, and the separate question of whether the flags should be
-> committed so the arming state is reviewable, is #1465 — not settled
-> here.
+> this document previously guessed, and guessed wrong"). The separate
+> question #1465 also raised — whether the flags should be committed so the
+> arming state is reviewable — was answered **no**: a committed var arms or
+> disarms the keeper from any clean checkout, and a var of the same name
+> **replaces** the remote secret rather than sitting beside it (wrangler's
+> own collision warning), so the commit would destroy the binding this plan
+> provisions at step 4.
 
 ## 5. Wrangler config layout
 

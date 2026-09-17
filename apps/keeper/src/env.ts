@@ -268,7 +268,11 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.KEEPER_PRIVATE_KEY),
   ]);
   return {
-    // Non-secret config — passed straight through.
+    // Passed straight through — these need no `.get()` resolution. That is
+    // NOT the same as "non-secret", which this label claimed until #2223:
+    // KEEPER_ENABLED and the two REWARD_*_ENABLED flags below are
+    // `secret_text` bindings, delivered as strings like any other. See the
+    // module comment, which already drew this distinction.
     DB: raw.DB,
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,

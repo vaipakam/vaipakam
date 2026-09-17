@@ -437,14 +437,14 @@ then deploy.
       committed — so a restore that follows only the steps above completes
       with the signing key present and every autonomous path dark,
       indefinitely and silently.
-      `apps/keeper/wrangler.jsonc` describes them as "operator-managed vars
-      (non-secret config — plain `vars`)" and its committed `vars` block
-      carries only `TG_BOT_USERNAME`. **That description is wrong and this
-      matters for capture, not just for tidiness.** Verified against the live
+      `apps/keeper/wrangler.jsonc` used to describe them as
+      "operator-managed vars (non-secret config — plain `vars`)" while its
+      committed `vars` block carried only `TG_BOT_USERNAME`. **That mattered
+      for capture, not just for tidiness** — #2223 corrected it (closing
+      #1465) and it now names them as secrets. Verified against the live
       deployment (2026-07-30): `KEEPER_ENABLED` is a per-Worker
       **`secret_text`** binding, and §7a step 3 restores it with
-      `wrangler secret put` accordingly. Correcting the config comment is
-      #1465.
+      `wrangler secret put` accordingly.
       The consequence here: a `secret_text` value **cannot be read back**,
       from the API or the dashboard. So capturing these offline is not
       optional convenience — it is the only record that will exist, and an
@@ -1860,12 +1860,18 @@ caught at the cheapest stage.
    binding (a per-Worker secret, set with `wrangler secret put`), NOT a var.
    `KEEPER_PRIVATE_KEY` is a `secrets_store_secret`. `TG_BOT_USERNAME` is the
    only genuine `plain_text` var. `REWARD_REMIT_ENABLED` and
-   `REWARD_COMMIT_ENABLED` are **absent** — the reward passes are dark.
+   `REWARD_COMMIT_ENABLED` are **absent** — which leaves THREE scheduled
+   passes dark, not two: `rewardBudgetRemit` and `remitAck` both gate on
+   `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`.
+   Reading the two flag names as two duties misses the remit-ACK one.
 
-   `apps/keeper/wrangler.jsonc` describes all three flags as
-   "operator-managed vars (non-secret config — plain `vars`)". The deployment
-   does not match that comment. Trust the readback in step 4, not the comment
-   (correcting it is #1465).
+   `apps/keeper/wrangler.jsonc` used to describe all three flags as
+   "operator-managed vars (non-secret config — plain `vars`)", and this
+   section warned against trusting that comment. **#2223 corrected it**
+   (closing #1465): it now names them as `secret_text` and carries the
+   decision not to move them into `vars`. The readback in step 4 remains the
+   authority for what is actually set — a comment states the mechanism, never
+   the live value.
 
    They are restored **the way they are held** — `wrangler secret put`, not
    `--var` and not the committed `vars` block. The commands are below, at
@@ -1962,9 +1968,14 @@ caught at the cheapest stage.
    >
    > An earlier revision of this step recommended precisely that, on the
    > strength of the config comment rather than the deployment. Whether these
-   > flags *should* be committed vars — reviewable, but then needing
-   > `--keep-vars` discipline — is a real question, and it is #1465's, not a
-   > decision to take mid-restore.
+   > flags *should* be committed vars was #1465's question, and #2223
+   > answered it **no**: a committed var arms or disarms the keeper from any
+   > clean checkout, and a var of the same name does not sit beside the
+   > secret — wrangler warns it "will replace these remote secrets with the
+   > configuration values", so the commit CONVERTS the binding. That matters
+   > here specifically: removing the var later does not hand the secret back,
+   > it leaves the name unset until you set the secret again. Either way it
+   > was never a decision to take mid-restore.
 
 4. **Confirm the flags from a tick — and note what the settings readback
    can and cannot tell you.**

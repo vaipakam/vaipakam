@@ -258,7 +258,10 @@ remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
 synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
-   (dedicated flag) in the keeper Worker's vars.
+   (dedicated flag). Both are per-Worker `secret_text`, **not** entries in
+   the committed `vars` block, which this step named until #2223. **Do not
+   set them yet** — they are the LAST step, not the first; see the arming
+   note after item 4.
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
@@ -272,6 +275,54 @@ default** and requires all of:
    `vpfi-reward-budget` channel + calls the Diamond's `setRewardRemittanceReceiver`
    for each mirror; the lane's rate limits are set per the mainnet-deploy gates in
    CLAUDE.md § "Cross-Chain Security Policy".
+
+**Arm last, and scoped to the keeper.** Items 2-4 are what make a remit
+succeed rather than fail on-chain; `runRewardBudgetRemit` checks only the flags
+and the key before heading for `writeContract`, so arming while the EOA is
+unauthorized, the receiver unregistered or the lane unprovisioned produces
+failed or unintended attempts against half-configured infrastructure. Set the
+two secrets only once 2-4 are verified.
+
+**`KEEPER_ENABLED` is not a remittance switch.** If it is currently `false`,
+setting it `true` here restarts every duty that gates on it — the gated passes,
+plus at least one write path that is not one of them: the liquidity-confidence
+relay's `setKeeperTier` submission, which becomes live again when
+`depthTieredLtvEnabled` and `submitGloballyEnabled` are already on. Items 2-4
+above validate only the remittance path.
+
+**Do not take the count on trust, including from here.** What this flag
+re-enables has been enumerated incorrectly at least three times in this
+repository — twice in `apps/keeper/wrangler.jsonc`'s own re-enable note (Codex
+#1924 r1/r2) and once in this warning, which named six passes and missed the
+tier-write path.
+
+Derive it from source rather than from any prose list, this one included — but
+derive it from the **right** entry point, because there are two and the obvious
+one is the minority case. `keeperBlockers` (`keeper.ts:866`) is the shared
+gate: `isKeeperEnabled` wraps it, and `passIsArmed` calls it directly, which is
+how `matcher`, `liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck`
+and `commitmentReport` are gated. Only two call sites reach `isKeeperEnabled`
+by name (`keeper.ts:257`, `liquidityConfidence.ts:781`), so grepping for that
+alone finds two of eight and looks conclusive. Enumerate `keeperBlockers`
+callers, then `passIsArmed` callers.
+
+So do not flip it from this procedure to turn remittance on. Either it is
+already `true` — the normal case, remittance being added to a running keeper,
+so set only the dedicated flag — or arming the whole keeper is its own
+decision with its own prerequisites.
+
+Scope each command to the keeper — from the repository root there is no
+Wrangler config, so a bare command fails or targets whichever Worker's
+directory you happen to be in:
+
+```bash
+# The dedicated flag. This is the one this procedure is about:
+( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
+
+# Only if the keeper as a whole is meant to be armed, and only having
+# checked what else that restarts:
+( cd apps/keeper && wrangler secret put KEEPER_ENABLED )       # enter: true
+```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
 `REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
@@ -977,12 +1028,12 @@ would have converted a binding that is currently safe into one that a later
 bare deploy really would delete. It was the one change that could have made
 the documented failure possible.
 
-What the source of the confusion is, and it is worth knowing:
-`apps/keeper/wrangler.jsonc` describes all three flags as
-"operator-managed vars (non-secret config — plain `vars`)". The deployment
-does not match that comment. **The comment is wrong, not the deployment** —
-correcting it is #1465, which is now a comment fix rather than a config
-change.
+What the source of the confusion was, and it is worth knowing:
+`apps/keeper/wrangler.jsonc` described all three flags as
+"operator-managed vars (non-secret config — plain `vars`)" while the
+deployment held them as secrets. **The comment was wrong, not the
+deployment** — #2223 fixed it (closing #1465), so the config now agrees with
+this section rather than contradicting it.
 
 `--keep-vars` is left on the rotation steps above. It is harmless, it is
 correct for `TG_BOT_USERNAME`, and a deploy flag that preserves state is
