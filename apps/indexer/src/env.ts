@@ -1,4 +1,5 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { spend, type TickBudget } from './subrequestBudget';
 
 /**
  * Typed env for the apps/indexer Worker.
@@ -189,6 +190,24 @@ export interface Env {
   DB: D1Database;
 
   /**
+   * The invocation's COUNTED sender (#2221).
+   *
+   * An invocation may issue 50 outbound requests; the env is the object every
+   * pass already carries, so it is where the counted handles belong. `DB` is
+   * metered in place (same type, wrapped); this is the HTTP half, used by any
+   * code here that reaches a third party directly rather than through a chain
+   * client.
+   *
+   * Optional and absent by default. A caller outside a counted invocation —
+   * the read-API request lane, a unit test — falls back to the global `fetch`
+   * and is simply not counted, which is correct: that lane has its own
+   * ceiling. Reach for `env.fetchFn ?? fetch` rather than `fetch`, so a
+   * request made from a cron pass is counted without the author having to
+   * know a budget exists.
+   */
+  fetchFn?: typeof fetch;
+
+  /**
    * The #757 rollout gate, ALREADY RESOLVED — is the DO ingest path actually
    * active? Consumers report the ingest mode's expected scan cadence from
    * this (DO path = every chain pinged each minute; legacy inline
@@ -277,9 +296,22 @@ export interface Env {
  */
 export async function readSecret(
   b: SecretBinding | undefined,
+  budget?: TickBudget,
 ): Promise<string | undefined> {
   if (!b) return undefined;
   try {
+    // COUNTED WHERE IT HAPPENS (#2221). A Secrets Store read is a binding
+    // call, the same class of outbound request as a D1 call, and this Worker
+    // makes up to a dozen of them at the top of every cron tick — a material
+    // slice of a 50-request allowance, and the slice a pass-scoped counter
+    // would never see. Counted here because this is the only line that knows
+    // whether a binding was actually present to read.
+    //
+    // Conservative by intent: if a cached read turns out not to be billed as
+    // a subrequest, this counter is high by at most the number of secrets,
+    // and a ceiling guard that errs high refuses work it could have done,
+    // where one that errs low freezes a chain.
+    if (budget) spend(budget);
     return await b.get();
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -294,7 +326,10 @@ export async function readSecret(
  * parallel. Call this **once** per request / cron tick, at the
  * Worker entry point — never inside a hot path.
  */
-export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
+export async function resolveEnv(
+  raw: WorkerEnv,
+  budget?: TickBudget,
+): Promise<Env> {
   const [
     base,
     eth,
@@ -309,18 +344,18 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     polyAmoy,
     openSea,
   ] = await Promise.all([
-    readSecret(raw.RPC_BASE),
-    readSecret(raw.RPC_ETH),
-    readSecret(raw.RPC_ARB),
-    readSecret(raw.RPC_OP),
-    readSecret(raw.RPC_BNB),
-    readSecret(raw.RPC_SEPOLIA),
-    readSecret(raw.RPC_BASE_SEPOLIA),
-    readSecret(raw.RPC_ARB_SEPOLIA),
-    readSecret(raw.RPC_OP_SEPOLIA),
-    readSecret(raw.RPC_BNB_TESTNET),
-    readSecret(raw.RPC_POLYGON_AMOY),
-    readSecret(raw.OPENSEA_API_KEY),
+    readSecret(raw.RPC_BASE, budget),
+    readSecret(raw.RPC_ETH, budget),
+    readSecret(raw.RPC_ARB, budget),
+    readSecret(raw.RPC_OP, budget),
+    readSecret(raw.RPC_BNB, budget),
+    readSecret(raw.RPC_SEPOLIA, budget),
+    readSecret(raw.RPC_BASE_SEPOLIA, budget),
+    readSecret(raw.RPC_ARB_SEPOLIA, budget),
+    readSecret(raw.RPC_OP_SEPOLIA, budget),
+    readSecret(raw.RPC_BNB_TESTNET, budget),
+    readSecret(raw.RPC_POLYGON_AMOY, budget),
+    readSecret(raw.OPENSEA_API_KEY, budget),
   ]);
   return {
     DB: raw.DB,

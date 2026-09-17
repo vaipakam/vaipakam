@@ -30,10 +30,13 @@
  * RPCs in a follow-up — schema PKs already include `chain_id`.
  */
 
+// NOTE: `createPublicClient` / `http` are deliberately NOT imported here.
+// Every chain client this module builds comes from `createChainClient`, sending
+// through the invocation's counted `env.fetchFn`, so a read cannot leave this
+// lane uncounted — see the module header of `subrequestBudget.ts` and the guard
+// in `test/meteredEgress.test.ts`.
 import {
-  createPublicClient,
   decodeEventLog,
-  http,
   toEventSignature,
   type Abi,
   type AbiEvent,
@@ -112,6 +115,15 @@ import {
   EMPTY_SWEEP,
   type CalendarSweepResult,
 } from './calendarNotifications';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  createChainClient,
+  meterEnv,
+  reportSpend,
+  spent,
+  type TickBudget,
+} from './subrequestBudget';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -225,6 +237,21 @@ export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
   scannedTo: bigint;
+  /**
+   * Outbound requests THE INVOCATION had issued when this pass returned,
+   * MEASURED (#2221).
+   *
+   * The invocation is what the platform's ceiling applies to, and on the cron
+   * path several passes share one tick — so the honest figure is the tick's,
+   * not this pass's. Naming it for the invocation rather than the pass is the
+   * point: a per-pass number would have to be a delta, and deltas are not
+   * attributable while the sweep and the scan run concurrently.
+   *
+   * Set on EVERY exit including a throw, by the one wrapper that owns the
+   * reporting (#2227 r1 `4033546273`) — the early returns below do not each
+   * remember to carry it.
+   */
+  invocationSubrequestsSpent?: number;
   newOffers: number;
   statusUpdates: number;
   detailRefreshes: number;
@@ -302,7 +329,16 @@ export interface ChainIndexerResult {
  * = one worker per chain (no schema changes needed — `chain_id` PK
  * already keys every table).
  */
-export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
+export async function runChainIndexer(
+  rawEnv: Env,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    'cron tick',
+  ),
+): Promise<ChainIndexerResult[]> {
+  // The round-robin pointer's own read and write are requests too, and they
+  // come out of the same tick's allowance as the chain pass they schedule.
+  const env: Env = meterEnv(rawEnv, budget);
   const chains = getChainConfigs(env);
   if (chains.length === 0) return [];
 
@@ -339,11 +375,23 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
     // something this PR created or can fix. The repair therefore takes the
     // minimum that still turns the rotation — 2 — rather than a number
     // justified by headroom, because there is none to claim.
-    const r = await runChainIndexerForChain(env, chain, RECONCILE_BUDGET_SHARED_TICK);
+    const r = await runChainIndexerForChain(
+      env,
+      chain,
+      RECONCILE_BUDGET_SHARED_TICK,
+      budget,
+    );
     results.push(r);
   } catch (err) {
     console.error(`[chainIndexer] chain ${chain.id} failed`, err);
-    results.push({ ...emptyResult('chain-error'), chainId: chain.id });
+    // The count belongs on the failure result too. A pass that threw still
+    // spent what it spent, and the tick that went wrong is the one an
+    // operator most wants the figure for.
+    results.push({
+      ...emptyResult('chain-error'),
+      chainId: chain.id,
+      invocationSubrequestsSpent: spent(budget),
+    });
   }
 
   // Advance pointer regardless of pass success — sticking on a failing
@@ -377,12 +425,23 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
  * to rows whose `posted_at` is at least `SWEEP_MIN_AGE_S` old (so
  * the inline event-ingest publish gets a chance to land first).
  *
- * Subrequest budget: per row we spend ~6 calls (getReceipt +
- * getBlock + getPrepayContext + 2 readContract + 1 OpenSea fetch),
- * so a batch of 5 fits well under the 50/tick free-tier ceiling
- * alongside the normal scan + offer prune.
+ * Subrequest budget: this sweep shares ONE tick's allowance with the scan and
+ * the other cron passes, which is why it takes the invocation's counter rather
+ * than opening its own. The per-row figure this note used to assert (~6) is no
+ * longer stated here: it is the class of claim #2221 exists to stop making,
+ * and the counter now reports what a batch actually costs.
  */
-export async function sweepUnpublishedListings(env: Env): Promise<void> {
+export async function sweepUnpublishedListings(
+  rawEnv: Env,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    'listing sweep',
+  ),
+): Promise<void> {
+  // Metered once, shadowing, for the reason the chain pass does it — and
+  // idempotently, so handing this an already-metered env (which the cron entry
+  // point does) counts each call once rather than twice.
+  const env: Env = meterEnv(rawEnv, budget);
   const SWEEP_BATCH = 5;
   const SWEEP_MIN_AGE_S = 60; // give the inline publish a minute.
   const cutoff = Math.floor(Date.now() / 1000) - SWEEP_MIN_AGE_S;
@@ -440,7 +499,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
     // salt / executor — skip them. The proper migration window for
     // those is the original-tx redrive, which is out of scope here.
     if (!row.conduit_key || !row.salt || !row.executor) continue;
-    const client = createPublicClient({ transport: http(chain.rpc) });
+    const client = createChainClient(chain.rpc, env.fetchFn);
     // T-086 Round-5 Block A (#313) — decode the recorded fee
     // legs from D1 back into the shape the JS reconstruction
     // needs. Rows from before this migration have NULL
@@ -1360,8 +1419,8 @@ export async function _runLoanReconcilePass(input: {
   // exactly when the provider is rate-limiting — the moment it matters. A
   // read that fails is not worth retrying here anyway: the row is left
   // alone, reported in `unread`, and the rotation returns to it next tick.
-  const reconcileClient = createPublicClient({
-    transport: http(chain.rpc, { retryCount: 0 }),
+  const reconcileClient = createChainClient(chain.rpc, env.fetchFn, {
+    retryCount: 0,
   });
   // ONE reporting call, on ONE path, whatever happened (#2203 r1). The
   // failure path used to do its own reporting, which is how it came to
@@ -1643,11 +1702,70 @@ export async function _runLoanReconcilePass(input: {
   }
 }
 
+/**
+ * ONE exit, so the count is reported on all of them (#2227 r1
+ * `4033546273` / `4033546280`).
+ *
+ * The pass body below has more than a dozen returns — the identity abort, the
+ * caught-up quiet path, the RPC-error rewind — and r1 found the reporting
+ * attached to exactly one of them: the busy path. So the common tick, the one
+ * an operator would look at to learn what a quiet pass costs, reported
+ * nothing, and a throw reported nothing at all. Adding the field to each
+ * return is the per-path patch that stops being true at the fourteenth
+ * return; a wrapper that owns entry and exit cannot miss one, and `finally`
+ * covers the throw for free.
+ *
+ * What it cannot cover is the platform killing the invocation mid-request —
+ * nothing downstream runs then, which is exactly why the CEILING is announced
+ * at `spend()` rather than here.
+ */
 export async function runChainIndexerForChain(
-  env: Env,
+  rawEnv: Env,
   chain: ChainConfig,
   reconcileBudget: ReconcileOptions = RECONCILE_BUDGET_SHARED_TICK,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    `chain ${chain.id} pass`,
+  ),
 ): Promise<ChainIndexerResult> {
+  try {
+    const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
+    return { ...result, invocationSubrequestsSpent: spent(budget) };
+  } finally {
+    // The NORMAL figure, on every tick. A number that is only logged when it
+    // is already too late tells an operator nothing about the headroom they
+    // have; this is what makes the constants re-tunable from evidence instead
+    // of from argument.
+    //
+    // NOT the last word on the invocation, and it does not claim to be: the
+    // ingest DO does more work after this returns, and reports again at its
+    // own exit (#2227 r2 `4033723744`). `at` is in the line precisely so two
+    // readings of one counter cannot be mistaken for a disagreement.
+    reportSpend(budget, `chain ${chain.id} pass exit`);
+  }
+}
+
+async function runChainPass(
+  rawEnv: Env,
+  chain: ChainConfig,
+  reconcileBudget: ReconcileOptions,
+  budget: TickBudget,
+): Promise<ChainIndexerResult> {
+  // EVERY REQUEST THIS PASS ISSUES IS COUNTED FROM HERE (#2221), and counted
+  // BECAUSE OF WHAT IT GOES THROUGH rather than because someone remembered to
+  // account for it.
+  //
+  // `env` shadows the parameter deliberately. The body below reaches D1 as
+  // `env.DB` in over two hundred places and hands `env` to the reconciliation
+  // pass, the reminder sweep and the quarantine helpers, which reach it the
+  // same way; metering the env once here therefore covers all of them — the
+  // binding and the HTTP sender both — including code written later that has
+  // never heard of this budget. The
+  // alternative — a decrement beside each call — is the shape the agent lane
+  // uses at fifteen sites, and at this lane's scale it would rebuild the very
+  // defect #2221 was filed for: an enumeration nothing verifies, which the
+  // hundred-and-twentieth site escapes in silence.
+  const env: Env = meterEnv(rawEnv, budget);
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
   // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
@@ -1666,7 +1784,13 @@ export async function runChainIndexerForChain(
   // intentionally exposes only the runtime essentials.
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // METERED AT EGRESS, not at the client's methods (#2227 r1 `4033546264`).
+  // viem retries a failed request up to three more times INSIDE one method
+  // call, so counting method calls undercounts by a factor of four in exactly
+  // the condition that matters — a provider rate-limiting this pass. The
+  // transport sends through a counted `fetch`, so each attempt is one request,
+  // which is what the platform also thinks.
+  const client = createChainClient(chain.rpc, env.fetchFn);
 
   // One-time activity_events backfills, run BEFORE every return out of
   // this function — including the identity aborts just below (Codex
@@ -2271,6 +2395,13 @@ export async function runChainIndexerForChain(
     );
   }
 
+  // NOTHING IS REPORTED HERE ANY MORE (#2227 r1 `4033546273` / `4033546277`).
+  // The over-ceiling warning that used to sit at this point could not fire in
+  // the case it was written for: the platform kills the invocation AT the
+  // request that passes the ceiling, so this line is downstream of the event
+  // it was meant to announce. It now happens in `spend()`, before the
+  // offending request is issued. The ordinary figure is reported by the
+  // wrapper, on every exit including a throw.
   return {
     scannedFrom: scanFrom,
     scannedTo: scanTo,

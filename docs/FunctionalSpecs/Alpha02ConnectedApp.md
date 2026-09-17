@@ -380,6 +380,72 @@ The app uses chain reads and indexed reads for different jobs.
   stay inside its allowance and re-read the same prefix on every later run,
   which is the starvation the remembered position exists to prevent — so the
   two requirements are held together rather than traded off.
+- **The same allowance governs the runs that keep the records current, and
+  those runs COUNT what they spend rather than estimating it.** The service
+  that follows each network and writes down what happened draws on the same
+  fixed allowance, covering its reads of the network and its reads and writes
+  of the platform's own records alike. Exceeding it does not slow that run
+  down; it ends the run before it can record how far it read, so the next run
+  begins at the same place and does the same thing — a network that has
+  stopped advancing while still appearing to run normally. Because that
+  failure is silent, the figure may not be an estimate: a run measures what it
+  actually issued and reports it, and a run that passes the limit says so and
+  names which run it was, so a stalled network is announced rather than
+  inferred later from records that stopped changing.
+- **A statement prepared but never sent costs nothing, and statements sent
+  together cost one departure but not one allowance.** This is stated because
+  getting it wrong in either direction produces a confident figure that is
+  still incorrect — counting work that never left the run, or counting one
+  departure many times and refusing work that would in fact have fitted.
+- **There are TWO allowances, and a run is held to both.** One bounds the
+  requests a run may send; the other bounds the database statements it may
+  submit. A batch of statements sent together is a single request but many
+  statements, so the two allowances legitimately disagree about it, and a
+  single figure would have to be wrong about one of them. Both are counted,
+  both are reported, and a run that has passed either says so — a report that
+  answered for requests alone would read as comfortable on a run about to be
+  stopped for its statement count.
+- **No part of a run may be exempt from the count by having been overlooked.**
+  Whether a request is counted follows from the means it travels by, not from
+  a list of the places that make requests. A list has to be revised whenever a
+  new place is added and gives no sign when it has not been, which is how the
+  figure came to be wrong repeatedly while appearing settled; a request made
+  by a part of the system that knows nothing about the allowance is still
+  counted against it.
+- **The count is the whole run's, and an automatic retry is a request.** The
+  limit applies to a scheduled run, and a run does several things at once —
+  following the network, catching records up, retrying a listing that failed
+  to publish, tidying old rows. Counting each of those separately would report
+  several comfortable figures for a run that had already been stopped, so they
+  share one count. For the same reason, a read that fails and is retried costs
+  what the attempts cost: an attempt that reaches the network is a request
+  whether or not the caller asked for it, and the attempts a failing provider
+  causes are exactly the ones that decide whether a run survives.
+- **These runs do not chase an address that has moved.** A request answered
+  with "this has moved elsewhere" is not followed: reaching the new address
+  would be a further request, and a count that charged only for the first
+  would be short by however many moves the run was sent on. The alternative —
+  following, and counting each move — requires the platform to reproduce the
+  web's own forwarding rules exactly, and a second set of rules that must
+  match the first is a promise to keep matching it. So the run is told plainly
+  where it was being sent and stops there. The peers these runs talk to are a
+  configured address for each network, a marketplace, and the platform's own
+  services; none of them should be moving, and when one does the answer is to
+  correct the configured address rather than to have the platform quietly
+  follow a provider somewhere new.
+- **The run is counted to its own end, not to the end of its main job.** Where
+  a run does further work after the part that reads the network — announcing
+  what changed to anyone listening, for instance — that work issues requests
+  too, and they come out of the same allowance. A figure reported when the
+  main job finished would be short by them, and a run finishing at its limit
+  could then issue a further request with nothing having said so.
+- **Every run reports what it spent, including the ones that end early or
+  fail, and a run that passes the limit says so at the moment it happens.**
+  The ordinary figure is the one that makes the limits re-settable from
+  evidence, so reporting it only on the busiest path leaves the common case
+  unmeasured. And the announcement cannot wait for the end of the run: the
+  platform ends a run AT the request that passes the limit, so anything said
+  afterwards is said by something that may no longer be running.
 - Anything that occupies a record slot without issuing a request cannot
   consume the allowance — a record the chain declines to confirm is the case
   that arises, since nothing is worth asking about a loan the chain has never

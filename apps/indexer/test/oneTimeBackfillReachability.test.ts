@@ -16,7 +16,7 @@
  * caller's control flow entirely.
  *
  * This pins the structural property instead: every one-time backfill is
- * invoked BEFORE the first `return` in `runChainIndexerForChain`. A guard
+ * invoked BEFORE the first `return` in `runChainPass`. A guard
  * on the call graph rather than on behaviour is the right shape here —
  * the defect is reachability, and reachability is what a behavioural test
  * of a directly-invoked helper cannot establish.
@@ -37,7 +37,17 @@ const SOURCE = readFileSync(
   'utf8',
 );
 
-/** Body of `runChainIndexerForChain` up to its FIRST `return` of ANY
+/**
+ * The BODY function, not the exported name (#2227 r1). `runChainIndexerForChain`
+ * is now a thin wrapper that owns entry and exit so the invocation's subrequest
+ * count is reported on every path including a throw; the scan itself — and
+ * every return this guard is about — lives in `runChainPass`. Pointing at the
+ * wrapper would slice a five-line function and assert nothing, so this guard
+ * failed loudly when the split landed, which is the behaviour it was built for.
+ */
+const PASS_FN = 'async function runChainPass';
+
+/** Body of `runChainPass` up to its FIRST `return` of ANY
  *  form. Codex #1527 r1 caught the original single-pattern version
  *  (`return {` only) missing the `return emptyResult(...)` identity
  *  aborts — a whole exit family the guard was blind to — so this now
@@ -45,10 +55,10 @@ const SOURCE = readFileSync(
  *  uses, and the guard-the-guard below rejects a prologue containing
  *  ANY return statement. */
 function prologue(): string {
-  const start = SOURCE.indexOf('export async function runChainIndexerForChain');
+  const start = SOURCE.indexOf(PASS_FN);
   expect(
     start,
-    'runChainIndexerForChain not found — this guard has drifted from the source',
+    `${PASS_FN} not found — this guard has drifted from the source`,
   ).toBeGreaterThan(-1);
   const returnAt = SOURCE.slice(start).search(/\n\s+return[ ;(]/);
   expect(
