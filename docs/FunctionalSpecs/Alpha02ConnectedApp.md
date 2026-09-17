@@ -413,10 +413,19 @@ The app uses chain reads and indexed reads for different jobs.
   share one count. For the same reason, a read that fails and is retried costs
   what the attempts cost: an attempt that reaches the network is a request
   whether or not the caller asked for it, and the attempts a failing provider
-  causes are exactly the ones that decide whether a run survives. **A request
-  answered by "the address moved" is the same case**: reaching the new address
-  is another request, so a count that charged only for the first would be
-  short by however many moves the run was sent on.
+  causes are exactly the ones that decide whether a run survives.
+- **These runs do not chase an address that has moved.** A request answered
+  with "this has moved elsewhere" is not followed: reaching the new address
+  would be a further request, and a count that charged only for the first
+  would be short by however many moves the run was sent on. The alternative —
+  following, and counting each move — requires the platform to reproduce the
+  web's own forwarding rules exactly, and a second set of rules that must
+  match the first is a promise to keep matching it. So the run is told plainly
+  where it was being sent and stops there. The peers these runs talk to are a
+  configured address for each network, a marketplace, and the platform's own
+  services; none of them should be moving, and when one does the answer is to
+  correct the configured address rather than to have the platform quietly
+  follow a provider somewhere new.
 - **The run is counted to its own end, not to the end of its main job.** Where
   a run does further work after the part that reads the network — announcing
   what changed to anyone listening, for instance — that work issues requests

@@ -337,170 +337,63 @@ export function meterFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ) => {
-    // `redirect: 'manual'` is what makes the count exact (#2227 r2
-    // `4033723749`). Note this reads on WORKERS semantics, which are not the
-    // browser's: a browser hands back an opaque redirect with status 0, while
-    // the Workers runtime returns the real 3xx with its `Location` — which is
-    // what the loop below needs, and why this approach is available here at
-    // all. Left on the default 'follow', the runtime chases a
-    // redirect chain on our behalf and bills every hop, while this wrapper
-    // charges once and reports a figure it cannot know is wrong — the
-    // confident-but-incorrect number this module exists to retire. Taking each
-    // hop ourselves means each one comes back through here and is counted,
-    // because it IS a separate request.
+    // ── THIS LANE DOES NOT FOLLOW REDIRECTS, AND THAT IS THE POINT ──
     //
-    // Conservative if the platform turns out not to bill a hop: the count is
-    // then high by the number of redirects, which on this lane is normally
-    // zero. A ceiling guard that errs high does less work than it could; one
-    // that errs low freezes a chain.
-    let hop = await normaliseHop(input, init);
-
-    for (let hops = 0; ; hops += 1) {
+    // The platform bills every hop of a redirect chain (#2227 r2
+    // `4033723749`), so a counter that charges once and lets the runtime chase
+    // the rest reports a figure it cannot know is wrong — the confident-but-
+    // incorrect number this module exists to retire. There are exactly two
+    // ways to be exact: follow the hops yourself and count them, or do not
+    // follow.
+    //
+    // Round 2 took the first. Round 3 returned FOUR findings against it, three
+    // of them the same defect in different clothes: a hand-written redirect
+    // algorithm diverging from `fetch`'s own — 301/302 rewriting a PUT where
+    // the standard rewrites only POST, 303 turning a HEAD into a GET, an
+    // `AbortSignal` dropped, a replacement body refused. That class has no
+    // bottom. Matching a standard algorithm by hand is a commitment to keep
+    // matching it, and every round would have found the next clause.
+    //
+    // So the re-implementation is gone. `redirect: 'manual'` on the Workers
+    // runtime returns the real 3xx with its `Location` and follows nothing, so
+    // ONE request is issued and ONE is counted — exact, with no second
+    // implementation of anybody's spec to keep in step. Everything else passes
+    // through to the sender untouched: method, headers, body, signal, and a
+    // `Request` input handled by the runtime that defines what a `Request`
+    // means.
+    //
+    // WHAT THIS COSTS, said plainly: an endpoint that answers with a redirect
+    // is no longer chased. The caller receives the 3xx and fails. On this lane
+    // that is the right failure — the peers are a configured RPC URL, a
+    // marketplace API and a Durable Object, none of which should redirect, and
+    // if one starts the fix is the configured URL rather than an indexer
+    // quietly following a provider somewhere new. The warning below names the
+    // destination so that fix is one log line away, and this is a deliberate
+    // behaviour change rather than a gap: see the PR.
+    const response = await (() => {
       spend(budget);
-      const response = await base(hop.url, hop.init);
-      if (!REDIRECT_STATUSES.has(response.status)) return response;
+      return base(input, {
+        ...((init ?? {}) as RequestInit),
+        redirect: 'manual',
+      });
+    })();
 
-      const location = response.headers.get('location');
-      if (!location || hops >= MAX_REDIRECT_HOPS) return response;
-
-      const next = redirectedHop(hop, response.status, location);
-      // A body this cannot re-send — a stream, already consumed by the send
-      // above — is the one case it will not follow. Returning the 3xx makes
-      // that visible to the caller rather than pretending; nothing on this
-      // lane sends one.
-      if (!next) return response;
-      hop = next;
+    if (REDIRECT_STATUSES.has(response.status)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[subrequests] ${budget.label}: ${response.status} redirect NOT ` +
+          `followed, to ${response.headers.get('location') ?? '(no Location)'}` +
+          `. This lane does not chase redirects — the caller sees the 3xx. If ` +
+          `this is a provider that has moved, update the configured URL.`,
+      );
     }
+    return response;
   }) as typeof fetch;
 }
 
-/**
- * One outbound attempt, as a URL and a plain init.
- *
- * Kept as values rather than as a `Request` so a hop can be rebuilt and sent
- * again: a `Request`'s body is consumed by the send, and re-sending is the
- * whole point of following a redirect ourselves.
- */
-interface Hop {
-  url: string;
-  init: RequestInit;
-}
-
-/** Redirects a `fetch` would follow. 304 is deliberately absent — it is a
- *  cache response, not a hop. */
+/** Redirects a `fetch` would have followed. 304 is deliberately absent — it is
+ *  a cache response, not a hop. */
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-
-/** Matches what a browser stops at. A chain longer than this on an RPC or a
- *  marketplace API is a misconfiguration, and the caller sees the 3xx. */
-const MAX_REDIRECT_HOPS = 5;
-
-/**
- * Flatten whatever a caller passed into a URL and a plain init.
- *
- * ASYNC because of the body. A `Request` carries its body as a stream, and
- * carrying the method across while leaving the body behind would silently send
- * a POST with nothing in it — so the body is buffered here, once, and the hop
- * becomes re-sendable in the same move. Nothing on this lane passes a
- * `Request` today; it is handled because losing a body is not the kind of
- * thing that should depend on nobody trying.
- */
-async function normaliseHop(
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1],
-): Promise<Hop> {
-  const asRequest =
-    typeof input === 'string' || input instanceof URL
-      ? null
-      : (input as Request);
-  let fromRequest: RequestInit = {};
-  if (asRequest) {
-    const carriesBody =
-      asRequest.method !== 'GET' && asRequest.method !== 'HEAD';
-    fromRequest = {
-      method: asRequest.method,
-      headers: new Headers(asRequest.headers),
-      ...(carriesBody ? { body: await asRequest.clone().arrayBuffer() } : {}),
-    };
-  }
-  return {
-    url: asRequest ? asRequest.url : String(input),
-    init: {
-      ...fromRequest,
-      ...((init ?? {}) as RequestInit),
-      redirect: 'manual',
-    },
-  };
-}
-
-/**
- * Build the next hop, following the same rules `fetch` itself would.
- *
- * Two of those rules are not incidental. 301/302 on a non-GET, and 303 on
- * anything, become a GET WITHOUT the body — re-POSTing a JSON-RPC call or a
- * marketplace listing to wherever a redirect pointed would be a second write,
- * not a retry. And credentials are dropped when the hop crosses origin, so a
- * redirect cannot walk an API key to another host.
- *
- * Returns null when the body cannot be re-sent.
- */
-function redirectedHop(
-  previous: Hop,
-  status: number,
-  location: string,
-): Hop | null {
-  const nextUrl = new URL(location, previous.url).toString();
-  const method = (previous.init.method ?? 'GET').toUpperCase();
-  const dropsBody =
-    status === 303 ||
-    ((status === 301 || status === 302) &&
-      method !== 'GET' &&
-      method !== 'HEAD');
-  const nextMethod = dropsBody ? 'GET' : method;
-
-  const headers = new Headers(previous.init.headers as HeadersInit | undefined);
-  if (new URL(nextUrl).origin !== new URL(previous.url).origin) {
-    for (const sensitive of ['authorization', 'cookie', 'x-api-key']) {
-      headers.delete(sensitive);
-    }
-  }
-
-  const body = previous.init.body;
-  const keepsBody = !dropsBody && nextMethod !== 'GET' && nextMethod !== 'HEAD';
-  // A stream was consumed by the attempt that produced this redirect. Strings
-  // and buffers — everything this lane actually sends — re-send unchanged.
-  if (keepsBody && body != null && typeof body !== 'string' && !isReplayable(body)) {
-    return null;
-  }
-
-  return {
-    url: nextUrl,
-    init: {
-      ...previous.init,
-      method: nextMethod,
-      headers,
-      ...(keepsBody ? {} : { body: undefined }),
-      redirect: 'manual',
-    },
-  };
-}
-
-/**
- * Can this body be sent a second time?
- *
- * A stored value can; a stream cannot, because the attempt that produced the
- * redirect consumed it. The list is what can be re-sent, not what this lane
- * happens to send, so a caller that starts sending form data is followed
- * correctly rather than quietly handed back a 3xx.
- */
-function isReplayable(body: BodyInit): boolean {
-  return (
-    body instanceof ArrayBuffer ||
-    ArrayBuffer.isView(body) ||
-    body instanceof URLSearchParams ||
-    body instanceof Blob ||
-    body instanceof FormData
-  );
-}
 
 /**
  * Meter a whole invocation in one move: the D1 binding AND the HTTP sender,

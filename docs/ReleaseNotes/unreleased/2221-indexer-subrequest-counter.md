@@ -46,12 +46,27 @@ a run does pass its allowance, it says so at the moment it happens rather than
 at the end, because by the end the run may no longer be alive to say anything.
 
 Review found two further places the count fell short, and both are now closed.
-A request answered with "this has moved" is followed to the new address, and
-reaching it is another request — so those are counted individually rather than
-as one, and a request that moves to a different host no longer carries its
-credentials along. And a run is counted to its own end rather than to the end
-of its main job: the step that tells connected apps what changed reads records
-too, and a figure published before it ran was short by that much.
+A run is counted to its own end rather than to the end of its main job — the
+step that tells connected apps what changed reads records too, and a figure
+published before it ran was short by that much.
+
+The second is a deliberate change in behaviour and is worth stating plainly.
+A request answered with "this has moved elsewhere" used to be followed
+automatically, and each move is a further request that the count did not see.
+Following them and counting each one was tried first, and it meant
+reproducing the web's own forwarding rules — which method survives which kind
+of move, which requests keep their body, what happens to credentials when the
+new address is on another host. Review found three separate places where that
+second copy of the rules did not match the original, which is what a second
+copy of anybody's rules does.
+
+So these runs no longer follow. A moved address is reported, naming where the
+request was being sent, and the request fails there. What these runs talk to
+is a configured address for each network, a marketplace and the platform's own
+services — none of which should be moving — and if one does, the fix is to
+correct the configured address rather than to have the indexer quietly follow
+a provider somewhere new. The count stays exactly right either way, which is
+the property the rest of this work exists to establish.
 
 What is still not counted is stated in the code rather than left to be
 discovered: requests served to visitors of the public read endpoints are a

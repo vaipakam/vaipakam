@@ -273,115 +273,66 @@ describe('meterFetch — the egress rule', () => {
     expect(spent(budget)).toBe(1);
   });
 
-  it('counts EVERY redirect hop, not the request that started them', async () => {
-    // #2227 r2 `4033723749`: the platform bills each hop of a redirect chain.
-    // Charging once and letting the runtime chase the rest reports a figure
-    // the counter cannot know is wrong — the confident-but-incorrect number
-    // this module exists to retire.
-    const budget = createBudget();
-    const seen: string[] = [];
-    const base = (async (url: string) => {
-      seen.push(url);
-      if (seen.length < 3) {
+  it('does NOT follow a redirect — it counts the one request and surfaces the 3xx', async () => {
+    // #2227 r3: following meant re-implementing `fetch`'s redirect algorithm,
+    // and three of that round's four findings were that re-implementation
+    // diverging from the standard. Not following is exact by construction —
+    // one request issued, one counted — and needs no second implementation of
+    // anybody's spec.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const budget = createBudget();
+      const seen: string[] = [];
+      const base = (async (url: string) => {
+        seen.push(String(url));
         return new Response(null, {
           status: 302,
-          headers: { location: `https://rpc.test/hop${seen.length}` },
+          headers: { location: 'https://elsewhere.test/moved' },
         });
-      }
-      return new Response('final');
-    }) as unknown as typeof fetch;
+      }) as unknown as typeof fetch;
 
-    const res = await meterFetch(budget, base)('https://rpc.test/start');
-    expect(await res.text()).toBe('final');
-    expect(seen).toEqual([
-      'https://rpc.test/start',
-      'https://rpc.test/hop1',
-      'https://rpc.test/hop2',
-    ]);
-    expect(spent(budget)).toBe(3);
+      const res = await meterFetch(budget, base)('https://rpc.test/start');
+      expect(res.status).toBe(302);
+      expect(seen).toEqual(['https://rpc.test/start']);
+      expect(spent(budget)).toBe(1);
+      // Loud, and names where it was being sent, so the configured URL can be
+      // fixed rather than the failure being opaque.
+      expect(String(warn.mock.calls[0]?.[0])).toContain(
+        'https://elsewhere.test/moved',
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  it('turns a redirected POST into a GET without the body', async () => {
-    // Re-POSTing a JSON-RPC call or a listing to wherever a redirect pointed
-    // would be a second WRITE, not a retry. This is what `fetch` itself does.
-    const calls: { method?: string; body: unknown }[] = [];
-    const base = (async (url: string, init?: RequestInit) => {
-      calls.push({ method: init?.method, body: init?.body });
-      return calls.length === 1
-        ? new Response(null, {
-            status: 303,
-            headers: { location: 'https://api.test/done' },
-          })
-        : new Response('ok');
+  it('asks the runtime not to follow, so no hop can go uncounted', async () => {
+    let init: RequestInit | undefined;
+    const base = (async (_url: string, i?: RequestInit) => {
+      init = i;
+      return new Response('ok');
     }) as unknown as typeof fetch;
-
-    await meterFetch(createBudget(), base)('https://api.test/orders', {
-      method: 'POST',
-      body: '{"listing":1}',
-    });
-    expect(calls[0]).toEqual({ method: 'POST', body: '{"listing":1}' });
-    expect(calls[1]?.method).toBe('GET');
-    expect(calls[1]?.body).toBeUndefined();
+    await meterFetch(createBudget(), base)('https://rpc.test');
+    expect(init?.redirect).toBe('manual');
   });
 
-  it('drops credentials when a redirect crosses origin', async () => {
-    // A redirect must not be able to walk an API key to another host.
-    const headers: Headers[] = [];
-    const base = (async (url: string, init?: RequestInit) => {
-      headers.push(new Headers(init?.headers));
-      return headers.length === 1
-        ? new Response(null, {
-            status: 307,
-            headers: { location: 'https://elsewhere.test/v2' },
-          })
-        : new Response('ok');
-    }) as unknown as typeof fetch;
-
-    await meterFetch(createBudget(), base)('https://api.test/v2', {
-      headers: { 'X-API-KEY': 'secret', 'Content-Type': 'application/json' },
-    });
-    expect(headers[0]?.get('x-api-key')).toBe('secret');
-    expect(headers[1]?.get('x-api-key')).toBeNull();
-    expect(headers[1]?.get('content-type')).toBe('application/json');
-  });
-
-  it('stops at the hop cap and hands the caller the 3xx', async () => {
-    const budget = createBudget();
-    let n = 0;
-    const base = (async () => {
-      n += 1;
-      return new Response(null, {
-        status: 302,
-        headers: { location: `https://rpc.test/${n}` },
-      });
-    }) as unknown as typeof fetch;
-
-    const res = await meterFetch(budget, base)('https://rpc.test/0');
-    expect(res.status).toBe(302);
-    // Six sends: the original plus the five hops the cap allows.
-    expect(spent(budget)).toBe(6);
-  });
-
-  it('keeps a Request input’s body — carrying the method alone would send an empty POST', async () => {
-    // Found by re-reading the round-2 diff, not reported: the flattening
-    // carried a Request's method and headers and left its body behind, so a
-    // POST would have gone out empty. Nothing on this lane passes a Request;
-    // losing a body should not depend on nobody trying.
+  it('passes a Request input straight through, body and all', async () => {
+    // Nothing is re-derived from it: the runtime that defines what a Request
+    // means is the one that sends it. The version this replaced rebuilt the
+    // request by hand and dropped its body, its signal, and a replacement
+    // body — three findings for one avoidable re-implementation.
     let sent: unknown;
-    const base = (async (url: string, init?: RequestInit) => {
-      sent = init?.body;
+    const base = (async (input: unknown) => {
+      sent = input;
       return new Response('ok');
     }) as unknown as typeof fetch;
 
-    await meterFetch(createBudget(), base)(
-      new Request('https://api.test/orders', {
-        method: 'POST',
-        body: '{"listing":1}',
-      }),
-    );
-    expect(new TextDecoder().decode(sent as ArrayBuffer)).toBe(
-      '{"listing":1}',
-    );
+    const request = new Request('https://api.test/orders', {
+      method: 'POST',
+      body: '{"listing":1}',
+    });
+    await meterFetch(createBudget(), base)(request);
+    expect(sent).toBe(request);
+    expect(await (sent as Request).text()).toBe('{"listing":1}');
   });
 
   it('passes the response through untouched', async () => {
