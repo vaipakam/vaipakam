@@ -89,6 +89,7 @@ import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -226,7 +227,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 80;
+    uint256 public constant EXPECTED_FACETS = 81;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -579,34 +580,17 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // and redoes both (re-upgrading to a fresh implementation is
         // idempotent in effect). Removing first would clear the marker while
         // the upgrade could still fail, permanently skipping it.
-        bytes4 oldRemitIngress6 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)"
-            )
-        );
-        bytes4 oldRemitIngress7 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)"
-            )
-        );
-        // #1566 closure 2 cutover PR 1 — the ingress gained
-        // `transportMessageId` (the ingress stamp), so the 8-arg selector
-        // retired the same way, and so did the 12-arg compensation ingress.
-        bytes4 oldRemitIngress8 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)"
-            )
-        );
-        bytes4 oldCompIngress12 = bytes4(
-            keccak256(
-                "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)"
-            )
-        );
-        bool routed6 = loupe.facetAddress(oldRemitIngress6) != address(0);
-        bool routed7 = loupe.facetAddress(oldRemitIngress7) != address(0);
-        bool routed8 = loupe.facetAddress(oldRemitIngress8) != address(0);
-        bool routed12 = loupe.facetAddress(oldCompIngress12) != address(0);
-        if (routed6 || routed7 || routed8 || routed12) {
+        // The retired signatures live in {retiredIngressSignatures} so the
+        // list is a surface a test can pin (Codex #2232 r1); this loop only
+        // asks the loupe which of them are still routed here.
+        string[] memory retiredSigs = retiredIngressSignatures();
+        bytes4[] memory retired = new bytes4[](retiredSigs.length);
+        uint256 retiredRouted;
+        for (uint256 r; r < retiredSigs.length; ++r) {
+            retired[r] = bytes4(keccak256(bytes(retiredSigs[r])));
+            if (loupe.facetAddress(retired[r]) != address(0)) ++retiredRouted;
+        }
+        if (retiredRouted != 0) {
             address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
             (, , , bool isCanonicalReward, ) =
                 RewardReporterFacet(diamond).getRewardReporterConfig();
@@ -648,14 +632,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // already past B2-d5 has no 6-arg selector, and asking the cut to
             // Remove an unrouted one reverts, which would abort the whole
             // refresh over a migration that had already happened.
-            bytes4[] memory rmIngress = new bytes4[](
-                (routed6 ? 1 : 0) + (routed7 ? 1 : 0) + (routed8 ? 1 : 0) + (routed12 ? 1 : 0)
-            );
+            bytes4[] memory rmIngress = new bytes4[](retiredRouted);
             uint256 k;
-            if (routed6) rmIngress[k++] = oldRemitIngress6;
-            if (routed7) rmIngress[k++] = oldRemitIngress7;
-            if (routed8) rmIngress[k++] = oldRemitIngress8;
-            if (routed12) rmIngress[k++] = oldCompIngress12;
+            for (uint256 r; r < retired.length; ++r) {
+                if (loupe.facetAddress(retired[r]) != address(0)) rmIngress[k++] = retired[r];
+            }
             IDiamondCut.FacetCut[] memory rmIngressCut =
                 new IDiamondCut.FacetCut[](1);
             rmIngressCut[0] = IDiamondCut.FacetCut({
@@ -665,7 +646,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             });
             IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
             console.log(
-                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover) and the 12-arg onCompensationBudgetReceived"
+                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b) and the 12-arg onCompensationBudgetReceived"
             );
         }
         // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
@@ -1445,6 +1426,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // as Replace toward this facet and the remittance item no longer lists
         // them: one refresh moves both halves.
         items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
+        items[80] = Item("rewardEpochFacet", address(new RewardEpochFacet()), _getRewardEpochSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
@@ -1632,6 +1614,36 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.
     /// @dev #1660 r9 — generation-probe + UUPS-upgrade one remittance
     ///      receiver proxy (no-op for zero or already-current).
+    /// @notice Every RETIRED mirror-ingress signature this script Removes, in
+    ///         the order they were retired.
+    /// @dev    #1566 transport epochs PR 3b (Codex #2232 r1). These were four
+    ///         inline locals until this PR, extended once per widening and
+    ///         covered by no test — which is how the FOURTH widening managed to
+    ///         omit itself. Leaving a retired selector routed is silent and
+    ///         severe: it still points at the previous facet bytecode, so an
+    ///         un-upgraded receiver keeps calling it and its deliveries SUCCEED
+    ///         against stale code, skipping whatever the new ingress added.
+    ///
+    ///         `RetiredIngressSelectorsTest` pins the CURRENT ingress selectors
+    ///         against this list, so a future signature change fails a test
+    ///         that names the predecessor it has to add here, rather than
+    ///         shipping a Diamond that half-migrated in the operator's favour.
+    ///
+    ///         `public` so a test can read it without broadcasting anything.
+    function retiredIngressSignatures() public pure returns (string[] memory sigs) {
+        sigs = new string[](5);
+        // #1222 B2-d5 — `recycledShare` (6 → 7 args).
+        sigs[0] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)";
+        // #1434 P1-a — `freshShare` (7 → 8).
+        sigs[1] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)";
+        // #1566 closure 2 cutover PR 1 — `transportMessageId` (8 → 9).
+        sigs[2] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)";
+        // #1566 transport epochs PR 3b — `splitTyped` (9 → 10).
+        sigs[3] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256,bytes32)";
+        // #1566 closure 2 cutover PR 1 — the compensation ingress's own stamp.
+        sigs[4] = "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)";
+    }
+
     function _probeUpgradeRemitReceiver(address proxy) private {
         if (proxy == address(0)) return;
         uint256 gen = 0;

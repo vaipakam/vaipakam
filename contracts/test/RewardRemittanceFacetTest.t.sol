@@ -16,6 +16,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -104,6 +105,20 @@ contract RewardRemittanceFacetTest is SetupTest {
     function _days(uint256 d) internal pure returns (uint256[] memory a) {
         a = new uint256[](1);
         a[0] = d;
+    }
+
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r2) — finalize a RANGE.
+    ///      The fan-out bound now applies to the FILTERED day list, so a test
+    ///      of that bound needs every day it names to survive the filters;
+    ///      otherwise an unfinalized day is refused first and the test asserts
+    ///      the wrong refusal, which is exactly what it did before this round.
+    function _finalizeDays(uint256 n) internal {
+        for (uint256 d = 1; d <= n; ++d) {
+            rewardMessenger.deliverChainReport(CHAIN_BASE, d, 10e18, 5e18);
+            rewardMessenger.deliverChainReport(CHAIN_ARB, d, 20e18, 10e18);
+            rewardMessenger.deliverChainReport(CHAIN_OP, d, 30e18, 15e18);
+            RewardAggregatorFacet(address(diamond)).finalizeDay(d);
+        }
     }
 
     // ─── slice math ─────────────────────────────────────────────────────────
@@ -313,6 +328,78 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, new uint256[](0), CAP);
     }
 
+    /// #1566 transport epochs PR 3b — the fan-out cap is a DESTINATION cost
+    /// enforced at the SOURCE, because a transport payload is immutable: a
+    /// mirror that refused an over-cap packet would refuse the same message on
+    /// every re-execution. Straddled at the boundary, so the test pins the cap
+    /// rather than merely the existence of a check.
+    function test_Remit_RefusesADayListOverTheTransportFanoutCap() public {
+        uint256 cap = LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP;
+        // Every named day must SURVIVE the filters, because the bound is on
+        // what the destination receives, not on what was asked for.
+        _finalizeDays(cap + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                cap + 1,
+                cap
+            )
+        );
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _dayList(cap + 1), CAP);
+
+        // Exactly AT the cap the same call gets past this check. Asserted as
+        // "not refused by the cap" rather than "succeeds": what the call does
+        // next depends on which of those days are finalized, and pinning that
+        // here would be pinning the remittance rather than the bound.
+        (bool ok, bytes memory err) = address(remit).call{value: 1 ether}(
+            abi.encodeCall(RewardRemittanceFacet.remitRewardBudget, (CHAIN_ARB, _dayList(cap), CAP))
+        );
+        if (!ok && err.length >= 4) {
+            assertTrue(
+                bytes4(err) != IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                "a list exactly at the cap is admitted by the cap"
+            );
+        }
+    }
+
+    /// #1566 transport epochs PR 3b (Codex #2232 r1) — the QUOTE refuses what
+    /// the send refuses. It is documented as a faithful dry run, and a bound
+    /// living only on the send let it return a real fee for a batch the send
+    /// was guaranteed to reject, which a keeper would then act on. Both halves
+    /// now call one rule, so this is the second caller of the same function
+    /// rather than a second copy of the check.
+    function test_Quote_RefusesTheDayListTheSendRefuses() public {
+        uint256 cap = LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP;
+        _finalizeDays(cap + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                cap + 1,
+                cap
+            )
+        );
+        remit.quoteRemittanceFee(CHAIN_ARB, _dayList(cap + 1));
+
+        // At the cap the quote gets past the bound, exactly as the send does.
+        (bool ok, bytes memory err) = address(remit).staticcall(
+            abi.encodeCall(RewardRemittanceFacet.quoteRemittanceFee, (CHAIN_ARB, _dayList(cap)))
+        );
+        if (!ok && err.length >= 4) {
+            assertTrue(
+                bytes4(err) != IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                "a list exactly at the cap is admitted by the bound"
+            );
+        }
+    }
+
+    /// @dev A day list of `n` consecutive days from 1. The single-day `_days`
+    ///      above names ONE day by id; this names a LENGTH, which is what the
+    ///      fan-out bound is about.
+    function _dayList(uint256 n) internal pure returns (uint256[] memory a) {
+        a = new uint256[](n);
+        for (uint256 i; i < n; ++i) a[i] = i + 1;
+    }
+
     // ─── auth ─────────────────────────────────────────────────────────────────
 
     function test_Remit_RevertsForStranger() public {
@@ -428,7 +515,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(rlens.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        ingress.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
         assertEq(rlens.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -441,7 +528,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 stranger
             )
         );
-        ingress.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -455,7 +542,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 address(0xDEAD)
             )
         );
-        ingress.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        ingress.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
     }
 
     receive() external payable {}

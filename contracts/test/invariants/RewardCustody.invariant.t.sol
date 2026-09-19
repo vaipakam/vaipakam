@@ -15,6 +15,7 @@ import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFa
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
 import {RewardIngressFacet} from "../../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../../src/facets/RewardEpochFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
@@ -155,6 +156,64 @@ contract RewardCustodyInvariant is SetupTest {
             (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
                 recon.getPacketReconciliation(handler.packetAt(i));
             assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
+        }
+    }
+
+    /// #1566 transport epochs PR 3b — the LIVENESS check behind the
+    /// conservation invariant below: an even seed must actually produce a
+    /// transport epoch.
+    ///
+    /// Deterministic and not an invariant, on purpose. The property it
+    /// establishes is "the handler has subjects", and an invariant asserting
+    /// that would be flaky — a run whose draws happened to be all odd would
+    /// fail on nothing being wrong. Driving one known-even seed by hand proves
+    /// it once, for good.
+    ///
+    /// This exists because the first version of the handler derived the wire
+    /// from `fresh != 0`, where `fresh` is bounded over `[0, amount]` and is
+    /// therefore zero about one time in 10^19. The conservation invariant
+    /// passed over an empty set.
+    function test_Handler_UntypedDrawAdmitsAnEpoch() public {
+        handler.untypedIngress(2); // even: the untyped wire
+        assertEq(handler.untypedAdmitted(), 1, "the untyped path was taken");
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        uint256 n = handler.packets();
+        assertGt(n, 0, "the delivery landed");
+        uint256 withEpoch;
+        for (uint256 i; i < n; ++i) {
+            (bytes32 packetHash, , , , , ) = ep.getTransportBatch(handler.packetAt(i));
+            if (packetHash != bytes32(0)) ++withEpoch;
+        }
+        assertGt(withEpoch, 0, "an untyped delivery opens an epoch for the invariant to check");
+
+        // And the odd draw takes the other path, so the parity means what the
+        // handler says it means.
+        handler.untypedIngress(3); // odd: a stated composition
+        assertEq(handler.untypedAdmitted(), 1, "the typed path added no untyped delivery");
+    }
+
+    /// #1566 transport epochs PR 3b — every TRANSPORT EPOCH conserves under
+    /// every interleaving: what a batch was admitted with is always what it
+    /// still holds plus what has been parked out of it. There is no third
+    /// place for it to be in 3b-i (no draw exists), which is exactly why the
+    /// identity is worth pinning now: 3b-ii adds the draws, and it will have
+    /// to keep this true with a third term rather than discover it broken.
+    ///
+    /// It also pins the rule the ingress relies on: a batch is admitted with
+    /// the UNTYPED REMAINDER, so a delivery that stated a component can never
+    /// have that component in an epoch as well as in the shared ledger it was
+    /// credited to.
+    function invariant_TransportEpochsConserve() public view {
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        uint256 n = handler.packets();
+        for (uint256 i = 0; i < n; ++i) {
+            bytes32 h = handler.packetAt(i);
+            (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
+            if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
+            (uint256 parked, , , ) = ep.getTransportRemainder(h);
+            assertEq(balance + parked, admitted, "transport epoch conserves");
+            (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
+            assertEq(legFresh + legRecycled, 0, "no draw exists until PR 3b-ii");
         }
     }
 
@@ -345,6 +404,11 @@ contract RewardCustodyHandler is Test {
     ///      correction invariant's baseline), and how many classification
     ///      actions were APPLIED (Codex #2206 r3: the liveness the campaign
     ///      is checked against).
+    /// @dev #1566 transport epochs PR 3b — how many UNTYPED deliveries this
+    ///      handler has attempted. Read by the liveness test below: an
+    ///      invariant over transport epochs proves nothing if the handler never
+    ///      produces one.
+    uint256 public untypedAdmitted;
     bytes32[] internal packetHashes;
     uint256 internal seqStamped;
     uint256 public freshSpentAtActionStart;
@@ -427,19 +491,41 @@ contract RewardCustodyHandler is Test {
         TestMutatorFacet(diamond).creditInflowRawWithBefore(LibVpfiRecycle.RecycleSource.NotificationFee, 1, amount, before);
     }
 
-    /// An untyped delivery as the receiver presents it (the handler is the
-    /// registered receiver): the tokens are forwarded to the Diamond first,
-    /// the fresh share is credited live, the remainder is protected into the
-    /// `Unclassified` row — nothing of it stays in the Diamond.
+    /// A delivery whose remainder is UNTYPED, as the receiver presents it
+    /// (the handler is the registered receiver): the tokens are forwarded to
+    /// the Diamond first, the fresh share is credited live, the remainder is
+    /// protected into the `Unclassified` row — nothing of it stays in the
+    /// Diamond.
+    ///
+    /// #1566 transport epochs PR 3b — the draw decides the WIRE too, not only
+    /// the composition: a zero fresh share is what an untyped wire delivers,
+    /// and such a delivery opens a transport epoch whose conservation the
+    /// invariants below then cover.
     function untypedIngress(uint256 seed) external {
         _start();
         uint256 amount = bound(seed, 2, 10_000e18);
-        uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
+        // #1566 transport epochs PR 3b — the WIRE is its own draw, on the raw
+        // seed's parity, so both accounting paths are reached about half the
+        // time each.
+        //
+        // Deriving it from the fresh component instead (`fresh != 0`) looked
+        // equivalent and was not: `fresh` is bounded over `[0, amount]`, so it
+        // is zero with probability about 1/amount — effectively never. The
+        // untyped path, and with it every transport epoch the conservation
+        // invariant checks, would have had no subjects at all while the
+        // invariant passed. `test_Handler_UntypedDrawAdmitsAnEpoch` pins the
+        // parity so this cannot quietly regress to a path nothing exercises.
+        bool splitTyped = seed % 2 == 1;
+        uint256 fresh = splitTyped
+            ? bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount)
+            : 0;
+        if (!splitTyped) ++untypedAdmitted;
         _mint(diamond, amount);
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
         try RewardIngressFacet(diamond).onRewardBudgetReceived(
-            address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0)
+            address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0),
+            splitTyped
         ) {
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
         } catch {

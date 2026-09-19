@@ -527,6 +527,57 @@ interface IVaipakamErrors {
     ///         caller has paid a transport fee for a message the destination
     ///         must reject.
     error RemitSplitAlreadyOnWire(uint256 remitId);
+    /// @notice #1566 transport epochs PR 3b — the day list re-supplied to a
+    ///         materialization call is not the one this delivery committed to
+    ///         at ingress. Membership is never taken from an event or from a
+    ///         caller's word: the packet's 3a commitment is the authority, and
+    ///         a page that cannot prove itself against it writes nothing.
+    error TransportDayListMismatch(bytes32 batchId, bytes32 committed, bytes32 supplied);
+    /// @notice #1566 transport epochs PR 3b — this batch's per-day index is
+    ///         already whole, so there is no page left to materialize.
+    error TransportBatchFullyIndexed(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — no batch was admitted under this
+    ///         id. A d5 delivery has no batch by design (its components are
+    ///         typed on the wire and credited to the shared ledgers at
+    ///         ingress), and neither has a packet that landed before this
+    ///         ledger existed.
+    error TransportBatchUnknown(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — the batch's remainder is already
+    ///         parked. Parking is once and for all: the remainder it names is
+    ///         what the batch's obligations left, and a second park would
+    ///         restate a finished fact.
+    error TransportRemainderAlreadyParked(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — the batch's per-day index is not
+    ///         yet whole, so what its obligations may still reach is not yet
+    ///         known and its remainder cannot be parked.
+    error TransportBatchNotFullyIndexed(bytes32 batchId, uint32 indexedDays, uint32 dayCount);
+    /// @notice #1566 transport epochs PR 3b — no remainder is parked for this
+    ///         batch, so there is nothing to acknowledge.
+    error TransportRemainderNotParked(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — this batch's parked remainder is
+    ///         already acknowledged, and the acknowledgment is what released
+    ///         the batch.
+    error TransportRemainderAlreadyAcknowledged(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — a classification would take more
+    ///         than the batch's PARKED REMAINDER still holds. The remainder is
+    ///         what a released batch's obligations left, and classification is
+    ///         one of its dispositions (design §5c): stepping it down with each
+    ///         classification is what keeps it from reporting value that has
+    ///         already left, and the bound falls out of the same arithmetic.
+    error TransportRemainderExceeded(bytes32 batchId, uint256 requested, uint256 available);
+    /// @notice #1566 transport epochs PR 3b — an old-wire packet whose batch
+    ///         has not been released cannot be classified. The only route by
+    ///         which what remains of such a packet becomes classifiable is its
+    ///         batch's remainder being parked WITH its acknowledgment (design
+    ///         §5c): classifying earlier would spend value the batch's own
+    ///         listed obligations can still draw.
+    error TransportBatchNotReleased(bytes32 packetHash, bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — the canonical chain refuses to
+    ///         build a remittance whose day list exceeds the transport fan-out
+    ///         cap. The cap is enforced HERE, at dispatch, because a transport
+    ///         payload is immutable once sent: a receive-side refusal would
+    ///         retry the same over-cap message forever.
+    error TransportDayFanoutExceeded(uint256 dayCount, uint256 cap);
     /// @notice A split attestation arrived from a chain that is not this
     ///         deployment's canonical (Base) chain. Messenger authentication
     ///         proves a message came from a configured peer, never that the

@@ -134,7 +134,16 @@ library LibRewardCustody {
     ///         or debit the holder changes shape (a new consumer, a changed
     ///         seam), so an activation can never run against a complete cut
     ///         that predates the consumers it needs.
-    uint32 internal constant CUTOVER_VERSION = 1;
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r2) — advanced 1 → 2.
+    ///      This PR adds a holder consumer ({RewardEpochFacet}) and changes a
+    ///      seam: classification now passes the transport-epoch gate and debits
+    ///      the batch's parked remainder. Left at 1, a partial cut carrying
+    ///      this ingress but a version-1 reconciliation facet could be stamped
+    ///      complete and activation would accept it — a delivery would open an
+    ///      epoch while the stale classifier had neither the gate nor the
+    ///      debit, so two records would claim one sum. The bump is what makes
+    ///      that cut refuse to certify.
+    uint32 internal constant CUTOVER_VERSION = 2;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -983,6 +992,35 @@ library LibRewardCustody {
     ///         was recorded at ingress, with the record.
     /// @custom:event-category state-change/reward-custody
     event IngressPacketDayListRecorded(bytes32 indexed packetHash, bytes32 dayListHash, uint256 dayCount);
+    /// @notice #1566 transport epochs PR 3b — an old-wire delivery opened its
+    ///         transport epoch. Its membership is NOT yet indexed: admission is
+    ///         compact for every delivery, and `TransportBatchPageIndexed`
+    ///         reports the index being built afterwards.
+    /// @custom:event-category state-change/reward-custody
+    event TransportBatchAdmitted(
+        bytes32 indexed batchId,
+        bytes32 indexed packetHash,
+        uint256 amount,
+        uint256 dayCount
+    );
+    /// @notice #1566 transport epochs PR 3b — one bounded page of an oversize
+    ///         batch's membership was indexed against its commitment.
+    /// @custom:event-category state-change/reward-custody
+    event TransportBatchPageIndexed(bytes32 indexed batchId, uint32 indexedDays, uint32 dayCount);
+    /// @notice #1566 transport epochs PR 3b — what a batch's obligations left
+    ///         was parked under the batch's key, still bound by its membership.
+    /// @custom:event-category state-change/reward-custody
+    event TransportRemainderParked(bytes32 indexed batchId, uint256 amount, bytes32 dayListHash);
+    /// @notice #1566 transport epochs PR 3b — a batch's parked remainder was
+    ///         acknowledged, which is what makes its packet classifiable.
+    /// @custom:event-category state-change/reward-custody
+    event TransportBatchReleased(bytes32 indexed batchId, uint256 remainder);
+    /// @notice #1566 transport epochs PR 3b — a disposition took part of a
+    ///         batch's parked remainder. `left` is what the entry still holds,
+    ///         emitted rather than derived so a reader never has to replay the
+    ///         whole history to know what is still parked.
+    /// @custom:event-category state-change/reward-custody
+    event TransportRemainderDebited(bytes32 indexed batchId, uint256 amount, uint256 left);
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
     ///         split of a d2 remittance was attested for the packet that
     ///         delivered it, both caps scaled to what actually landed.
@@ -1066,7 +1104,7 @@ library LibRewardCustody {
             // its fresh component (Codex #2224 r2): the cap is what the source
             // recorded, not what is left, and classifying the gross figure
             // would republish fresh value the batch already paid listed
-            // obligations with. Both seams are 3b's to fill, and they are two
+            // obligations with. PR 3b filled both seams, and they stayed two
             // so that flipping the release predicate alone can never expose
             // the gross cap.
             uint256 drawn = transportConsumedFresh(p);
@@ -1077,29 +1115,54 @@ library LibRewardCustody {
 
     /// @notice What a packet's own transport draws have already spent of its
     ///         FRESH component.
-    /// @dev    #1566 transport epochs PR 3a — the transport epochs' leg
-    ///         counters (3b) are what make this answerable; until they land no
-    ///         draw exists and the answer is zero. The second half of the
-    ///         seam {authenticatedFresh} reads, kept separate from
-    ///         {packetBatchReleased} deliberately: one predicate deciding both
-    ///         "may this be classified" and "how much of it" is how a later
-    ///         change exposes a gross figure by flipping a boolean.
-    function transportConsumedFresh(LibVaipakam.IngressPacket storage) internal pure returns (uint256) {
-        return 0;
+    /// @dev    #1566 transport epochs PR 3b filled this in: the answer is the
+    ///         batch's own fresh leg counter. It stays ZERO through 3b-i,
+    ///         because the counter is written by the draws PR 3b-ii adds —
+    ///         which is a real read of a real zero, not a stub, and it is the
+    ///         reason the counter ships with the ledger rather than with the
+    ///         draws: a classification must never be able to run against a
+    ///         packet whose legs are unreadable.
+    ///
+    ///         A packet with NO batch answers zero directly. That is the right
+    ///         answer for every population that has none — a d5 delivery,
+    ///         whose components were typed on the wire; any packet that landed
+    ///         before this ledger existed; and any that landed before reward
+    ///         custody was activated here (Codex #2232 r1).
+    ///
+    ///         The second half of the seam {authenticatedFresh} reads, kept
+    ///         separate from {packetBatchReleased} deliberately: one predicate
+    ///         deciding both "may this be classified" and "how much of it" is
+    ///         how a later change exposes a gross figure by flipping a
+    ///         boolean. Both halves are single storage reads and must stay so:
+    ///         classification reaches them through {authenticatedFresh}, and
+    ///         `RewardReconciliationFacet` has under 2 KB of EIP-170 headroom.
+    function transportConsumedFresh(LibVaipakam.IngressPacket storage p) internal view returns (uint256) {
+        bytes32 batchId = p.batchId;
+        if (batchId == bytes32(0)) return 0;
+        return LibVaipakam.storageSlot().transportBatches[batchId].consumedFresh;
     }
 
     /// @notice Whether a packet's batch has been parked with its
     ///         acknowledgment, so what remains of it is classifiable.
-    /// @dev    #1566 transport epochs PR 3a — the transport epochs' batch
-    ///         lifecycle (3b) is what makes this answerable; until it lands
-    ///         there are no batches and the answer is NO for every packet.
-    ///         3b replaces this body, and nothing else about the evidence rule
-    ///         moves with it. Deliberately a predicate rather than a flag on
-    ///         the packet: a batch is released by its obligations terminating
-    ///         or being dispositioned, which is a property of the batch, not
-    ///         of the delivery that opened it.
-    function packetBatchReleased(LibVaipakam.IngressPacket storage) internal pure returns (bool) {
-        return false;
+    /// @dev    #1566 transport epochs PR 3b filled this in, and nothing else
+    ///         about the evidence rule moved with it. A batch is released by
+    ///         its remainder being parked WITH its recorded acknowledgment
+    ///         (§5c), which is a property of the BATCH rather than of the
+    ///         delivery that opened it — so the flag lives there and the
+    ///         packet carries only the link. Parking alone does not release:
+    ///         an operator would otherwise make a packet classifiable merely
+    ///         by draining its batch.
+    ///
+    ///         A packet with no batch answers NO, which is what keeps every
+    ///         packet that landed before this ledger behaving exactly as it
+    ///         did. A d5 packet also has none, and never needs one: its
+    ///         components were typed on the wire and credited to the shared
+    ///         ledgers at ingress, so it is not attested and this predicate is
+    ///         never the thing standing between it and a classification.
+    function packetBatchReleased(LibVaipakam.IngressPacket storage p) internal view returns (bool) {
+        bytes32 batchId = p.batchId;
+        if (batchId == bytes32(0)) return false;
+        return LibVaipakam.storageSlot().transportBatches[batchId].released;
     }
 
     /// @notice #1566 transport epochs PR 3a — mark a reservation as dispatched
@@ -1167,6 +1230,310 @@ library LibRewardCustody {
         p.dayListHash = commitment;
         p.dayCount = dayIds.length;
         emit IngressPacketDayListRecorded(h, commitment, dayIds.length);
+    }
+
+    // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
+
+    /// @notice The largest `dayIds` fan-out the canonical chain will build a
+    ///         remittance for.
+    /// @dev    #1566 transport epochs PR 3b. The cap exists because
+    ///         RETIREMENT writes one index update per member day: a list that
+    ///         fit the source transaction can exceed the DESTINATION's block
+    ///         gas limit when that happens, leaving the exhausted batch parked
+    ///         at the front of every member cursor forever. "Wire-bounded" is
+    ///         not a bound — the remitter supplies any nonempty list.
+    ///
+    ///         32 is a month of daily rows, which covers the lane's real
+    ///         shapes, and sizes both ends comfortably: admission pushes at
+    ///         most 32 index entries and retirement clears at most 32.
+    ///
+    ///         It is enforced at DISPATCH and NOT at ingress. A transport
+    ///         payload is immutable once sent, so a receive-side refusal
+    ///         retries the same over-cap message forever; the receiver instead
+    ///         ADMITS any transport-authentic packet, an over-cap one through
+    ///         the compact admission below.
+    uint256 internal constant TRANSPORT_DAY_FANOUT_CAP = 32;
+
+    /// @notice How many member days one materialization call indexes.
+    /// @dev    #1566 transport epochs PR 3b — the same per-call storage cost
+    ///         the cap allows a within-cap admission, so an oversize batch is
+    ///         indexed by repeating a call that is known to fit rather than by
+    ///         a caller guessing a page size.
+    uint256 internal constant TRANSPORT_INDEX_PAGE = 32;
+
+    /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
+    ///         EPOCH: one untyped balance, spendable only by the obligations
+    ///         whose day the delivery listed.
+    /// @dev    Called at ingress, in the same transaction as the record and
+    ///         the day-list commitment, under exactly the conditions that book
+    ///         the delivery's untyped remainder into the holder's
+    ///         `Unclassified` row: an untyped wire, a non-zero remainder, and
+    ///         an ACTIVATED deployment. The last of those matters as much as
+    ///         the first (Codex #2232 r1): before activation the remainder is
+    ///         not booked at all — the tokens sit Diamond-side and the
+    ///         activation envelope attributes them — so an epoch opened then
+    ///         would claim an amount another path is free to move, and the two
+    ///         claims could never be reconciled afterwards.
+    ///
+    ///         A d5 delivery takes no batch: its
+    ///         components are typed on the wire and credited to the shared
+    ///         live/bucket ledgers at ingress, so admitting it here as well
+    ///         would make one delivery spendable twice — once through the
+    ///         batch and once through the ledgers it was already credited to
+    ///         (§5c's one-accounting-path rule). The caller passes the fact
+    ///         rather than inferring it: the RECEIVER is the only party that
+    ///         saw the wire generation, and at this depth a typed delivery
+    ///         that happens to carry a zero fresh component is
+    ///         indistinguishable from an untyped one.
+    ///
+    ///         The batch is keyed by the packet's own ingress stamp — the
+    ///         epoch's unit is the PACKET (§5c: the old wire is batched and
+    ///         carries no per-day split, so a per-day balance cannot be
+    ///         constructed from it at all), and one key for both means a draw
+    ///         can never reach a batch whose packet it has not also reached.
+    ///         Storing it on the packet is what lets
+    ///         {packetBatchReleased} stay a single storage read from an
+    ///         `IngressPacket` alone.
+    ///
+    ///         The admission is COMPACT for every delivery, whatever its
+    ///         list's length (Codex #2232 r2): it writes this batch's row and
+    ///         nothing per-day. The receiver's callback runs inside
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — 300,000
+    ///         — and 32 first-time per-day pushes cost two new storage slots
+    ///         each, which exceeds that budget on its own before the packet
+    ///         record and the custody relocation are counted. Indexing short
+    ///         lists here would therefore have failed to deliver precisely the
+    ///         in-flight old-wire messages this path exists to preserve.
+    ///
+    ///         Refusing a long list instead was never available either: the
+    ///         payload is immutable, so the refusal repeats for as long as the
+    ///         message is re-executed, and the delivery is authentic. One
+    ///         compact path serves both, and the per-day index is built
+    ///         afterwards by {materializeTransportBatchPage}, permissionlessly,
+    ///         against the day-list commitment 3a stamped.
+    /// @param  s        Diamond storage.
+    /// @param  h        The packet's ingress stamp.
+    /// @param  dayIds   The delivery's day list, as it arrived.
+    /// @param  untyped  What this delivery brought that is in NO shared
+    ///                  ledger: the destination-observed amount less any
+    ///                  component the wire stated. For the untyped wires this
+    ///                  admission is for, that is the whole of
+    ///                  `actualReceived` — never the declared total, since a
+    ///                  short delivery must shrink the funding and not the
+    ///                  obligations.
+    ///
+    ///                  It is the REMAINDER rather than the amount so that the
+    ///                  epoch's balance and the `Unclassified` protection the
+    ///                  ingress books alongside it are the same expression. A
+    ///                  caller that said "untyped" while also stating a
+    ///                  component would otherwise leave that component
+    ///                  spendable twice — once through the shared ledger it
+    ///                  was credited to, once through this balance — and the
+    ///                  rule that forbids it should hold by construction, not
+    ///                  by the caller being right.
+    /// @return batchId  The batch's key, equal to the packet's stamp.
+    function admitTransportBatch(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256[] calldata dayIds,
+        uint256 untyped
+    ) internal returns (bytes32 batchId) {
+        // Only the list's LENGTH is read here. Its contents are already
+        // committed to by the packet's `dayListHash`, and the index they feed
+        // is written later, page by page, against that commitment.
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        // No balance, no batch — §5c: a batch with nothing in it has a
+        // membership that can reserve nothing and a retirement that retires
+        // nothing, and here it would be worse than useless, since the
+        // classification gate would hold a valueless packet shut until an
+        // operator went through a release that releases nothing. The delivery
+        // keeps `batchId == 0` and is ungated, which is the honest answer: it
+        // holds no epoch value for the gate to protect.
+        if (untyped == 0) return bytes32(0);
+        batchId = h;
+        uint256 count = dayIds.length;
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        b.balance = untyped;
+        b.admitted = untyped;
+        // Cast by name rather than silently: the fan-out is bounded at
+        // dispatch and by the destination's gas limit long before a list could
+        // reach 2^32 days, so this can only fire on something that is already
+        // wrong, and a truncated `dayCount` would then quietly declare an
+        // oversize batch fully indexed.
+        b.dayCount = SafeCast.toUint32(count);
+        p.batchId = batchId;
+        emit TransportBatchAdmitted(batchId, h, untyped, count);
+    }
+
+    /// @notice #1566 transport epochs PR 3b — index one bounded page of an
+    ///         OVERSIZE batch's membership, proving the page against the day
+    ///         list this delivery committed to at ingress.
+    /// @dev    Permissionless: the commitment is the authority, so anyone may
+    ///         supply the payload and nobody can supply a different one. The
+    ///         whole list is re-supplied on every call because the commitment
+    ///         is flat — one hash over the encoded list, which 3a stamped
+    ///         precisely so membership never has to be taken from an event —
+    ///         while only `TRANSPORT_INDEX_PAGE` entries are WRITTEN, storage
+    ///         being what the destination's block gas limit actually bounds.
+    ///
+    ///         Every batch is indexed this way, because every admission is
+    ///         compact. A batch whose index is already whole has no page left
+    ///         and refuses, rather than accepting a call that would write
+    ///         nothing.
+    /// @return indexedDays The batch's day-index progress after this page.
+    function materializeTransportBatchPage(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId,
+        uint256[] calldata dayIds
+    ) internal returns (uint32 indexedDays) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        uint32 done = b.indexedDays;
+        if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
+        // The batch's key IS its packet's stamp, so the commitment is read
+        // through `batchId` directly.
+        bytes32 committed = s.ingressPackets[batchId].dayListHash;
+        bytes32 supplied = keccak256(abi.encode(dayIds));
+        if (supplied != committed) {
+            revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+        }
+        uint256 end = uint256(done) + TRANSPORT_INDEX_PAGE;
+        if (end > dayIds.length) end = dayIds.length;
+        for (uint256 i = done; i < end; ++i) {
+            s.transportBatchesByDay[dayIds[i]].push(batchId);
+        }
+        indexedDays = uint32(end);
+        b.indexedDays = indexedDays;
+        emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
+    }
+
+    /// @notice #1566 transport epochs PR 3b — PARK what this batch's
+    ///         obligations left, under the batch's own key, with the
+    ///         membership that still binds it.
+    /// @dev    Parking is the first half of the release (§5c). It does not
+    ///         make the packet classifiable on its own: an operator could
+    ///         otherwise make a packet classifiable merely by draining its
+    ///         batch, so the ACKNOWLEDGMENT is what releases it.
+    ///
+    ///         The remainder stays MEMBERSHIP-BOUND — it carries the same flat
+    ///         commitment 3a stamped on the packet — so a late obligation
+    ///         whose day is in this list can still restore against it after
+    ///         the index itself has been retired, rather than finding the
+    ///         value in a general pool it has no claim on.
+    ///
+    ///         An incompletely indexed batch is refused: until its whole
+    ///         membership exists, what its obligations may still reach is not
+    ///         known, and a remainder parked now would name a filter the
+    ///         batch had not finished acquiring.
+    ///
+    ///         There is NO "the obligations are finished" test here, and in
+    ///         3b-i there is nothing for one to test: no draw exists, so no
+    ///         obligation can hold a claim on a batch. §5c's rule that a batch
+    ///         with outstanding STAGING REFERENCES cannot be retired belongs
+    ///         with the staging that creates them, in 3b-ii, and lands on this
+    ///         function when it does.
+    function parkTransportRemainder(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId
+    ) internal returns (uint256 amount) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (b.indexedDays < b.dayCount) {
+            revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
+        }
+        LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
+        if (rem.batchId != bytes32(0)) revert IVaipakamErrors.TransportRemainderAlreadyParked(batchId);
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
+        amount = b.balance;
+        rem.batchId = batchId;
+        rem.amount = amount;
+        rem.dayListHash = p.dayListHash;
+        rem.dayCount = b.dayCount;
+        b.balance = 0;
+        emit TransportRemainderParked(batchId, amount, rem.dayListHash);
+    }
+
+    /// @notice #1566 transport epochs PR 3b — record the acknowledgment that
+    ///         RELEASES a batch, so what remains of its packet becomes
+    ///         classifiable.
+    /// @dev    The second half of the release, and the whole of the gate:
+    ///         after this, {packetBatchReleased} answers yes for the batch's
+    ///         packet and {authenticatedFresh} derives the classification's
+    ///         bound from the packet's immutable attested caps NET of what the
+    ///         batch's own transport legs already spent.
+    function acknowledgeTransportRemainder(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId
+    ) internal {
+        LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
+        if (rem.batchId == bytes32(0)) revert IVaipakamErrors.TransportRemainderNotParked(batchId);
+        if (rem.acknowledged) revert IVaipakamErrors.TransportRemainderAlreadyAcknowledged(batchId);
+        rem.acknowledged = true;
+        s.transportBatches[batchId].released = true;
+        emit TransportBatchReleased(batchId, rem.amount);
+    }
+
+    /// @notice #1566 transport epochs PR 3b — admit a classification against an
+    ///         old-wire packet AND step its batch's parked remainder down by
+    ///         what the classification takes.
+    /// @dev    ONE function, because the gate and the debit are one rule
+    ///         (Codex #2232 r1). An earlier revision gated classification on
+    ///         the release and left the remainder alone: parking 10 and
+    ///         classifying 4 left the entry still reporting 10, so the
+    ///         membership-bound restore and the operator dispositions 3b-ii
+    ///         adds would have treated already-classified value as still
+    ///         parked — two claims on one amount. Design §5c says a
+    ///         classification debits the batch-keyed pending entry rather than
+    ///         the transport balance, and it can only be relied on if there is
+    ///         no way to do the one without the other.
+    ///
+    ///         The BOUND falls out of the same arithmetic: a classification
+    ///         can never take more than the remainder holds. That is a second,
+    ///         independent ceiling on top of the packet's own `unclassified`
+    ///         figure — in 3b-i the two are equal by construction, and where a
+    ///         later disposition makes them differ the stricter one binds,
+    ///         which is the conservative direction.
+    ///
+    ///         A packet with NO batch passes untouched and is debited nothing:
+    ///         the rule is about value held in a transport epoch, and a d5
+    ///         delivery, a pre-3b arrival, and a delivery that landed before
+    ///         custody was activated all hold none.
+    function takeFromReleasedRemainder(
+        LibVaipakam.Storage storage s,
+        bytes32 packetHash,
+        uint256 amount
+    ) internal {
+        bytes32 batchId = s.ingressPackets[packetHash].batchId;
+        if (batchId == bytes32(0)) return;
+        if (!s.transportBatches[batchId].released) {
+            revert IVaipakamErrors.TransportBatchNotReleased(packetHash, batchId);
+        }
+        LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
+        uint256 available = rem.amount;
+        if (amount > available) {
+            revert IVaipakamErrors.TransportRemainderExceeded(batchId, amount, available);
+        }
+        uint256 left = available - amount;
+        rem.amount = left;
+        emit TransportRemainderDebited(batchId, amount, left);
+    }
+
+    /// @notice #1566 transport epochs PR 3b — the day-list fan-out bound, in
+    ///         ONE place.
+    /// @dev    Called by the remittance SEND and by its fee QUOTE (Codex #2232
+    ///         r1). The quote is documented as a faithful dry run of the send,
+    ///         and a bound that lived only on the send let it price a batch the
+    ///         send was guaranteed to refuse — a keeper acting on a fee for an
+    ///         impossible operation. This is the second time a quote drifted
+    ///         from its send in this programme (#2224 r6 was the split
+    ///         attestation's), so the rule gets one implementation both reach
+    ///         rather than a copy each, and the divergence stops being
+    ///         something to remember.
+    function requireRemittableFanout(uint256 dayCount) internal pure {
+        if (dayCount > TRANSPORT_DAY_FANOUT_CAP) {
+            revert IVaipakamErrors.TransportDayFanoutExceeded(dayCount, TRANSPORT_DAY_FANOUT_CAP);
+        }
     }
 
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded

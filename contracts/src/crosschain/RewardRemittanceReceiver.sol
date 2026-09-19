@@ -35,11 +35,21 @@ import {
 ///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
 ///      which generation it decoded, so it is the only one that can answer,
 ///      and for the two old generations the honest answer is ZERO.
+/// @dev #1566 transport epochs PR 3b (Codex #2232 r1) — advanced 4 → 5 for the
+///      `splitTyped` argument. The change is NOT to the payloads this contract
+///      decodes; it is to what the contract TELLS the Diamond, which is the
+///      distinction worth stating because it is the reason this bump is easy to
+///      miss. What the constant governs is the refresh's UPGRADE DECISION: a
+///      deployed proxy reporting less than this figure is upgraded. Any change
+///      to the receiver's own behaviour has to advance it, whichever side of
+///      the contract the change is on, or the refresh reads a current-looking
+///      proxy and leaves it running the old implementation.
+///
 /// @dev #1434 P2-w2 — the receiver's CURRENT wire generation, at file
 ///      level so the refresh script can import the same value the
 ///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
 ///      returns — one definition, no literal to drift.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 4;
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 5;
 
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
@@ -51,7 +61,8 @@ interface IRewardBudgetIngress {
         address remitter,
         uint256 recycledShare,
         uint256 freshShare,
-        bytes32 transportMessageId
+        bytes32 transportMessageId,
+        bool splitTyped
     ) external;
 }
 
@@ -354,7 +365,22 @@ contract RewardRemittanceReceiver is
             remitter,
             recycledShare,
             freshShare,
-            transportMessageId
+            transportMessageId,
+            // #1566 transport epochs PR 3b — WHETHER THE WIRE CARRIED THE
+            // SPLIT, which is a different question from whether the split it
+            // carried was non-zero. This frame is the only place either can be
+            // answered: by the time the Diamond sees the call, a d5 remittance
+            // that was wholly recycled and a legacy one that transmitted
+            // nothing both arrive as two zero components.
+            //
+            // The Diamond needs the distinction because the two take different
+            // ACCOUNTING PATHS. A d5 delivery's components are typed and
+            // credited to the shared live/bucket ledgers here and now; an
+            // untyped one's value is in no shared ledger and needs a transport
+            // epoch to be spendable at all. Opening an epoch for a d5 delivery
+            // would make it spendable twice, and opening none for an untyped
+            // one would strand it.
+            head == RemitWire.REMIT_WIRE_TAG_D5
         );
 
         emit RewardBudgetForwarded(

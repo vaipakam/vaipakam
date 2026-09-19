@@ -6762,6 +6762,55 @@ old-wire packet exists on a refreshed chain until the legacy lane delivers
 one) and exercised, until PR C unfreezes role changes, by old-wire packets
 on the live era alone.
 
+> **SPLIT INTO 3b-i AND 3b-ii, on measured size evidence this plan did not
+> have.** Scouting 3b before writing it measured the EIP-170 headroom of
+> every facet the allocation pass must reach: `InteractionRewardsLensFacet`
+> 1,318 bytes, `InteractionRewardsFacet` 1,734, `RewardClaimFacet` 1,870,
+> `RewardReconciliationFacet` 1,969, `RewardHorizonSweepFacet` 2,804. An
+> `internal` library function is inlined into every contract that reaches
+> it, so writing the pass as a library grows all of them at once, and the
+> pass is larger than the reconciliation walks that forced #2206's facet
+> split. The pass is therefore HOSTED on its own facet (`RewardEpochFacet`)
+> with each consumer carrying only the call. Deciding that seam per consumer
+> instead would meet the limit five separate times and turn the remedy into
+> a patch per path — the failure mode the owner's re-scout rule exists to
+> stop, and the one #1780, #1835 and #2206 each paid for.
+>
+> The split falls at the EVIDENCE/SPEND seam, so each half is whole:
+>
+> - **3b-i — the epoch ledger** (LANDED): the untyped per-packet balance,
+>   the per-day arrival-ordered index and cursor, the dispatch fan-out cap,
+>   the compact admission and its paged materialization, the batch-keyed
+>   parked remainder and its acknowledgment, the batch gate on
+>   classification, and the REAL bodies for 3a's two seams —
+>   `packetBatchReleased` reading the batch's released flag and
+>   `transportConsumedFresh` reading its fresh leg counter, which answers a
+>   real zero until 3b-ii writes one. `RewardEpochFacet` is created here, so
+>   3b-ii adds the pass to an existing facet rather than paying the
+>   registration cost alongside the harder change.
+>   ONE thing 3b-i had to add that this plan does not name: the wire's own
+>   fact must TRAVEL to the ingress (`splitTyped`, supplied by the receiver
+>   and appended to `onRewardBudgetReceived`). At ingress depth a d5 delivery
+>   that was wholly recycled and a legacy one that transmitted nothing both
+>   arrive as two zero components, so inferring the accounting path is
+>   exactly the one-delivery-spendable-twice error §5c forbids. The receiver
+>   and the Diamond must be refreshed together for it; the full refresh
+>   carries both, and a mirror on an older receiver fails closed (the
+>   transport records the failure and re-executes after the upgrade).
+> - **3b-ii — the uncontested draws**: the deterministic per-day allocation
+>   pass, the `transportPaid / eraPaid / livePaid` split at rows 1, 5, 13 and
+>   settlement, staging with references and deadlines and priority mode, the
+>   dispositions and batch-bound replacement funding, the leg counters as
+>   written quantities, the `eraBalance(era)` term, and the refusal of a
+>   CONTESTED allocation until 3c.
+>
+> Row 13 does NOT run the pass, and the row-13 entry in §5d's matrix already
+> says so: the predicate is a view and cannot run the bounded scan, so
+> discovery is a separate permissionless stateful PREPARATION operation and
+> the predicate reads an O(1) staged result. Read "run identically by rows
+> 1/5/13 and settlement" below as the same allocation RULE applied to each
+> caller's figures, not the same scan executed four times.
+
 - One UNTYPED balance per old-wire packet, bounded by `actualReceived`,
   the listed `dayIds` as its membership filter; the per-day arrival-ordered
   batch index and consumption cursor; the `dayIds` fan-out cap enforced at

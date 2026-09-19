@@ -84,6 +84,7 @@ import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -2451,6 +2452,24 @@ contract HelperTest {
         selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
         // #1566 transport epochs PR 3a — the split attestation ingress.
         selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+    }
+
+    /// #1566 transport epochs PR 3b — the transport epochs' ledger. Mirrors
+    /// `DeployDiamond._getRewardEpochSelectors` (SelectorCoverageTest asserts
+    /// the match).
+    function getRewardEpochFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
+        selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
+        selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
+        selectors[3] = RewardEpochFacet.getTransportBatch.selector;
+        selectors[4] = RewardEpochFacet.getTransportBatchLegs.selector;
+        selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
+        selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
