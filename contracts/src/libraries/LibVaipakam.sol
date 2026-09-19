@@ -7732,18 +7732,25 @@ library LibVaipakam {
     ///         its declared total — a short delivery must shrink the funding,
     ///         not the obligations.
     ///
-    ///         `oversize` records which admission this batch took. The fan-out
-    ///         cap is enforced at DISPATCH, but a CCIP payload is immutable, so
-    ///         a receive-side refusal of an over-cap packet would retry the
-    ///         same message forever: the receiver admits any transport-
-    ///         authentic packet, and an over-cap one takes the COMPACT
-    ///         admission whose storage cost does not scale with the list. Its
-    ///         per-day index is then materialized in bounded pages against the
-    ///         day list's 3a commitment, and it retires through the resumable
-    ///         RETIRING path — the settlement that exhausts it commits without
-    ///         attempting the full fan-out, which is what keeps an admitted
-    ///         oversize batch from parking at the front of every member cursor
-    ///         forever.
+    ///         ADMISSION IS ALWAYS COMPACT (Codex #2232 r2): it writes this
+    ///         row and nothing per-day, whatever the list's length. The
+    ///         receiver's callback runs inside
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, which is
+    ///         300,000 — and 32 first-time per-day pushes, two new storage
+    ///         slots each, exceed that on their own before the packet record
+    ///         and the custody relocation are counted. An admission that
+    ///         indexed short lists synchronously would therefore have failed
+    ///         to deliver exactly the in-flight old-wire messages this path
+    ///         exists to preserve. `indexedDays` climbs afterwards, one
+    ///         permissionless page at a time, proved against the delivery's
+    ///         own day-list commitment.
+    ///
+    ///         Retirement still distinguishes a within-cap list from an
+    ///         over-cap one (§5c: the first retires atomically, the second
+    ///         through the resumable RETIRING path), and 3b-ii reads that from
+    ///         `dayCount` against the cap. It is deliberately NOT a stored
+    ///         flag: a flag beside the count is a second statement of one fact
+    ///         and can disagree with it.
     ///
     ///         `consumedFresh` / `consumedRecycled` are the transport LEG
     ///         COUNTERS: what this packet's own draws have already spent of
@@ -7753,19 +7760,25 @@ library LibVaipakam {
     ///         obligation with. No draw exists until PR 3b-ii, so they are
     ///         zero until then — a real read of a real zero, not a stub.
     struct TransportBatch {
-        /// @dev The delivery that opened it. One batch per old-wire packet.
-        bytes32 packetHash;
+        /// @dev #1566 transport epochs PR 3b (Codex #2232 r2) — there is NO
+        ///      stored packet hash: the batch is keyed BY the packet's ingress
+        ///      stamp, so a field holding it would restate the key, and it
+        ///      would do so with a cold storage write inside the one call that
+        ///      has a destination gas budget to fit. `admitted` is the
+        ///      existence marker instead — it is non-zero for every admitted
+        ///      batch, because a delivery with nothing untyped in it opens none.
         uint256 balance;
         /// @dev What admission recorded, immutable afterwards — the
         ///      conservation anchor every draw, restore and disposition is
         ///      checked against.
         uint256 admitted;
         uint32 dayCount;
-        /// @dev How many listed days carry an index entry. Equal to
-        ///      `dayCount` for a within-cap batch from admission onward; it
-        ///      climbs one page at a time for an oversize one.
+        /// @dev How many listed days carry an index entry. Zero at admission for
+        ///      every batch, climbing one permissionless page at a time until it
+        ///      equals `dayCount`. A batch whose index is not yet whole cannot
+        ///      have its remainder parked — what its obligations may still reach
+        ///      is not known until the membership exists.
         uint32 indexedDays;
-        bool oversize;
         /// @dev Whether the batch's remainder has been parked WITH its
         ///      acknowledgment, which is the sole route by which what remains
         ///      of an old-wire packet becomes classifiable (§5c). Read by

@@ -134,7 +134,16 @@ library LibRewardCustody {
     ///         or debit the holder changes shape (a new consumer, a changed
     ///         seam), so an activation can never run against a complete cut
     ///         that predates the consumers it needs.
-    uint32 internal constant CUTOVER_VERSION = 1;
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r2) — advanced 1 → 2.
+    ///      This PR adds a holder consumer ({RewardEpochFacet}) and changes a
+    ///      seam: classification now passes the transport-epoch gate and debits
+    ///      the batch's parked remainder. Left at 1, a partial cut carrying
+    ///      this ingress but a version-1 reconciliation facet could be stamped
+    ///      complete and activation would accept it — a delivery would open an
+    ///      epoch while the stale classifier had neither the gate nor the
+    ///      debit, so two records would claim one sum. The bump is what makes
+    ///      that cut refuse to certify.
+    uint32 internal constant CUTOVER_VERSION = 2;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -984,15 +993,15 @@ library LibRewardCustody {
     /// @custom:event-category state-change/reward-custody
     event IngressPacketDayListRecorded(bytes32 indexed packetHash, bytes32 dayListHash, uint256 dayCount);
     /// @notice #1566 transport epochs PR 3b — an old-wire delivery opened its
-    ///         transport epoch. `oversize` says which admission it took, and
-    ///         therefore whether its membership is already whole.
+    ///         transport epoch. Its membership is NOT yet indexed: admission is
+    ///         compact for every delivery, and `TransportBatchPageIndexed`
+    ///         reports the index being built afterwards.
     /// @custom:event-category state-change/reward-custody
     event TransportBatchAdmitted(
         bytes32 indexed batchId,
         bytes32 indexed packetHash,
         uint256 amount,
-        uint256 dayCount,
-        bool oversize
+        uint256 dayCount
     );
     /// @notice #1566 transport epochs PR 3b — one bounded page of an oversize
     ///         batch's membership was indexed against its commitment.
@@ -1286,14 +1295,22 @@ library LibRewardCustody {
     ///         {packetBatchReleased} stay a single storage read from an
     ///         `IngressPacket` alone.
     ///
-    ///         WITHIN the cap the membership is written here, whole, so the
-    ///         batch is drawable the moment it lands. OVER the cap only the
-    ///         aggregate, the day count and the commitment are written — a
-    ///         cost that does not scale with the list — and the index is
-    ///         materialized afterwards in bounded pages. Refusing the oversize
-    ///         packet instead is not available: the payload is immutable, so
-    ///         the refusal would repeat for as long as the message is
-    ///         re-executed, and the delivery is authentic.
+    ///         The admission is COMPACT for every delivery, whatever its
+    ///         list's length (Codex #2232 r2): it writes this batch's row and
+    ///         nothing per-day. The receiver's callback runs inside
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — 300,000
+    ///         — and 32 first-time per-day pushes cost two new storage slots
+    ///         each, which exceeds that budget on its own before the packet
+    ///         record and the custody relocation are counted. Indexing short
+    ///         lists here would therefore have failed to deliver precisely the
+    ///         in-flight old-wire messages this path exists to preserve.
+    ///
+    ///         Refusing a long list instead was never available either: the
+    ///         payload is immutable, so the refusal repeats for as long as the
+    ///         message is re-executed, and the delivery is authentic. One
+    ///         compact path serves both, and the per-day index is built
+    ///         afterwards by {materializeTransportBatchPage}, permissionlessly,
+    ///         against the day-list commitment 3a stamped.
     /// @param  s        Diamond storage.
     /// @param  h        The packet's ingress stamp.
     /// @param  dayIds   The delivery's day list, as it arrived.
@@ -1321,6 +1338,9 @@ library LibRewardCustody {
         uint256[] calldata dayIds,
         uint256 untyped
     ) internal returns (bytes32 batchId) {
+        // Only the list's LENGTH is read here. Its contents are already
+        // committed to by the packet's `dayListHash`, and the index they feed
+        // is written later, page by page, against that commitment.
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
         // No balance, no batch — §5c: a batch with nothing in it has a
@@ -1333,9 +1353,7 @@ library LibRewardCustody {
         if (untyped == 0) return bytes32(0);
         batchId = h;
         uint256 count = dayIds.length;
-        bool oversize = count > TRANSPORT_DAY_FANOUT_CAP;
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        b.packetHash = h;
         b.balance = untyped;
         b.admitted = untyped;
         // Cast by name rather than silently: the fan-out is bounded at
@@ -1344,15 +1362,8 @@ library LibRewardCustody {
         // wrong, and a truncated `dayCount` would then quietly declare an
         // oversize batch fully indexed.
         b.dayCount = SafeCast.toUint32(count);
-        b.oversize = oversize;
-        if (!oversize) {
-            for (uint256 i; i < count; ++i) {
-                s.transportBatchesByDay[dayIds[i]].push(batchId);
-            }
-            b.indexedDays = b.dayCount;
-        }
         p.batchId = batchId;
-        emit TransportBatchAdmitted(batchId, h, untyped, count, oversize);
+        emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
 
     /// @notice #1566 transport epochs PR 3b — index one bounded page of an
@@ -1366,9 +1377,10 @@ library LibRewardCustody {
     ///         while only `TRANSPORT_INDEX_PAGE` entries are WRITTEN, storage
     ///         being what the destination's block gas limit actually bounds.
     ///
-    ///         A within-cap batch is indexed whole at admission and therefore
-    ///         has no page left; it refuses here rather than accepting a call
-    ///         that would write nothing.
+    ///         Every batch is indexed this way, because every admission is
+    ///         compact. A batch whose index is already whole has no page left
+    ///         and refuses, rather than accepting a call that would write
+    ///         nothing.
     /// @return indexedDays The batch's day-index progress after this page.
     function materializeTransportBatchPage(
         LibVaipakam.Storage storage s,
@@ -1376,10 +1388,12 @@ library LibRewardCustody {
         uint256[] calldata dayIds
     ) internal returns (uint32 indexedDays) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (b.packetHash == bytes32(0)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
-        bytes32 committed = s.ingressPackets[b.packetHash].dayListHash;
+        // The batch's key IS its packet's stamp, so the commitment is read
+        // through `batchId` directly.
+        bytes32 committed = s.ingressPackets[batchId].dayListHash;
         bytes32 supplied = keccak256(abi.encode(dayIds));
         if (supplied != committed) {
             revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
@@ -1424,13 +1438,13 @@ library LibRewardCustody {
         bytes32 batchId
     ) internal returns (uint256 amount) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (b.packetHash == bytes32(0)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         if (b.indexedDays < b.dayCount) {
             revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
         }
         LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
         if (rem.batchId != bytes32(0)) revert IVaipakamErrors.TransportRemainderAlreadyParked(batchId);
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[b.packetHash];
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
         amount = b.balance;
         rem.batchId = batchId;
         rem.amount = amount;

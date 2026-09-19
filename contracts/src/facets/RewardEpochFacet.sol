@@ -79,11 +79,24 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         same day-list commitment the packet does — so a late obligation
     ///         whose day is in that list can still be funded from it rather
     ///         than finding the value in a general pool it has no claim on.
+    ///         PERMISSIONLESS (Codex #2232 r2), because the specification says
+    ///         so and for the reason it gives: attesting a packet's split and
+    ///         releasing its value for classification are both open to anyone
+    ///         and may happen in either order, which is exactly why the
+    ///         evidence bound is derived at use time rather than snapshotted.
+    ///         An earlier revision of this facet gated both halves on
+    ///         `ADMIN_ROLE`, which turned a specified lifecycle into an
+    ///         administrator-dependent one and left a valid batch's closeout
+    ///         waiting on whoever holds the role.
+    ///
+    ///         What makes a release valid is STATE, not the caller: the batch
+    ///         must exist and its membership must be whole. 3b-ii adds §5c's
+    ///         remaining condition — a batch with outstanding staging
+    ///         references cannot be retired — to the same place.
     /// @return amount What was parked.
     function parkTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
-        onlyRole(LibAccessControl.ADMIN_ROLE)
         returns (uint256 amount)
     {
         return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
@@ -95,10 +108,12 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         derives the bound a classification reads from the packet's
     ///         immutable attested caps, NET of what the batch's own transport
     ///         legs have spent.
+    ///         Permissionless for the same reason as the park above, and
+    ///         state-gated the same way: a remainder must be parked and not
+    ///         already acknowledged.
     function acknowledgeTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
-        onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }
@@ -109,12 +124,15 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         to. `balance` is what remains spendable by the batch's member
     ///         days; `admitted` is the immutable conservation anchor.
     /// @return packetHash  The delivery that opened it; zero when no batch was
-    ///                     admitted under this id.
+    ///                     admitted under this id. DERIVED, not stored — the
+    ///                     batch is keyed by that stamp, so storing it would
+    ///                     restate the key.
     /// @return balance     Untyped value still held by the epoch.
     /// @return admitted    What admission recorded.
     /// @return dayCount    How many days the delivery listed.
-    /// @return indexedDays How many of them carry an index entry.
-    /// @return oversize    Whether it took the compact admission.
+    /// @return indexedDays How many of them carry an index entry. Zero at
+    ///                     admission for every batch: admission is compact, and
+    ///                     the index is materialized afterwards.
     /// @return released    Whether its remainder is parked AND acknowledged.
     function getTransportBatch(bytes32 batchId)
         external
@@ -125,12 +143,19 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             uint256 admitted,
             uint32 dayCount,
             uint32 indexedDays,
-            bool oversize,
             bool released
         )
     {
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
-        return (b.packetHash, b.balance, b.admitted, b.dayCount, b.indexedDays, b.oversize, b.released);
+        uint256 admittedAmount = b.admitted;
+        return (
+            admittedAmount == 0 ? bytes32(0) : batchId,
+            b.balance,
+            admittedAmount,
+            b.dayCount,
+            b.indexedDays,
+            b.released
+        );
     }
 
     /// @notice What a batch's transport legs have spent, per component.

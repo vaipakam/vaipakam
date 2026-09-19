@@ -107,6 +107,20 @@ contract RewardRemittanceFacetTest is SetupTest {
         a[0] = d;
     }
 
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r2) — finalize a RANGE.
+    ///      The fan-out bound now applies to the FILTERED day list, so a test
+    ///      of that bound needs every day it names to survive the filters;
+    ///      otherwise an unfinalized day is refused first and the test asserts
+    ///      the wrong refusal, which is exactly what it did before this round.
+    function _finalizeDays(uint256 n) internal {
+        for (uint256 d = 1; d <= n; ++d) {
+            rewardMessenger.deliverChainReport(CHAIN_BASE, d, 10e18, 5e18);
+            rewardMessenger.deliverChainReport(CHAIN_ARB, d, 20e18, 10e18);
+            rewardMessenger.deliverChainReport(CHAIN_OP, d, 30e18, 15e18);
+            RewardAggregatorFacet(address(diamond)).finalizeDay(d);
+        }
+    }
+
     // ─── slice math ─────────────────────────────────────────────────────────
 
     function test_Quote_ComputesRoleAwareSlice() public {
@@ -320,8 +334,10 @@ contract RewardRemittanceFacetTest is SetupTest {
     /// every re-execution. Straddled at the boundary, so the test pins the cap
     /// rather than merely the existence of a check.
     function test_Remit_RefusesADayListOverTheTransportFanoutCap() public {
-        _finalizeDay1();
         uint256 cap = LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP;
+        // Every named day must SURVIVE the filters, because the bound is on
+        // what the destination receives, not on what was asked for.
+        _finalizeDays(cap + 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.TransportDayFanoutExceeded.selector,
@@ -353,8 +369,8 @@ contract RewardRemittanceFacetTest is SetupTest {
     /// now call one rule, so this is the second caller of the same function
     /// rather than a second copy of the check.
     function test_Quote_RefusesTheDayListTheSendRefuses() public {
-        _finalizeDay1();
         uint256 cap = LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP;
+        _finalizeDays(cap + 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.TransportDayFanoutExceeded.selector,

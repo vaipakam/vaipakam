@@ -181,7 +181,7 @@ contract RewardCustodyInvariant is SetupTest {
         assertGt(n, 0, "the delivery landed");
         uint256 withEpoch;
         for (uint256 i; i < n; ++i) {
-            (bytes32 packetHash, , , , , , ) = ep.getTransportBatch(handler.packetAt(i));
+            (bytes32 packetHash, , , , , ) = ep.getTransportBatch(handler.packetAt(i));
             if (packetHash != bytes32(0)) ++withEpoch;
         }
         assertGt(withEpoch, 0, "an untyped delivery opens an epoch for the invariant to check");
@@ -208,7 +208,7 @@ contract RewardCustodyInvariant is SetupTest {
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
             bytes32 h = handler.packetAt(i);
-            (bytes32 packetHash, uint256 balance, uint256 admitted, , , , ) = ep.getTransportBatch(h);
+            (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
             (uint256 parked, , , ) = ep.getTransportRemainder(h);
             assertEq(balance + parked, admitted, "transport epoch conserves");

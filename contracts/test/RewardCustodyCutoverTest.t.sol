@@ -1177,8 +1177,14 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         // #1566 transport epochs PR 3b (Codex #2232 r1) — a delivery that
         // landed before custody was ACTIVATED opens no epoch, so there may be
         // nothing to release. Section 7 drives both fixtures.
-        (bytes32 packetHash, , , , , , ) = ep.getTransportBatch(batchId);
+        (bytes32 packetHash, , , , , ) = ep.getTransportBatch(batchId);
         if (packetHash == bytes32(0)) return;
+        // #1566 transport epochs PR 3b (Codex #2232 r2) — admission is compact
+        // for every delivery, so the membership is materialized here before the
+        // remainder can be parked. Section 7's deliveries all name one day.
+        uint256[] memory one = new uint256[](1);
+        one[0] = 1;
+        ep.materializeTransportBatchPage(batchId, one);
         ep.parkTransportBatchRemainder(batchId);
         ep.acknowledgeTransportBatchRemainder(batchId);
     }
