@@ -164,10 +164,17 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // only once its TRANSPORT EPOCH has been released: the batch's
         // remainder parked, with its acknowledgment recorded (§5c names that
         // the only route). Classifying earlier would spend value the batch's
-        // own listed obligations can still draw. A packet holding no batch —
-        // a d5 delivery, whose components were typed on the wire, or one that
-        // landed before the ledger existed — passes untouched.
-        LibRewardCustody.requireClassifiable(s, packetHash);
+        // own listed obligations can still draw.
+        //
+        // The same call DEBITS the parked remainder by what this
+        // classification takes (Codex #2232 r1). Classification is one of the
+        // remainder's dispositions, so leaving the entry at its parked figure
+        // would report value that has already left — and it bounds the take at
+        // what the entry still holds, which is a second ceiling beside the
+        // packet's own remainder. A packet holding no batch — a d5 delivery, a
+        // pre-3b arrival, or one that landed before custody was activated —
+        // passes untouched and is debited nothing.
+        LibRewardCustody.takeFromReleasedRemainder(s, packetHash, freshShare + recycledShare);
         if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {
             LibVaipakam.StrandedRecovery storage sr =
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];

@@ -1174,6 +1174,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
     function _releaseEpoch(bytes32 batchId) internal {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        // #1566 transport epochs PR 3b (Codex #2232 r1) — a delivery that
+        // landed before custody was ACTIVATED opens no epoch, so there may be
+        // nothing to release. Section 7 drives both fixtures.
+        (bytes32 packetHash, , , , , , ) = ep.getTransportBatch(batchId);
+        if (packetHash == bytes32(0)) return;
         ep.parkTransportBatchRemainder(batchId);
         ep.acknowledgeTransportBatchRemainder(batchId);
     }

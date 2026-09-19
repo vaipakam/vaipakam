@@ -244,17 +244,6 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // the only step that can refuse for a reason the credits would not
         // (an unknown packet), and a refusal must leave no half-credited
         // delivery behind.
-        //
-        // The epoch takes the UNTYPED REMAINDER, which is the same expression
-        // the closure-2 protection books into the holder's `Unclassified` row
-        // a few lines below. They are one value seen two ways — what the
-        // delivery's own days may draw, and what a reconciliation may later
-        // classify — and writing them from one expression is what keeps them
-        // that way. `freshShare` is bounded by `freshLooking` above, so the
-        // subtraction cannot underflow.
-        if (!splitTyped) {
-            LibRewardCustody.admitTransportBatch(s, h, dayIds, freshLooking - freshShare);
-        }
         uint256 counted = freshShare;
         // #1566 slice 4 PR B — on an activated deployment the counted fresh
         // share is RELOCATED from this balance into the holder and credited
@@ -274,7 +263,36 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // (measured) into the holder's `Unclassified` row the moment it
             // lands, instead of resting in the shared balance where a later
             // relocation could move another owner's tokens (design §5c).
-            if (LibRewardCustody.active(s)) LibRewardCustody.callUnclassifiedIngress(h, remainder);
+            if (LibRewardCustody.active(s)) {
+                LibRewardCustody.callUnclassifiedIngress(h, remainder);
+                // #1566 transport epochs PR 3b — the TRANSPORT EPOCH is opened
+                // HERE, under the same condition and from the same amount as
+                // the protection above, and only for an untyped wire (Codex
+                // #2232 r1).
+                //
+                // One condition, because the epoch and the protection are two
+                // views of ONE value: what the delivery's own days may draw,
+                // and what a reconciliation may later classify. An earlier
+                // revision admitted the epoch unconditionally, so a delivery
+                // landing on a configured-but-not-yet-ACTIVATED mirror got an
+                // epoch reporting the full balance while the packet's
+                // `unclassified` figure stayed zero — its tokens are
+                // Diamond-side until activation, and the activation envelope
+                // can move them into shared recycled backing. That is two
+                // claims on one amount, and no arithmetic downstream could
+                // have reconciled them.
+                //
+                // A pre-activation delivery therefore keeps `batchId == 0` and
+                // behaves exactly as every pre-3b arrival does: its value is
+                // Diamond-side, the epoch gate does not concern it, and the
+                // activation envelope is what attributes it. `freshShare` is
+                // bounded by `freshLooking` above, so the subtraction cannot
+                // underflow, and this branch is only reached when the
+                // remainder is non-zero.
+                if (!splitTyped) {
+                    LibRewardCustody.admitTransportBatch(s, h, dayIds, remainder);
+                }
+            }
         }
         // #1222 M3 B2-d5 — the RECYCLED component of this delivery is
         // RELOCATED CUSTODY: the tokens are physically here and the claim

@@ -45,6 +45,17 @@ thereby make its delivery reconcilable, and a late obligation whose day is in
 the parked membership can still be funded from what was parked rather than
 finding the value in a general pool it has no claim on.
 
+Each reconciliation then draws the parked figure down by what it takes, so the
+parked amount always states what is still there rather than what was once put
+aside — and nothing can be reconciled beyond it.
+
+An epoch is opened only where the delivery's value has somewhere to be
+attributed. On a chain whose reward custody has not yet been switched on, an
+arriving delivery's tokens rest with the platform itself and a later
+switch-on is what assigns them; giving such a delivery an epoch as well would
+have two records claiming the same money. Those deliveries behave exactly as
+every delivery that predates this ledger does.
+
 Nothing here moves value yet. Deliveries that arrived before this ledger
 existed keep behaving exactly as they did, no draw exists until the next
 release adds one, and on a chain that has not received an old-wire delivery

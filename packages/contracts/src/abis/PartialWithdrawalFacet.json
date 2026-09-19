@@ -3481,6 +3481,27 @@
   },
   {
     "type": "error",
+    "name": "TransportRemainderExceeded",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportRemainderNotParked",
     "inputs": [
       {

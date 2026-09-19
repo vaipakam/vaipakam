@@ -379,20 +379,17 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         if (dayIds.length == 0) revert EmptyDayList();
-        // #1566 transport epochs PR 3b — the fan-out cap, enforced HERE
-        // because a transport payload is immutable once sent. A destination
-        // that refused an over-cap packet would refuse the same message on
-        // every re-execution, so the receiver admits it instead, compactly;
-        // this is the half that keeps that admission an exception rather than
-        // the ordinary case. The bound is a destination cost, not a source
-        // one: the mirror walks this list to fund its days, and a transport
-        // epoch's retirement writes one index update per member day.
-        if (dayIds.length > LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP) {
-            revert IVaipakamErrors.TransportDayFanoutExceeded(
-                dayIds.length,
-                LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP
-            );
-        }
+        // #1566 transport epochs PR 3b — the fan-out cap, enforced on the SEND
+        // side because a transport payload is immutable once sent: a
+        // destination that refused an over-cap packet would refuse the same
+        // message on every re-execution, so the receiver admits it instead,
+        // compactly, and this is the half that keeps that admission an
+        // exception rather than the ordinary case. The bound is a destination
+        // cost, not a source one — the mirror walks this list to fund its days,
+        // and a transport epoch's retirement writes one index update per member
+        // day. {quoteRemittanceFee} calls the SAME rule (Codex #2232 r1), so
+        // the quote can never price a batch this refuses.
+        LibRewardCustody.requireRemittableFanout(dayIds.length);
         if (
             perRemittanceCap == 0 ||
             perRemittanceCap > LibVaipakam.VPFI_INTERACTION_POOL_CAP
@@ -1616,6 +1613,16 @@ contract RewardRemittanceFacet is
         uint256[] calldata dayIds
     ) external view returns (uint256 fee, uint256 total) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 transport epochs PR 3b — the fan-out bound, BEFORE the
+        // unconfigured-chain early return and by the same rule the send
+        // applies (Codex #2232 r1). This quote is a faithful dry run of
+        // {remitRewardBudget}; a bound that lived only on the send let it
+        // return a real fee for a list the send was guaranteed to refuse, and
+        // a keeper acting on that fee acts on an impossible operation. Placed
+        // ahead of the early return because an over-cap list is refused
+        // whatever the chain's configuration — returning a zero fee for it
+        // would be the same false reassurance in a quieter form.
+        LibRewardCustody.requireRemittableFanout(dayIds.length);
         address vpfi = s.vpfiToken;
         address messenger = s.crossChainMessenger;
         if (vpfi == address(0) || messenger == address(0)) return (0, 0);

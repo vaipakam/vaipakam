@@ -35,11 +35,21 @@ import {
 ///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
 ///      which generation it decoded, so it is the only one that can answer,
 ///      and for the two old generations the honest answer is ZERO.
+/// @dev #1566 transport epochs PR 3b (Codex #2232 r1) — advanced 4 → 5 for the
+///      `splitTyped` argument. The change is NOT to the payloads this contract
+///      decodes; it is to what the contract TELLS the Diamond, which is the
+///      distinction worth stating because it is the reason this bump is easy to
+///      miss. What the constant governs is the refresh's UPGRADE DECISION: a
+///      deployed proxy reporting less than this figure is upgraded. Any change
+///      to the receiver's own behaviour has to advance it, whichever side of
+///      the contract the change is on, or the refresh reads a current-looking
+///      proxy and leaves it running the old implementation.
+///
 /// @dev #1434 P2-w2 — the receiver's CURRENT wire generation, at file
 ///      level so the refresh script can import the same value the
 ///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
 ///      returns — one definition, no literal to drift.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 4;
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 5;
 
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(

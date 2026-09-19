@@ -11,6 +11,7 @@ import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -54,6 +55,11 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         if (SEED > have) vpfi.mint(address(this), SEED - have);
         vpfi.transfer(address(diamond), SEED);
         _becomeMirror();
+        // #1566 transport epochs PR 3b (Codex #2232 r1) — an epoch is opened
+        // only where the delivery's untyped remainder is attributed, which is
+        // on an ACTIVATED deployment. `test_Untyped_OpensNoEpochBeforeCustodyIsActivated`
+        // drives the other side from a fixture that skips this line.
+        activateRewardCustodyForTest(address(vpfi), 0);
     }
 
     // ─── fixture ─────────────────────────────────────────────────────────────
@@ -258,7 +264,6 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// while its epoch stands, still refused when the remainder is merely
     /// PARKED, and admitted only once the acknowledgment is recorded.
     function test_Classification_IsRefusedUntilTheEpochIsReleased() public {
-        activateRewardCustodyForTest(address(vpfi), 0);
         bytes32 h = _untyped(10e18, 2, 7, keccak256("g1"));
 
         AdminFacet(address(diamond)).pause();
@@ -286,7 +291,6 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// A packet holding no epoch passes the gate untouched — the rule is about
     /// value held in a transport epoch, and such a packet holds none.
     function test_Classification_IsUngatedForAPacketWithNoEpoch() public {
-        activateRewardCustodyForTest(address(vpfi), 0);
         bytes32 h = _deliver(10e18, _days(2), 8, keccak256("t3"), true);
         // Typed: its recycled component was credited at ingress, so there is
         // nothing unclassified to take — which is a DIFFERENT refusal, and
@@ -373,6 +377,39 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         _epoch().acknowledgeTransportBatchRemainder(nobody);
     }
 
+    /// A classification DEBITS the parked remainder by what it takes, and
+    /// cannot take more than the entry still holds. Without the debit the entry
+    /// would keep reporting its parked figure while the value had already left,
+    /// so the restore and disposition machinery 3b-ii adds would treat
+    /// already-classified value as still parked.
+    function test_Classification_DebitsTheParkedRemainder_AndIsBoundedByIt() public {
+        bytes32 h = _untyped(10e18, 2, 40, keccak256("dbt"));
+        _epoch().parkTransportBatchRemainder(h);
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        (uint256 parked, , , ) = _epoch().getTransportRemainder(h);
+        assertEq(parked, 10e18, "the whole balance is parked");
+
+        AdminFacet(address(diamond)).pause();
+        _recon().classifyLegacyPacket(h, 0, 4e18, keccak256("d1"));
+        AdminFacet(address(diamond)).unpause();
+        (parked, , , ) = _epoch().getTransportRemainder(h);
+        assertEq(parked, 6e18, "stepped down by what the classification took");
+
+        // And the entry is a CEILING: past it the classification is refused by
+        // name rather than silently flooring.
+        AdminFacet(address(diamond)).pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(TransportRemainderExceeded.selector, h, 7e18, 6e18)
+        );
+        _recon().classifyLegacyPacket(h, 0, 7e18, keccak256("d2"));
+        // Exactly what is left still lands, so the refusal was the bound and
+        // not the batch.
+        _recon().classifyLegacyPacket(h, 0, 6e18, keccak256("d3"));
+        AdminFacet(address(diamond)).unpause();
+        (parked, , , ) = _epoch().getTransportRemainder(h);
+        assertEq(parked, 0, "the entry is emptied exactly");
+    }
+
     // ─── 3. the evidence seams ───────────────────────────────────────────────
 
     /// The transport LEG counters ship with the ledger and read zero: no draw
@@ -418,5 +455,81 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         (bytes32[] memory all, , ) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(all[0], keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("d", uint256(0))))), "first in");
         assertEq(all[4], keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("d", uint256(4))))), "last in");
+    }
+}
+
+/**
+ * @title RewardTransportEpochPreActivationTest
+ * @notice #1566 transport epochs PR 3b (Codex #2232 r1) — the OTHER side of the
+ *         activation rule, driven from a fixture that deliberately stops short
+ *         of activating reward custody.
+ *
+ *         Its own contract rather than a test inside the suite above, because
+ *         the condition is established in `setUp` and an activated deployment
+ *         cannot be un-activated. Together the two contracts straddle the rule:
+ *         the same delivery opens an epoch there and none here.
+ *
+ *         Why the rule exists: before activation the delivery's tokens sit
+ *         Diamond-side and the activation envelope is what attributes them, so
+ *         an epoch opened now would claim an amount that envelope is free to
+ *         move somewhere else — two records on one sum, which no later
+ *         arithmetic could reconcile.
+ */
+contract RewardTransportEpochPreActivationTest is SetupTest, IVaipakamErrors {
+    VPFIToken internal vpfi;
+    uint32 internal constant CHAIN_BASE = 8453;
+    uint32 internal constant CHAIN_ARB = 42161;
+    address internal constant REMITTER = address(0xBA5E);
+    uint256 internal constant SEED = 1_000_000 ether;
+
+    function setUp() public {
+        setupHelper();
+        VPFIToken impl = new VPFIToken();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(VPFIToken.initialize, (address(this), address(this), address(this)))
+        );
+        vpfi = VPFIToken(address(proxy));
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
+        VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
+        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
+        vm.warp(block.timestamp + 5 days);
+        uint256 have = vpfi.balanceOf(address(this));
+        if (SEED > have) vpfi.mint(address(this), SEED - have);
+        vpfi.transfer(address(diamond), SEED);
+        vm.chainId(CHAIN_ARB);
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
+        RewardReporterFacet(address(diamond)).setBaseChainId(CHAIN_BASE);
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
+        // Deliberately NOT activated.
+    }
+
+    function test_Untyped_OpensNoEpochBeforeCustodyIsActivated() public {
+        uint256[] memory dayIds = new uint256[](2);
+        dayIds[0] = 1;
+        dayIds[1] = 2;
+        RewardIngressFacet(address(diamond)).onRewardBudgetReceived(
+            address(vpfi), 10e18, dayIds, CHAIN_BASE, 99, REMITTER, 0, 0, keccak256("pre-act"), false
+        );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre-act")));
+
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        (bytes32 packetHash, uint256 balance, , uint32 dayCount, , , ) = ep.getTransportBatch(h);
+        assertEq(packetHash, bytes32(0), "no epoch before activation");
+        assertEq(balance, 0, "and none holds value");
+        assertEq(dayCount, 0, "and none carries a membership");
+        for (uint256 d = 1; d <= 2; ++d) {
+            (, uint256 total, ) = ep.getTransportDayBatches(d, 0, 4);
+            assertEq(total, 0, "no day indexes it");
+        }
+
+        // The delivery itself is intact and unchanged — this is the pre-3b
+        // path, not a refusal.
+        assertGt(
+            RewardRemittanceLensFacet(address(diamond)).getReceivedRemit(REMITTER, 99).receivedAt,
+            0,
+            "the delivery landed and wrote its receipt"
+        );
     }
 }

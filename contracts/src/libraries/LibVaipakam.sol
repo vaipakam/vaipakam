@@ -7690,13 +7690,20 @@ library LibVaipakam {
         bool attested;
         /// @dev #1566 transport epochs PR 3b — the TRANSPORT BATCH this
         ///      delivery opened, appended. Zero means the packet holds no
-        ///      batch balance, and that is the answer for two populations
-        ///      that must keep behaving exactly as they do today: a d5
-        ///      packet, whose components are typed on the wire and credited
-        ///      to the shared live/bucket ledgers at ingress (§5c's
-        ///      one-accounting-path rule — admitting it as a batch as well
-        ///      would make one delivery spendable twice), and every packet
-        ///      that arrived before this ledger existed.
+        ///      batch balance, and that is the answer for THREE populations
+        ///      that must keep behaving exactly as they do today:
+        ///
+        ///        1. a d5 packet, whose components are typed on the wire and
+        ///           credited to the shared live/bucket ledgers at ingress
+        ///           (§5c's one-accounting-path rule — admitting it as a batch
+        ///           as well would make one delivery spendable twice);
+        ///        2. every packet that arrived before this ledger existed;
+        ///        3. every packet that arrived before reward custody was
+        ///           ACTIVATED on this deployment (Codex #2232 r1). Such a
+        ///           delivery's value sits Diamond-side rather than in the
+        ///           holder's `Unclassified` row, and the activation envelope
+        ///           is what attributes it — so an epoch here would claim an
+        ///           amount the envelope can move elsewhere.
         ///
         ///      The link lives on the PACKET because 3a fixed the evidence
         ///      seam's signature at `(IngressPacket storage)` — no hash, no

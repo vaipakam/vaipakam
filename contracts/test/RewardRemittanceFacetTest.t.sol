@@ -346,6 +346,36 @@ contract RewardRemittanceFacetTest is SetupTest {
         }
     }
 
+    /// #1566 transport epochs PR 3b (Codex #2232 r1) — the QUOTE refuses what
+    /// the send refuses. It is documented as a faithful dry run, and a bound
+    /// living only on the send let it return a real fee for a batch the send
+    /// was guaranteed to reject, which a keeper would then act on. Both halves
+    /// now call one rule, so this is the second caller of the same function
+    /// rather than a second copy of the check.
+    function test_Quote_RefusesTheDayListTheSendRefuses() public {
+        _finalizeDay1();
+        uint256 cap = LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                cap + 1,
+                cap
+            )
+        );
+        remit.quoteRemittanceFee(CHAIN_ARB, _dayList(cap + 1));
+
+        // At the cap the quote gets past the bound, exactly as the send does.
+        (bool ok, bytes memory err) = address(remit).staticcall(
+            abi.encodeCall(RewardRemittanceFacet.quoteRemittanceFee, (CHAIN_ARB, _dayList(cap)))
+        );
+        if (!ok && err.length >= 4) {
+            assertTrue(
+                bytes4(err) != IVaipakamErrors.TransportDayFanoutExceeded.selector,
+                "a list exactly at the cap is admitted by the bound"
+            );
+        }
+    }
+
     /// @dev A day list of `n` consecutive days from 1. The single-day `_days`
     ///      above names ONE day by id; this names a LENGTH, which is what the
     ///      fan-out bound is about.

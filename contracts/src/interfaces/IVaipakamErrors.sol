@@ -558,6 +558,13 @@ interface IVaipakamErrors {
     ///         already acknowledged, and the acknowledgment is what released
     ///         the batch.
     error TransportRemainderAlreadyAcknowledged(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — a classification would take more
+    ///         than the batch's PARKED REMAINDER still holds. The remainder is
+    ///         what a released batch's obligations left, and classification is
+    ///         one of its dispositions (design §5c): stepping it down with each
+    ///         classification is what keeps it from reporting value that has
+    ///         already left, and the bound falls out of the same arithmetic.
+    error TransportRemainderExceeded(bytes32 batchId, uint256 requested, uint256 available);
     /// @notice #1566 transport epochs PR 3b — an old-wire packet whose batch
     ///         has not been released cannot be classified. The only route by
     ///         which what remains of such a packet becomes classifiable is its
