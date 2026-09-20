@@ -72,6 +72,7 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
+  ALL_CHAIN_IDS,
   WORKER_NAME,
   type WorkerEnv,
   type Env,
@@ -175,6 +176,43 @@ export default {
     if (!hasD1Binding(env.DB)) {
       // eslint-disable-next-line no-console
       console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      // WAKE THE INGEST DOs SO THEY DROP THEIR SOCKETS (#2252 r10).
+      //
+      // The alarm closes its sockets when it declines — but only if an alarm
+      // is pending. After a caught-up scan there is none, which is the COMMON
+      // idle state, and this tick is exactly what would normally have pinged
+      // them. Returning without it leaves inherited hibernatable sockets open
+      // and auto-answering `ping`, so a connected client keeps presenting a
+      // stopped ingest rail as healthy until its 450s cursor timeout.
+      //
+      // A trigger POST arms an immediate alarm, and that alarm finds no
+      // binding and closes the sockets — so no new Durable Object surface is
+      // needed for this; the path that already exists does the work.
+      //
+      // `ALL_CHAIN_IDS` rather than `getChainConfigs`, because resolving the
+      // env to learn which chains are configured would spend the Secrets Store
+      // reads this branch exists to avoid. Addressing a DO that never existed
+      // creates an empty one that closes nothing, which costs a storage row
+      // and is the cheaper error than missing a chain that holds sockets.
+      if (env.CHAIN_INGEST_DO) {
+        const ns = env.CHAIN_INGEST_DO;
+        for (const chainId of ALL_CHAIN_IDS) {
+          const stub = ns.get(ns.idFromName(String(chainId)));
+          ctx.waitUntil(
+            stub
+              .fetch('https://chain-ingest-do/trigger', {
+                method: 'POST',
+                body: JSON.stringify({ chainId, targetBlock: '0' }),
+              })
+              .then(() => undefined)
+              .catch(() => {
+                // Best effort. A DO that cannot be reached keeps its sockets
+                // for now; the client's own 450s timeout is the backstop, and
+                // failing the whole maintenance tick over it would be worse.
+              }),
+          );
+        }
+      }
       return;
     }
     // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point

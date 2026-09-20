@@ -22,21 +22,27 @@ propagation delay stops mattering, and an unlisted entry point is covered
 precisely because nothing is listed.
 
 What **three** of the four services gained is the ability to be held that way
-**gracefully**. The exception is the nightly backup service: it sits outside
-the shared code and has no equivalent gate, so removing its database access
-makes its scheduled run fail outright rather than decline politely. That is the
-expected behaviour during a window and not a new fault — it writes nothing a
-user can see, so nothing is lost, but an operator watching the logs should know
-to expect a raw error from it rather than the clean refusal the other three
-give. Without it, code that expected a
-database would simply crash, which is loud but tells nobody whether their write
-landed. Now each of those three refuses at its entrance: a caller gets a temporary-unavailable answer that says plainly that
-nothing they sent was recorded and that nothing read back would be current,
-with a retry hint; background ticks decline to start and say so once, rather
-than launching a dozen pieces of work that each discover the refusal
+**gracefully**. Without it, code that expected a database would simply crash,
+which is loud but tells nobody whether their write landed. Now each of those
+three refuses at its entrance: a caller gets a temporary-unavailable answer
+that says plainly that nothing they sent was recorded and that nothing read
+back would be current; background ticks decline to start and say so once,
+rather than launching a dozen pieces of work that each discover the refusal
 separately. Any path that somehow gets further meets a stand-in that refuses by
 name — including through operations the database provider has not invented yet,
 because the stand-in states a rule rather than listing today's methods.
+
+**The fourth service is the nightly backup, and it is the exception.** It sits
+outside the shared code and has no equivalent gate, so removing its database
+access makes its scheduled run fail outright rather than decline politely. That
+is expected during a window rather than a new fault, and an operator watching
+the logs should know to expect a raw error from it.
+
+**It does cost something, though, and an earlier draft said it did not.** No
+live user row is affected — it only reads — but if the window covers its nightly
+run, **that day's backup does not happen**. The recovery point for that day is
+simply missing, and getting it back means re-running the backup once the
+binding is restored. Worth planning around rather than discovering afterwards.
 
 Two choices inside that are worth naming because they cost something. The
 refusal is **blanket**: a handful of routes touch no database at all and are
@@ -48,14 +54,16 @@ than traded for a new one. And the self-rescheduling ingest work declines
 database and retrying every few seconds would only bill for rediscovering the
 same refusal; the ordinary scheduled backstop restarts it afterwards.
 
-The guarantee is also bounded honestly. Work already running when the
-maintenance build goes out still holds what it was given and can still write.
-That is real, and it is disclosed in the procedure as the one remaining
-exposure, to be waited out — with the length of that wait left unstated,
-because nobody has measured it and an invented number in an operating procedure
-is the defect this whole exercise was opened to remove. What changed is the
-shape of the unknown: one measurable quantity instead of an open-ended set of
-entry points to get right.
+The guarantee is also bounded honestly, and the bound is **open rather than
+handled**. Work already running when the service is held off its data still
+holds what it was given and can still write until it finishes. Removing the
+access does not reach inside something already running.
+
+There is no procedure yet for waiting that out — how long it takes has never
+been measured, and inventing a number is the defect this whole exercise was
+opened to remove. So the residual is recorded as a known gap rather than as a
+step somebody else performs. What changed is the shape of the unknown: one
+measurable quantity, instead of an open-ended set of entry points to get right.
 
 **What this change does NOT include, and the reason is worth recording.** It
 ships the ability to hold a service off its data; it does not ship the

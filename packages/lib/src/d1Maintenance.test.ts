@@ -151,10 +151,16 @@ describe('the HTTP refusal', () => {
   it('is a 503 that tells the caller the write did not happen', () => {
     const r = maintenanceRefusal('vaipakam-agent');
     expect(r.status).toBe(503);
-    expect(r.headers['retry-after']).toBe('120');
+    // NO `Retry-After`, deliberately (#2252 r10). The Worker cannot know how
+    // long a maintenance window lasts — the procedure, the tooling and the
+    // drain are all unsettled — so a number here would be an invented figure
+    // on the one surface whose purpose is to avoid exactly that.
+    expect(r.headers['retry-after']).toBeUndefined();
     // Never cached: a cached maintenance page outlives the window.
     expect(r.headers['cache-control']).toBe('no-store');
     expect(r.body).toContain('nothing you sent has been recorded');
+    // It says the duration is unknown rather than implying one.
+    expect(r.body).toContain('not something this service can tell you');
     // And it does not imply a stale read would be safe either.
     expect(r.body).toContain('nothing you read here would be current');
   });

@@ -38,7 +38,9 @@ describe('fetch, on a build with no D1 binding', () => {
       fakeCtx(),
     );
     expect(res.status).toBe(503);
-    expect(res.headers.get('retry-after')).toBe('120');
+    // NO `Retry-After` (#2252 r10) — the Worker cannot know how long a
+    // maintenance window lasts, so it does not pretend to.
+    expect(res.headers.get('retry-after')).toBeNull();
     // No `FRONTEND_ORIGIN` on this env — which a maintenance build can also
     // look like — so the CORS helpers must not throw. They used to: the type
     // claimed `string` and the runtime does not guarantee it, and a throw here

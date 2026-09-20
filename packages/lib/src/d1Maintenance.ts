@@ -228,11 +228,20 @@ export function maintenanceSkipNotice(worker: string, lane: string): string {
  * Returned as data rather than a `Response` so this module stays free of
  * runtime globals; each Worker does `new Response(body, rest)`.
  *
- * **Retry-After is a real number, not a guess dressed as one.** It is the
- * caller-facing promise that retrying is the right move and roughly when — it
- * is not a claim about how long the cutover takes. A caller that retries early
- * gets another 503 and the same header, which is the correct behaviour for a
- * window whose length the Worker cannot know.
+ * **There is deliberately NO `Retry-After`** (#2252 r10). An earlier revision
+ * sent `120`, described as "roughly when" a retry would succeed. The Worker has
+ * no basis for that number: how long a maintenance window lasts depends on a
+ * procedure that is not written, tooling that does not exist and a drain nobody
+ * has measured. Two minutes would have been an invented figure on the one
+ * surface whose entire purpose is to avoid asserting what cannot be
+ * substantiated — the defect this change exists to fix, in its own answer.
+ *
+ * The cost is real and is the right trade: without the header a caller falls
+ * back to its own backoff. That is better than a hint that is confidently
+ * wrong in both directions — clients idling after service returns, or retrying
+ * every two minutes through an outage of unknown length. If the procedure ever
+ * defines a bounded window, a `Retry-After` can be added as a **policy** the
+ * procedure supports rather than as an estimate the service invents.
  */
 export function maintenanceRefusal(worker: string): {
   body: string;
@@ -244,11 +253,11 @@ export function maintenanceRefusal(worker: string): {
       `${worker} is temporarily unavailable: a database binding is being ` +
       `moved. No request is being served against a database right now, so ` +
       `nothing you sent has been recorded and nothing you read here would be ` +
-      `current. Retry shortly.\n`,
+      `current. How long this lasts is not something this service can tell ` +
+      `you — retry with your own backoff.\n`,
     status: 503,
     headers: {
       'content-type': 'text/plain; charset=utf-8',
-      'retry-after': '120',
       'cache-control': 'no-store',
     },
   };

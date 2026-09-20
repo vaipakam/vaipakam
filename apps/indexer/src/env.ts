@@ -456,6 +456,25 @@ const CHAIN_META_IDS = [
   8453, 1, 42161, 10, 1101, 56, 84532, 11155111, 421614, 11155420, 80002, 97,
 ];
 
+/**
+ * Every chain id this Worker could ever hold a per-chain Durable Object for.
+ *
+ * `getChainConfigs` needs the RESOLVED env, because it filters on whether each
+ * chain's RPC secret and deployment exist. This list needs neither: it is the
+ * superset of `idFromName` keys, and it is what the maintenance path uses to
+ * reach DOs without resolving any secrets (#2252 r10).
+ *
+ * A stale entry here is harmless — addressing a DO that never existed creates
+ * an empty one that closes no sockets and does nothing. A MISSING entry is not
+ * harmless: that chain's DO would keep its inherited sockets open through a
+ * maintenance window, which is the defect the wake exists to prevent. So keep
+ * it a superset of `getChainConfigs`'s `meta` ids and err towards including.
+ */
+export const ALL_CHAIN_IDS: readonly number[] = [
+  8453, 1, 42161, 10, 1101, 56,
+  84532, 11155111, 421614, 11155420, 80002, 97,
+];
+
 export function getChainConfigs(env: Env): ChainConfig[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
     // Mainnets — included once both the deployment artifact and the
