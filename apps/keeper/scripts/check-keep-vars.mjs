@@ -208,9 +208,17 @@ const problems = [];
  *
  * So there is no scoping question left to get wrong: **every wrangler config
  * in the tracked tree declares preservation**, whatever it names, wherever it
- * sits, whether or not that Worker has vars today. A config is identified by
- * WRANGLER'S OWN FILENAME CONVENTION (`wrangler*.json`/`.jsonc`/`.toml`),
- * which is a total test on a string, not a judgement about content.
+ * sits, whether or not that Worker has vars today.
+ *
+ * A config is identified by EITHER of the two total tests described under THE
+ * SECOND IDENTIFICATION in the file header — wrangler's filename convention,
+ * or a top-level string `compatibility_date`. This passage described the
+ * filename test alone until #2245, and called identification "not a judgement
+ * about content", which the second test plainly is; leaving that standing
+ * would invite a maintainer to delete the recogniser as a design violation.
+ * Neither test is a judgement about what a file is FOR, which is the property
+ * that matters: one reads a name, the other reads one key through the parser.
+ * What is ruled out is inferring which config a COMMAND would load.
  *
  * TWO EXCEPTIONS, and both come from wrangler's own rules rather than from a
  * judgement this file makes — see the code for each:
@@ -343,15 +351,6 @@ walkConfigs('', named, candidates);
 const discovery = new Map(named.map((rel) => [rel, 'name']));
 
 for (const rel of candidates) {
-  let text;
-  try {
-    text = readFileSync(join(REPO_ROOT, rel), 'utf8');
-  } catch {
-    continue;
-  }
-  // Cheap reject first: most of the tree's JSON is ABIs and lockfiles, and
-  // only the few files mentioning the field are worth parsing.
-  if (!text.includes(WORKER_FIELD)) continue;
   // TOML IS NOT IDENTIFIED BY CONTENT, deliberately. The JSON test is a shape
   // test on a parsed object — a top-level key of type string. The TOML
   // equivalent needs the grammar this file refuses to carry, and the only
@@ -361,6 +360,27 @@ for (const rel of candidates) {
   // false-report class is the trade #1995 says not to make. A `wrangler*.toml`
   // is still refused by name below, where the name is a claim about the file.
   if (rel.endsWith('.toml')) continue;
+  let text;
+  try {
+    text = readFileSync(join(REPO_ROOT, rel), 'utf8');
+  } catch {
+    continue;
+  }
+  // THERE IS NO LEXICAL PREFILTER, and the first revision's was deleted rather
+  // than repaired (#2245 r1, P2). It skipped any candidate whose raw text did
+  // not contain the field name, to avoid parsing the tree's ABIs and
+  // lockfiles — but JSON may spell a key with escapes, so
+  // `"compatibility_date"` parses to exactly this key and the substring
+  // never matched. A config could therefore be valid, deployable, missing
+  // `keep_vars`, and silently skipped.
+  //
+  // The repair on offer was a second predicate — match the name OR any `\u`
+  // escape — and predicates that must stay in step with a parser are the
+  // thing this file exists to stop reintroducing. Deleting the optimisation
+  // removes the divergence outright: the recogniser now asks the parser, which
+  // is the only thing that knows what a key is. Measured cost of parsing every
+  // candidate in the tracked tree: ~0.5 s over 195 files / 8.4 MB, inside a
+  // job with a five-minute budget.
   let cfg;
   try {
     cfg = parseJsonc(text);
