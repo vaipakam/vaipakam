@@ -456,7 +456,22 @@ library Deployments {
     ///         remain on-chain via `DiamondLoupeFacet.facetAddresses()` and in
     ///         the broadcast log — so failing loudly at the end is strictly
     ///         better than the silence #1798 actually shipped with.
-    function requireFacetsRecorded(address[] memory expected) internal view {
+    function snapshotArtifact()
+        internal
+        view
+        returns (string memory prior, bool existed)
+    {
+        string memory p = path();
+        existed = _fileExists(p);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        if (existed) prior = CHEATS.readFile(p);
+    }
+
+    function requireFacetsRecorded(
+        address[] memory expected,
+        string memory prior,
+        bool priorExisted
+    ) internal {
         if (!artifactWritesEnabled()) return;
 
         string memory p = path();
@@ -479,16 +494,33 @@ library Deployments {
                     found = true;
                 }
             }
-            require(
-                found,
-                string.concat(
-                    "Deployments: facet ",
-                    CHEATS.toString(expected[i]),
-                    " is installed in the Diamond but was never recorded under any .facets.* key of ",
-                    p,
-                    " - add its Deployments.writeFacet(...) line. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
-                )
-            );
+            if (!found) {
+                // #2253 r3 P1 — RESTORE BEFORE REVERTING. Filesystem cheatcode
+                // effects are NOT rolled back by a revert, and on a
+                // `--broadcast` run forge's pre-send simulation executes this
+                // whole body before any transaction is sent. Reverting here
+                // without restoring would leave the CANONICAL artifact -- the
+                // inventory's source of truth -- describing a Diamond that was
+                // never deployed, with simulated addresses. That is a worse
+                // outcome than the silence this check exists to end, and it is
+                // a failure mode the check itself would have introduced.
+                if (priorExisted) {
+                    // forge-lint: disable-next-line(unsafe-cheatcode)
+                    CHEATS.writeFile(p, prior);
+                } else {
+                    // forge-lint: disable-next-line(unsafe-cheatcode)
+                    CHEATS.removeFile(p);
+                }
+                revert(
+                    string.concat(
+                        "Deployments: facet ",
+                        CHEATS.toString(expected[i]),
+                        " is installed in the Diamond but was never recorded under any .facets.* key of ",
+                        p,
+                        " - add its Deployments.writeFacet(...) line. Nothing was deployed and the previous artifact has been left untouched. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
+                    )
+                );
+            }
         }
     }
 

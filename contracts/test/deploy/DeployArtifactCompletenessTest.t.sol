@@ -27,9 +27,13 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 contract DeployDiamondVerificationProbe is DeployDiamond {
     bool public verificationRan;
 
-    function verifyArtifactCompleteness(address diamond_) internal override {
+    function verifyArtifactCompleteness(
+        address diamond_,
+        string memory priorArtifact,
+        bool priorExisted
+    ) internal override {
         verificationRan = true;
-        super.verifyArtifactCompleteness(diamond_);
+        super.verifyArtifactCompleteness(diamond_, priorArtifact, priorExisted);
     }
 }
 

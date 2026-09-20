@@ -151,14 +151,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         would blind this check to the one facet that can never be
     ///         re-cut, since removing the cut function removes the ability to
     ///         cut (#1798 r9).
-    function verifyArtifactCompleteness(address diamond_) internal virtual {
+    function verifyArtifactCompleteness(
+        address diamond_,
+        string memory priorArtifact,
+        bool priorExisted
+    ) internal virtual {
         address[] memory routed = DiamondLoupeFacet(diamond_).facetAddresses();
         address[] memory recorded = new address[](routed.length + 1);
         for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
         recorded[routed.length] = DiamondLoupeFacet(diamond_).facetAddress(
             IDiamondCut.diamondCut.selector
         );
-        Deployments.requireFacetsRecorded(recorded);
+        Deployments.requireFacetsRecorded(recorded, priorArtifact, priorExisted);
         console.log("Verified: every installed facet is recorded in the artifact.");
     }
 
@@ -963,6 +967,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
             return;
         }
 
+        // #2253 r3 P1 — capture the artifact BEFORE this run rewrites it.
+        // Every write below lands on the CANONICAL file, and filesystem
+        // cheatcode effects survive a revert; on a `--broadcast` run forge
+        // executes this whole body in its pre-send simulation, so a failed
+        // verification at Step 7b would otherwise leave the inventory's source
+        // of truth describing a Diamond that was never deployed. Step 7b
+        // restores this snapshot before reverting.
+        (string memory priorArtifact, bool priorExisted) =
+            Deployments.snapshotArtifact();
+
         Deployments.writeChainHeader();
         Deployments.writeDiamond(diamond);
 
@@ -1104,14 +1118,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // why this was an inconvenience rather than a lost deploy — but the
         // artifact is supposed to be the record.
         //
-        // NOTHING AUTOMATED STOPS THIS FROM REGROWING YET. A predeploy step that
-        // read these scripts as text was written and withdrawn — review found
-        // thirteen ways past it, because proving a registration executes under a
-        // stable identity on every chain is a scope-and-control-flow question a
-        // text parser cannot answer. #1800 replaces it with the assertion that
-        // needs no parsing: run the deploy with artifacts on, then require every
-        // facet the built Diamond routes to appear in the JSON it wrote. Until
-        // that lands, adding a facet means adding its write HERE by hand.
+        // STEP 7b BELOW NOW STOPS THIS FROM REGROWING (#1800, #2253 r2). A
+        // predeploy step that read these scripts as TEXT was written and
+        // withdrawn first — review found thirteen ways past it, because proving
+        // a registration executes under a stable identity on every chain is a
+        // scope-and-control-flow question a text parser cannot answer. What
+        // replaces it needs no parsing: after these writes, the deploy reads
+        // back the artifact it just produced and requires every facet the built
+        // Diamond routes to appear in it. Adding a facet still means adding its
+        // write HERE — the difference is that forgetting now fails the deploy
+        // instead of passing silently.
         Deployments.writeFacet("aggregatorAdapterFactoryFacet", address(aggregatorAdapterFactoryFacet));
         Deployments.writeFacet("backstopFacet",           address(backstopFacet));
         Deployments.writeFacet("consolidationFacet",      address(consolidationFacet));
@@ -1155,7 +1171,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // directly, without pushing into the enumeration. Leaving it out would
         // blind this check to the one facet that can never be re-cut — removing
         // the cut function removes the ability to cut. (#1798 r9.)
-        verifyArtifactCompleteness(diamond);
+        verifyArtifactCompleteness(diamond, priorArtifact, priorExisted);
 
         // ── Summary ─────────────────────────────────────────────────────
         console.log("");

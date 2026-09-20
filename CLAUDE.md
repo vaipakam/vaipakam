@@ -273,19 +273,44 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
   never-refreshed chain was missing them. Those thirteen writes are now in the
   deploy script.
 
-  **There is no automated guard against this recurring yet**, and that is a
-  deliberate, recorded position rather than an oversight. A step-4c that read
-  the deploy scripts as text was written and then withdrawn: review found
-  thirteen distinct ways to get a registration past it, and each fix opened the
-  next. Proving "this registration executes, under this identity, on every
-  chain" is a question about scope, control flow and aliasing, and a shell
-  parser reading lines of Solidity cannot answer it — it was reaching a green
-  verdict it had not earned, which on a pre-deploy gate is worse than no gate.
-  **#1800** replaces it with the assertion that needs no parsing: run the deploy
-  with artifact writing on and require every address `facetAddresses()` reports
-  to appear in the JSON it wrote. The refresh-key-identity check
-  (`RefreshScriptFacetParityTest` documents it as out of its own scope) goes
-  there too.
+  **The guard now exists, and it is in the DEPLOY rather than in a check over
+  the scripts** (#1800). `DeployDiamond` Step 7b reads back the artifact it just
+  wrote and requires every address `facetAddresses()` reports — plus
+  `diamondCutFacet`, which the constructor installs outside that enumeration —
+  to appear under some `.facets.*` key. Forgetting a `writeFacet` now fails the
+  deploy instead of passing silently.
+
+  A step-4c that read the deploy scripts as TEXT was written and withdrawn
+  first: review found thirteen distinct ways to get a registration past it, and
+  each fix opened the next. Proving "this registration executes, under this
+  identity, on every chain" is a question about scope, control flow and
+  aliasing, and a shell parser reading lines of Solidity cannot answer it — it
+  was reaching a green verdict it had not earned, which on a pre-deploy gate is
+  worse than no gate.
+
+  **A TEST could not close it either, and that is the part worth remembering.**
+  The first version of #1800 asserted the same property from a test that
+  deployed across a matrix of chain ids. Review found the matrix incomplete
+  twice running — first that it covered only chain 31337, then that it listed a
+  retired chain while omitting an active one and never exercised the production
+  admin≠deployer topology. Both were correct, and both were the same seam: a
+  write can be guarded on chain id, on admin≠deployer, on the treasury, on
+  `block.number`, on any env var, so a matrix only ever covers what somebody
+  enumerated. Inside the deploy there is no matrix to be incomplete, because the
+  conditions under test ARE the conditions in effect.
+
+  Two properties of that guard are load-bearing and easy to undo by accident.
+  It **snapshots the artifact before the writes and restores it before
+  reverting** — filesystem cheatcode effects survive a revert, and a
+  `--broadcast` run executes the whole body in its pre-send simulation, so
+  failing after mutating the canonical file would leave the inventory's source
+  of truth describing a Diamond that was never deployed. And its **call site is
+  covered by a probe**, because deleting the call left the entire deploy-artifact
+  suite green: every test there reads the artifact independently and asserts the
+  same property, so nothing depended on the deploy doing it.
+
+  The refresh-key-identity check (`RefreshScriptFacetParityTest` documents it as
+  out of its own scope) is still outstanding.
 
   Note also that this class of omission is an inconvenience rather than a lost
   address — the implementation stays recoverable on-chain via
