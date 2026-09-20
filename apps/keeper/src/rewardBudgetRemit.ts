@@ -81,10 +81,16 @@ const ARMED_BACKSCAN_DAYS = 90;
  * same `deferred` total the lane cap's overflow feeds, so the coverage signal
  * reports the mirror as not settled and the next tick takes the next 32.
  *
- * `rewardBudgetRemitFanoutCap.test.ts` pins this against the Solidity
- * constant, so raising the cap on chain cannot silently leave the keeper
- * bounded by the old one (and lowering it cannot silently leave the keeper
- * building batches the chain will refuse).
+ * It bounds FUNDED days only (Codex #2232 r5). The send and its quote trim the
+ * payload to the days that actually carry VPFI and apply the bound to that
+ * count, so a close-only day never reaches the destination list and is free of
+ * this cap exactly as it is free of `laneCap`.
+ *
+ * `rewardBudgetRemitFanoutCap.test.ts` pins BOTH halves against the contract
+ * source: the figure against `TRANSPORT_DAY_FANOUT_CAP`, and the population
+ * against the argument every `requireRemittableFanout` call site passes. The
+ * figure alone would not have caught this — the first revision had the right
+ * number and the wrong subject.
  */
 const TRANSPORT_DAY_FANOUT_CAP = 32;
 
@@ -121,28 +127,32 @@ export function planRemitBatch(
   // permanently out of reach. An empty batch is settled ONLY when nothing was
   // left behind (Codex #1924 r20).
   let deferred = deferredIn;
+  // FUNDED days in the batch, which is the population the destination bound
+  // counts — NOT `batch.length` (Codex #2232 r5). The send and its quote both
+  // trim the payload to the funded days and call `requireRemittableFanout` on
+  // that count, so a close-only day never reaches the destination list and
+  // never occupies a place in it.
+  //
+  // Counting the whole batch was wrong twice over. It refused batches the
+  // chain would have accepted; and because the cap was checked before the
+  // close-only branch, a plan with more than 32 closeable zero-slice days
+  // filled the cap with free riders and then left every later day behind —
+  // dropping close-only ones silently, since the deferral count only ever
+  // counts positive slices. `remitToMirror` would then have reported the
+  // mirror settled with days still open and their commitments unretired,
+  // which is the stand-down signal reading a truncation as completeness.
+  //
+  // The error was inferring the cap's subject from the list this function
+  // builds instead of reading which population the contract counts. The test
+  // pins that subject now, not only the figure.
+  let fundedInBatch = 0;
   for (let i = 0; i < window.length; i++) {
-    // The FAN-OUT ceiling, checked before anything else can be added
-    // (Codex #2232 r4). It counts EVERY day in the batch, close-only riders
-    // included: the destination's bound is over the day list the remittance
-    // carries, and a free rider still occupies a place in it.
-    if (batch.length >= TRANSPORT_DAY_FANOUT_CAP) {
-      // Every later ACTIONABLE day waits for a later tick — the same
-      // accounting the lane-cap break below uses, so the coverage signal
-      // cannot read a fan-out deferral as a settled mirror. Close-only days
-      // left behind are not counted here, exactly as they are not counted
-      // there: they carry no obligation, and this tick's send closes enough
-      // of them that the next tick's window is shorter.
-      for (let k = i; k < window.length; k++) {
-        const rest = perDay[k] ?? 0n;
-        if (rest > 0n) deferred += 1;
-      }
-      break;
-    }
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {
       // Zero-amount and not closeable = nothing to do for this day. Already
-      // remitted, or otherwise not eligible; NOT a deferral.
+      // remitted, or otherwise not eligible; NOT a deferral. Closeable ones
+      // ride along free of BOTH caps: they move no VPFI and reach no
+      // destination list.
       if (closeable[i]) batch.push(window[i]);
       continue;
     }
@@ -150,9 +160,14 @@ export function planRemitBatch(
       deferred += 1; // appeared oversized on the final pass
       continue;
     }
-    if (total + slice > laneCap) {
-      // Cap reached: this day and EVERY later actionable one wait for a
+    if (fundedInBatch >= TRANSPORT_DAY_FANOUT_CAP || total + slice > laneCap) {
+      // A cap is reached — the destination's day fan-out, or the lane's VPFI
+      // ceiling. Either way this day and EVERY later actionable one wait for a
       // later tick. Counting only this one would under-report (r20).
+      //
+      // Reached only on a FUNDED day, so `deferred` is always at least one
+      // here and the tick reports the mirror unsettled. That is what stops a
+      // truncated plan from being read as a complete one.
       for (let k = i; k < window.length; k++) {
         const rest = perDay[k] ?? 0n;
         if (rest > 0n) deferred += 1;
@@ -161,6 +176,7 @@ export function planRemitBatch(
     }
     batch.push(window[i]);
     total += slice;
+    fundedInBatch += 1;
   }
   return { batch, total, deferred };
 }

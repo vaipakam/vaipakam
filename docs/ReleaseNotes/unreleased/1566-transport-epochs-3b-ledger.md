@@ -220,9 +220,15 @@ unfunded indefinitely, with nothing in the ledger to show why.
 The pass now stops at the destination's limit and reports the rest as
 deferred, exactly as it already does when the monetary limit binds: the mirror
 is reported as not fully funded, and the next pass takes the next instalment,
-so the backlog drains instead of wedging. Days that are only being closed out
-count towards the limit too, because they still occupy a place in the list the
-destination has to retire.
+so the backlog drains instead of wedging.
+
+The limit counts the days that actually carry funding. Days that are only
+being closed out are left out of what the destination receives, so they are
+outside the limit and ride along freely — the same treatment they already get
+from the monetary limit. Counting them would have refused batches the platform
+accepts, and would have let a plan made up mostly of close-outs fill the limit
+with them and then quietly leave funded days behind while reporting the mirror
+complete.
 
 Nothing here moves value yet: no draw exists until the next release adds one,
 and on a chain that has not received an old-wire delivery none of this is
