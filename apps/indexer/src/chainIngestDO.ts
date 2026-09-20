@@ -37,7 +37,12 @@
  * (bounded), and `scanRunning` is always cleared in `finally`.
  */
 
-import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
+import { resolveEnv, getChainConfigs, WORKER_NAME, type WorkerEnv } from './env';
+import {
+  hasD1Binding,
+  maintenanceSkipNotice,
+  resolveD1Binding,
+} from '@vaipakam/lib/d1Maintenance';
 import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
@@ -354,6 +359,22 @@ export class ChainIngestDO {
    */
   private scanRunning = false;
 
+  /**
+   * The D1 handle for this object, through the maintenance seam (#2239).
+   *
+   * A Durable Object is the entry point the quiescence discussion kept
+   * tripping over: `alarm()` re-arms itself, so an alarm queued before a
+   * maintenance deploy keeps firing after `fetch()` and `scheduled()` are both
+   * closed, and no route-level or schedule-level gate sees it. It reaches the
+   * database the same way everything else does, so it is held off the same
+   * way — by there being no binding to hold, and by this seam turning that
+   * absence into a refusal that names itself instead of a `Cannot read
+   * properties of undefined`.
+   */
+  private get db(): D1Database {
+    return resolveD1Binding(this.env.DB, WORKER_NAME);
+  }
+
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: WorkerEnv,
@@ -429,6 +450,21 @@ export class ChainIngestDO {
 
   /** One catch-up iteration: scan once, then re-arm or finish. */
   async alarm(): Promise<void> {
+    // #2239 — decline, and do NOT re-arm, when this build has no D1 binding.
+    //
+    // This is the entry point the quiescence discussion kept tripping over: an
+    // alarm re-arms itself, so one queued before a maintenance deploy keeps
+    // firing after both `fetch()` and `scheduled()` are closed. Returning
+    // WITHOUT re-arming is the deliberate half — the scan cannot make progress
+    // without a database, and a re-arm would turn a maintenance window into a
+    // retry loop billing DO storage rows every few seconds to discover the
+    // same refusal. The cron backstop restarts the loop once a build with a
+    // binding is deployed, which is exactly what it is for.
+    if (!hasD1Binding(this.env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'the ingest alarm'));
+      return;
+    }
     // Synchronously (before any await) mark a scan live, so any concurrent
     // `fetch()` trigger sees `scanRunning` and won't arm a second scan. Cleared
     // in `finally` no matter how we exit, so the DO can never wedge "running".
@@ -445,7 +481,7 @@ export class ChainIngestDO {
     );
     // Metered ONCE for the whole alarm, so everything downstream — the scan
     // AND the broadcast — draws on it.
-    const db = meterD1(this.env.DB, budget);
+    const db = meterD1(this.db, budget);
     try {
       // Honor the rollout gate INSIDE the alarm (Codex #764 round 5). If an
       // operator turns `CHAIN_INGEST_VIA_DO` off after it was on, `scheduled()`
@@ -610,11 +646,11 @@ export class ChainIngestDO {
     // alarm with its own allowance, so there is no alarm counter to draw on
     // and reaching for one would attribute a handshake's read to a scan. The
     // alarm's own reads all go through its metered handle (#2227 r2
-    // `4033723744`); this is the one place `this.env.DB` is still correct.
+    // `4033723744`); this is the one place `this.db` (the unmetered seam handle) is still correct.
     let cursor: { lastBlock: number; updatedAt: number } | null = null;
     if (ingestActive && chainId !== null) {
       try {
-        const row = await this.env.DB.prepare(
+        const row = await this.db.prepare(
           `SELECT last_block, updated_at FROM indexer_cursor
            WHERE chain_id = ? AND kind = 'diamond'`,
         )

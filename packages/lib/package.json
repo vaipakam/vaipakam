@@ -80,6 +80,10 @@
     "./d1Binds": {
       "types": "./src/d1Binds.ts",
       "default": "./src/d1Binds.ts"
+    },
+    "./d1Maintenance": {
+      "types": "./src/d1Maintenance.ts",
+      "default": "./src/d1Maintenance.ts"
     }
   },
   "scripts": {

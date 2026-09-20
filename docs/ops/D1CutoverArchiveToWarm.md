@@ -481,7 +481,7 @@ inbox rows cannot be regenerated once the crossing has recovered.
 **That list is known to be incomplete**, which is why the next section refuses
 to present one as a procedure.
 
-### The writers must be quiesced across the change — and the procedure for that is NOT specified here
+### The writers must be quiesced across the change — and here is how
 
 **What is established**, and it is the part this step needs:
 
@@ -497,40 +497,99 @@ to present one as a procedure.
 - So the writers must be stopped across the change, and restarted only once
   every binding is confirmed.
 
-**How to stop them is an open question, deliberately left open** (#2239). Four
-review rounds of #2238 tried to write that procedure as an inventory of
-writers to close, and each round found another way one reaches D1 that the
-previous wording missed — a second Worker's routes, a cron event that
-traverses no route, the diagnostic routes, a Durable Object alarm that
-re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
-aliases that bypass a zone rule, and a schedule change that takes up to
-fifteen minutes to propagate.
+**The mechanism is capability removal, not an inventory** (#2239, owner
+decision 2026-09-20). Four review rounds of #2238 tried to write this
+procedure as a list of writers to close, and each round found another way one
+reaches D1 that the previous wording missed — a second Worker's routes, a cron
+event that traverses no route, the diagnostic routes, a Durable Object alarm
+that re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
+aliases that bypass a zone rule, and a schedule change that takes up to fifteen
+minutes to propagate. That list was never going to finish, because
 
-**Enumerating the ways code can reach a database is an unbounded predicate.**
-Writing a list here that reads authoritative and is incomplete is worse than
-saying so: an operator follows it, believes the writers are stopped, and loses
-exactly the rows this section exists to protect. #2239 carries the
-requirements, the evidence for each, and the decisions an owner has to make —
-including whether a maintenance build should simply carry **no D1 binding at
-all**, which is the one formulation that does not depend on having enumerated
-the entry points correctly.
+> you cannot prove "no writer" by listing writers. You can prove it by removing
+> the write capability.
 
-**Until #2239 is settled, treat this cutover as requiring an operator who
-accepts that exposure** — which is what the next section describes, honestly
-labelled.
+A **maintenance build** is a deploy of the same code whose `d1_databases`
+entry is absent. Nothing in the isolate can obtain a database handle — not a
+route, not a cron tick, not a Durable Object alarm, not a `waitUntil`
+continuation, not a request that arrived over a `workers.dev` alias, and not an
+entry point nobody has thought of yet. The Workers cooperate with that state
+rather than crashing into it: each declines at its entrance, answering `503`
+with a `Retry-After` and a body that says nothing was recorded, and logging one
+line per tick rather than one failure per pass.
+
+**Three of the round-5 objections are answered by the choice of mechanism
+rather than by a clause each.** There is no zone rule, so nothing bypasses one
+via an alias; the cron schedule is untouched, so its propagation window does
+not apply — a tick that fires simply finds no capability; and an entry point
+outside every list is covered because the mechanism never names one.
+
+#### The procedure
+
+1. **Deploy the maintenance build** to all four Workers (`apps/{indexer,
+   keeper,agent}` and `ops/offchain-data-warm`) — same commit, `d1_databases`
+   removed. Confirm each is refusing: a request to the indexer or the agent
+   answers `503`, and the logs carry the `[d1] … maintenance build` line.
+
+   **How you produce it today is the weakest link in this procedure, and it is
+   deliberately not dressed up.** There is no flag that deploys a Worker
+   without one of its bindings, so today it means deleting the `d1_databases`
+   block from that Worker's `wrangler.jsonc`, deploying from the edited tree,
+   and restoring the block afterwards — a hand edit to production
+   configuration, done four times, under time pressure, with the restore step
+   carried only in the operator's memory. That is the same class of error the
+   rest of this document exists to remove. Do not skip the confirmation above
+   on the strength of having run the command: read the refusal back from each
+   Worker. **Tooling to generate and deploy the stripped config, so no tracked
+   file is ever edited, is #2250** — until it lands, treat the edit-and-restore
+   as a step that needs a second person watching.
+
+   **`ops/offchain-data-warm` is the exception, and it is a graceful-failure
+   exception rather than a safety one.** It is a standalone package outside the
+   pnpm workspace, so it does not carry the shared seam; its binding is named
+   `DB_ARCHIVE`, and removing it makes the nightly export fail rather than
+   decline politely. The capability removal — the part that matters — works
+   identically. What it does not get is the named refusal and the one-line log,
+   so expect a raw error from that Worker during the window and do not read it
+   as a new fault. It writes no user-facing rows, so nothing is lost either way.
+2. **Drain.** Executions admitted BEFORE the maintenance deploy still hold the
+   environment they captured and can still write. This is the one residual,
+   and it is real — see below.
+3. **Move the bindings.** Merge the commit that points all four at the target
+   database, and let each Worker's build run.
+4. **Confirm** every binding individually, per Step 3 below. The binding read
+   is the confirmation available while the Workers are still refusing.
+5. **Restore** — deploy the build that carries the binding again. Work resumes
+   on the next tick; the indexer's ingest alarm is restarted by the cron
+   backstop, which is what it is for.
+
+#### The residual, stated rather than absorbed
+
+**The drain interval is not specified here, and that is deliberate.** Putting
+an unmeasured number in an operator procedure is the defect #2239 was opened to
+stop. What the mechanism changes is the SHAPE of the remaining exposure: after
+the maintenance deploy, the only code that can still reach D1 is work admitted
+before it, holding the previous environment. That is a bounded, measurable
+population rather than an open-ended set of entry points — one unknown with an
+answer somebody can go and measure, instead of a list nobody can finish.
+
+Measure it from the real `waitUntil` tail before running the cutover, and
+record the figure here when you do.
 
 ### The alternative, and when it is defensible
 
 **Watch it through (the 2026-08-03 choice, defensible only pre-live).** Merge
 when someone is watching and run Step 3 immediately, accepting that anything
 written in between may be lost. This was chosen when there were no real users.
-It is not a decision to inherit once there are.
+It is not a decision to inherit once there are, and it is no longer the only
+option this document can offer.
 
-**Until #2239 lands, this is effectively the only procedure this document can
-honestly offer** — and the reason to say that out loud is that a partial gate
-is this option wearing a disguise. Closing the public routes while cron still
-ticks, or while a Durable Object alarm re-arms itself, accepts the same
-exposure and hides it behind a step that looks like protection.
+The reason to keep describing it is that **a partial gate is this option
+wearing a disguise**. Closing the public routes while cron still ticks, or
+while a Durable Object alarm re-arms itself, accepts the same exposure and
+hides it behind a step that looks like protection. The maintenance build is
+not a partial gate — it removes the capability rather than closing a door in
+front of it — but anything short of it is.
 
 What the auto-deploy correction genuinely changes is **who** closes the
 window: it no longer waits on a person remembering a command. It does not make
@@ -635,8 +694,8 @@ the one that authorises restoring normal operation:
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
    fails here, stop the writers again rather than leaving them running while
-   investigating — by whatever means #2239 settles on, which today means
-   accepting the exposure knowingly.
+   investigating — by redeploying the maintenance build, which is the same
+   move as Step 1 of the quiescence procedure above.
 
 An earlier revision made the agent write probe "the test that closes the
 deployment window". It cannot be: it is unavailable exactly when the window is
@@ -654,8 +713,8 @@ open. The binding read closes the window; the write confirms it afterwards.
 something you have to DO, not something you observe** (#2238 r2 P1).
 
 A revert is a binding change, so everything above applies to it unchanged —
-including that the procedure for stopping the writers is unspecified (#2239).
-The revert has the same mixed state, in the same shape, and the same
+including the maintenance-build quiescence procedure, which a revert needs just
+as much as the cutover did. The revert has the same mixed state, in the same shape, and the same
 consequence for a write that lands on the wrong side of it.
 Confirming afterwards cannot make the window safe — during the revert's own
 independent builds, a Worker still serving the target can accept the first

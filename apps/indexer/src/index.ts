@@ -58,6 +58,12 @@
  * signing Worker reads (#1722). The GET surface stays public-read.
  */
 
+import {
+  hasD1Binding,
+  maintenanceRefusal,
+  maintenanceSkipNotice,
+  resolveD1Binding,
+} from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
@@ -66,6 +72,7 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
+  WORKER_NAME,
   type WorkerEnv,
   type Env,
   type SecretBinding,
@@ -158,6 +165,16 @@ export default {
     // rows — acts on minutes divisible by 5. A skipped tick returns
     // here having done no work at all.
     if (!shouldRunCronTick(controller.scheduledTime, doIngestEnabled(env))) {
+      return;
+    }
+    // #2239 — decline the whole tick when this build has no D1 binding. Every
+    // pass below reads or writes the database, so one line here beats a
+    // separate failure from each `waitUntil` continuation — and declining
+    // before the budget is created keeps a maintenance tick from spending
+    // Secrets Store reads it has no use for.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
       return;
     }
     // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point
@@ -317,6 +334,24 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(req.url);
+
+    // #2239 — one answer for every route while this build has no D1 binding.
+    //
+    // Blunt ON PURPOSE, and it sits above the early routes deliberately. A
+    // per-route list of which routes touch D1 is the enumeration this whole
+    // mechanism exists to stop, and this Worker is the clearest case for the
+    // blunt rule: its read-API answers FROM the database, so during a binding
+    // move there is nothing truthful for it to serve. A 503 that says so is
+    // better than a 200 carrying rows from a database about to be discarded.
+    //
+    // The WebSocket upgrade below is covered by the same refusal. A socket
+    // accepted now would be fed by an ingest lane that is not running, which
+    // is the "live socket, stale data" state that route's own comment calls
+    // out as the thing to avoid.
+    if (!hasD1Binding(env.DB)) {
+      const { body, ...rest } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, rest);
+    }
 
     // #757 — inbound chain webhook. Dispatched BEFORE the global `resolveEnv`
     // so an unauthenticated POST never triggers the other Secrets-Store
@@ -663,7 +698,11 @@ async function handleChainEventWebhook(
     parsed.providerId ?? `${chainId}:sha256:${await sha256Hex(rawBody)}`;
 
   // 4. Early dedupe — drop a delivery already recorded (no DO work).
-  const seen = await env.DB.prepare(
+  // Through the maintenance seam (#2239): this route is dispatched BEFORE
+  // `resolveEnv`, so it is one of the paths that would otherwise read an
+  // absent binding directly.
+  const db = resolveD1Binding(env.DB, WORKER_NAME);
+  const seen = await db.prepare(
     `SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?`,
   )
     .bind(deliveryId)
@@ -693,7 +732,7 @@ async function handleChainEventWebhook(
   }
 
   // 6. Record the dedupe row ONLY after a durable accept, then ack.
-  await env.DB.prepare(
+  await db.prepare(
     `INSERT OR IGNORE INTO webhook_deliveries (delivery_id, seen_at) VALUES (?, ?)`,
   )
     .bind(deliveryId, Math.floor(Date.now() / 1000))

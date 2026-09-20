@@ -1,5 +1,14 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import { spend, type TickBudget } from './subrequestBudget';
+
+/**
+ * This Worker's deployed name, used as the label on a D1 refusal so an
+ * operator reading the log knows which deployment refused (#2239). Kept in
+ * step with `wrangler.jsonc`'s `name` by hand — a wrong label costs a moment
+ * of confusion in a log line, which is why it is not worth a build step.
+ */
+export const WORKER_NAME = 'vaipakam-indexer';
 
 /**
  * Typed env for the apps/indexer Worker.
@@ -62,7 +71,20 @@ export type SecretBinding = { get(): Promise<string> };
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv {
-  DB: D1Database;
+  /**
+   * The D1 binding AS DELIVERED — possibly absent, and typed that way (#2239).
+   *
+   * A maintenance deployment omits `d1_databases` so that no code in the
+   * isolate can obtain a database handle while a binding is being moved. That
+   * is a real state, so the raw env tells the truth about it, and the compiler
+   * then refuses `env.DB.prepare(...)` on a raw env. Every path has to go
+   * through `resolveD1Binding` and gets the refusing stub instead of a
+   * `Cannot read properties of undefined` — which is the whole point: the
+   * chokepoint is enforced by the type checker rather than by remembering.
+   *
+   * `Env.DB` below is non-optional, so nothing downstream of the seam changes.
+   */
+  DB?: D1Database;
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
   RPC_ARB?: SecretBinding;
@@ -177,6 +199,11 @@ export function isDoIngestEnabled(raw: WorkerEnv): boolean {
 export function earlyRouteEnv(raw: WorkerEnv): Env {
   return {
     ...(raw as unknown as Env),
+    // The same maintenance seam `resolveEnv` uses (#2239). The spread above
+    // copies `DB` straight off the raw env, so without this line the early
+    // routes would be the one lane that reaches an absent binding directly —
+    // and they are precisely the lane that skips `resolveEnv`.
+    DB: resolveD1Binding(raw.DB, WORKER_NAME),
     doIngestEnabled: isDoIngestEnabled(raw),
   };
 }
@@ -358,7 +385,9 @@ export async function resolveEnv(
     readSecret(raw.OPENSEA_API_KEY, budget),
   ]);
   return {
-    DB: raw.DB,
+    // Through the maintenance seam: the real binding untouched on every
+    // ordinary deploy, a refusing stub when it is absent (#2239).
+    DB: resolveD1Binding(raw.DB, WORKER_NAME),
     // Resolved HERE because this is the only layer that can see both
     // halves — see the `doIngestEnabled` field doc.
     doIngestEnabled: isDoIngestEnabled(raw),

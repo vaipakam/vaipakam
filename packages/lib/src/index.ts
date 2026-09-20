@@ -16,6 +16,7 @@ export * from './erasureMessage.js';
 export * from './notificationProvenance.js';
 export * from './contractRevert.js';
 export * from './d1Binds.js';
+export * from './d1Maintenance.js';
 // T-086 step 14 — `prepayOrderShape` deliberately NOT re-exported
 // from the root barrel: it's framework-agnostic (no browser
 // globals), but every consumer that needs it goes through the

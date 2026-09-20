@@ -82,7 +82,12 @@
  * chain.
  */
 
-import { resolveEnv, type Env, type WorkerEnv } from './env';
+import { resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
+import {
+  hasD1Binding,
+  maintenanceRefusal,
+  maintenanceSkipNotice,
+} from '@vaipakam/lib/d1Maintenance';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
@@ -129,6 +134,15 @@ export default {
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // #2239 — decline the whole tick when this build has no D1 binding.
+    // Every pass below reads or writes the database, so one line here beats a
+    // separate failure from each `waitUntil` continuation.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      return;
+    }
+
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; all three passes get the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -211,6 +225,23 @@ export default {
 
   async fetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+
+    // #2239 — one answer for every route while this build has no D1 binding.
+    //
+    // Blunt ON PURPOSE. A few routes here touch no database (the aggregator
+    // quote proxies, the Frames image), and refusing those too costs their
+    // callers a short window. The alternative is a per-route list of which
+    // routes read D1, kept correct by hand forever — which is precisely the
+    // enumeration this whole mechanism exists to stop. One rule at the
+    // entrance cannot fall out of step with the routes below it.
+    //
+    // 503 + Retry-After, and a body that says nothing was recorded: a caller
+    // whose write is refused must be told it did not happen, rather than be
+    // handed a 500 that could mean anything.
+    if (!hasD1Binding(env.DB)) {
+      const { body, ...rest } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, rest);
+    }
 
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; every route handler below gets the plain resolved
