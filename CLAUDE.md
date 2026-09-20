@@ -1346,35 +1346,42 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 > take a step back and see if you can fix the issue at the root rather
 > than patching them in every path." These caps are written INTO the two
 > bullets below rather than beside them; **10** replaces the 2026-08-07
-> two-round docs rule outright, and **30** is the coding loop's outer
-> bound.
+> two-round docs rule outright. The **30** it names as the coding loop's
+> outer bound is SUPERSEDED — see the next paragraph.
 >
-> **Round 28 — the MANDATORY root scout — user directive 2026-09-17,
-> verbatim:** "if the PR codex finding rounds go beyond 28 rounds, then
+> **Round 15 — the MANDATORY root scout — user directive 2026-09-20,
+> verbatim:** "if the PR codex finding rounds go beyond 15 rounds, then
 > recheck (scout) the code if the issues could be arrested in the root
-> rather than patching them up in every path."
+> rather than patching them up in every path." — followed the same
+> morning, when a separate 30-round stop had been kept alongside it, by:
+> **"replace 28 or 30 with 15."**
 >
-> **28 is a trigger, 30 is still the stop.** Crossing 28 obligates a
-> fresh SCOUT of the code for a root arrest; 30 remains the outer bound
-> from 2026-09-13 and is unchanged. The two rounds between them are the
-> point: the scout has to happen while there is still room to act on
-> what it finds, and a trigger sitting ON the cap would leave none.
+> **15 is the trigger AND the stop — one number.** This supersedes both
+> the 30-round outer bound of 2026-09-11/13 and the 28-round scout
+> trigger of 2026-09-17 (itself lowered from 30 the same day). The
+> history is recorded so an operator who remembers an older number knows
+> which one is live. The earlier shape — a trigger sitting a few rounds
+> inside a later stop — is gone: at round 15 the loop STOPS, the root
+> scout is mandatory, and the PR merges then only if no P1/P2 stands in
+> the latest round. There is no later cap to land a restructured fix
+> against; the scout at 15 is what decides whether the PR merges or is
+> re-cut.
 >
 > What the scout is, precisely: a re-examination of the CODE the findings
 > keep landing on — asking whether one shared rule, one boundary, one
 > deletion removes the whole class — **not** another re-read of the
-> findings, which is what a loop that has reached round 28 has been doing
-> for 28 rounds already.
+> findings, which is what a loop that has reached round 15 has been doing
+> for 15 rounds already.
 >
 > Two things this does NOT license. It is not permission to loop toward
-> 28: the escalate-to-owner signal after **10 rounds since the last
-> surface change** still fires, and fires far earlier, so a loop should
+> 15: the escalate-to-owner signal after **10 rounds since the last
+> surface change** still fires, and fires earlier, so a loop should
 > rarely reach this trigger without the owner already knowing. And the
-> root-fix duty does not WAIT for 28 — the same-seam-three-rounds-running
+> root-fix duty does not WAIT for 15 — the same-seam-three-rounds-running
 > signal below fires whatever the round number, and every recorded
-> precedent (#1995, #2066 at round 6, #2149 at round 13) was caught well
-> short of it. Round 28 is the backstop for a loop that slipped past all
-> of them, not the point at which root-cause thinking begins.
+> precedent (#1995, #2066 at round 6, #2149 at round 13, #2232 at round 1)
+> was caught short of it. Round 15 is the backstop for a loop that slipped
+> past all of them, not the point at which root-cause thinking begins.
 
 - **Docs-only PRs**: loop to convergence, and **never past round 10**;
   at round 10 merge if **no P1 finding stands** (user directive
@@ -1389,10 +1396,11 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   Skipping Codex entirely remains OK for trivial mechanical edits — say
   so in the thread.
 - **Coding PRs**: keep triggering rounds until findings **converge**, and
-  **never past round 30** (user directive 2026-09-13). **Past round 28, a
-  fresh scout of the code for a root arrest is MANDATORY** (user directive
-  2026-09-17) — see the banner above for what that scout is and what it
-  does not license. Two earlier
+  **never past round 15** (user directive 2026-09-20, replacing the 30 of
+  2026-09-13 and the 28 of 2026-09-17). **At round 15 a fresh scout of the
+  code for a root arrest is MANDATORY**, and the PR merges at 15 only if
+  no P1/P2 stands in the latest round — see the banner above for what
+  that scout is and what it does not license. Two earlier
   signals still fire inside that ceiling: escalate to the owner rather
   than grinding past 10 rounds after the last SURFACE CHANGE in the code
   (only a substantive code change resets that count; replies, thread
@@ -1430,8 +1438,8 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
 - Merge gate: **coding PRs** only after a converged round AND green CI,
-  never past round 30, and — where the loop ran past 28 — not without the
-  root scout the 2026-09-17 directive requires; **docs-only PRs** after a
+  never past round 15, and at round 15 only after the root scout the
+  2026-09-20 directive requires, with no P1/P2 standing; **docs-only PRs** after a
   converged round, or at the round-10
   cap with no P1 standing, AND green CI. All review
   conversations must be resolved before merge (repo rule) in both cases —
