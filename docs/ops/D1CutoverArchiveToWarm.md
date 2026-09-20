@@ -7,11 +7,21 @@
 2. **Do not migrate the data.** Fresh contract deployments are expected, so
    the new database starts empty and captures new data only.
 
-That second decision is what makes this document short. Earlier revisions
-carried a quiesce, a whole-database export/import, a reconciliation and a
-secure-destruction step for a file full of personal data. None of that is
-needed to move to an empty database, and every one of those steps was a
-place to get it wrong.
+That second decision is what makes this document short — **but it does not
+make the quiesce optional, and an earlier revision of this paragraph said it
+did** (#2252 r4 P2).
+
+What decision 2 removes is the DATA migration: the whole-database
+export/import, the reconciliation of two populated databases, and the
+secure-destruction step for a file full of personal data. Each was a place to
+get it wrong and none is needed to move to an empty database.
+
+What it does NOT remove is the quiesce. That protects something different —
+writes a user watched succeed, landing in a database that is about to be
+abandoned — and it is needed precisely BECAUSE the target starts empty, since
+there is nothing to reconcile such a row against afterwards. §3 carries it as
+a mandatory procedure with a stated operating posture; this paragraph is a
+summary of decision 2, not a licence to skip §3.
 
 ---
 
@@ -99,7 +109,9 @@ revision of this table said it was. It is per-wallet, per-chain alert
 configuration with no loan identifier, and the same row carries the user's
 Telegram chat id. A redeploy changes which contracts it watches, not the
 user's stated preference. It is one row today; export it with the tickets if
-that user's settings are worth keeping.
+that user's settings are worth keeping — and read P6 in §3 before deciding
+what "keeping" buys, because nothing in this document loads an export back
+into the target.
 
 And the born-off-chain set is larger than this table shows: the classifier
 also names `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
@@ -550,9 +562,72 @@ via an alias; the cron schedule is untouched, so its propagation window does
 not apply — a tick that fires simply finds no capability; and an entry point
 outside every list is covered because the mechanism never names one.
 
-#### The procedure
+#### Operating posture — stated ONCE, here; the steps derive from it
 
-1. **Deploy the maintenance build** to all four Workers (`apps/{indexer,
+**Why this block exists** (#2252 r4, the root fix). Three review rounds found
+the same defect in three places: this procedure's safety properties were
+restated in the opening summary, in the governing rule, inside the mechanism
+description and inside the steps, and an edit to one left the others saying
+something else. Patching a fourth contradiction would have repeated the loop.
+So the posture is stated once, here, and everything below points at it rather
+than re-describing it. **If you change a property, change it here.**
+
+**P1 — the invariant.** The four builds activate at independent times, exactly
+as they always did. What the maintenance build changes is what the others are
+doing meanwhile:
+
+> During the window the deployment set is only ever **{on the target, unbound
+> and refusing}**. It is never **{on the target, on the source}**.
+
+Nothing can write to the abandoned database, because after Q1 nothing is
+bound to it. The mixed state still exists and is now harmless — which is the
+whole difference between staggered activation and a write-loss window.
+
+**P2 — staggered restoration onto the TARGET is acceptable; a writer live on
+the SOURCE is not.** This is the amended rule above, and it is what makes
+"deploying the binding is also what restores the Worker" safe rather than a
+contradiction.
+
+**P3 — a failed build fails SAFE.** A Worker whose build errors stays on the
+maintenance deployment: refusing, not writing to the old database. Fix the
+build; nothing accumulates in the wrong place meanwhile.
+
+**P4 — the merge freeze is a PRECONDITION, not a closing note** (#2252 r4 P1).
+It must be in force **before Q1's first maintenance deploy** and stay in
+force through step 4's final confirmation. Every merge to `main` triggers
+every Worker's build, and during this window the committed tree names the
+SOURCE right up until the Q3 merge — so any unrelated merge landing after
+Q0 rebuilds an already-unbound Worker straight back onto the database
+being abandoned. That is the one way P1 can be broken from outside, and it is
+broken silently. An earlier revision stated the freeze after the steps that
+depend on it, which told an operator to start it at the moment it had stopped
+mattering.
+
+**P5 — the residual is in-flight work, and its length is unmeasured.** Work
+admitted by the deployment BEFORE the maintenance build keeps the environment
+it captured and can still write until it finishes. That is what Q2's drain
+waits out. The interval is deliberately not given a number here; see "The
+residual" below.
+
+**P6 — retained rows are ARCHIVED, not restored.** §1 exports the
+born-off-chain tables and Q2b re-exports anything that moved; **neither
+loads them into the target**, and the target is deliberately empty. So a
+support ticket that survives this procedure survives as a row in a file, not
+as a ticket in the service — and somebody has to answer it from there. This
+is stated rather than implied because it looked like retention and is not
+(#2252 r4 P1). **Whether that is the intended outcome is an owner decision and
+has not been taken.** Loading them back is not a step this document can invent:
+it needs a decision about id collisions with a fresh schema, about what a
+diagnostic row means once the contracts it references are gone, and about
+whether a legal hold may be reconstructed at all. If retention-in-service is
+wanted, that is a separate, designed step.
+
+#### The procedure — Q-steps, so they cannot be read as §3's Steps 0–3
+
+**Q0. Freeze merges to `main`** — per P4, before anything else, and keep it
+   frozen until Q4 is complete.
+
+**Q1. Deploy the maintenance build** to all four Workers (`apps/{indexer,
    keeper,agent}` and `ops/offchain-data-warm`) — same commit, `d1_databases`
    removed.
 
@@ -592,10 +667,10 @@ outside every list is covered because the mechanism never names one.
    identically. What it does not get is the named refusal and the one-line log,
    so expect a raw error from that Worker during the window and do not read it
    as a new fault. It writes no user-facing rows, so nothing is lost either way.
-2. **Drain.** Executions admitted BEFORE the maintenance deploy still hold the
+**Q2. Drain.** Executions admitted BEFORE the maintenance deploy still hold the
    environment they captured and can still write. This is the one residual,
    and it is real — see below.
-2b. **Re-export the retained rows, AFTER the drain and before activating the
+**Q2b. Re-export the retained rows, AFTER the drain and before activating the
    target** (#2252 r3 P1). §1's export is taken before any of this starts, and
    the four maintenance deploys are sequential — so between that export and
    the last Worker going unbound, the agent or the indexer can still accept a
@@ -611,14 +686,18 @@ outside every list is covered because the mechanism never names one.
    and before the target goes live. Taking it any earlier leaves a gap; taking
    it any later means reading a database that is no longer the one being
    written to.
-3. **Move the bindings, which is also what restores service.** Merge the
+
+   **This EXPORTS; it does not restore.** See P6 — the rows survive as a file,
+   not as rows in the service, and whether that is the intended outcome is an
+   open owner decision.
+**Q3. Move the bindings, which is also what restores service.** Merge the
    commit that points all four at the target database, and let each Worker's
    build run. Each deployment that lands carries the new binding, so that
    Worker resumes on the target as it lands.
 
    **A merge restores only THREE of the four** (#2252 r3 P2).
    `ops/offchain-data-warm` does not auto-deploy — §2 establishes that, and it
-   is why its maintenance build in step 1 is a manual deploy too. Deploy it by
+   is why its maintenance build in Q1 is a manual deploy too. Deploy it by
    hand here, with the form quoted in §0:
 
    ```bash
@@ -627,40 +706,24 @@ outside every list is covered because the mechanism never names one.
    ```
 
    Omit it and its `DB_ARCHIVE` stays absent: the nightly backup keeps
-   failing, and step 4 can never confirm all four bindings on the target.
+   failing, and Q4 can never confirm all four bindings on the target.
    Nothing is lost while that is true — it writes no user-facing rows — but
-   the cutover is not finished. **There is no separate restore
-   step, and an earlier revision's step 5 said there was** (#2252 r1 P1) — it
-   described re-deploying a binding that step 3 had already delivered, and it
-   made step 4's "while the Workers are still refusing" false for any Worker
+   the cutover is not finished.
+
+   **There is no separate restore step, and an earlier revision's Q5 said
+   there was** (#2252 r1 P1) — it
+   described re-deploying a binding that Q3 had already delivered, and it
+   made Q4's "while the Workers are still refusing" false for any Worker
    whose build had finished.
-4. **Confirm** every binding individually, per Step 3 below. Workers whose
+
+**Q4. Confirm** every binding individually, per Step 3 below. Workers whose
    builds have landed are live on the target; the rest are still unbound and
    refusing. Both are fine — see the invariant.
 
-**THE INVARIANT THAT MAKES STEP 3 SAFE, and it is the whole reason the
-maintenance build comes first.** Those four builds still activate at
-independent times, exactly as they always did. What changed is what the other
-Workers are doing meanwhile:
-
-> During the window the deployment set is only ever **{on the target, unbound
-> and refusing}**. It is never **{on the target, on the source}**.
-
-Nothing can write to the abandoned database, because after step 1 nothing is
-bound to it. The mixed state still exists and is now harmless — which is the
-difference between staggered activation and a write-loss window, and it is why
-"quiesce first" is not decoration.
-
-Two consequences worth acting on:
-
-- **A failed build fails SAFE.** A Worker whose build errors stays on the
-  maintenance deployment — refusing, not writing to the old database. Fix the
-  build; nothing is accumulating in the wrong place while you do.
-- **Freeze other merges to `main` for the duration.** Every merge triggers
-  every Worker's build, and a build from a tree whose config still names the
-  source would put that Worker back on the abandoned database while others are
-  already on the target — reintroducing precisely the split this invariant
-  rules out.
+**Why Q3 is safe although the builds land at different times: P1 and P2 of
+the operating posture above.** They are not restated here — that duplication is
+what three review rounds kept finding, and one of the two copies was always the
+stale one.
 
 #### The residual, stated rather than absorbed
 

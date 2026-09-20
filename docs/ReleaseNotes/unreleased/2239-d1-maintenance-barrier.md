@@ -62,15 +62,37 @@ being a window in which writes are lost and becomes merely staggered. A service
 whose switch fails now fails safe, staying on the refusing build rather than
 carrying on against the database being left behind.
 
-Two things fall out of that and are stated as steps. Other changes must not be
-merged during the window, because any merge re-deploys every service from a
-tree that may still name the old database — which would put one back on it
-while others have already moved, recreating exactly the split the invariant
-rules out. And confirmation is read from the deployment's own configuration
-rather than from how a service behaves: two of the four cannot be asked
-behaviourally at all — one is currently unscheduled and answers no requests,
-the other runs once a day — so a procedure that depended on watching them
-refuse could not be carried out.
+Several things fall out of that and are now stated in one place rather than
+scattered. Unrelated changes must not be merged for the duration, because any
+merge re-deploys every service from a tree that still names the old database —
+which would put one back on it while others have already moved, recreating
+exactly the split the invariant rules out. That freeze is a precondition, in
+force before the first step and until the last, rather than a closing remark.
+Confirmation is read from each deployment's own configuration rather than from
+how a service behaves, because two of the four cannot be asked behaviourally at
+all — one is currently unscheduled and answers no requests, the other runs once
+a day.
+
+And one thing is now said plainly that had been implied: the rows worth keeping
+are **archived, not restored**. They are exported to a file and nothing loads
+them into the new database, which starts deliberately empty. So a support
+ticket that survives this procedure survives as a line in a file, and somebody
+has to answer it from there. Whether that is the intended outcome is an open
+decision for the owner — loading them back is not something this procedure can
+invent for itself, because it would need answers about identifier collisions
+against a fresh schema, about what a diagnostic record means once the contracts
+it refers to are gone, and about whether a legal hold may be reconstructed at
+all.
+
+The reason all of this now lives in one block is itself worth recording. Three
+review rounds found the same defect in three different places: the procedure's
+safety properties were restated in the opening summary, in the governing rule,
+in the description of the mechanism and inside the steps — and an edit to one
+left the others saying something else. Patching a fourth contradiction would
+have repeated the loop, so the properties are stated once and everything else
+points at them. The steps are lettered, too, because the document already had a
+differently-numbered sequence and "step 3" had come to mean two different
+things.
 
 There is also an explicitly marked exception: the nightly backup service sits
 outside the shared code and so fails bluntly rather than politely during a
