@@ -52,63 +52,29 @@ is the defect this whole exercise was opened to remove. What changed is the
 shape of the unknown: one measurable quantity instead of an open-ended set of
 entry points to get right.
 
-The operating procedure for the database move now carries the sequence
-end-to-end, and the part that makes it work is an invariant rather than a step.
-The four services still switch over at independent times, exactly as they
-always did. What changed is what the others are doing meanwhile.
+**What this change does NOT include, and the reason is worth recording.** It
+ships the ability to hold a service off its data; it does not ship the
+step-by-step procedure for actually moving the database. The operating runbook
+still says, as it has since the problem was first raised, that the procedure is
+unspecified — it now points at the mechanism instead of at an open question.
 
-**Once every service has been confirmed held off its data** — and only from
-that point — the set is only ever *some on the new database, the rest
-refusing*; it is never *some on the new, some on the old*. Nothing can write to
-the abandoned database because nothing is pointed at it any more. Staggered
-switching stops being a window in which writes are lost and becomes merely
-staggered.
+That was a deliberate split rather than work left undone. A full procedure was
+drafted and went through seven rounds of review; each round produced correct
+findings and the count rose rather than fell, and one round's fix was
+invalidated by the next round's. The cause was not the drafting. The procedure
+describes an operation with four unresolved inputs — there is no tooling to
+produce a maintenance build without hand-editing production configuration, it
+is an open decision whether rows worth keeping are archived or restored back
+into service, the length of the wait for work already in flight has never been
+measured, and the ordering against a planned contract redeploy is unsettled.
+Writing steps around four unknowns generates a steady supply of correct
+objections about steps whose preconditions do not exist yet.
 
-The scoping matters and is not a caveat. Holding the services off their data is
-itself done one at a time, so while that is happening some are still on the old
-database — which is the ordinary state being left, not a violation. A service
-that fails to be held off fails the opposite way from one that fails to switch
-over: the first is still writing where it should not and stops the procedure
-dead, the second is simply refusing and can be fixed at leisure. Both were
-previously described as if only the second existed.
-
-Several things fall out of that and are now stated in one place rather than
-scattered. Unrelated changes must not be merged for the duration, because any
-merge re-deploys every service from a tree that still names the old database —
-which would put one back on it while others have already moved, recreating
-exactly the split the invariant rules out. That freeze is a precondition, in
-force before the first step and until the last, rather than a closing remark.
-Confirmation is read from each deployment's own configuration rather than from
-how a service behaves, because two of the four cannot be asked behaviourally at
-all — one is currently unscheduled and answers no requests, the other runs once
-a day.
-
-And one thing is now said plainly that had been implied: the rows worth keeping
-are **archived, not restored**. They are exported to a file and nothing loads
-them into the new database, which starts deliberately empty. So a support
-ticket that survives this procedure survives as a line in a file, and somebody
-has to answer it from there. Whether that is the intended outcome is an open
-decision for the owner — loading them back is not something this procedure can
-invent for itself, because it would need answers about identifier collisions
-against a fresh schema, about what a diagnostic record means once the contracts
-it refers to are gone, and about whether a legal hold may be reconstructed at
-all.
-
-The reason all of this now lives in one block is itself worth recording. Three
-review rounds found the same defect in three different places: the procedure's
-safety properties were restated in the opening summary, in the governing rule,
-in the description of the mechanism and inside the steps — and an edit to one
-left the others saying something else. Patching a fourth contradiction would
-have repeated the loop, so the properties are stated once and everything else
-points at them. The steps are lettered, too, because the document already had a
-differently-numbered sequence and "step 3" had come to mean two different
-things.
-
-There is also an explicitly marked exception: the nightly backup service sits
-outside the shared code and so fails bluntly rather than politely during a
-window. It writes nothing a user can see, so nothing is lost — but an operator
-watching the logs should expect a raw error from it and not read that as a new
-fault.
+So the mechanism lands, and the procedure is tracked separately with its open
+findings recorded against the draft. Nothing about the database move becomes
+possible or impossible as a result; what changes is that a reader of the
+runbook is no longer told a procedure exists when the things it depends on have
+not been decided.
 
 The functional specification gains the intent underneath all of this: a service
 that cannot reach its data says so rather than answering anyway; holding a
@@ -116,11 +82,11 @@ service off its data is done by removing the capability rather than by
 enumerating the code that uses it; and the residual is named rather than
 absorbed.
 
-Closes #2239. Follow-up, deliberately not folded in: producing a maintenance
-build still means editing a production configuration file by hand and
-remembering to put it back, four times over. The procedure names that as its
-own weakest step rather than glossing it; tooling to generate the stripped
-configuration, so no tracked file is ever touched, is filed as #2250. It was
-left out because it cannot be honestly verified from here — proving it works
-means taking a live service off its database, which is the very operation it
-exists to make safe.
+Closes #2239. Two follow-ups, both deliberate. Producing a maintenance build
+still means editing a production configuration file by hand and remembering to
+put it back, four times over; tooling to generate it so no tracked file is ever
+touched is #2250, left out here because it cannot be honestly verified from
+this side — proving it works means taking a live service off its database,
+which is the very operation it exists to make safe. And the operating procedure
+for the move itself is #2255, with the draft and its open findings recorded
+there.

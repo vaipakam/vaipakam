@@ -7,21 +7,11 @@
 2. **Do not migrate the data.** Fresh contract deployments are expected, so
    the new database starts empty and captures new data only.
 
-That second decision is what makes this document short — **but it does not
-make the quiesce optional, and an earlier revision of this paragraph said it
-did** (#2252 r4 P2).
-
-What decision 2 removes is the DATA migration: the whole-database
-export/import, the reconciliation of two populated databases, and the
-secure-destruction step for a file full of personal data. Each was a place to
-get it wrong and none is needed to move to an empty database.
-
-What it does NOT remove is the quiesce. That protects something different —
-writes a user watched succeed, landing in a database that is about to be
-abandoned — and it is needed precisely BECAUSE the target starts empty, since
-there is nothing to reconcile such a row against afterwards. §3 carries it as
-a mandatory procedure with a stated operating posture; this paragraph is a
-summary of decision 2, not a licence to skip §3.
+That second decision is what makes this document short. Earlier revisions
+carried a quiesce, a whole-database export/import, a reconciliation and a
+secure-destruction step for a file full of personal data. None of that is
+needed to move to an empty database, and every one of those steps was a
+place to get it wrong.
 
 ---
 
@@ -109,9 +99,7 @@ revision of this table said it was. It is per-wallet, per-chain alert
 configuration with no loan identifier, and the same row carries the user's
 Telegram chat id. A redeploy changes which contracts it watches, not the
 user's stated preference. It is one row today; export it with the tickets if
-that user's settings are worth keeping — and read P6 in §3 before deciding
-what "keeping" buys, because nothing in this document loads an export back
-into the target.
+that user's settings are worth keeping.
 
 And the born-off-chain set is larger than this table shows: the classifier
 also names `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
@@ -479,23 +467,8 @@ has not been measured at the bindings themselves.**
 **The rule, and it is one rule for both directions.**
 
 > Before merging any change to a D1 binding — the cutover or its revert —
-> **quiesce every user-facing writer.** No writer may be live on the database
-> being left behind at any point after that.
-
-**AMENDED 2026-09-20** (#2252 r3 P2). This rule used to end "restore traffic
-only once **every** Worker's binding has been confirmed", and that is no
-longer followable: deploying the new binding is *what* restores that Worker,
-so an operator cannot both move the bindings and keep traffic stopped until
-all four are confirmed. The instruction and the mechanism contradicted each
-other.
-
-**The decision, recorded rather than implied: staggered restoration onto the
-TARGET is acceptable.** What was never acceptable is a writer live on the
-SOURCE after the move begins, and that is what the rule now says. The
-quiescence procedure below is what makes the difference real — after its step
-1 nothing is bound to the source, so a Worker resuming early resumes on the
-target and cannot write to the database being abandoned. See the invariant
-stated there.
+> **quiesce every user-facing writer.** Restore traffic only once **every**
+> Worker's binding has been confirmed on the intended database.
 
 **"Every user-facing writer" is more than agent**, which is the second thing
 the old frame got wrong (#2238 r2 P1) — and establishing HOW MANY more turned
@@ -508,7 +481,7 @@ inbox rows cannot be regenerated once the crossing has recovered.
 **That list is known to be incomplete**, which is why the next section refuses
 to present one as a procedure.
 
-### The writers must be quiesced across the change — and here is how
+### The writers must be quiesced across the change — and the procedure for that is NOT specified here
 
 **What is established**, and it is the part this step needs:
 
@@ -521,324 +494,60 @@ to present one as a procedure.
 - Writes reaching the abandoned database in that window are lost, and some of
   them are things a user watched succeed: a threshold, a signed offer, a
   support ticket, a legal hold **and its audit record**.
-- So the writers must be stopped across the change — and, per the amended
-  rule above, restarted onto the TARGET as each binding lands rather than held
-  until all four are confirmed. Staggered restoration onto the target is
-  acceptable; a writer live on the source after the move begins is not.
+- So the writers must be stopped across the change, and restarted only once
+  every binding is confirmed.
 
-**The mechanism is capability removal, not an inventory** (#2239, owner
-decision 2026-09-20). Four review rounds of #2238 tried to write this
-procedure as a list of writers to close, and each round found another way one
-reaches D1 that the previous wording missed — a second Worker's routes, a cron
-event that traverses no route, the diagnostic routes, a Durable Object alarm
-that re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
-aliases that bypass a zone rule, and a schedule change that takes up to fifteen
-minutes to propagate. That list was never going to finish, because
+**How to stop them is an open question, deliberately left open** (#2239). Four
+review rounds of #2238 tried to write that procedure as an inventory of
+writers to close, and each round found another way one reaches D1 that the
+previous wording missed — a second Worker's routes, a cron event that
+traverses no route, the diagnostic routes, a Durable Object alarm that
+re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
+aliases that bypass a zone rule, and a schedule change that takes up to
+fifteen minutes to propagate.
 
-> you cannot prove "no writer" by listing writers. You can prove it by removing
-> the write capability.
+**UPDATE 2026-09-20: the MECHANISM now exists; the PROCEDURE still does not**
+(#2239, shipped in #2252). The Workers can be held off the database by
+capability removal — a deployment whose `d1_databases` entry is absent, so
+nothing in the isolate can obtain a handle whatever entry point it arrives
+through — and they now cooperate with that state rather than crashing into it.
+`docs/FunctionalSpecs/ProjectDetailsREADME.md` §13 states the intent under
+"Off-Chain Data Services".
 
-A **maintenance build** is a deploy of the same code whose `d1_databases`
-entry is absent. **Nothing that runs in it** can obtain a database handle — not
-a route, not a cron tick, not a Durable Object alarm, not a `waitUntil`
-continuation, not a request that arrived over a `workers.dev` alias, and not an
-entry point nobody has thought of yet.
+**That is the mechanism, not the runbook.** Writing the step-by-step procedure
+around it needs four things this document does not yet have: tooling to produce
+a maintenance build without hand-editing production config (#2250), an owner
+decision on whether retained rows are archived or restored, a drain criterion
+that survives its own premise, and the contract-redeploy sequencing in §2.
+**#2255 carries that work and the open findings against the draft.** Until it
+lands, everything below stands: the procedure is unspecified, and the
+paragraphs that follow explain why writing one anyway is worse than saying so.
 
-**"That runs in it" is doing real work in that sentence** (#2252 r3 P2). The
-guarantee covers work admitted by the MAINTENANCE build. Work admitted by the
-deployment before it holds the environment it captured and can still write
-until it finishes — a `waitUntil` continuation, a Durable Object alarm already
-in flight. That is the drain in step 2, and it is the one residual this
-procedure carries; stating the list categorically would make the control-plane
-confirmation look stronger than it is in exactly the interval where the
-difference matters. The Workers cooperate with that state
-rather than crashing into it: each declines at its entrance, answering `503`
-with a `Retry-After` and a body that says nothing was recorded, and logging one
-line per tick rather than one failure per pass.
+**Enumerating the ways code can reach a database is an unbounded predicate.**
+Writing a list here that reads authoritative and is incomplete is worse than
+saying so: an operator follows it, believes the writers are stopped, and loses
+exactly the rows this section exists to protect. #2239 carries the
+requirements, the evidence for each, and the decisions an owner has to make —
+including whether a maintenance build should simply carry **no D1 binding at
+all**, which is the one formulation that does not depend on having enumerated
+the entry points correctly.
 
-**Three of the round-5 objections are answered by the choice of mechanism
-rather than by a clause each.** There is no zone rule, so nothing bypasses one
-via an alias; the cron schedule is untouched, so its propagation window does
-not apply — a tick that fires simply finds no capability; and an entry point
-outside every list is covered because the mechanism never names one.
-
-#### Operating posture — stated ONCE, here; the steps derive from it
-
-**Why this block exists** (#2252 r4, the root fix). Three review rounds found
-the same defect in three places: this procedure's safety properties were
-restated in the opening summary, in the governing rule, inside the mechanism
-description and inside the steps, and an edit to one left the others saying
-something else. Patching a fourth contradiction would have repeated the loop.
-So the posture is stated once, here, and everything below points at it rather
-than re-describing it. **If you change a property, change it here.**
-
-**P1 — the invariant.** The four builds activate at independent times, exactly
-as they always did. What the maintenance build changes is what the others are
-doing meanwhile:
-
-> **Once Q1's four control-plane confirmations have all succeeded**, and for
-> the rest of the procedure, the deployment set is only ever **{on the target,
-> unbound and refusing}**. It is never **{on the target, on the source}**.
-
-**The scoping words are load-bearing** (#2252 r5 P2). Q1 itself is sequential,
-so while it is running the set is `{source, unbound}` — Workers not yet
-redeployed are still bound to the database being abandoned, which is the
-ordinary state the procedure is working to leave and not a violation of
-anything. The invariant is a property of the window AFTER Q1, which is the
-window in which the bindings move. An earlier revision stated it
-categorically, which made it false of a state the procedure necessarily
-passes through.
-
-Nothing can write to the abandoned database once Q1 is complete, because
-nothing is bound to it. The mixed state during Q3 still exists and is
-harmless — which is the whole difference between staggered activation and a
-write-loss window.
-
-**P2 — staggered restoration onto the TARGET is acceptable; a writer live on
-the SOURCE is not.** This is the amended rule above, and it is what makes
-"deploying the binding is also what restores the Worker" safe rather than a
-contradiction.
-
-**P3 — a failed Q3 build fails SAFE; a failed Q1 deploy does NOT** (#2252 r5
-P2). These are opposite cases and an earlier revision stated only the
-favourable one.
-
-- **Q3** — a Worker whose build errors stays on the maintenance deployment:
-  refusing, not writing to the old database. Fix the build; nothing
-  accumulates in the wrong place meanwhile.
-- **Q1** — a Worker whose maintenance deploy fails stays bound to the
-  **source**. That is not safe and it is not a state to proceed from: it is
-  the whole condition Q1 exists to remove. **A Q1 failure BLOCKS the
-  procedure.** Do not start Q2's drain, and do not merge Q3, until all four
-  Q1 confirmations have passed — the binding move is only safe under the
-  invariant, and the invariant is what Q1 establishes.
-
-**P4 — freeze every DEPLOYMENT, not merely every merge, and do it as a
-PRECONDITION** (#2252 r4 P1, widened r6 P1). It must be in force **before
-Q1's first maintenance deploy** and stay in force through Q4's final
-confirmation.
-
-The rule: **between Q0 and Q4, the only deployments that may happen are the
-ones this procedure names — Q1's four maintenance deploys, Q3's merge, and
-Q3's manual `ops/offchain-data-warm` deploy.** Nothing else. That covers three
-distinct routes, and an earlier revision named only the first:
-
-- a **merge to `main`**, which triggers every Worker's build;
-- a **manual `wrangler deploy`** from any checkout — it needs no merge and
-  takes whatever config that tree holds;
-- a **dashboard rollback**, which this document already notes creates a fresh
-  deployment rather than restoring an old one.
-
-All three land the same way, because during this window the committed tree
-names the **SOURCE** right up until the Q3 merge: any of them rebuilds an
-already-unbound Worker straight back onto the database being abandoned. That
-is how P1 gets broken from outside, and it is broken silently. An earlier revision stated the freeze after the steps that
-depend on it, which told an operator to start it at the moment it had stopped
-mattering.
-
-**P5 — the residual is in-flight work, and its length is unmeasured.** Work
-admitted by the deployment BEFORE the maintenance build keeps the environment
-it captured and can still write until it finishes. That is what Q2's drain
-waits out. The interval is deliberately not given a number here; see "The
-residual" below.
-
-**P6 — retained rows are ARCHIVED, not restored.** §1 exports the
-born-off-chain tables and Q2b re-exports anything that moved; **neither
-loads them into the target**, and the target is deliberately empty. So a
-support ticket that survives this procedure survives as a row in a file, not
-as a ticket in the service — and somebody has to answer it from there. This
-is stated rather than implied because it looked like retention and is not
-(#2252 r4 P1). **Whether that is the intended outcome is an owner decision and
-has not been taken.** Loading them back is not a step this document can invent:
-it needs a decision about id collisions with a fresh schema, about what a
-diagnostic row means once the contracts it references are gone, and about
-whether a legal hold may be reconstructed at all. If retention-in-service is
-wanted, that is a separate, designed step.
-
-#### The procedure — Q-steps, so they cannot be read as §3's Steps 0–3
-
-**Q0. Freeze every deployment route** — merges to `main`, manual
-   `wrangler deploy`, and dashboard rollbacks alike. Per P4, before anything
-   else, and in force until Q4 is complete. The only deployments permitted in
-   between are Q1's, Q3's merge and Q3's manual backup-Worker deploy.
-
-**Q1. Deploy the maintenance build** to all four Workers (`apps/{indexer,
-   keeper,agent}` and `ops/offchain-data-warm`) — same commit, `d1_databases`
-   removed.
-
-   **Confirm from the CONTROL PLANE, because two of the four cannot be asked
-   behaviourally** (#2252 r1 P2). Read each Worker's bindings — *Settings →
-   Bindings* in the dashboard, or the API — and confirm no D1 binding is
-   present. That is the same check Step 3 below already relies on, for the
-   same reason it gives there: it reflects what is actually deployed, and it
-   is the only check available when the request surfaces are closed.
-
-   Do **not** make the behavioural check the gate. `apps/keeper` is on
-   `"crons": []` and exports only `scheduled`, so it emits nothing on demand
-   and cannot be prodded into logging anything; `ops/offchain-data-warm` runs
-   once a day at `17 3 * * *` and has no refusal seam at all. A `503` from the
-   indexer or the agent, and the `[d1] … maintenance build` line in their
-   logs, are worth reading as corroboration on the two Workers that serve
-   requests — and prove nothing about the other two.
-
-   **How you produce it today is the weakest link in this procedure, and it is
-   deliberately not dressed up.** There is no flag that deploys a Worker
-   without one of its bindings, so today it means deleting the `d1_databases`
-   block from that Worker's `wrangler.jsonc`, deploying from the edited tree,
-   and restoring the block afterwards — a hand edit to production
-   configuration, done four times, under time pressure, with the restore step
-   carried only in the operator's memory. That is the same class of error the
-   rest of this document exists to remove. Do not skip the confirmation above
-   on the strength of having run the command: read the refusal back from each
-   Worker. **Tooling to generate and deploy the stripped config, so no tracked
-   file is ever edited, is #2250** — until it lands, treat the edit-and-restore
-   as a step that needs a second person watching.
-
-   **`ops/offchain-data-warm` is the exception, and it is a graceful-failure
-   exception rather than a safety one.** It is a standalone package outside the
-   pnpm workspace, so it does not carry the shared seam; its binding is named
-   `DB_ARCHIVE`, and removing it makes the nightly export fail rather than
-   decline politely. The capability removal — the part that matters — works
-   identically. What it does not get is the named refusal and the one-line log,
-   so expect a raw error from that Worker during the window and do not read it
-   as a new fault. It writes no user-facing rows, so nothing is lost either way.
-**Q2. Drain — and it has a completion criterion, which is an OBSERVATION of
-   the source database rather than a wait** (#2252 r6 P1). Executions admitted
-   before the maintenance deploy still hold the environment they captured and
-   can still write. This is the one residual, and it is real.
-
-   An earlier revision said "drain" and gave nothing to check, so Q2b could
-   finish exporting while a straggler continuation was still to write — the
-   very row the archive exists for. Do not substitute a guessed interval; ask
-   the database whether anything is still writing to it:
-
-   ```bash
-   # [run] 2026-09-20 — verified against the live account, read-only.
-   # Per-minute write activity for the SOURCE database. Requires a token with
-   # Account Analytics: Read. Substitute the database id being LEFT BEHIND.
-   #   POST https://api.cloudflare.com/client/v4/graphql
-   #   query { viewer { accounts(filter:{accountTag:$acct}) {
-   #     d1AnalyticsAdaptiveGroups(limit:50,
-   #       filter:{datetimeMinute_geq:$start, datetimeMinute_leq:$end},
-   #       orderBy:[datetimeMinute_DESC]) {
-   #       sum { writeQueries rowsWritten readQueries }
-   #       dimensions { databaseId datetimeMinute } } } } }
-   ```
-
-   **The signal is unambiguous, because the steady state is not quiet.** Read
-   live on 2026-09-20, `vaipakam-archive` runs at a floor of **1 write query
-   and 1 row written per minute**, every minute, spiking to 16 — that is the
-   indexer's cursor advancing. So `writeQueries: 0` is a real observation and
-   not merely an absence of traffic: a zero minute means nothing wrote, where
-   on a quiet database zero would mean nothing had happened to write.
-
-   Q2 is complete when the source reports **zero write queries for several
-   consecutive minutes**, read a few minutes after the last Q1 confirmation so
-   the per-minute rollup has settled.
-
-   **What this does and does not prove, stated rather than assumed.** It
-   observes WRITES, not executions: a continuation that is still running but
-   has not yet reached its write is invisible to it, so zero writes is a
-   NECESSARY condition and not a proof of quiescence. It is nonetheless far
-   stronger than a guessed interval, because it is a direct measurement of the
-   thing that actually matters — whether the database being abandoned is still
-   receiving rows — rather than a proxy for it.
-
-   **The cutover does not proceed on this alone.** P5's drain figure is still
-   owed: measure the real `waitUntil` tail before running this and record it
-   here, then hold for it AND require the zero-write observation. Two
-   independent conditions, neither invented.
-**Q2b. Re-export the retained rows, AFTER the drain and before activating the
-   target** (#2252 r3 P1). §1's export is taken before any of this starts, and
-   the four maintenance deploys are sequential — so between that export and
-   the last Worker going unbound, the agent or the indexer can still accept a
-   new threshold, support ticket, diagnostic record or legal hold **and its
-   audit row** into the source. Those are acknowledged to a user. Activating
-   the empty target without re-taking them discards exactly the rows §1 set
-   out to protect, and they are the ones a redeploy does NOT obsolete.
-
-   **Re-export all nine born-off-chain tables UNCONDITIONALLY. Do not compare
-   row counts and skip the ones that "did not move"** (#2252 r5 P1) — an
-   earlier revision said to, and a count cannot see the changes that matter
-   most here. `user_thresholds` is written with `ON CONFLICT … DO UPDATE`, so
-   a user changing an alert band rewrites a row without adding one; unlinking
-   Telegram clears a chat id in place. Both leave the count identical and the
-   content different, so a count-gated re-export keeps the STALE file and the
-   archive silently holds a superseded version of the user's settings. Nine
-   small tables cost nothing to export; a wrong archive costs the thing the
-   archive is for.
-
-   This is the moment when it is safe to do so and still true: everything is
-   unbound, the drain has finished, so nothing can add a row after this read
-   and before the target goes live. Taking it any earlier leaves a gap; taking
-   it any later means reading a database that is no longer the one being
-   written to.
-
-   **This EXPORTS; it does not restore.** See P6 — the rows survive as a file,
-   not as rows in the service, and whether that is the intended outcome is an
-   open owner decision.
-**Q3. Move the bindings, which is also what restores service.** Merge the
-   commit that points all four at the target database, and let each Worker's
-   build run. Each deployment that lands carries the new binding, so that
-   Worker resumes on the target as it lands.
-
-   **A merge restores only THREE of the four** (#2252 r3 P2).
-   `ops/offchain-data-warm` does not auto-deploy — §2 establishes that, and it
-   is why its maintenance build in Q1 is a manual deploy too. Deploy it by
-   hand here, with the form quoted in §0:
-
-   ```bash
-   # [unrun here] — verified form, copied from OffChainRestore.md §7b
-   ( cd ops/offchain-data-warm && npm ci && npm run deploy )
-   ```
-
-   Omit it and its `DB_ARCHIVE` stays absent: the nightly backup keeps
-   failing, and Q4 can never confirm all four bindings on the target.
-   Nothing is lost while that is true — it writes no user-facing rows — but
-   the cutover is not finished.
-
-   **There is no separate restore step, and an earlier revision's Q5 said
-   there was** (#2252 r1 P1) — it
-   described re-deploying a binding that Q3 had already delivered, and it
-   made Q4's "while the Workers are still refusing" false for any Worker
-   whose build had finished.
-
-**Q4. Confirm** every binding individually, per Step 3 below. Workers whose
-   builds have landed are live on the target; the rest are still unbound and
-   refusing. Both are fine — see the invariant.
-
-**Why Q3 is safe although the builds land at different times: P1 and P2 of
-the operating posture above.** They are not restated here — that duplication is
-what three review rounds kept finding, and one of the two copies was always the
-stale one.
-
-#### The residual, stated rather than absorbed
-
-**The drain interval is not specified here, and that is deliberate.** Putting
-an unmeasured number in an operator procedure is the defect #2239 was opened to
-stop. What the mechanism changes is the SHAPE of the remaining exposure: after
-the maintenance deploy, the only code that can still reach D1 is work admitted
-before it, holding the previous environment. That is a bounded, measurable
-population rather than an open-ended set of entry points — one unknown with an
-answer somebody can go and measure, instead of a list nobody can finish.
-
-Measure it from the real `waitUntil` tail before running the cutover, and
-record the figure here when you do.
+**Until #2239 is settled, treat this cutover as requiring an operator who
+accepts that exposure** — which is what the next section describes, honestly
+labelled.
 
 ### The alternative, and when it is defensible
 
 **Watch it through (the 2026-08-03 choice, defensible only pre-live).** Merge
 when someone is watching and run Step 3 immediately, accepting that anything
 written in between may be lost. This was chosen when there were no real users.
-It is not a decision to inherit once there are, and it is no longer the only
-option this document can offer.
+It is not a decision to inherit once there are.
 
-The reason to keep describing it is that **a partial gate is this option
-wearing a disguise**. Closing the public routes while cron still ticks, or
-while a Durable Object alarm re-arms itself, accepts the same exposure and
-hides it behind a step that looks like protection. The maintenance build is
-not a partial gate — it removes the capability rather than closing a door in
-front of it — but anything short of it is.
+**Until #2239 lands, this is effectively the only procedure this document can
+honestly offer** — and the reason to say that out loud is that a partial gate
+is this option wearing a disguise. Closing the public routes while cron still
+ticks, or while a Durable Object alarm re-arms itself, accepts the same
+exposure and hides it behind a step that looks like protection.
 
 What the auto-deploy correction genuinely changes is **who** closes the
 window: it no longer waits on a person remembering a command. It does not make
@@ -943,8 +652,8 @@ the one that authorises restoring normal operation:
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
    fails here, stop the writers again rather than leaving them running while
-   investigating — by redeploying the maintenance build, which is the same
-   move as Step 1 of the quiescence procedure above.
+   investigating — by whatever means #2239 settles on, which today means
+   accepting the exposure knowingly.
 
 An earlier revision made the agent write probe "the test that closes the
 deployment window". It cannot be: it is unavailable exactly when the window is
@@ -961,32 +670,10 @@ open. The binding read closes the window; the write confirms it afterwards.
 **Free until the Workers start writing to the target — and staying free is
 something you have to DO, not something you observe** (#2238 r2 P1).
 
-A revert is a binding change, so everything above applies to it — including the
-maintenance-build quiescence procedure, which a revert needs just as much as
-the cutover did. The revert has the same mixed state, in the same shape, and
-the same consequence for a write that lands on the wrong side of it.
-
-**"Unchanged" was the wrong word, and Q2b is where it bites** (#2252 r5 P1).
-Every step of the procedure is written in terms of the database being LEFT
-BEHIND, and on a revert that is the **target**, not the source. So:
-
-- **Q2b inverts.** Archive the TARGET's nine born-off-chain tables before
-  reverting the bindings. By the time a revert is being considered the target
-  has been live and may hold thresholds, support tickets, diagnostics or legal
-  holds that exist nowhere else — and the source, which is about to become
-  canonical again, has no record of them. Running Q2b as literally written
-  would re-export the source, which is the database being kept, and leave the
-  one being abandoned unarchived. That is the same defect as the cutover's
-  original gap, with the databases swapped.
-- **P1 and P2 invert with it.** During a revert the set is
-  `{on the source, unbound and refusing}`, and a writer live on the TARGET is
-  the thing that must not happen.
-- Step 3's probes invert too, which this document already states in its own
-  terms — see "Supposed to be on is a direction" there.
-
-Read every mention of "source" and "target" in §3 as "the database being kept"
-and "the database being left behind", and the procedure runs in both
-directions. Read them literally on a revert and it runs backwards.
+A revert is a binding change, so everything above applies to it unchanged —
+including that the procedure for stopping the writers is unspecified (#2239).
+The revert has the same mixed state, in the same shape, and the same
+consequence for a write that lands on the wrong side of it.
 Confirming afterwards cannot make the window safe — during the revert's own
 independent builds, a Worker still serving the target can accept the first
 threshold, signed order or support ticket written there, and that row is lost
