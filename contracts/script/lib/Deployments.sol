@@ -21,10 +21,11 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 ///      to catch EVERY way the assertion can fail so it can put the operator's
 ///      artifact back before re-reverting. And the assertion is the one seam a
 ///      test needs to override — to observe that a real deploy reached it, or
-///      to force it to fail — while `DeployDiamond.runWith` sits at the viaIR
-///      whole-unit stack ceiling with no room for a subclass to override
-///      anything INLINED into it. An external function is not inlined, so a
-///      probe can override this one at no cost to that frame.
+///      to force it to fail. (An earlier revision justified the boundary on
+///      the viaIR stack ceiling as well, claiming a subclass has no room to
+///      override anything inlined into `runWith`. That was unsupported — see
+///      the `memoryguard` note on {finalizeArtifact} for what the stack errors
+///      actually were. The `try` reason above stands on its own.)
 interface IArtifactVerifier {
     function assertFacetsRecordedExternal(address[] calldata expected) external;
 }
@@ -560,9 +561,12 @@ library Deployments {
         console.log("");
         console.log("=== Deployment Summary ===");
         console.log("Diamond:              ", diamond);
-        console.log(
-            "Wrote addresses to deployments/", chainSlug(), "/addresses.json"
-        );
+        // The RESOLVED path, never a rebuilt `deployments/<slug>/…`. A run
+        // with an artifact-root override writes under the scratch tree, and a
+        // line naming the canonical file would send an operator to inspect a
+        // file this run never touched — the opposite of the deployment config
+        // actually in effect (#2253 r7).
+        console.log("Wrote addresses to", path());
         if (!artifactWritesEnabled()) {
             // Say so rather than print nothing. A run with artifact writes off
             // has no recorded facet set to read back, and a summary that simply
@@ -622,10 +626,14 @@ library Deployments {
             // Five revisions of this PR moved a call around chasing the frame
             // and never read that line.
             //
-            // The annotation is true, not merely convenient: a memory-safe block
-            // may READ any memory, and `revert(p, s)` only reads — `err` is a
-            // `bytes memory` this block already holds, and both `add(err, 0x20)`
-            // and `mload(err)` stay inside it.
+            // The annotation is true, not merely convenient — and the reason
+            // is the ALLOCATION BOUND, not read-only-ness. `("memory-safe")`
+            // does not license arbitrary reads: once the mover is enabled it
+            // spills stack slots into memory, so a block reading outside
+            // Solidity's own allocations can observe those spills. What makes
+            // this block safe is that `err` is an allocated `bytes memory` the
+            // block already holds, and both `add(err, 0x20)` and `mload(err)`
+            // stay inside it (#2253 r7).
             //
             // forge-lint: disable-next-line(unsafe-assembly)
             assembly ("memory-safe") {
@@ -649,12 +657,13 @@ library Deployments {
     ///         the check immediately below turns it into a failed deploy.
     ///
     ///         It also takes ~45 live addresses out of `runWith`'s frame, which
-    ///         is welcome on a function near the viaIR stack ceiling — but do
-    ///         NOT read that as the reason the completeness check fits. It was
-    ///         tried as the fix and measured: removing the block moved the
-    ///         overflow by a single slot and did not clear it. What cleared it
-    ///         was moving the override seam off an `internal` hook, and the
-    ///         honesty argument above is why this change was kept anyway.
+    ///         is welcome on a function near the viaIR stack ceiling — but that
+    ///         is a side effect and was NOT the fix. Removing the block was
+    ///         tried as the fix and measured: it moved the overflow by a single
+    ///         slot and did not clear it. What cleared it was annotating an
+    ///         inline-assembly block `("memory-safe")` — see the note on
+    ///         {finalizeArtifact}. The honesty argument above is the whole
+    ///         reason this change was kept.
     function printRecordedFacets() internal view {
         string memory p = path();
         if (!_fileExists(p)) return;

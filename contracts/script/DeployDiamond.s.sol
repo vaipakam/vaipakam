@@ -161,9 +161,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev The assertion itself, separated from the entry point so an
     ///      overriding probe can run exactly what the base runs instead of a
-    ///      copy of it that could drift. `internal`, and deliberately NOT
-    ///      called from `runWith` — see the note above on why nothing inlined
-    ///      into that frame can be an override seam.
+    ///      copy of it that could drift. `internal`, and not called from
+    ///      `runWith`: the entry point above is what the deploy reaches, across
+    ///      the boundary its `try` needs.
     function _assertFacetsRecorded(address[] memory expected) internal view {
         Deployments.assertFacetsRecorded(expected);
     }

@@ -1317,11 +1317,20 @@ were all plausible and all wrong.
 Two practical consequences:
 
 - **Annotate new inline assembly `("memory-safe")` — but only when it is.** The
-  annotation licenses the mover to relocate stack slots into memory; applying it
-  to a block that writes outside its own allocations invites memory corruption,
-  which is a far worse failure than a build error. It is an audit, not a
-  find-and-replace. A block that only READS memory (e.g. `revert(add(p, 0x20),
-  mload(p))` over a `bytes memory` it already holds) is safe.
+  annotation licenses the mover to relocate stack slots into memory, so a block
+  that steps outside Solidity's memory model invites corruption or
+  optimizer-dependent behaviour — a far worse failure than a build error. It is
+  an audit, not a find-and-replace.
+
+  **The test is the ALLOCATION BOUND, not read-vs-write.** Every access — read
+  included — must stay inside memory Solidity owns for that block: its own
+  allocations, the scratch space, the zero slot, or memory past the free
+  pointer that the block allocates itself. Read-only is *not* a licence: once
+  the mover is enabled, an arbitrary read can observe the very slots it spilled
+  there, which is how a "harmless" block becomes optimizer-dependent. The
+  rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
+  allocated `bytes memory` the block already holds and `add(err, 0x20)` /
+  `mload(err)` stay within it — not because it only reads (#2253 r7).
 - **`forge build --skip test` cannot see a test contract doing this.** A probe
   or helper under `test/` that inherits a script and carries an unannotated
   block fails only in the test build, which is the failure mode that cost #2253
