@@ -467,17 +467,69 @@ library Deployments {
         if (existed) prior = CHEATS.readFile(p);
     }
 
-    function requireFacetsRecorded(
-        address[] memory expected,
-        string memory prior,
-        bool priorExisted
-    ) internal {
+    /// @notice Empty the `.facets` namespace so it describes THIS run only.
+    ///
+    /// @dev    #2253 r5 P2 — the typed writers MERGE into the existing file, so
+    ///         a re-deploy inherits the previous run's facet keys. On the
+    ///         documented fresh-Anvil workflow that is not hypothetical:
+    ///         `anvil-bootstrap.sh` restarts the chain and reuses the fixed
+    ///         default deployer, so the CREATE addresses REPEAT while the
+    ///         committed `deployments/anvil/addresses.json` stays. Deleting a
+    ///         `writeFacet` then leaves the prior run's matching value in place,
+    ///         and a scan of the file's VALUES passes for a facet this run never
+    ///         recorded.
+    ///
+    ///         Clearing first makes the namespace mean what the check assumes it
+    ///         means. That is also the honest artifact semantics: a fresh
+    ///         Diamond's facet set is not the previous Diamond's, and a key
+    ///         inherited from a superseded deploy is a stale address wearing a
+    ///         current label.
+    function clearFacets() internal {
+        if (!artifactWritesEnabled()) return;
+        _ensureFile();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        CHEATS.writeJson("{}", path(), ".facets");
+    }
+
+    /// @notice Put the artifact back as {snapshotArtifact} found it.
+    ///
+    /// @dev    #2253 r5 P1 — separated from the check so the caller can run it
+    ///         as a FINALLY around every failure mode, not only the one the
+    ///         check anticipated. See {assertFacetsRecorded}.
+    function restoreArtifact(string memory prior, bool priorExisted) internal {
+        string memory p = path();
+        if (priorExisted) {
+            // forge-lint: disable-next-line(unsafe-cheatcode)
+            CHEATS.writeFile(p, prior);
+        } else if (_fileExists(p)) {
+            // forge-lint: disable-next-line(unsafe-cheatcode)
+            CHEATS.removeFile(p);
+        }
+    }
+
+    /// @notice Require that every address in `expected` is recorded under some
+    ///         `.facets.*` key. REVERTS WITHOUT RESTORING — the caller owns the
+    ///         restore, so that it covers every way this can fail.
+    ///
+    /// @dev    #2253 r5 P1. An earlier revision restored inside the
+    ///         facet-not-found branch, which left every OTHER failure
+    ///         un-restored: `parseJsonAddress` reverts outright when an existing
+    ///         `.facets` entry holds the wrong JSON type, and that revert
+    ///         happened before execution ever reached the restore. The artifact
+    ///         then stayed clobbered — precisely the outcome the snapshot exists
+    ///         to prevent, reachable by a different door.
+    ///
+    ///         Restoring in a branch is a bet that the author enumerated the
+    ///         failure modes; this PR's own history says that bet loses. The
+    ///         caller now wraps this in try/catch and restores on ANY revert,
+    ///         including ones added later.
+    function assertFacetsRecorded(address[] memory expected) internal view {
         if (!artifactWritesEnabled()) return;
 
         string memory p = path();
         require(
             _fileExists(p),
-            "Deployments: the deploy wrote no artifact to verify - requireFacetsRecorded must be called after the artifact writes"
+            "Deployments: the deploy wrote no artifact to verify - the completeness check must run after the artifact writes"
         );
         // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory file = CHEATS.readFile(p);
@@ -494,33 +546,16 @@ library Deployments {
                     found = true;
                 }
             }
-            if (!found) {
-                // #2253 r3 P1 — RESTORE BEFORE REVERTING. Filesystem cheatcode
-                // effects are NOT rolled back by a revert, and on a
-                // `--broadcast` run forge's pre-send simulation executes this
-                // whole body before any transaction is sent. Reverting here
-                // without restoring would leave the CANONICAL artifact -- the
-                // inventory's source of truth -- describing a Diamond that was
-                // never deployed, with simulated addresses. That is a worse
-                // outcome than the silence this check exists to end, and it is
-                // a failure mode the check itself would have introduced.
-                if (priorExisted) {
-                    // forge-lint: disable-next-line(unsafe-cheatcode)
-                    CHEATS.writeFile(p, prior);
-                } else {
-                    // forge-lint: disable-next-line(unsafe-cheatcode)
-                    CHEATS.removeFile(p);
-                }
-                revert(
-                    string.concat(
-                        "Deployments: facet ",
-                        CHEATS.toString(expected[i]),
-                        " is installed in the Diamond but was never recorded under any .facets.* key of ",
-                        p,
-                        " - add its Deployments.writeFacet(...) line. Nothing was deployed and the previous artifact has been left untouched. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
-                    )
-                );
-            }
+            require(
+                found,
+                string.concat(
+                    "Deployments: facet ",
+                    CHEATS.toString(expected[i]),
+                    " is installed in the Diamond but was never recorded under any .facets.* key of ",
+                    p,
+                    " - add its Deployments.writeFacet(...) line. Nothing was deployed and the previous artifact has been left untouched. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
+                )
+            );
         }
     }
 

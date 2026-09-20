@@ -151,6 +151,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         would blind this check to the one facet that can never be
     ///         re-cut, since removing the cut function removes the ability to
     ///         cut (#1798 r9).
+    /// @notice External hop for {verifyArtifactCompleteness}'s try/catch.
+    ///
+    /// @dev    `address(this)`-gated: it exists so the verification can be
+    ///         wrapped, not as a call surface. `view`, so it is a staticcall
+    ///         and never enters a broadcast.
+    function assertFacetsRecordedExternal(address[] memory expected)
+        external
+        view
+    {
+        require(
+            msg.sender == address(this),
+            "DeployDiamond: assertFacetsRecordedExternal is an internal hop"
+        );
+        Deployments.assertFacetsRecorded(expected);
+    }
+
     function verifyArtifactCompleteness(
         address diamond_,
         string memory priorArtifact,
@@ -162,8 +178,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
         recorded[routed.length] = DiamondLoupeFacet(diamond_).facetAddress(
             IDiamondCut.diamondCut.selector
         );
-        Deployments.requireFacetsRecorded(recorded, priorArtifact, priorExisted);
-        console.log("Verified: every installed facet is recorded in the artifact.");
+
+        // #2253 r5 P1 — the restore is a FINALLY, not a branch. An earlier
+        // revision restored inside the facet-not-found case, which left every
+        // other failure un-restored: `parseJsonAddress` reverts outright on a
+        // `.facets` entry of the wrong JSON type, before execution reached the
+        // restore, leaving the canonical artifact clobbered by exactly the door
+        // the snapshot was meant to close. Restoring in a branch bets that the
+        // author enumerated the failure modes, and this PR's own history is the
+        // evidence that bet loses. The external hop exists only so try/catch
+        // can wrap the whole check — including failures added later.
+        try this.assertFacetsRecordedExternal(recorded) {
+            console.log("Verified: every installed facet is recorded in the artifact.");
+        } catch (bytes memory err) {
+            Deployments.restoreArtifact(priorArtifact, priorExisted);
+            assembly { revert(add(err, 0x20), mload(err)) }
+        }
     }
 
     function runWith(
@@ -978,6 +1008,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
             Deployments.snapshotArtifact();
 
         Deployments.writeChainHeader();
+
+        // #2253 r5 P2 — empty `.facets` so it describes THIS run only. The
+        // typed writers MERGE into the existing file, and on the documented
+        // fresh-Anvil workflow the CREATE addresses repeat (anvil-bootstrap.sh
+        // restarts the chain and reuses the fixed default deployer) while the
+        // committed artifact stays — so a deleted `writeFacet` left the prior
+        // run's matching value in place and the completeness scan passed for a
+        // facet this run never recorded.
+        Deployments.clearFacets();
+
         Deployments.writeDiamond(diamond);
 
         // Issue #69 — record the authoritative facet count into
