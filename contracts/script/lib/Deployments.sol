@@ -417,6 +417,81 @@ library Deployments {
         _writeAddr(string.concat(".facets.", facetKey), a);
     }
 
+    /// @notice Require that every address in `expected` was recorded under some
+    ///         `.facets.*` key of the artifact this run just wrote.
+    ///
+    /// @dev    **The ROOT fix for #1800, and it is deliberately NOT a test**
+    ///         (#2253 r2). The guard began life as a test that deployed under a
+    ///         matrix of chain ids and asserted completeness for each. Review
+    ///         then found, correctly and twice, that the matrix was incomplete:
+    ///         first that it covered only chain 31337, then that it listed a
+    ///         RETIRED chain while omitting an ACTIVE one and never exercised
+    ///         the production admin≠deployer topology. Each time, a
+    ///         registration guarded on the uncovered dimension would pass.
+    ///
+    ///         Those two rounds are one seam, and the seam is unbounded: a
+    ///         write can be guarded on chain id, on admin≠deployer, on the
+    ///         treasury address, on `block.number`, on any env var, on
+    ///         anything at all. A test matrix can only ever enumerate the
+    ///         dimensions somebody thought of, so every round buys one more
+    ///         dimension and leaves the class open — the #1995 pattern, which
+    ///         this repository has twice resolved by DELETING the enumeration
+    ///         rather than extending it.
+    ///
+    ///         So the completeness check moves OUT of the test matrix and INTO
+    ///         the deploy. Every real deploy now verifies its own artifact,
+    ///         under whatever chain, admin topology, treasury and configuration
+    ///         that deploy actually runs with. There is no matrix to be
+    ///         incomplete, because there is no matrix: the conditions under
+    ///         test are by construction the conditions in effect. A guard on an
+    ///         un-enumerated dimension cannot evade a check that runs inside
+    ///         the branch it guards.
+    ///
+    ///         It is also strictly stronger than any test could be — it covers
+    ///         mainnet chains and operator topologies no test will ever run.
+    ///
+    ///         Ordering matters: call this AFTER every `writeFacet` and outside
+    ///         the broadcast. A failure here means the Diamond was deployed but
+    ///         its artifact is incomplete, which is recoverable — the addresses
+    ///         remain on-chain via `DiamondLoupeFacet.facetAddresses()` and in
+    ///         the broadcast log — so failing loudly at the end is strictly
+    ///         better than the silence #1798 actually shipped with.
+    function requireFacetsRecorded(address[] memory expected) internal view {
+        if (!artifactWritesEnabled()) return;
+
+        string memory p = path();
+        require(
+            _fileExists(p),
+            "Deployments: the deploy wrote no artifact to verify - requireFacetsRecorded must be called after the artifact writes"
+        );
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        string[] memory keys = CHEATS.parseJsonKeys(file, ".facets");
+
+        for (uint256 i; i < expected.length; ++i) {
+            bool found;
+            for (uint256 j; j < keys.length && !found; ++j) {
+                if (
+                    CHEATS.parseJsonAddress(
+                        file, string.concat(".facets.", keys[j])
+                    ) == expected[i]
+                ) {
+                    found = true;
+                }
+            }
+            require(
+                found,
+                string.concat(
+                    "Deployments: facet ",
+                    CHEATS.toString(expected[i]),
+                    " is installed in the Diamond but was never recorded under any .facets.* key of ",
+                    p,
+                    " - add its Deployments.writeFacet(...) line. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
+                )
+            );
+        }
+    }
+
     // ── Scalar/uint writes ─────────────────────────────────────────────────
 
     function writeUint(string memory jsonKey, uint256 value) internal {

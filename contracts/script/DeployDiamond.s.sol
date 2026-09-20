@@ -1102,6 +1102,36 @@ contract DeployDiamond is Script, ArtifactRootBase {
             "/addresses.json"
         );
 
+        // ── Step 7b: the deploy verifies its OWN artifact ───────────────
+        //
+        // #1800 / #2253 r2 — every address the Diamond reports must appear
+        // under some `.facets.*` key of the file just written. #1798 shipped
+        // with THIRTEEN facets cut and never recorded, and nothing noticed.
+        //
+        // This lives in the deploy rather than in a test on purpose. The test
+        // version had to enumerate the conditions a deploy might run under —
+        // chain id, admin-vs-deployer topology — and review found the
+        // enumeration incomplete twice running, because that list is unbounded:
+        // a write can be guarded on anything. Here there is no enumeration to
+        // be incomplete. The check runs under exactly the conditions the deploy
+        // runs under, so a guard on any dimension is inside the branch being
+        // verified rather than outside it.
+        //
+        // `diamondCutFacet` is appended SEPARATELY because `facetAddresses()`
+        // structurally cannot report it: `VaipakamDiamond`'s constructor writes
+        // `selectorToFacetAndPosition[diamondCut.selector].facetAddress`
+        // directly, without pushing into the enumeration. Leaving it out would
+        // blind this check to the one facet that can never be re-cut — removing
+        // the cut function removes the ability to cut. (#1798 r9.)
+        address[] memory routed = DiamondLoupeFacet(diamond).facetAddresses();
+        address[] memory recorded = new address[](routed.length + 1);
+        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
+        recorded[routed.length] = DiamondLoupeFacet(diamond).facetAddress(
+            IDiamondCut.diamondCut.selector
+        );
+        Deployments.requireFacetsRecorded(recorded);
+        console.log("Verified: every installed facet is recorded in the artifact.");
+
         // ── Summary ─────────────────────────────────────────────────────
         console.log("");
         console.log("=== Deployment Summary ===");

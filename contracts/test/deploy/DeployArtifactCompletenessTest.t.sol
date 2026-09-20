@@ -80,6 +80,10 @@ contract DeployArtifactCompletenessTest is Test {
     ///      unambiguous if this test ever grows an assertion about it.
     address internal constant TREASURY = address(0xBEEF);
 
+    /// @dev Distinct from the deployer so `runWith` takes the handover branch —
+    ///      the topology every testnet and mainnet deploy actually uses.
+    address internal constant ADMIN_FOR_HANDOVER = address(0xA11CE);
+
     /// @dev Scratch artifact roots live under `deployments/` because
     ///      `foundry.toml#fs_permissions` grants read-write on that subtree and
     ///      nowhere else. One directory per test FUNCTION, named after it: test
@@ -110,16 +114,18 @@ contract DeployArtifactCompletenessTest is Test {
     ///      0x64, absent from forge's EVM), so omitting it would leave the
     ///      chain most likely to diverge as the one never checked.
     function _chainIds() internal pure returns (uint256[] memory ids) {
-        ids = new uint256[](9);
+        ids = new uint256[](11);
         ids[0] = 31337;      // anvil
-        ids[1] = 1;          // ethereum
-        ids[2] = 8453;       // base
-        ids[3] = 84532;      // base-sepolia
-        ids[4] = 11155111;   // sepolia
-        ids[5] = 10;         // optimism
-        ids[6] = 137;        // polygon
-        ids[7] = 42161;      // arbitrum      (ArbSys path)
-        ids[8] = 421614;     // arb-sepolia   (ArbSys path)
+        ids[1] = 84532;      // base-sepolia  — ACTIVE (canonical-VPFI)
+        ids[2] = 421614;     // arb-sepolia   — ACTIVE (mirror, ArbSys path)
+        ids[3] = 97;         // bnb-testnet   — ACTIVE (mirror)
+        ids[4] = 11155420;   // op-sepolia    — a deploy-chain.sh target
+        ids[5] = 80002;      // polygon-amoy  — a deploy-chain.sh target
+        ids[6] = 1;          // ethereum      — Phase-1 mainnet
+        ids[7] = 8453;       // base          — Phase-1 mainnet
+        ids[8] = 10;         // optimism      — Phase-1 mainnet
+        ids[9] = 137;        // polygon       — Phase-1 mainnet
+        ids[10] = 42161;     // arbitrum      — Phase-1 mainnet, ArbSys path
     }
 
     /// @dev Chain-slug directory the artifact lands in, mirroring
@@ -131,11 +137,13 @@ contract DeployArtifactCompletenessTest is Test {
         if (cid == 1)         return "ethereum";
         if (cid == 8453)      return "base";
         if (cid == 84532)     return "base-sepolia";
-        if (cid == 11155111)  return "sepolia";
         if (cid == 10)        return "optimism";
         if (cid == 137)       return "polygon";
         if (cid == 42161)     return "arbitrum";
         if (cid == 421614)    return "arb-sepolia";
+        if (cid == 97)        return "bnb-testnet";
+        if (cid == 11155420)  return "op-sepolia";
+        if (cid == 80002)     return "polygon-amoy";
         revert("test: unlisted chain id");
     }
 
@@ -167,10 +175,15 @@ contract DeployArtifactCompletenessTest is Test {
             abi.encode(uint256(1))
         );
 
+        // #2253 r2 P2 — a DISTINCT admin, so the post-deploy handover branch
+        // executes exactly as it does on testnet and mainnet. Passing the
+        // deployer as admin took the single-EOA path and left every
+        // production-topology artifact unobserved.
         address deployer = vm.addr(DEPLOYER_KEY);
+        require(ADMIN_FOR_HANDOVER != deployer, "test: admin must differ from deployer");
         DeployDiamond script = new DeployDiamond();
         script.setArtifactRootOverride(root);
-        script.runWith(deployer, TREASURY, DEPLOYER_KEY);
+        script.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
         diamond = script.diamond();
 
         string memory artifactPath = string.concat(
