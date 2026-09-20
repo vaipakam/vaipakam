@@ -2450,4 +2450,41 @@ contract TestMutatorFacet {
         r.recycled = recycled;
         if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
     }
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only —
+    ///         put a delivered packet back into the PRE-3b shape: its 3a
+    ///         day-list commitment and its protected `unclassified` balance
+    ///         intact, its transport epoch gone.
+    /// @dev    This is the ROLLOUT POPULATION, and it cannot be produced by
+    ///         driving the current ingress, which always admits. It is the
+    ///         state of every old-wire packet that landed on an activated
+    ///         mirror while 3a was deployed and 3b was not — the exact
+    ///         population design §5c records a commitment for, and the one
+    ///         `admitLegacyTransportBatch` exists to bring in.
+    function unadmitTransportBatchRaw(bytes32 packetHash) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.ingressPackets[packetHash].batchId = bytes32(0);
+        delete s.transportBatches[packetHash];
+    }
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only — set a
+    ///         packet's recorded ARRIVAL, which is the ordering key a day's
+    ///         batch index is read by. Two deliveries in one test share a
+    ///         block timestamp otherwise, and the point of the key is that it
+    ///         is the delivery's own fact rather than the order a caller
+    ///         happened to materialize in.
+    function setPacketArrivedAtRaw(bytes32 packetHash, uint64 arrivedAt) external {
+        LibVaipakam.storageSlot().ingressPackets[packetHash].arrivedAt = arrivedAt;
+    }
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only — set a
+    ///         packet's 3a DAY-LIST COMMITMENT, so the shapes that carry none
+    ///         can be driven: a pre-3a arrival (no fingerprint at all) and a
+    ///         record whose count is zero. Both are refused by the rollout
+    ///         admission, and neither is reachable through the current ingress.
+    function setPacketDayListRaw(bytes32 packetHash, bytes32 dayListHash, uint256 dayCount) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.dayListHash = dayListHash;
+        p.dayCount = dayCount;
+    }
 }

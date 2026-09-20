@@ -99,7 +99,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](213); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
+        selectors = new bytes4[](216); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -498,6 +498,12 @@ contract HelperTest {
             TestMutatorFacet.getRewardEntryExpiryBegunRaw.selector;
         selectors[n++] =
             TestMutatorFacet.getUserClaimPendingUncappedRaw.selector;
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — the rollout
+        // population's fixture: put a packet back into its pre-3b shape, and
+        // set the arrival that a day's batch index is ordered by.
+        selectors[n++] = TestMutatorFacet.unadmitTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.setPacketArrivedAtRaw.selector;
+        selectors[n++] = TestMutatorFacet.setPacketDayListRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2462,7 +2468,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2470,6 +2476,7 @@ contract HelperTest {
         selectors[4] = RewardEpochFacet.getTransportBatchLegs.selector;
         selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
         selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
+        selectors[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

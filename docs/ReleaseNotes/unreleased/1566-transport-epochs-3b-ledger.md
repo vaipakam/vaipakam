@@ -21,12 +21,23 @@ wire a message came off: by the time the figures reach the Diamond, a
 wholly-recycled delivery on the new wire and a legacy delivery that stated
 nothing look exactly alike.
 
-Each day keeps an arrival-ordered index of the epochs that list it, and a
-cursor recording how far through that index its funding has been consumed. The
-index exists because the older lane can produce arbitrarily many small
-deliveries naming a single day; anything that had to walk all of them would
-eventually stop fitting in a block, and an obligation would be blocked behind
-funding that demonstrably exists.
+Each day keeps an index of the epochs that list it, and a cursor recording how
+far through that index its funding has been consumed. The index exists because
+the older lane can produce arbitrarily many small deliveries naming a single
+day; anything that had to walk all of them would eventually stop fitting in a
+block, and an obligation would be blocked behind funding that demonstrably
+exists.
+
+Where an epoch sits in that index is not a statement about when its delivery
+arrived. Writing the index is open to anyone and happens after the fact, so the
+position an epoch ends up in records only who wrote it in first — and a
+delivery brought in retrospectively (below) landed long before it was written
+down at all. The index therefore reports each epoch's **own recorded arrival**
+alongside it, taken from the delivery record and fixed when the delivery
+landed. Anyone choosing between two epochs that fund the same day reads that,
+rather than inferring an order from a list that was never ordered. Two
+deliveries that landed in the same block share an arrival, which is the honest
+answer: within one block there is no order to report.
 
 For the same reason the sending side now refuses to build a remittance naming
 more days than the destination can retire in one go. A message already sent
@@ -56,7 +67,41 @@ switch-on is what assigns them; giving such a delivery an epoch as well would
 have two records claiming the same money. Those deliveries behave exactly as
 every delivery that predates this ledger does.
 
-Nothing here moves value yet. Deliveries that arrived before this ledger
-existed keep behaving exactly as they did, no draw exists until the next
-release adds one, and on a chain that has not received an old-wire delivery
-none of this is reachable at all.
+### Deliveries that landed before the ledger existed
+
+An earlier release had already started recording, on every old-wire delivery,
+a commitment to the day list it named — specifically so that a ledger arriving
+later could index it. Between that release and this one there is a window in
+which deliveries landed carrying that commitment but finding no ledger to join.
+
+Those deliveries can now be brought in, by anyone, from their own delivery
+record: the balance, the day list commitment and the day count are all read
+from what was written when the delivery arrived, so whoever makes the call can
+only cause the ledger to state what the platform already recorded. Nothing
+about them is supplied by the caller. Once brought in they behave in every
+respect like a delivery that arrived today — their membership is written in the
+same instalments against the same commitment, and what remains of them becomes
+reconcilable only through the same two-step close-out.
+
+Without this they would have held value that no day could draw and that no
+close-out gated, which is the opposite of what the commitment was recorded for.
+Deliveries that arrived before that commitment was recorded have no day list to
+be bound to and are unchanged; so are deliveries on a chain whose reward
+custody has not been switched on, for the same reason as above.
+
+### Operational note for the in-place refresh
+
+The refresh that installs this work now upgrades the mirror's receiving
+contract **before** it installs the new Diamond code, rather than after. In the
+old order there was a gap in which a delivery could arrive at new Diamond code
+through an old receiver, be accepted, and silently receive no epoch — bypassing
+the close-out gate permanently. In the new order a delivery arriving in that
+gap is refused outright and re-delivered once the refresh finishes, which costs
+a retry and loses nothing. The refresh also now identifies that receiving
+contract the way every other step does — by asking the platform which one it
+actually uses, and treating the recorded address as a fallback — so a stale
+record can no longer stop a refresh whose live receiver is perfectly fine.
+
+Nothing here moves value yet: no draw exists until the next release adds one,
+and on a chain that has not received an old-wire delivery none of this is
+reachable at all.

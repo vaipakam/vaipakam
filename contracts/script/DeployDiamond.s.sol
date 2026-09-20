@@ -3037,7 +3037,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3045,6 +3045,7 @@ contract DeployDiamond is Script {
         s[4] = RewardEpochFacet.getTransportBatchLegs.selector;
         s[5] = RewardEpochFacet.getTransportRemainder.selector;
         s[6] = RewardEpochFacet.getTransportDayBatches.selector;
+        s[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.

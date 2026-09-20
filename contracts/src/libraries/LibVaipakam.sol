@@ -7523,8 +7523,8 @@ library LibVaipakam {
         uint256 recycleReattributedOutCumulative;
         /// @dev #1566 transport epochs PR 3b — the transport epochs.
         ///      `transportBatches` is keyed by the batch id the admission
-        ///      derives; `transportBatchesByDay` is each day's
-        ///      ARRIVAL-ORDERED index of the batches listing it, and
+        ///      derives; `transportBatchesByDay` is each day's MEMBERSHIP
+        ///      INDEX of the batches listing it, and
         ///      `transportDayCursor` that day's consumption cursor, so
         ///      allocation resumes where it left off instead of rescanning a
         ///      history the legacy lane can grow without bound. A bare
@@ -7533,6 +7533,22 @@ library LibVaipakam {
         ///      claim or permissionless sweep forced to traverse all of them
         ///      exceeds the block gas limit — permanently blocking an
         ///      obligation behind backing that exists.
+        ///
+        ///      A batch's POSITION in a day's index is not an order (Codex
+        ///      #2232 r3). Materialization is permissionless and asynchronous,
+        ///      so position records which caller got there first; an earlier
+        ///      revision of this comment called the index arrival-ordered,
+        ///      which position could never have delivered and which a
+        ///      RETROSPECTIVE admission — a rollout packet admitted long after
+        ///      it landed — makes plainly untrue. The order is the delivery's
+        ///      own `ingressPackets[batchId].arrivedAt`: written once by the
+        ///      ingress that received it, immutable, and returned with every
+        ///      entry so a reader never infers it from the array. Design §5c
+        ///      does not allocate by this order in any case — an assignment is
+        ///      computed off-chain and checked for VALIDITY, with
+        ///      fewest-remaining-member-days-first (oldest on ties) as a
+        ///      preparer DEFAULT — so the arrival key is what that tie-break
+        ///      reads, not a priority the chain enforces.
         mapping(bytes32 => TransportBatch) transportBatches;
         mapping(uint256 => bytes32[]) transportBatchesByDay;
         mapping(uint256 => uint256) transportDayCursor;

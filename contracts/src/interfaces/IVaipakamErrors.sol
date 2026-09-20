@@ -542,6 +542,35 @@ interface IVaipakamErrors {
     ///         ingress), and neither has a packet that landed before this
     ///         ledger existed.
     error TransportBatchUnknown(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         already holds a transport epoch, so the ROLLOUT admission has
+    ///         nothing to open. The retrospective entry exists only for
+    ///         packets that landed before this ledger did; re-running it on an
+    ///         admitted packet would restate an anchor the conservation rule
+    ///         treats as immutable.
+    error TransportBatchAlreadyAdmitted(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         carries no 3a day-list commitment, so there is no membership to
+    ///         bind an epoch to. A d6+ arrival is typed on the wire and has no
+    ///         day list to name; a pre-3a one recorded none. Neither can be
+    ///         admitted retrospectively, because membership is never taken
+    ///         from a caller's word.
+    error TransportPacketHasNoDayList(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet's
+    ///         record STATES a component, so its wire typed it and the value
+    ///         was credited to a shared ledger at ingress. Opening an epoch
+    ///         over it would make the same value drawable twice — once through
+    ///         the ledger that holds it, once through the epoch — which is the
+    ///         error design §5c's one-accounting-path rule exists to prevent.
+    error TransportPacketWireTyped(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         holds nothing protected-and-unclassified, so a retrospective
+    ///         epoch would have a balance of zero: a membership that can
+    ///         reserve nothing, behind a gate that would hold the packet shut
+    ///         until an operator released a batch releasing nothing. Refused
+    ///         for the same reason the ingress opens no epoch for an empty
+    ///         remainder.
+    error TransportPacketNothingUntyped(bytes32 packetHash);
     /// @notice #1566 transport epochs PR 3b — the batch's remainder is already
     ///         parked. Parking is once and for all: the remainder it names is
     ///         what the batch's obligations left, and a second park would

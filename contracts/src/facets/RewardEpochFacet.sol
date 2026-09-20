@@ -188,36 +188,95 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return (r.amount, r.dayListHash, r.dayCount, r.acknowledged);
     }
 
-    /// @notice One day's ARRIVAL-ORDERED batch index, paginated, with its
-    ///         consumption cursor.
+    /// @notice One day's batch MEMBERSHIP index, paginated, with each entry's
+    ///         arrival and the day's consumption cursor.
     /// @dev    Paginated because the legacy lane can mint arbitrarily many
     ///         small batches listing one day: a view that returned the whole
     ///         index would stop being callable exactly on the days that matter
     ///         most. `cursor` is where allocation resumes, so `cursor ==
     ///         total` means every batch this day ever listed is spent.
+    ///
+    ///         `arrivedAt` is returned WITH the page, and that is the point
+    ///         (Codex #2232 r3). A batch's position here records which caller
+    ///         materialized it first, nothing more: indexing is permissionless
+    ///         and asynchronous, and a rollout packet is admitted long after
+    ///         it landed. So the order a reader wants is never the array's —
+    ///         it is each delivery's own recorded arrival, which the ingress
+    ///         wrote once and nothing can change. Returning it here is what
+    ///         lets design §5c's preparer default (fewest-remaining-member-
+    ///         days-first, OLDEST ON TIES) read an authenticated key instead
+    ///         of inferring one from push order. Two deliveries that landed in
+    ///         the same block share a key; within one block there is no
+    ///         arrival order to preserve, and the batch id breaks the tie
+    ///         deterministically for any reader that needs a total order.
     /// @param  dayId  The day.
-    /// @param  offset Where to start, in arrival order.
+    /// @param  offset Where to start in the index.
     /// @param  limit  How many to return.
-    /// @return page   The batch ids in that window.
-    /// @return total  How many batches this day has ever indexed.
-    /// @return cursor The day's consumption cursor.
+    /// @return page      The batch ids in that window.
+    /// @return arrivedAt Each returned batch's delivery arrival, same order as
+    ///                   `page` — the ordering key, read from the packet.
+    /// @return total     How many batches this day has ever indexed.
+    /// @return cursor    The day's consumption cursor.
     function getTransportDayBatches(uint256 dayId, uint256 offset, uint256 limit)
         external
         view
-        returns (bytes32[] memory page, uint256 total, uint256 cursor)
+        returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, uint256 cursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32[] storage index = s.transportBatchesByDay[dayId];
         total = index.length;
         cursor = s.transportDayCursor[dayId];
-        if (offset >= total) return (new bytes32[](0), total, cursor);
+        if (offset >= total) return (new bytes32[](0), new uint64[](0), total, cursor);
         // Clamped against what REMAINS rather than computing `offset + limit`:
         // a caller asking for everything with an unbounded limit would
         // otherwise overflow into a panic instead of getting the tail.
         uint256 end = total - offset < limit ? total : offset + limit;
         page = new bytes32[](end - offset);
+        arrivedAt = new uint64[](end - offset);
         for (uint256 i = offset; i < end; ++i) {
-            page[i - offset] = index[i];
+            bytes32 id = index[i];
+            page[i - offset] = id;
+            // The batch IS its packet's stamp, so the arrival is one read from
+            // the packet record and never a second copy that could drift.
+            arrivedAt[i - offset] = s.ingressPackets[id].arrivedAt;
         }
+    }
+
+    /// @notice Open the transport epoch of an old-wire packet that landed
+    ///         before this ledger existed.
+    /// @dev    Permissionless, and the authority is the packet's own record —
+    ///         balance, membership commitment and day count are all read from
+    ///         it, so a stranger calling this can only make the ledger state
+    ///         what the ingress already wrote. No role gates it for the same
+    ///         reason none gates materialization or the release (Codex #2232
+    ///         r2): what makes the call valid is STATE, never the caller.
+    ///
+    ///         Design §5c records the day-list commitment on every arrival on
+    ///         a wire older than d6 precisely so "a packet landing between 3a
+    ///         and 3b carries authenticated membership 3b can index". Without
+    ///         this entry that is false for the entire 3a-to-3b window: those
+    ///         packets hold untyped value with no epoch bounding it, their
+    ///         committed list is refused as an unknown batch, and their zero
+    ///         `batchId` makes classification skip the gate.
+    ///
+    ///         Its admission is COMPACT, exactly as the ingress's is, so the
+    ///         membership is then built by {materializeTransportBatchPage} —
+    ///         one path afterwards, whichever entry opened the epoch.
+    /// @param  packetHash The packet's ingress stamp, which is its batch's key.
+    /// @return batchId    The batch's key, equal to the packet's stamp.
+    function admitLegacyTransportBatch(bytes32 packetHash)
+        external
+        nonReentrant
+        returns (bytes32 batchId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // The same condition the ingress admits under (Codex #2232 r1): an
+        // epoch and the `Unclassified` protection backing it are two views of
+        // one value, so an epoch must not exist where custody has not
+        // attributed that value. On a configured-but-not-yet-activated
+        // deployment the packet's tokens are Diamond-side and the activation
+        // envelope is what attributes them.
+        if (!LibRewardCustody.active(s)) revert RewardCustodyNotActivated();
+        batchId = LibRewardCustody.admitLegacyTransportBatch(s, packetHash);
     }
 }

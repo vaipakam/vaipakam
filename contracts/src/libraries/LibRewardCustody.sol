@@ -1351,8 +1351,110 @@ library LibRewardCustody {
         // keeps `batchId == 0` and is ungated, which is the honest answer: it
         // holds no epoch value for the gate to protect.
         if (untyped == 0) return bytes32(0);
+        batchId = _openTransportBatch(s, p, h, dayIds.length, untyped);
+    }
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — admit the
+    ///         ROLLOUT POPULATION: an old-wire packet that landed while 3a's
+    ///         commitment existed but this ledger did not.
+    /// @dev    Permissionless, and retrospective. 3a records a day-list
+    ///         commitment on EVERY arrival on a wire older than d6 — design
+    ///         §5c states that it does so precisely "so a packet landing
+    ///         between 3a and 3b carries authenticated membership 3b can
+    ///         index". Without this entry that sentence is false for the whole
+    ///         3a-to-3b window: `admitTransportBatch` is reachable only from
+    ///         the ingress, so those packets hold untyped value with no epoch
+    ///         bounding it, `materializeTransportBatchPage` refuses their
+    ///         committed list as an unknown batch, and their zero `batchId`
+    ///         makes classification skip the gate entirely.
+    ///
+    ///         The authority is the PACKET'S OWN RECORD, never the caller:
+    ///         balance, membership and count are all read from it, so a
+    ///         stranger calling this can only make the ledger state what the
+    ///         ingress already wrote. That is the same authority
+    ///         materialization runs on, and it is why no role gates either.
+    ///
+    ///         WHICH PACKETS. Four conditions, each refused by name rather
+    ///         than skipped, because a silent skip here is the same silent
+    ///         bypass the classification gate exists to close:
+    ///
+    ///          1. no epoch yet — a re-run must not restate an immutable
+    ///             anchor;
+    ///          2. a 3a commitment exists — membership is never taken from a
+    ///             caller's word, so a packet that recorded no day list cannot
+    ///             be bound to one;
+    ///          3. the record states NO component — a wire that typed its
+    ///             delivery had those components credited to the shared
+    ///             ledgers at ingress, and an epoch over them would make one
+    ///             value drawable in two places;
+    ///          4. something is protected-and-unclassified to bind.
+    ///
+    ///         Condition 3 is the one that cannot be made exact, and saying so
+    ///         is the point. At ingress depth the live path is TOLD which wire
+    ///         it is (`splitTyped`), because a d5 delivery whose components
+    ///         both floored to zero and a legacy delivery that transmitted
+    ///         nothing arrive as the same two zeros. A recorded packet carries
+    ///         no such statement, so this entry reads the shape instead: both
+    ///         components zero. The residue is a d5 delivery short enough to
+    ///         floor BOTH components away, which this entry would admit and
+    ///         the live ingress would not. That direction is the conservative
+    ///         one — the value becomes bound to the days its own delivery
+    ///         named and needs a release before it can be classified, which is
+    ///         a stricter gate on the same funds, never a second claim on
+    ///         them. The opposite default (refuse everything ambiguous) would
+    ///         leave genuine old-wire value permanently ungated, which is the
+    ///         gap this entry exists to close.
+    ///
+    ///         THE ANCHOR IS WHAT REMAINS, not what arrived. A rollout packet
+    ///         may already have been classified against, since a zero
+    ///         `batchId` skipped the gate for as long as no epoch existed; its
+    ///         `admitted` is therefore its CURRENT `unclassified`, and the
+    ///         conservation rule (`admitted == balance + parked`) holds
+    ///         against that. This is the same expression the live ingress
+    ///         admits — there the packet's `unclassified` has just been
+    ///         credited with exactly the remainder being passed — so both
+    ///         entries bind the epoch to the protected row rather than to a
+    ///         figure that merely ought to equal it.
+    /// @param  s          Diamond storage.
+    /// @param  packetHash The packet's ingress stamp, which is its batch's key.
+    /// @return batchId    The batch's key, equal to the packet's stamp.
+    function admitLegacyTransportBatch(LibVaipakam.Storage storage s, bytes32 packetHash)
+        internal
+        returns (bytes32 batchId)
+    {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(packetHash);
+        if (p.batchId != bytes32(0)) {
+            revert IVaipakamErrors.TransportBatchAlreadyAdmitted(packetHash);
+        }
+        if (p.dayListHash == bytes32(0) || p.dayCount == 0) {
+            revert IVaipakamErrors.TransportPacketHasNoDayList(packetHash);
+        }
+        if (p.freshShare != 0 || p.recycledShare != 0) {
+            revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
+        }
+        uint256 untyped = p.unclassified;
+        if (untyped == 0) revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);
+        batchId = _openTransportBatch(s, p, packetHash, p.dayCount, untyped);
+    }
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the ONE writer
+    ///         of a transport batch's row, shared by the ingress admission and
+    ///         the rollout admission.
+    /// @dev    One writer because the two entries differ only in how they
+    ///         learn the delivery's shape — the ingress is told it on the
+    ///         wire, the rollout entry reads it off the record — and not at
+    ///         all in what a batch IS. A second copy of these four writes is a
+    ///         second place for the anchor, the membership count and the
+    ///         packet's back-reference to disagree.
+    function _openTransportBatch(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.IngressPacket storage p,
+        bytes32 h,
+        uint256 count,
+        uint256 untyped
+    ) private returns (bytes32 batchId) {
         batchId = h;
-        uint256 count = dayIds.length;
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         b.balance = untyped;
         b.admitted = untyped;
@@ -1401,6 +1503,19 @@ library LibRewardCustody {
         uint256 end = uint256(done) + TRANSPORT_INDEX_PAGE;
         if (end > dayIds.length) end = dayIds.length;
         for (uint256 i = done; i < end; ++i) {
+            // A day's index is a MEMBERSHIP SET, and a batch's POSITION in it
+            // carries no meaning (Codex #2232 r3). Materialization is
+            // permissionless and asynchronous, so which batch reaches a day
+            // first is decided by caller timing; an append therefore cannot
+            // be, and never was, an ordering. The order a preparer's
+            // "oldest on ties" default needs is the delivery's own arrival —
+            // `ingressPackets[batchId].arrivedAt`, written once by the ingress
+            // that received it, immutable, and returned alongside every entry
+            // by {RewardEpochFacet.getTransportDayBatches} so it is read
+            // rather than inferred. That key is correct for a RETROSPECTIVE
+            // admission too, which an append order could not be: a rollout
+            // packet is admitted long after it arrived, and its true arrival
+            // is what the record holds.
             s.transportBatchesByDay[dayIds[i]].push(batchId);
         }
         indexedDays = uint32(end);

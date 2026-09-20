@@ -3859,6 +3859,17 @@
   },
   {
     "type": "error",
+    "name": "TransportBatchAlreadyAdmitted",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportBatchFullyIndexed",
     "inputs": [
       {
@@ -3948,6 +3959,39 @@
       },
       {
         "name": "supplied",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportPacketHasNoDayList",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportPacketNothingUntyped",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportPacketWireTyped",
+    "inputs": [
+      {
+        "name": "packetHash",
         "type": "bytes32",
         "internalType": "bytes32"
       }

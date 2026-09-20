@@ -6797,6 +6797,44 @@ on the live era alone.
 >   and the Diamond must be refreshed together for it; the full refresh
 >   carries both, and a mirror on an older receiver fails closed (the
 >   transport records the failure and re-executes after the upgrade).
+>
+>   TWO corrections this plan's own wording invited, both found in review
+>   (Codex #2232 r3) and both recorded here rather than edited into the
+>   paragraphs above, which stand as written.
+>
+>   **(a) "the per-day ARRIVAL-ORDERED index" describes a representation the
+>   implementation cannot deliver, and does not need.** Materialization is
+>   permissionless and asynchronous by design — the commitment is the
+>   authority, not the caller — so which batch reaches a day's array first is
+>   decided by caller timing. Making POSITION carry arrival would require
+>   serializing every batch's indexing behind one global frontier, whose jam
+>   (one batch whose committed list nobody re-supplies stalls the index for
+>   every other batch) is a worse failure than the thing it fixes. What
+>   arrival order is actually FOR here is this section's own preparer default
+>   — fewest-remaining-member-days-first, *oldest on ties* — and the chain
+>   never allocates by position in any case: §5c has the preparer compute the
+>   assignment off-chain and the chain verify VALIDITY, precisely because "no
+>   local greedy survives overlapping memberships". So 3b-i keeps the array as
+>   a MEMBERSHIP SET and makes the order DATA: each entry is returned with its
+>   packet's own `arrivedAt`, written once by the ingress that received it and
+>   immutable. That key is also the only one correct for (b), which an append
+>   order could never be.
+>
+>   **(b) the 3a-to-3b ROLLOUT POPULATION needed an admission, and this plan
+>   implies one without naming it.** §5c records a day-list commitment on
+>   every pre-d6 arrival "so a packet landing between 3a and 3b carries
+>   authenticated membership 3b can index" — but 3b-i's only admission is the
+>   ingress's, so those packets held untyped value with no epoch bounding it,
+>   had their committed list refused as an unknown batch, and skipped the
+>   classification gate entirely on a zero `batchId`. `admitLegacyTransportBatch`
+>   is that entry: permissionless, with every figure read from the packet's
+>   own record. One ambiguity is intrinsic and is resolved conservatively —
+>   at ingress the wire's fact is TOLD to the Diamond, while a recorded
+>   packet carries no such statement, so a d5 delivery short enough to floor
+>   BOTH components away is admitted where the live ingress would not. That
+>   direction binds the value to the days its own delivery named, a stricter
+>   gate on the same funds and never a second claim on them; the opposite
+>   default would leave genuine old-wire value permanently ungated.
 > - **3b-ii — the uncontested draws**: the deterministic per-day allocation
 >   pass, the `transportPaid / eraPaid / livePaid` split at rows 1, 5, 13 and
 >   settlement, staging with references and deadlines and priority mode, the

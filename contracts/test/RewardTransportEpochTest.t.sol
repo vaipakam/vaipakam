@@ -145,13 +145,13 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
 
         // Compact means COMPACT — not one per-day write, whatever the length.
         for (uint256 d = 1; d <= 3; ++d) {
-            (, uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 10);
+            (, , uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 10);
             assertEq(total, 0, "no day reaches it before materialization");
         }
 
         assertEq(_epoch().materializeTransportBatchPage(h, _days(3)), 3, "indexed whole in one page");
         for (uint256 d = 1; d <= 3; ++d) {
-            (bytes32[] memory page, uint256 total, uint256 cursor) =
+            (bytes32[] memory page, , uint256 total, uint256 cursor) =
                 _epoch().getTransportDayBatches(d, 0, 10);
             assertEq(total, 1, "the day lists the batch");
             assertEq(page[0], h, "and it is this one");
@@ -159,7 +159,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         }
         // A day the delivery did NOT list is untouched — membership is a
         // filter, not a broadcast.
-        (, uint256 unlistedTotal, ) = _epoch().getTransportDayBatches(4, 0, 10);
+        (, , uint256 unlistedTotal, ) = _epoch().getTransportDayBatches(4, 0, 10);
         assertEq(unlistedTotal, 0, "an unlisted day has no claim on it");
     }
 
@@ -174,7 +174,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(balance, 0, "and none holds value");
         assertEq(dayCount, 0, "and none carries a membership");
         for (uint256 d = 1; d <= 3; ++d) {
-            (, uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 10);
+            (, , uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 10);
             assertEq(total, 0, "no day indexes a typed delivery");
         }
     }
@@ -193,7 +193,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(balance, 7e18, "the balance is admitted whole");
         assertEq(dayCount, uint32(count), "the count is recorded");
         assertEq(indexedDays, 0, "nothing is indexed yet");
-        (, uint256 total0, ) = _epoch().getTransportDayBatches(1, 0, 10);
+        (, , uint256 total0, ) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(total0, 0, "and no day can reach it yet");
 
         assertEq(_epoch().materializeTransportBatchPage(h, dayIds), uint32(cap), "page 1");
@@ -203,7 +203,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         (, , , , uint32 indexedAfter, ) = _epoch().getTransportBatch(h);
         assertEq(indexedAfter, uint32(count), "indexed whole");
         for (uint256 d = 1; d <= count; ++d) {
-            (bytes32[] memory page, uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 4);
+            (bytes32[] memory page, , uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 4);
             assertEq(total, 1, "every listed day reaches it now");
             assertEq(page[0], h, "and it is this batch");
         }
@@ -331,6 +331,133 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
             "if this now fits, the pre-existing budget gap was closed - delete this test and say so"
         );
+    }
+
+    // ─── 1b. the rollout population (Codex #2232 r3) ─────────────────────────
+
+    /// @dev Put a delivered packet back into its PRE-3b shape: 3a's day-list
+    ///      commitment and the protected balance intact, the epoch gone. This
+    ///      is every old-wire packet that landed on an activated mirror while
+    ///      3a was deployed and 3b was not, and it is the only way to produce
+    ///      one — the current ingress always admits.
+    function _asRolloutPacket(uint256 amount, uint256 dayCount, uint256 remitId, bytes32 id)
+        internal
+        returns (bytes32 h, uint256[] memory dayIds)
+    {
+        dayIds = _days(dayCount);
+        h = _deliver(amount, dayIds, remitId, id, false);
+        _mut().unadmitTransportBatchRaw(h);
+    }
+
+    /// A packet that landed between 3a and 3b is admitted from its OWN RECORD,
+    /// and admitting it is what makes 3a's commitment mean what design §5c says
+    /// it means. Before the entry existed that packet held untyped value with
+    /// no epoch bounding it, its committed list was refused as an unknown
+    /// batch, and its zero `batchId` made classification skip the gate.
+    function test_Rollout_AdmitsAPacketThatLandedBeforeTheLedger() public {
+        (bytes32 h, uint256[] memory dayIds) = _asRolloutPacket(10e18, 3, 60, keccak256("roll1"));
+
+        // The pre-3b state, asserted rather than assumed — otherwise the test
+        // below could pass against a packet that never lost its batch.
+        (bytes32 before, , , , , ) = _epoch().getTransportBatch(h);
+        assertEq(before, bytes32(0), "no epoch, as a pre-3b arrival has none");
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, h));
+        _epoch().materializeTransportBatchPage(h, dayIds);
+
+        assertEq(_epoch().admitLegacyTransportBatch(h), h, "the batch is keyed by its packet");
+
+        (
+            bytes32 packetHash,
+            uint256 balance,
+            uint256 admitted,
+            uint32 dayCount,
+            uint32 indexedDays,
+            bool released
+        ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, h, "the epoch exists now");
+        assertEq(balance, 10e18, "bounded by what the packet still holds unclassified");
+        assertEq(admitted, 10e18, "which is its conservation anchor");
+        assertEq(dayCount, 3, "membership taken from the packet's own commitment");
+        assertEq(indexedDays, 0, "and admitted COMPACTLY, exactly as the ingress admits");
+        assertFalse(released, "nothing has released it");
+
+        // One path afterwards, whichever entry opened the epoch: the same
+        // commitment proves the same pages, and refuses any other list. The
+        // refusal is driven BEFORE the index is whole, so it is the
+        // commitment that rejects the page and not the progress counter.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TransportDayListMismatch.selector, h, keccak256(abi.encode(dayIds)), keccak256(abi.encode(_days(2)))
+            )
+        );
+        _epoch().materializeTransportBatchPage(h, _days(2));
+        assertEq(_epoch().materializeTransportBatchPage(h, dayIds), 3, "indexed against 3a's commitment");
+
+        // And the gate now binds it, which is the whole point: before the
+        // admission this packet could be classified with no release at all.
+        AdminFacet(address(diamond)).pause();
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotReleased.selector, h, h));
+        _recon().classifyLegacyPacket(h, 0, 4e18, keccak256("rollE1"));
+        AdminFacet(address(diamond)).unpause();
+    }
+
+    /// The entry is permissionless, for the same reason materialization and
+    /// the release are: every figure it writes is read from the packet's own
+    /// record, so a stranger calling it can only make the ledger state what
+    /// the ingress already wrote.
+    function test_Rollout_IsOpenToAnyone() public {
+        (bytes32 h, ) = _asRolloutPacket(6e18, 2, 61, keccak256("roll2"));
+        vm.prank(makeAddr("rolloutStranger"));
+        assertEq(_epoch().admitLegacyTransportBatch(h), h, "anyone may admit it");
+        (, uint256 balance, , , , ) = _epoch().getTransportBatch(h);
+        assertEq(balance, 6e18, "from the record, not from the caller");
+    }
+
+    /// Each refusal by name, and each straddled against the admission above —
+    /// a guard that refused everything would pass a one-sided test.
+    function test_Rollout_RefusesEveryPacketItMustNotAdmit() public {
+        // 1. already admitted: a re-run must not restate an immutable anchor.
+        bytes32 live = _deliver(9e18, _days(2), 62, keccak256("roll3"), false);
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchAlreadyAdmitted.selector, live));
+        _epoch().admitLegacyTransportBatch(live);
+
+        // 2. wire-typed: its components were credited to the shared ledgers at
+        //    ingress, so an epoch over them is one value in two places.
+        bytes32 typed = _deliver(9e18, _days(2), 63, keccak256("roll4"), true);
+        vm.expectRevert(abi.encodeWithSelector(TransportPacketWireTyped.selector, typed));
+        _epoch().admitLegacyTransportBatch(typed);
+
+        // 3. unknown packet: nothing arrived under this stamp.
+        bytes32 ghost = keccak256("neverArrived");
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketUnknown.selector, ghost));
+        _epoch().admitLegacyTransportBatch(ghost);
+
+        // 4. no day list to be bound to, in BOTH shapes that carry none — a
+        //    pre-3a arrival that recorded no fingerprint, and a record whose
+        //    count is zero. Membership is never taken from a caller's word, so
+        //    neither can be admitted however plainly untyped it looks.
+        (bytes32 noList, ) = _asRolloutPacket(7e18, 2, 65, keccak256("roll6"));
+        _mut().setPacketDayListRaw(noList, bytes32(0), 2);
+        vm.expectRevert(abi.encodeWithSelector(TransportPacketHasNoDayList.selector, noList));
+        _epoch().admitLegacyTransportBatch(noList);
+        _mut().setPacketDayListRaw(noList, keccak256("someList"), 0);
+        vm.expectRevert(abi.encodeWithSelector(TransportPacketHasNoDayList.selector, noList));
+        _epoch().admitLegacyTransportBatch(noList);
+
+        // 5. nothing untyped left to bind. Admitted, released, and classified
+        //    down to zero: a second epoch over the emptied packet would hold it
+        //    shut behind a release that releases nothing.
+        (bytes32 spent, uint256[] memory spentDays) = (bytes32(0), _days(1));
+        spent = _deliver(5e18, spentDays, 64, keccak256("roll5"), false);
+        _epoch().materializeTransportBatchPage(spent, spentDays);
+        _epoch().parkTransportBatchRemainder(spent);
+        _epoch().acknowledgeTransportBatchRemainder(spent);
+        AdminFacet(address(diamond)).pause();
+        _recon().classifyLegacyPacket(spent, 0, 5e18, keccak256("rollE2"));
+        AdminFacet(address(diamond)).unpause();
+        _mut().unadmitTransportBatchRaw(spent);
+        vm.expectRevert(abi.encodeWithSelector(TransportPacketNothingUntyped.selector, spent));
+        _epoch().admitLegacyTransportBatch(spent);
     }
 
     // ─── 2. the release, and the classification gate it opens ────────────────
@@ -543,22 +670,63 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
             // Admission is compact, so each batch is indexed here.
             _epoch().materializeTransportBatchPage(bh, _days(1));
         }
-        (bytes32[] memory page, uint256 total, uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 2);
+        (bytes32[] memory page, , uint256 total, uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 2);
         assertEq(total, 5, "every batch this day ever listed");
         assertEq(page.length, 2, "one window");
         assertEq(cursor, 0, "nothing consumed");
 
-        (bytes32[] memory tail, , ) = _epoch().getTransportDayBatches(1, 4, 10);
+        (bytes32[] memory tail, , , ) = _epoch().getTransportDayBatches(1, 4, 10);
         assertEq(tail.length, 1, "a window clamped to the end");
 
-        (bytes32[] memory past, uint256 pastTotal, ) = _epoch().getTransportDayBatches(1, 9, 10);
+        (bytes32[] memory past, , uint256 pastTotal, ) = _epoch().getTransportDayBatches(1, 9, 10);
         assertEq(past.length, 0, "an offset past the end is empty, not a revert");
         assertEq(pastTotal, 5, "and still reports the total");
 
-        // Arrival ORDER is the index's promise.
-        (bytes32[] memory all, , ) = _epoch().getTransportDayBatches(1, 0, 10);
-        assertEq(all[0], keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("d", uint256(0))))), "first in");
-        assertEq(all[4], keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("d", uint256(4))))), "last in");
+        // The index holds every member, and the ORDER it is read by comes back
+        // with it. Position is only where the materializing caller put it —
+        // `test_DayIndex_OrdersByArrival_NotByWhoMaterializedFirst` drives the
+        // side where the two disagree.
+        (bytes32[] memory all, uint64[] memory arrivals, , ) =
+            _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(all.length, 5, "every member comes back");
+        assertEq(arrivals.length, 5, "each with its ordering key");
+        for (uint256 i; i < 5; ++i) {
+            assertEq(arrivals[i], uint64(block.timestamp), "the delivery's own recorded arrival");
+        }
+    }
+
+    /// The ORDER a day's index is read by is each delivery's own recorded
+    /// arrival — NOT its position, which only records which caller
+    /// materialized it first.
+    ///
+    /// Materialization is permissionless and asynchronous, so a later
+    /// delivery can be indexed before an earlier one that lists the same day.
+    /// This drives exactly that: B arrives second and is materialized FIRST,
+    /// so it sits at position 0 while its arrival key is the larger one. A
+    /// reader taking the array's order would have them backwards; one reading
+    /// the key has them right, and the key is what design §5c's preparer
+    /// default ("oldest on ties") is specified to use.
+    function test_DayIndex_OrdersByArrival_NotByWhoMaterializedFirst() public {
+        uint256[] memory dayIds = _days(1);
+        bytes32 a = _deliver(4e18, dayIds, 41, keccak256("aEarly"), false);
+        bytes32 b = _deliver(5e18, dayIds, 42, keccak256("bLate"), false);
+        // The deliveries share this block, so the arrivals are stamped apart
+        // explicitly: the subject is the key, not the clock.
+        _mut().setPacketArrivedAtRaw(a, 1000);
+        _mut().setPacketArrivedAtRaw(b, 2000);
+
+        // The LATER delivery is materialized FIRST — the caller-timing case.
+        _epoch().materializeTransportBatchPage(b, dayIds);
+        _epoch().materializeTransportBatchPage(a, dayIds);
+
+        (bytes32[] memory page, uint64[] memory arrivals, uint256 total, ) =
+            _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(total, 2, "both list the day");
+        assertEq(page[0], b, "position 0 is whoever was materialized first");
+        assertEq(page[1], a, "and position 1 the other - position is not an order");
+        assertEq(arrivals[0], 2000, "but the key at position 0 is the LATER arrival");
+        assertEq(arrivals[1], 1000, "and the key at position 1 the earlier one");
+        assertTrue(arrivals[0] > arrivals[1], "so the array's order and the arrival order disagree");
     }
 }
 
@@ -624,7 +792,7 @@ contract RewardTransportEpochPreActivationTest is SetupTest, IVaipakamErrors {
         assertEq(balance, 0, "and none holds value");
         assertEq(dayCount, 0, "and none carries a membership");
         for (uint256 d = 1; d <= 2; ++d) {
-            (, uint256 total, ) = ep.getTransportDayBatches(d, 0, 4);
+            (, , uint256 total, ) = ep.getTransportDayBatches(d, 0, 4);
             assertEq(total, 0, "no day indexes it");
         }
 
@@ -635,5 +803,24 @@ contract RewardTransportEpochPreActivationTest is SetupTest, IVaipakamErrors {
             0,
             "the delivery landed and wrote its receipt"
         );
+    }
+
+    /// The ROLLOUT admission carries the SAME activation condition as the
+    /// ingress (Codex #2232 r3). A permissionless entry that could open an
+    /// epoch here would reintroduce exactly the divergence r1 closed: the
+    /// epoch would report a balance while the packet's tokens are still
+    /// Diamond-side, waiting for the activation envelope to attribute them —
+    /// two claims on one amount.
+    function test_Rollout_OpensNoEpochBeforeCustodyIsActivated() public {
+        uint256[] memory dayIds = new uint256[](2);
+        dayIds[0] = 1;
+        dayIds[1] = 2;
+        RewardIngressFacet(address(diamond)).onRewardBudgetReceived(
+            address(vpfi), 10e18, dayIds, CHAIN_BASE, 98, REMITTER, 0, 0, keccak256("pre-act-roll"), false
+        );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre-act-roll")));
+
+        vm.expectRevert(RewardCustodyNotActivated.selector);
+        RewardEpochFacet(address(diamond)).admitLegacyTransportBatch(h);
     }
 }
