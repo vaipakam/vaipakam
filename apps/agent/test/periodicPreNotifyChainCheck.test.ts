@@ -1938,14 +1938,16 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run({ PUSH_CHANNEL_PK: undefined });
     // "missing or unusable", because this disclosure covers both (#2213 r25
     // `4015755007`) — an unset binding and a present-but-malformed value.
-    // r29 `4016866267` widened this: the signer being unset or malformed is no
-    // longer the only way a deployment cannot send Push — the installed SDK
-    // and ethers major can also disagree about how to sign. The line names
-    // all three, because the fix differs and an operator sent to look for an
-    // unset secret will not find a dependency mismatch.
+    //
+    // r29 `4016866267` had added a THIRD cause, the installed SDK and ethers
+    // major disagreeing about how to sign, and this case asserted the line
+    // named it. #2220 removed that cause by correcting the SDK pin, so the
+    // assertion is removed with it (#2220 r1). Keeping it would have pinned a
+    // diagnostic pointing responders at a dependency pair that can no longer
+    // be the answer — a test holding a stale explanation in place.
     expect(said).toContain('deployment cannot send Push at all');
     expect(said).toContain('PUSH_CHANNEL_PK is unset');
-    expect(said).toContain('disagree about how to sign');
+    expect(said).not.toContain('disagree about how to sign');
     // Telegram still worked, so this is a disclosure and not an outage.
     expect(sends.some((x) => x.startsWith('tg:'))).toBe(true);
     expect(sends.some((x) => x.startsWith('push:'))).toBe(false);
