@@ -89,7 +89,7 @@ Deliveries that arrived before that commitment was recorded have no day list to
 be bound to and are unchanged; so are deliveries on a chain whose reward
 custody has not been switched on, for the same reason as above.
 
-### Bringing an older delivery in costs what taking it back out costs
+### Bringing an older delivery in takes the delivery's own day list
 
 The call that brings a pre-ledger delivery into the ledger now takes the
 delivery's own day list and checks it against the fingerprint recorded when
@@ -97,19 +97,24 @@ that delivery arrived. Anyone may still make the call, and nothing about the
 delivery is taken from the caller's word — the list is checked, not believed,
 and it is not stored.
 
-The reason is a symmetry that was missing. Bringing a delivery in closes its
-reconciliation gate: until that moment the delivery was reconcilable, and
-afterwards it is reconcilable only once its remainder has been parked and
-acknowledged — and parking requires the delivery's membership to have been
-written, which requires that same day list. So without this check anyone could
-close a gate that only someone holding the list could reopen. The deliveries
-this entry exists to rescue are the oldest ones, whose day list may survive
-only in long-past event records, so "it can be looked up" is not something the
-platform can assume on every chain. Requiring the list up front also puts it
-permanently in the record of the call that used it.
+The reason is that this call is where the delivery's opening figure is fixed,
+permanently. A membership that can never be produced would leave that figure
+describing a set nobody can enumerate. It costs a caller nothing it does not
+already need: writing the membership checks the same list against the same
+fingerprint, so there is no route to a close-out without it. Requiring the list
+up front also puts it permanently in the record of the call that used it, which
+matters because the deliveries this entry exists to rescue are the oldest ones,
+whose day list may survive only in long-past event records.
 
-A delivery whose list does not match is refused and left exactly as it was —
-still reconcilable, having lost nothing by the attempt.
+An earlier draft of this release gave a different reason — that bringing a
+delivery in was what *closed* its reconciliation gate, so it had to cost what
+reopening it cost. That is no longer how the gate works, as the section below
+describes: a delivery owed a place in the ledger is gated from the moment it
+lands, and bringing it in closes nothing. The reason is restated here rather
+than left standing next to a section that contradicts it.
+
+A delivery whose list does not match is refused and left exactly as it was,
+having lost nothing by the attempt.
 
 ### Who may close an epoch out
 
@@ -150,6 +155,14 @@ differently. A delivery that entry would still accept must be brought in and
 closed out before it can be reconciled, and the refusal says so and names the
 missing step. A delivery it would refuse can never hold an epoch, and is
 reconcilable exactly as before.
+
+**What this costs, stated plainly.** Bringing a delivery in requires producing
+its day list, so a delivery whose list can no longer be produced can no longer
+be reconciled, where before this it could. Nothing is lost: the value stays
+exactly where it already is, held aside and unreconciled, and it becomes
+reconcilable the moment someone produces the list. That is the conservative
+direction, and the alternative is reconciling value while the days that
+delivery named can still draw on it.
 
 ### Reading what has left an epoch
 

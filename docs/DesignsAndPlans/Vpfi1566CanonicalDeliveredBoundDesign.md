@@ -6835,6 +6835,34 @@ on the live era alone.
 >   direction binds the value to the days its own delivery named, a stricter
 >   gate on the same funds and never a second claim on them; the opposite
 >   default would leave genuine old-wire value permanently ungated.
+>
+>   **Corrected at review r5: that entry is the LIVENESS half, and alone it
+>   does not close the gate.** The paragraph above treats
+>   `admitLegacyTransportBatch` as the whole remedy for the rollout
+>   population. It is not, because the entry is permissionless and therefore
+>   OPTIONAL: nothing obliges anyone to call it, so a rollout packet rests at
+>   `batchId == 0` indefinitely and the gate — which tested that field — kept
+>   exempting exactly the population the entry exists to rescue, for however
+>   long nobody acted. The ambiguity that made this hard to see is that a zero
+>   `batchId` answers two different questions with one value: "is this packet
+>   owed an epoch" and "has one been opened".
+>
+>   So the gate asks the PACKET, not the ledger. Whether an epoch is owed is
+>   decided by the packet's own recorded shape — a 3a day-list commitment, an
+>   untyped wire record, something still protected-and-unclassified — which the
+>   ingress writes and which depends on nobody acting. One predicate
+>   (`rolloutAdmissionStatus`), read by this admission and by the
+>   classification gate alike, so the two can never disagree about which
+>   packets are in scope. `batchId` reverts to what it always should have been:
+>   the STATE of an epoch, never the test for whether one is owed.
+>
+>   The residue is stated rather than implied: a packet owed an epoch whose
+>   committed day list cannot be EXHIBITED is no longer classifiable. Nothing
+>   is lost — the value stays protected in `Unclassified`, where it already is
+>   — but it stays there until the list is produced. That is §5c's own position
+>   (the commitment is the authority) applied consistently, and it is the
+>   conservative direction; the alternative is classifying value while the days
+>   the delivery named can still draw on it.
 > - **3b-ii — the uncontested draws**: the deterministic per-day allocation
 >   pass, the `transportPaid / eraPaid / livePaid` split at rows 1, 5, 13 and
 >   settlement, staging with references and deadlines and priority mode, the

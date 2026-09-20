@@ -1426,22 +1426,30 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         uint8 status = rolloutAdmissionStatus(p);
         if (status != ROLLOUT_ADMISSIBLE) _revertRolloutRefusal(status, packetHash);
-        // #1566 transport epochs PR 3b — CLOSING THE GATE REQUIRES EXHIBITING
-        // THE MATERIAL THAT REOPENS IT.
+        // #1566 transport epochs PR 3b — THE DAY LIST IS EXHIBITED HERE
+        // BECAUSE THE ANCHOR IS FIXED HERE.
         //
-        // This admission sets `p.batchId`, which closes the classification
-        // gate on a packet that was, until this call, ungated and
-        // classifiable. Reopening it runs through
-        // {materializeTransportBatchPage}, and that call proves the day list
-        // against this same commitment — so without this check ANYONE could
-        // close the gate while only a holder of the committed list could open
-        // it again. The rollout population is by definition the oldest
-        // deliveries, whose list survives only in long-past event data, and
-        // this programme already has an open blocker on archive access for
-        // exactly that kind of historical read (#2095). So "recoverable from
-        // logs" is not a free assumption, and the asymmetry would be a
-        // liveness regression a stranger could cause on precisely the
-        // population this entry exists to rescue.
+        // This check was introduced with a SYMMETRY argument: admission sets
+        // `p.batchId`, which closed the classification gate on a packet that
+        // was until then ungated, and the only route back through that gate
+        // proves the same list — so without it anyone could close a gate only
+        // a list-holder could reopen.
+        //
+        // THAT ARGUMENT IS RETIRED, and is written out rather than left
+        // standing (Codex #2232 r5). Since {rolloutAdmissionStatus} became the
+        // gate's rule too, an owed packet is gated by its own SHAPE from the
+        // moment it lands, and this call closes nothing — so a justification
+        // resting on what it closes is now simply false. A false justification
+        // at this exact seam is how the conflation took five review rounds to
+        // find; leaving one behind to be re-read as current is the same
+        // mistake with a longer fuse.
+        //
+        // The check stays, for the reason that actually holds: this is the one
+        // call that fixes an IMMUTABLE anchor over the protected row, and an
+        // anchor bounding a membership nobody can ever exhibit describes a set
+        // nobody can enumerate. It costs a caller nothing it does not already
+        // need — {materializeTransportBatchPage} proves the same list against
+        // the same commitment, so no route to a release exists without it.
         //
         // The list is NOT written here: admission stays compact and the
         // membership is still built by the paged call. The only thing this

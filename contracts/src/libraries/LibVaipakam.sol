@@ -7706,14 +7706,37 @@ library LibVaipakam {
         bool attested;
         /// @dev #1566 transport epochs PR 3b — the TRANSPORT BATCH this
         ///      delivery opened, appended. Zero means the packet holds no
-        ///      batch balance, and that is the answer for THREE populations
-        ///      that must keep behaving exactly as they do today:
+        ///      batch balance.
+        ///
+        ///      IT DOES NOT MEAN THE PACKET IS OWED NO EPOCH, and nothing may
+        ///      read it as if it did (Codex #2232 r5). Admission of the
+        ///      rollout population is permissionless and therefore OPTIONAL,
+        ///      so a packet that is owed an epoch nobody has opened reads zero
+        ///      too. Whether one is OWED is a question about the packet's
+        ///      recorded shape and is answered in one place,
+        ///      {LibRewardCustody.rolloutAdmissionStatus}; this field is the
+        ///      STATE of an epoch and nothing more. The classification gate
+        ///      read this field instead and exempted the entire 3a-to-3b
+        ///      rollout population for it — and clause 2 below, as it was
+        ///      originally worded ("every packet that arrived before this
+        ///      ledger existed"), is the sentence that licensed the reading.
+        ///
+        ///      Zero is the RIGHT and permanent answer for THREE populations
+        ///      that must keep behaving exactly as they do today, each
+        ///      excluded by a clause of that predicate:
         ///
         ///        1. a d5 packet, whose components are typed on the wire and
         ///           credited to the shared live/bucket ledgers at ingress
         ///           (§5c's one-accounting-path rule — admitting it as a batch
-        ///           as well would make one delivery spendable twice);
-        ///        2. every packet that arrived before this ledger existed;
+        ///           as well would make one delivery spendable twice). A
+        ///           COMPENSATION is excluded by the same clause: it records
+        ///           its whole amount as the fresh component;
+        ///        2. every packet that arrived before 3a began recording the
+        ///           day-list commitment, which carries no membership an epoch
+        ///           could be bound to. NOT "before this ledger existed" — an
+        ///           arrival between 3a and 3b carries the commitment, IS owed
+        ///           an epoch, and rests at zero only until someone opens it
+        ///           (`RewardEpochFacet.admitLegacyTransportBatch`);
         ///        3. every packet that arrived before reward custody was
         ///           ACTIVATED on this deployment (Codex #2232 r1). Such a
         ///           delivery's value sits Diamond-side rather than in the
