@@ -31,6 +31,26 @@ interface IArtifactRoot {
     /// @notice The directory holding `<chain-slug>/addresses.json` for this
     ///         run, or the empty string to use the committed default.
     function artifactRootOverride() external view returns (string memory);
+
+    /// @notice Hand the script the artifact as it stood before this run.
+    ///
+    /// @dev    The library cannot hold run state — it is stateless — and the
+    ///         CALLER cannot hold it either: `DeployDiamond.runWith` is at the
+    ///         viaIR stack ceiling with ~80 live facet addresses, and FOUR
+    ///         compiles failed on "Variable expr_… is 1 too deep" from nothing
+    ///         more than an extra local or a destructured return in that frame.
+    ///         So the library pushes it into the script's storage, through the
+    ///         same seam it already reads {artifactRootOverride} from.
+    function recordArtifactSnapshot(
+        string calldata prior,
+        bool priorExisted
+    ) external;
+
+    /// @notice The snapshot recorded by {recordArtifactSnapshot}.
+    function artifactSnapshot()
+        external
+        view
+        returns (string memory prior, bool priorExisted);
 }
 
 // The ONLY directory a redirected artifact may be written to.
@@ -79,6 +99,30 @@ abstract contract ArtifactRootBase is IArtifactRoot {
 
 
     string private _artifactRootOverride;
+    string private _priorArtifact;
+    bool private _priorExisted;
+
+    /// @inheritdoc IArtifactRoot
+    function recordArtifactSnapshot(
+        string calldata prior,
+        bool priorExisted
+    ) external {
+        require(
+            msg.sender == address(this),
+            "ArtifactRootBase: recordArtifactSnapshot is an internal hop"
+        );
+        _priorArtifact = prior;
+        _priorExisted = priorExisted;
+    }
+
+    /// @inheritdoc IArtifactRoot
+    function artifactSnapshot()
+        external
+        view
+        returns (string memory, bool)
+    {
+        return (_priorArtifact, _priorExisted);
+    }
 
     /// @inheritdoc IArtifactRoot
     function artifactRootOverride() external view returns (string memory) {

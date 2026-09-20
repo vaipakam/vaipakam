@@ -117,6 +117,65 @@ contract DeployDiamond is Script, ArtifactRootBase {
         );
     }
 
+
+    /// @notice The completeness assertion, reached by
+    ///         `Deployments.finalizeArtifact` across a call to this contract.
+    ///
+    /// @dev    **This is the virtual seam for the whole check, and it is
+    ///         external for two independent reasons.**
+    ///
+    ///         `Deployments.assertFacetsRecorded` reverts WITHOUT restoring the
+    ///         artifact snapshot — the caller owns the finally — and Solidity's
+    ///         `try` only wraps external calls, so the restore the library does
+    ///         on any failure needs this boundary to exist.
+    ///
+    ///         And #2253 r2 found the completeness check unguarded in the other
+    ///         direction: deleting its call from Step 7b left the whole
+    ///         deploy-artifact suite green, because those tests read the
+    ///         artifact independently and assert the same property. A fix that
+    ///         nothing fails without is not covered, however carefully the check
+    ///         itself is written. So the CALL SITE has to be observable, which
+    ///         means a probe has to be able to override something on the path —
+    ///         and `runWith` sits at the viaIR whole-unit stack ceiling with
+    ///         exactly zero spare slots in a subclass's copy. An `internal`
+    ///         hook was tried first and cannot work: it is inlined into each
+    ///         derived contract's own copy of `runWith`, so ANY override body,
+    ///         down to a single external self-call, overflows that copy while
+    ///         the identical base compiles. Five rounds went into shaving that
+    ///         one slot before the seam moved here. An external function is not
+    ///         inlined, so overriding this costs `runWith` nothing.
+    ///
+    ///         Note that `forge build --skip test` cannot see a probe blowing
+    ///         that budget — only the test build compiles them.
+    ///
+    ///         Gated to self-calls so it is not an operator-reachable entry
+    ///         point on a broadcast script.
+    function assertFacetsRecordedExternal(address[] memory expected)
+        external
+        virtual
+    {
+        require(msg.sender == address(this), "DeployDiamond: self-call only");
+        _assertFacetsRecorded(expected);
+    }
+
+    /// @dev The assertion itself, separated from the entry point so an
+    ///      overriding probe can run exactly what the base runs instead of a
+    ///      copy of it that could drift. `internal`, and deliberately NOT
+    ///      called from `runWith` — see the note above on why nothing inlined
+    ///      into that frame can be an override seam.
+    function _assertFacetsRecorded(address[] memory expected) internal view {
+        Deployments.assertFacetsRecorded(expected);
+    }
+
+    /// @dev Restore the snapshot. `internal` so a test probe replicating the
+    ///      deploy's failure path uses the SAME restore the deploy uses, rather
+    ///      than a copy that could drift from it.
+    function restoreArtifactForTest() internal {
+        (string memory prior, bool existed) = Deployments.callerSnapshot();
+        Deployments.restoreArtifact(prior, existed);
+    }
+
+
     /// @notice Parameterised entry point — same deploy logic, but admin /
     ///         treasury / deployer-key are passed directly instead of read
     ///         from env vars.
@@ -130,72 +189,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         env-var round-trip, no parallel-test race. Production
     ///         `forge script` invocations keep using `run()` and are
     ///         unaffected.
-    /// @notice Require that every facet installed in `diamond_` was recorded in
-    ///         the artifact this run wrote.
-    ///
-    /// @dev    **VIRTUAL so that the CALL SITE is testable, not only the
-    ///         check.** #2253 r2 found the completeness check itself unguarded:
-    ///         deleting the call from Step 7b left the whole deploy-artifact
-    ///         suite green, because those tests read the artifact independently
-    ///         and assert the same property. A fix nothing fails without is not
-    ///         covered, however carefully the check itself is written — exactly
-    ///         the vacuous-fixture trap. A test probe overrides this, records
-    ///         that it ran, and delegates to `super`; deleting the call site
-    ///         then turns that fixture red.
-    ///
-    ///         `diamondCutFacet` is appended SEPARATELY because
-    ///         `facetAddresses()` structurally cannot report it:
-    ///         `VaipakamDiamond`'s constructor writes
-    ///         `selectorToFacetAndPosition[diamondCut.selector].facetAddress`
-    ///         directly, without pushing into the enumeration. Leaving it out
-    ///         would blind this check to the one facet that can never be
-    ///         re-cut, since removing the cut function removes the ability to
-    ///         cut (#1798 r9).
-    /// @notice External hop for {verifyArtifactCompleteness}'s try/catch.
-    ///
-    /// @dev    `address(this)`-gated: it exists so the verification can be
-    ///         wrapped, not as a call surface. `view`, so it is a staticcall
-    ///         and never enters a broadcast.
-    function assertFacetsRecordedExternal(address[] memory expected)
-        external
-        view
-    {
-        require(
-            msg.sender == address(this),
-            "DeployDiamond: assertFacetsRecordedExternal is an internal hop"
-        );
-        Deployments.assertFacetsRecorded(expected);
-    }
-
-    function verifyArtifactCompleteness(
-        address diamond_,
-        string memory priorArtifact,
-        bool priorExisted
-    ) internal virtual {
-        address[] memory routed = DiamondLoupeFacet(diamond_).facetAddresses();
-        address[] memory recorded = new address[](routed.length + 1);
-        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
-        recorded[routed.length] = DiamondLoupeFacet(diamond_).facetAddress(
-            IDiamondCut.diamondCut.selector
-        );
-
-        // #2253 r5 P1 — the restore is a FINALLY, not a branch. An earlier
-        // revision restored inside the facet-not-found case, which left every
-        // other failure un-restored: `parseJsonAddress` reverts outright on a
-        // `.facets` entry of the wrong JSON type, before execution reached the
-        // restore, leaving the canonical artifact clobbered by exactly the door
-        // the snapshot was meant to close. Restoring in a branch bets that the
-        // author enumerated the failure modes, and this PR's own history is the
-        // evidence that bet loses. The external hop exists only so try/catch
-        // can wrap the whole check — including failures added later.
-        try this.assertFacetsRecordedExternal(recorded) {
-            console.log("Verified: every installed facet is recorded in the artifact.");
-        } catch (bytes memory err) {
-            Deployments.restoreArtifact(priorArtifact, priorExisted);
-            assembly { revert(add(err, 0x20), mload(err)) }
-        }
-    }
-
     function runWith(
         address admin,
         address treasury,
@@ -1004,19 +997,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // verification at Step 7b would otherwise leave the inventory's source
         // of truth describing a Diamond that was never deployed. Step 7b
         // restores this snapshot before reverting.
-        (string memory priorArtifact, bool priorExisted) =
-            Deployments.snapshotArtifact();
-
         Deployments.writeChainHeader();
-
-        // #2253 r5 P2 — empty `.facets` so it describes THIS run only. The
-        // typed writers MERGE into the existing file, and on the documented
-        // fresh-Anvil workflow the CREATE addresses repeat (anvil-bootstrap.sh
-        // restarts the chain and reuses the fixed default deployer) while the
-        // committed artifact stays — so a deleted `writeFacet` left the prior
-        // run's matching value in place and the completeness scan passed for a
-        // facet this run never recorded.
-        Deployments.clearFacets();
 
         Deployments.writeDiamond(diamond);
 
@@ -1184,103 +1165,25 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("perkFacet",               address(perkFacet));
         Deployments.writeFacet("rewardBroadcastFacet",   address(rewardBroadcastFacet));
 
-        console.log(
-            "Wrote addresses to deployments/",
-            Deployments.chainSlug(),
-            "/addresses.json"
-        );
+        // ── Summary + completeness check ────────────────────────────────
+        // Prints the header, the Diamond, and EVERY facet this run recorded —
+        // read back from the artifact — then requires every facet installed in
+        // the Diamond to appear there.
+        //
+        // The per-facet lines used to be a second hand-maintained block of ~45
+        // `console.log`s right here, naming the same addresses the `writeFacet`
+        // block above had just written. Printing from the artifact instead is
+        // the honest summary: the operator sees what was RECORDED, so a missing
+        // `writeFacet` shows up as a missing line rather than being masked by a
+        // parallel list that still had it — which is exactly how #1798 stayed
+        // invisible to anyone reading a deploy log.
+        //
+        // The failure branch is the library's: it restores the artifact this
+        // run overwrote before re-reverting, so a caught omission does not
+        // leave the inventory describing a Diamond that was never deployed.
+        Deployments.finalizeArtifact(diamond);
 
-        // ── Step 7b: the deploy verifies its OWN artifact ───────────────
-        //
-        // #1800 / #2253 r2 — every address the Diamond reports must appear
-        // under some `.facets.*` key of the file just written. #1798 shipped
-        // with THIRTEEN facets cut and never recorded, and nothing noticed.
-        //
-        // This lives in the deploy rather than in a test on purpose. The test
-        // version had to enumerate the conditions a deploy might run under —
-        // chain id, admin-vs-deployer topology — and review found the
-        // enumeration incomplete twice running, because that list is unbounded:
-        // a write can be guarded on anything. Here there is no enumeration to
-        // be incomplete. The check runs under exactly the conditions the deploy
-        // runs under, so a guard on any dimension is inside the branch being
-        // verified rather than outside it.
-        //
-        // `diamondCutFacet` is appended SEPARATELY because `facetAddresses()`
-        // structurally cannot report it: `VaipakamDiamond`'s constructor writes
-        // `selectorToFacetAndPosition[diamondCut.selector].facetAddress`
-        // directly, without pushing into the enumeration. Leaving it out would
-        // blind this check to the one facet that can never be re-cut — removing
-        // the cut function removes the ability to cut. (#1798 r9.)
-        verifyArtifactCompleteness(diamond, priorArtifact, priorExisted);
-
-        // ── Summary ─────────────────────────────────────────────────────
         console.log("");
-        console.log("=== Deployment Summary ===");
-        console.log("Diamond:              ", diamond);
-        console.log("DiamondCutFacet:      ", address(cutFacet));
-        console.log("DiamondLoupeFacet:    ", address(loupeFacet));
-        console.log("OwnershipFacet:       ", address(ownershipFacet));
-        console.log("AccessControlFacet:   ", address(accessControlFacet));
-        console.log("AdminFacet:           ", address(adminFacet));
-        console.log("ProfileFacet:         ", address(profileFacet));
-        console.log("OracleFacet:          ", address(oracleFacet));
-        console.log("OracleAdminFacet:     ", address(oracleAdminFacet));
-        console.log("VaipakamNFTFacet:     ", address(nftFacet));
-        console.log("VaultFactoryFacet:   ", address(vaultFactoryFacet));
-        console.log("OfferCreateFacet:     ", address(offerCreateFacet));
-        console.log("OfferParallelSaleFacet:", address(offerParallelSaleFacet));
-        console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
-        console.log("OfferAcceptFeeFacet:  ", address(offerAcceptFeeFacet));
-        console.log("OfferMatchFacet:      ", address(offerMatchFacet));
-        console.log("OfferCancelFacet:     ", address(offerCancelFacet));
-        console.log("OfferMutateFacet:     ", address(offerMutateFacet));
-        console.log("LoanFacet:            ", address(loanFacet));
-        console.log("RepayFacet:           ", address(repayFacet));
-        console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
-        console.log("SwapToRepayFacet:     ", address(swapToRepayFacet));
-        console.log("DefaultedFacet:       ", address(defaultedFacet));
-        console.log("RiskFacet:            ", address(riskFacet));
-        console.log("RiskMatchLiquidationFacet:", address(riskMatchLiquidationFacet));
-        console.log("RiskSplitLiquidationFacet:", address(riskSplitLiquidationFacet));
-        console.log("ClaimFacet:           ", address(claimFacet));
-        console.log("AddCollateralFacet:   ", address(addCollateralFacet));
-        console.log("TreasuryFacet:        ", address(treasuryFacet));
-        console.log("PayrollFacet:         ", address(payrollFacet));
-        console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
-        console.log("EarlyWithdrawalDirectFacet:", address(earlyWithdrawalDirectFacet));
-        console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
-        console.log("PrecloseFacet:        ", address(precloseFacet));
-        console.log("PrepayListingFacet:   ", address(prepayListingFacet));
-        console.log("NFTPrepayListingFacet:", address(nftPrepayListingFacet));
-        console.log("NFTPrepayDutchListingFacet:", address(nftPrepayDutchListingFacet));
-        console.log("NFTPrepayListingAtomicFacet:", address(nftPrepayListingAtomicFacet));
-        console.log("RefinanceFacet:       ", address(refinanceFacet));
-        console.log("MetricsFacet:         ", address(metricsFacet));
-        console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
-        console.log("VPFITokenFacet:       ", address(vpfiTokenFacet));
-        console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
-        console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
-        console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
-        console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
-        console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
-        console.log("RewardClaimFacet:", address(rewardClaimFacet));
-        console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
-        console.log("PerkFacet:", address(perkFacet));
-        console.log("RewardBroadcastFacet:", address(rewardBroadcastFacet));
-        console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
-        console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
-        console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
-        console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
-        console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
-        console.log("RewardRemittanceLensFacet:", address(rewardRemittanceLensFacet));
-        console.log("RewardCompensationDispatchFacet:", address(rewardCompensationDispatchFacet));
-        console.log("RewardCustodyFacet:   ", address(rewardCustodyFacet));
-        console.log("RewardReconciliationFacet:", address(rewardReconciliationFacet));
-        console.log("RewardIngressFacet:   ", address(rewardIngressFacet));
-        console.log("ConfigFacet:          ", address(configFacet));
-        console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
-        console.log("RiskAccessFacet:      ", address(riskAccessFacet));
-        console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
         console.log("");
@@ -1289,6 +1192,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         console.log("   - RewardReporterFacet.setIsCanonicalRewardChain (true only on Base)");
         console.log("   - RewardAggregatorFacet.setExpectedSourceChainIds (Base only)");
         console.log("   See docs/ops/DeploymentRunbook.md section 3.");
+
     }
 
     // ── Helper: build a FacetCut struct ─────────────────────────────────

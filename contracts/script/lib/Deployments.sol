@@ -4,6 +4,41 @@ pragma solidity ^0.8.29;
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {IArtifactRoot} from "./ArtifactRoot.sol";
+// The REAL cut interface, imported rather than approximated. An earlier
+// revision declared a "minimal" `diamondCut(bytes,address,bytes)` here to keep
+// this library free of domain imports; that has a DIFFERENT selector from the
+// real `diamondCut(FacetCut[],address,bytes)`, so the loupe lookup returned
+// address(0) and the guard reported every deploy as missing a facet. A
+// hand-written interface is not a free abstraction when a selector is the thing
+// being looked up.
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+
+/// @dev The completeness assertion, as {finalizeArtifact} reaches it: on the
+///      CALLING SCRIPT, across an external call to itself.
+///
+///      Two things need that boundary, and neither is a matter of taste.
+///      Solidity's `try` only wraps external calls, and {finalizeArtifact} has
+///      to catch EVERY way the assertion can fail so it can put the operator's
+///      artifact back before re-reverting. And the assertion is the one seam a
+///      test needs to override — to observe that a real deploy reached it, or
+///      to force it to fail — while `DeployDiamond.runWith` sits at the viaIR
+///      whole-unit stack ceiling with no room for a subclass to override
+///      anything INLINED into it. An external function is not inlined, so a
+///      probe can override this one at no cost to that frame.
+interface IArtifactVerifier {
+    function assertFacetsRecordedExternal(address[] calldata expected) external;
+}
+
+/// @dev Minimal loupe surface, declared here so the artifact library keeps no
+///      dependency on the domain contracts it records. The CUT interface is
+///      imported rather than approximated the same way — see the note on that
+///      import — because there a selector is the value being looked up.
+interface ILoupeMinimal {
+    function facetAddresses() external view returns (address[] memory);
+    function facetAddress(bytes4 selector) external view returns (address);
+}
+
+
 
 /**
  * @title Deployments
@@ -467,6 +502,151 @@ library Deployments {
         if (existed) prior = CHEATS.readFile(p);
     }
 
+    /// @dev Capture the artifact and hand it to the calling script to hold.
+    ///
+    ///      Pushed into the script rather than returned because the caller
+    ///      cannot hold it: `DeployDiamond.runWith` is at the viaIR stack
+    ///      ceiling, and four compiles failed on "Variable expr_… is 1 too
+    ///      deep" from nothing more than one extra local or a destructured
+    ///      return in that frame. A script that does not implement
+    ///      {IArtifactRoot} simply has no snapshot, which is why this is
+    ///      wrapped rather than required.
+    function _recordSnapshotOnCaller() private {
+        (string memory prior, bool existed) = snapshotArtifact();
+        try IArtifactRoot(address(this)).recordArtifactSnapshot(prior, existed) {
+        } catch {
+            // Not an ArtifactRootBase script: nothing verifies, nothing restores.
+        }
+    }
+
+    /// @dev The snapshot {_recordSnapshotOnCaller} stored, or empty.
+    function callerSnapshot()
+        internal
+        view
+        returns (string memory prior, bool priorExisted)
+    {
+        try IArtifactRoot(address(this)).artifactSnapshot() returns (
+            string memory p_, bool e_
+        ) {
+            return (p_, e_);
+        } catch {
+            return ("", false);
+        }
+    }
+
+    /// @notice Close out the run's artifact: print what was recorded, then
+    ///         require every facet the built Diamond reports to appear in it,
+    ///         restoring the operator's previous artifact if it does not.
+    ///
+    /// @dev    Takes only the Diamond address and does its own loupe reads on
+    ///         purpose. `DeployDiamond.runWith` is AT the viaIR stack ceiling
+    ///         with ~80 live facet addresses, and building the facet list in
+    ///         that frame is what several failed compiles were; it also absorbs
+    ///         the "Wrote addresses to …" log and the deployment summary the
+    ///         frame used to print itself, so the net change there is negative.
+    ///
+    ///         Ordering matters: this runs AFTER every `writeFacet` and outside
+    ///         the broadcast. A failure means the Diamond was deployed but its
+    ///         artifact is incomplete — recoverable, since the addresses remain
+    ///         on-chain via `facetAddresses()` and in the broadcast log — so
+    ///         failing loudly at the end is strictly better than the silence
+    ///         #1798 actually shipped with.
+    ///
+    ///         The LOUPE surface is declared inline (two view functions, no
+    ///         selector semantics) but the CUT interface is imported: its
+    ///         selector is the value being looked up, and an approximation of
+    ///         it silently resolves to a different function.
+    function finalizeArtifact(address diamond) internal {
+        console.log("");
+        console.log("=== Deployment Summary ===");
+        console.log("Diamond:              ", diamond);
+        console.log(
+            "Wrote addresses to deployments/", chainSlug(), "/addresses.json"
+        );
+        if (!artifactWritesEnabled()) {
+            // Say so rather than print nothing. A run with artifact writes off
+            // has no recorded facet set to read back, and a summary that simply
+            // stopped after the Diamond address would read as "this deploy
+            // installed no facets".
+            console.log(
+                "Artifact writes are off for this run, so there is no recorded"
+                " facet set to list and no completeness check to run."
+            );
+            return;
+        }
+
+        printRecordedFacets();
+
+        address[] memory routed = ILoupeMinimal(diamond).facetAddresses();
+        address[] memory recorded = new address[](routed.length + 1);
+        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
+        // `diamondCutFacet` is appended SEPARATELY: the Diamond's constructor
+        // installs that selector by writing `selectorToFacetAndPosition`
+        // directly, so `facetAddresses()` structurally cannot report it, and a
+        // check built only on that enumeration would be blind to the one facet
+        // that can never be re-cut (#1798 r9).
+        recorded[routed.length] =
+            ILoupeMinimal(diamond).facetAddress(IDiamondCut.diamondCut.selector);
+
+        // Reached through the CALLER so the assertion can be wrapped, and so a
+        // failure puts the operator's artifact back before it propagates.
+        //
+        // #2253 r5 P1 — restoring inside the assertion's own not-found branch
+        // was a bet that its author had enumerated the failure modes, and this
+        // PR's history says that bet loses: `parseJsonAddress` reverts outright
+        // when a `.facets` entry holds the wrong JSON type, and that revert
+        // happened before execution ever reached the restore. Catching here
+        // covers every failure the assertion has today and every one added to
+        // it later.
+        try IArtifactVerifier(address(this)).assertFacetsRecordedExternal(recorded) {
+            return;
+        } catch (bytes memory err) {
+            (string memory prior, bool existed) = callerSnapshot();
+            restoreArtifact(prior, existed);
+            // Re-revert with the assertion's own message. The operator needs to
+            // read which facet was unrecorded, not that a call failed.
+            // forge-lint: disable-next-line(unsafe-assembly)
+            assembly ("memory-safe") {
+                revert(add(err, 0x20), mload(err))
+            }
+        }
+    }
+
+    /// @notice Print every facet the run recorded, read back FROM the artifact.
+    ///
+    /// @dev    #2253 r6. `runWith` used to print this list from a second,
+    ///         hand-maintained block of ~45 `console.log`s naming the same
+    ///         addresses the `writeFacet` block above it had just written.
+    ///
+    ///         Reading the artifact back instead makes the summary honest: what
+    ///         the operator sees is what was RECORDED, not a parallel list that
+    ///         can disagree with it. A `writeFacet` omission — the #1798 bug —
+    ///         was invisible in the old summary precisely because the two lists
+    ///         were independent, so an operator reading it saw a facet that the
+    ///         artifact did not name. Here it shows up as a missing line, and
+    ///         the check immediately below turns it into a failed deploy.
+    ///
+    ///         It also takes ~45 live addresses out of `runWith`'s frame, which
+    ///         is welcome on a function near the viaIR stack ceiling — but do
+    ///         NOT read that as the reason the completeness check fits. It was
+    ///         tried as the fix and measured: removing the block moved the
+    ///         overflow by a single slot and did not clear it. What cleared it
+    ///         was moving the override seam off an `internal` hook, and the
+    ///         honesty argument above is why this change was kept anyway.
+    function printRecordedFacets() internal view {
+        string memory p = path();
+        if (!_fileExists(p)) return;
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        string[] memory keys = CHEATS.parseJsonKeys(file, ".facets");
+        for (uint256 i; i < keys.length; ++i) {
+            console.log(
+                keys[i],
+                CHEATS.parseJsonAddress(file, string.concat(".facets.", keys[i]))
+            );
+        }
+    }
+
     /// @notice Empty the `.facets` namespace so it describes THIS run only.
     ///
     /// @dev    #2253 r5 P2 — the typed writers MERGE into the existing file, so
@@ -686,7 +866,20 @@ library Deployments {
     /// Stamp the file with `chainId` + `deployedAt`. Called from the
     /// top of `DeployDiamond.s.sol` so a partial deploy that crashes
     /// halfway still leaves a discoverable artifact.
+    /// @dev Also OPENS the artifact for this run: captures what was there (so a
+    ///      failed completeness check can put it back — #2253 r3 P1) and, at the
+    ///      end, empties `.facets` so the namespace describes this run only
+    ///      (#2253 r5 P2). The snapshot is returned for the caller to hold.
+    ///
+    ///      Folded in here rather than added as separate statements because
+    ///      `DeployDiamond.runWith` is AT the viaIR stack ceiling with ~80 live
+    ///      facet addresses: three compiles failed on "Variable expr_… is 1 too
+    ///      deep" purely from extra call sites in that frame. It is also the
+    ///      honest seam — writing the chain header IS the start of the run's
+    ///      artifact — and this function has exactly ONE caller
+    ///      (`DeployDiamond`), so nothing else changes behaviour.
     function writeChainHeader() internal {
+        _recordSnapshotOnCaller();
         requireMarkedPublication(".chainId");
         string memory p = path();
         // Build a minimal header object. Subsequent writes to the
@@ -708,6 +901,7 @@ library Deployments {
             CHEATS.createDir(dirForChainId(block.chainid), true);
             CHEATS.writeJson(finalJson, p);
         }
+        clearFacets();
     }
 
     // ── Internal helpers ───────────────────────────────────────────────────

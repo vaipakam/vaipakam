@@ -3,74 +3,14 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
+import {
+    DeployDiamondVerificationProbe,
+    DeployDiamondFailingVerificationProbe
+} from "./DeployDiamondVerificationProbes.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
 import {ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/ArtifactRoot.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
-
-/**
- * @notice Records whether `DeployDiamond` actually invoked its artifact
- *         verification, so the CALL SITE is covered and not only the check.
- *
- * @dev    #2253 r2 — mutation-checking the root fix found it unguarded:
- *         deleting `verifyArtifactCompleteness(diamond)` from Step 7b left this
- *         entire suite green (6 passed, 0 failed), because every test here
- *         reads the artifact itself and asserts the same property the deploy
- *         asserts. The check was right and nothing depended on it running.
- *
- *         That is the vacuous-fixture failure this repository has been caught
- *         by before, and it is worth stating plainly: a fix with no fixture
- *         that fails without it is not covered, however carefully it is
- *         written. This probe closes it — it delegates to `super`, so the real
- *         verification still runs, and records the call.
- */
-contract DeployDiamondVerificationProbe is DeployDiamond {
-    bool public verificationRan;
-
-    function verifyArtifactCompleteness(
-        address diamond_,
-        string memory priorArtifact,
-        bool priorExisted
-    ) internal override {
-        verificationRan = true;
-        super.verifyArtifactCompleteness(diamond_, priorArtifact, priorExisted);
-    }
-}
-
-
-/**
- * @notice A deploy whose artifact verification always FAILS, so the failure
- *         path itself can be tested without mutating `DeployDiamond`.
- *
- * @dev    #2253 r3 P1. Appending an address the deploy never recorded forces
- *         the completeness assertion to fail while every real
- *         write has already happened — which is exactly the situation the
- *         finding described: a caught omission, after the canonical artifact
- *         has been overwritten.
- */
-contract DeployDiamondFailingVerificationProbe is DeployDiamond {
-    address internal constant NEVER_RECORDED = address(0xDEAD);
-
-    function verifyArtifactCompleteness(
-        address diamond_,
-        string memory priorArtifact,
-        bool priorExisted
-    ) internal override {
-        address[] memory bogus = new address[](1);
-        bogus[0] = NEVER_RECORDED;
-        // #2253 r5 — mirrors the real hook's shape: the assertion reverts
-        // WITHOUT restoring, and the caller's catch does the restore. A probe
-        // that restored inline would test a path the deploy does not take.
-        try this.assertFacetsRecordedExternal(bogus) {
-            revert("probe: the bogus address was somehow recorded");
-        } catch (bytes memory err) {
-            Deployments.restoreArtifact(priorArtifact, priorExisted);
-            assembly { revert(add(err, 0x20), mload(err)) }
-        }
-        // unreachable
-        diamond_;
-    }
-}
 
 /**
  * @title  DeployArtifactCompletenessTest
@@ -539,7 +479,7 @@ contract DeployArtifactCompletenessTest is Test {
     /// @dev    #2253 r2. Every other test in this file reads the artifact and
     ///         asserts completeness itself, which means all of them stay green
     ///         with the deploy's own check deleted — mutation-checked and
-    ///         confirmed: removing `verifyArtifactCompleteness(diamond)` from
+    ///         confirmed: removing `Deployments.finalizeArtifact(diamond)` from
     ///         Step 7b gave "6 passed; 0 failed". The check was correct and
     ///         entirely unguarded.
     ///
@@ -567,7 +507,7 @@ contract DeployArtifactCompletenessTest is Test {
 
         assertTrue(
             probe.verificationRan(),
-            "DeployDiamond completed without invoking verifyArtifactCompleteness - the artifact completeness guarantee is not wired into the deploy, and every other test in this file would still pass"
+            "DeployDiamond completed without reaching its artifact verification - the completeness guarantee is not wired into the deploy, and every other test in this file would still pass"
         );
 
         vm.removeDir(root, true);
@@ -637,20 +577,30 @@ contract DeployArtifactCompletenessTest is Test {
     /// @notice Deploying twice into the SAME artifact leaves `.facets`
     ///         describing only the second run.
     ///
-    /// @dev    #2253 r5 P2, and this is the fixture whose absence the finding
-    ///         named: every other test here deletes its scratch root before
-    ///         deploying, which MASKED the bug rather than missing it by
-    ///         chance. The typed writers merge into the existing file, so
+    /// @dev    #2253 r5 P2. The typed writers MERGE into the existing file, so
     ///         without `clearFacets()` a second deploy inherits the first run's
     ///         keys — and on the documented fresh-Anvil workflow
     ///         (`anvil-bootstrap.sh` restarts the chain and reuses the fixed
     ///         default deployer) the CREATE addresses REPEAT, so a deleted
-    ///         `writeFacet` leaves a matching stale value and the value-scan
-    ///         passes for a facet the run never recorded.
+    ///         `writeFacet` leaves a matching stale value and the completeness
+    ///         scan passes for a facet the run never recorded.
     ///
-    ///         Deploying from two DIFFERENT deployer keys gives two disjoint
-    ///         address sets, so "inherited" and "cleared" are distinguishable:
-    ///         with the clear, no first-run address survives.
+    ///         **A SEEDED key is what makes this test able to fail, and the
+    ///         first version of it could not.** That version deployed twice
+    ///         from different deployer keys and asserted no first-run address
+    ///         survived — which passes with or without the clear, because both
+    ///         runs write the SAME key set, so every key is overwritten and
+    ///         merge is indistinguishable from replace. Mutation-checking
+    ///         caught it: deleting the wipe left all nine tests green. Staleness
+    ///         is only observable through a key the second run does NOT write,
+    ///         which is precisely the #1798 shape — a `writeFacet` line that
+    ///         went missing. So one is planted.
+    ///
+    ///         The extra key does not make the deploy fail on its own: the
+    ///         completeness check requires every INSTALLED facet to be recorded
+    ///         and is indifferent to additional keys. That asymmetry is the
+    ///         whole reason a stale key is dangerous rather than loud, and the
+    ///         reason clearing is the fix.
     function test_Redeploy_DoesNotInheritThePriorRunsFacetKeys() public {
         string memory root = string.concat(
             _scratchRoot("redeploy-clears-facets"), "/31337"
@@ -661,9 +611,21 @@ contract DeployArtifactCompletenessTest is Test {
         DeployDiamond first = new DeployDiamond();
         first.setArtifactRootOverride(root);
         first.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
-        address[] memory firstFacets =
-            IDiamondLoupe(first.diamond()).facetAddresses();
-        assertGt(firstFacets.length, 0, "first deploy built no Diamond");
+        assertGt(
+            IDiamondLoupe(first.diamond()).facetAddresses().length,
+            0,
+            "first deploy built no Diamond"
+        );
+
+        // A facet the FIRST run recorded under a key the second run does not
+        // write — the `writeFacet` line that went missing in #1798, planted so
+        // the second run has something to leave behind.
+        address ghost = address(0xF05511);
+        vm.writeJson(vm.toString(ghost), artifact, ".facets.retiredFacet");
+        assertTrue(
+            _recordedAsFacet(vm.readFile(artifact), ghost),
+            "the seeded stale key did not take - the rest of this test would prove nothing"
+        );
 
         // Deliberately NOT clearing the root: this is the re-deploy case.
         DeployDiamond second = new DeployDiamond();
@@ -671,16 +633,10 @@ contract DeployArtifactCompletenessTest is Test {
         second.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY + 1);
 
         string memory json = vm.readFile(artifact);
-        for (uint256 i; i < firstFacets.length; ++i) {
-            assertFalse(
-                _recordedAsFacet(json, firstFacets[i]),
-                string.concat(
-                    "the artifact still carries the FIRST deploy's facet ",
-                    vm.toString(firstFacets[i]),
-                    " - `.facets` was not cleared, so it describes two Diamonds at once and the completeness scan can pass on a stale value"
-                )
-            );
-        }
+        assertFalse(
+            _recordedAsFacet(json, ghost),
+            "the artifact still carries a facet key the second deploy never wrote - `.facets` was not cleared, so it describes two Diamonds at once and the completeness scan can pass on a stale value"
+        );
 
         address[] memory secondFacets =
             IDiamondLoupe(second.diamond()).facetAddresses();
