@@ -873,3 +873,65 @@ cost, and folding it into a correction fix would have made it silently.
 Recorded because the temptation, twice now, has been to resolve the asymmetry
 by restating the retracted claim — that the scan self-corrects — and thereby
 closing the whole entry. It does not, and the retraction above stands.
+
+## The transport epochs: two divergences the 3b-i ledger resolved (#2232)
+
+Both were found during Codex review of #2232 and both are **RESOLVED in code**
+— recorded here because the audit file is where a reader later checks whether
+a spec sentence was changed to match an implementation, and the first of these
+looks exactly like that and is not.
+
+### 1. The day index's order — a contradiction INSIDE the design, not code drift
+
+| Intent, as the design states it | What the code did | Resolution |
+| --- | --- | --- |
+| A day's batch index is read oldest-first, so a preparer's "oldest on ties" default has an order to use. | Membership is written by `materializeTransportBatchPage`, which is permissionless and asynchronous, so a batch's POSITION in a day's list recorded only which caller got there first. | Position now carries no order and **the order is data**: each entry is returned with its own packet's immutable `arrivedAt`. |
+
+This is the case the file's standing rule is least able to handle on its own.
+`Vpfi1566CanonicalDeliveredBoundDesign.md` asked for an ordering that its OWN
+compact-admission requirement makes unbuildable on-chain: admission is compact
+because a transport payload is immutable and a receive-side refusal would
+refuse the same message on every re-execution, so the membership must be
+written afterwards by whoever supplies the committed list — and that is a
+property of caller timing, not of arrival.
+
+So the divergence was **document-internal**, and resolving it did not weaken
+the spec toward the code. The intent — *a preparer can order deliveries by
+when they arrived* — is now met more directly than the original wording asked
+for, since `arrivedAt` is the delivery's own stamp rather than a proxy for it.
+The alternative considered and rejected was serializing materialization behind
+a global frontier, which would make position carry arrival at the cost of a
+strictly worse failure: one batch whose list nobody re-supplies would stall
+every other batch's indexing indefinitely.
+
+**No human intent-decision is required for this one**, and that is the point
+of recording it: a later reader who finds the ordering sentence rewritten
+should find this entry rather than assume the spec was bent.
+
+### 2. The 3a-to-3b window — spec promised an index nothing could provide
+
+| Intent, as the spec states it | Where the code fell short | Resolution |
+| --- | --- | --- |
+| Design §5c records a day-list commitment on every arrival on a wire older than d6 *precisely so* "a packet landing between 3a and 3b carries authenticated membership 3b can index". | 3b-i reached `admitTransportBatch` only from the ingress. For the whole 3a-to-3b window those packets held untyped value with no epoch bounding it, their committed list was refused as an unknown batch, and their zero `batchId` made classification skip the gate entirely. | `RewardEpochFacet.admitLegacyTransportBatch` — permissionless, every figure read from the packet's own record. |
+
+A straightforward spec-said / code-didn't, resolved in the direction the rule
+requires: the code moved to meet the spec.
+
+**One residue is intrinsic and is stated rather than hidden.** A d5 delivery
+short enough that BOTH stated components floored to zero is indistinguishable,
+from the record alone, from a delivery that stated nothing. It is admitted —
+binding it to the days its own delivery named is a stricter gate on the same
+money, never a second claim on it. Recorded in the entry's NatSpec, in
+`TokenomicsTechSpec.md`, and in the design note.
+
+**A second-order defect this entry's fix introduced, and its own resolution.**
+The admission originally took only the packet hash. It sets `p.batchId`, which
+CLOSES the classification gate on a packet that was ungated until that moment,
+while the only route back through that gate (`materializeTransportBatchPage`)
+proves the day list against the packet's commitment. Anyone could therefore
+close a gate that only a holder of the committed list could reopen — and the
+rollout population is by definition the oldest deliveries, whose list survives
+only in long-past event data, which this programme already has an open blocker
+on reading (#2095). The admission now takes the committed list and proves it,
+so closing the gate costs exactly what opening it costs. The list is not
+stored; admission stays compact.

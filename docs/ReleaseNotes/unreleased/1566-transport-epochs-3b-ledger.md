@@ -89,6 +89,28 @@ Deliveries that arrived before that commitment was recorded have no day list to
 be bound to and are unchanged; so are deliveries on a chain whose reward
 custody has not been switched on, for the same reason as above.
 
+### Bringing an older delivery in costs what taking it back out costs
+
+The call that brings a pre-ledger delivery into the ledger now takes the
+delivery's own day list and checks it against the fingerprint recorded when
+that delivery arrived. Anyone may still make the call, and nothing about the
+delivery is taken from the caller's word — the list is checked, not believed,
+and it is not stored.
+
+The reason is a symmetry that was missing. Bringing a delivery in closes its
+reconciliation gate: until that moment the delivery was reconcilable, and
+afterwards it is reconcilable only once its remainder has been parked and
+acknowledged — and parking requires the delivery's membership to have been
+written, which requires that same day list. So without this check anyone could
+close a gate that only someone holding the list could reopen. The deliveries
+this entry exists to rescue are the oldest ones, whose day list may survive
+only in long-past event records, so "it can be looked up" is not something the
+platform can assume on every chain. Requiring the list up front also puts it
+permanently in the record of the call that used it.
+
+A delivery whose list does not match is refused and left exactly as it was —
+still reconcilable, having lost nothing by the attempt.
+
 ### Who may close an epoch out
 
 The close-out's two steps are open to different parties, because they are

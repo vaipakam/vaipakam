@@ -20,6 +20,11 @@
         "name": "packetHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [

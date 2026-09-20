@@ -364,7 +364,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, h));
         _epoch().materializeTransportBatchPage(h, dayIds);
 
-        assertEq(_epoch().admitLegacyTransportBatch(h), h, "the batch is keyed by its packet");
+        assertEq(_epoch().admitLegacyTransportBatch(h, dayIds), h, "the batch is keyed by its packet");
 
         (
             bytes32 packetHash,
@@ -406,11 +406,49 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// record, so a stranger calling it can only make the ledger state what
     /// the ingress already wrote.
     function test_Rollout_IsOpenToAnyone() public {
-        (bytes32 h, ) = _asRolloutPacket(6e18, 2, 61, keccak256("roll2"));
+        (bytes32 h, uint256[] memory dayIds) = _asRolloutPacket(6e18, 2, 61, keccak256("roll2"));
         vm.prank(makeAddr("rolloutStranger"));
-        assertEq(_epoch().admitLegacyTransportBatch(h), h, "anyone may admit it");
+        assertEq(_epoch().admitLegacyTransportBatch(h, dayIds), h, "anyone may admit it");
         (, uint256 balance, , , , ) = _epoch().getTransportBatch(h);
         assertEq(balance, 6e18, "from the record, not from the caller");
+    }
+
+    /// CLOSING THE GATE COSTS WHAT OPENING IT COSTS.
+    ///
+    /// The rollout admission sets `p.batchId`, which closes the classification
+    /// gate on a packet that was ungated until then, and the only route back
+    /// through that gate runs via `materializeTransportBatchPage`, which proves
+    /// the day list against the packet's commitment. If admission did not take
+    /// the same list, anyone could close a gate that only a list-holder could
+    /// reopen — and the rollout population is by definition the oldest
+    /// deliveries, whose list survives only in long-past event data.
+    ///
+    /// So a wrong list is refused by the same error the page uses, and the
+    /// packet stays ungated and classifiable afterwards, which is the property
+    /// that actually matters: a failed attempt must leave nothing behind.
+    function test_Rollout_RefusesAListTheDeliveryDidNotCommitTo() public {
+        (bytes32 h, uint256[] memory dayIds) = _asRolloutPacket(8e18, 3, 66, keccak256("roll7"));
+        uint256[] memory wrong = _days(3);
+        wrong[2] = 99;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TransportDayListMismatch.selector, h, keccak256(abi.encode(dayIds)), keccak256(abi.encode(wrong))
+            )
+        );
+        _epoch().admitLegacyTransportBatch(h, wrong);
+
+        (bytes32 stillNone, , , , , ) = _epoch().getTransportBatch(h);
+        assertEq(stillNone, bytes32(0), "a refused admission opens no epoch");
+
+        // And the gate it would have closed is still open, so the packet has
+        // lost nothing by the attempt.
+        AdminFacet(address(diamond)).pause();
+        _recon().classifyLegacyPacket(h, 0, 1e18, keccak256("roll7c"));
+        AdminFacet(address(diamond)).unpause();
+
+        // The committed list still admits it, on the reduced remainder.
+        assertEq(_epoch().admitLegacyTransportBatch(h, dayIds), h, "the committed list admits it");
     }
 
     /// Each refusal by name, and each straddled against the admission above —
@@ -419,30 +457,30 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         // 1. already admitted: a re-run must not restate an immutable anchor.
         bytes32 live = _deliver(9e18, _days(2), 62, keccak256("roll3"), false);
         vm.expectRevert(abi.encodeWithSelector(TransportBatchAlreadyAdmitted.selector, live));
-        _epoch().admitLegacyTransportBatch(live);
+        _epoch().admitLegacyTransportBatch(live, _days(2));
 
         // 2. wire-typed: its components were credited to the shared ledgers at
         //    ingress, so an epoch over them is one value in two places.
         bytes32 typed = _deliver(9e18, _days(2), 63, keccak256("roll4"), true);
         vm.expectRevert(abi.encodeWithSelector(TransportPacketWireTyped.selector, typed));
-        _epoch().admitLegacyTransportBatch(typed);
+        _epoch().admitLegacyTransportBatch(typed, _days(2));
 
         // 3. unknown packet: nothing arrived under this stamp.
         bytes32 ghost = keccak256("neverArrived");
         vm.expectRevert(abi.encodeWithSelector(IngressPacketUnknown.selector, ghost));
-        _epoch().admitLegacyTransportBatch(ghost);
+        _epoch().admitLegacyTransportBatch(ghost, _days(1));
 
         // 4. no day list to be bound to, in BOTH shapes that carry none — a
         //    pre-3a arrival that recorded no fingerprint, and a record whose
         //    count is zero. Membership is never taken from a caller's word, so
         //    neither can be admitted however plainly untyped it looks.
-        (bytes32 noList, ) = _asRolloutPacket(7e18, 2, 65, keccak256("roll6"));
+        (bytes32 noList, uint256[] memory noListDays) = _asRolloutPacket(7e18, 2, 65, keccak256("roll6"));
         _mut().setPacketDayListRaw(noList, bytes32(0), 2);
         vm.expectRevert(abi.encodeWithSelector(TransportPacketHasNoDayList.selector, noList));
-        _epoch().admitLegacyTransportBatch(noList);
+        _epoch().admitLegacyTransportBatch(noList, noListDays);
         _mut().setPacketDayListRaw(noList, keccak256("someList"), 0);
         vm.expectRevert(abi.encodeWithSelector(TransportPacketHasNoDayList.selector, noList));
-        _epoch().admitLegacyTransportBatch(noList);
+        _epoch().admitLegacyTransportBatch(noList, noListDays);
 
         // 5. nothing untyped left to bind. Admitted, released, and classified
         //    down to zero: a second epoch over the emptied packet would hold it
@@ -457,7 +495,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         AdminFacet(address(diamond)).unpause();
         _mut().unadmitTransportBatchRaw(spent);
         vm.expectRevert(abi.encodeWithSelector(TransportPacketNothingUntyped.selector, spent));
-        _epoch().admitLegacyTransportBatch(spent);
+        _epoch().admitLegacyTransportBatch(spent, spentDays);
     }
 
     // ─── 2. the release, and the classification gate it opens ────────────────
@@ -836,7 +874,9 @@ contract RewardTransportEpochPreActivationTest is SetupTest, IVaipakamErrors {
         );
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre-act-roll")));
 
+        uint256[] memory preActDays = new uint256[](1);
+        preActDays[0] = 1;
         vm.expectRevert(RewardCustodyNotActivated.selector);
-        RewardEpochFacet(address(diamond)).admitLegacyTransportBatch(h);
+        RewardEpochFacet(address(diamond)).admitLegacyTransportBatch(h, preActDays);
     }
 }

@@ -686,7 +686,11 @@ contract RewardCustodyHandler is Test {
         (, , uint32 remDayCount, , ) = ep.getTransportRemainder(h);
         if (remDayCount != 0) return;
         TestMutatorFacet(diamond).unadmitTransportBatchRaw(h);
-        try ep.admitLegacyTransportBatch(h) {
+        // The handler's untyped deliveries all list exactly this one day, so the
+        // whole list re-supplied here is the list the commitment covers.
+        uint256[] memory days_ = new uint256[](1);
+        days_[0] = 1;
+        try ep.admitLegacyTransportBatch(h, days_) {
             rolloutAdmitted++;
         } catch {
             refusals++;

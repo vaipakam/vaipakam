@@ -1418,10 +1418,11 @@ library LibRewardCustody {
     /// @param  s          Diamond storage.
     /// @param  packetHash The packet's ingress stamp, which is its batch's key.
     /// @return batchId    The batch's key, equal to the packet's stamp.
-    function admitLegacyTransportBatch(LibVaipakam.Storage storage s, bytes32 packetHash)
-        internal
-        returns (bytes32 batchId)
-    {
+    function admitLegacyTransportBatch(
+        LibVaipakam.Storage storage s,
+        bytes32 packetHash,
+        uint256[] calldata dayIds
+    ) internal returns (bytes32 batchId) {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(packetHash);
         if (p.batchId != bytes32(0)) {
@@ -1432,6 +1433,35 @@ library LibRewardCustody {
         }
         if (p.freshShare != 0 || p.recycledShare != 0) {
             revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
+        }
+        // #1566 transport epochs PR 3b — CLOSING THE GATE REQUIRES EXHIBITING
+        // THE MATERIAL THAT REOPENS IT.
+        //
+        // This admission sets `p.batchId`, which closes the classification
+        // gate on a packet that was, until this call, ungated and
+        // classifiable. Reopening it runs through
+        // {materializeTransportBatchPage}, and that call proves the day list
+        // against this same commitment — so without this check ANYONE could
+        // close the gate while only a holder of the committed list could open
+        // it again. The rollout population is by definition the oldest
+        // deliveries, whose list survives only in long-past event data, and
+        // this programme already has an open blocker on archive access for
+        // exactly that kind of historical read (#2095). So "recoverable from
+        // logs" is not a free assumption, and the asymmetry would be a
+        // liveness regression a stranger could cause on precisely the
+        // population this entry exists to rescue.
+        //
+        // The list is NOT written here: admission stays compact and the
+        // membership is still built by the paged call. The only thing this
+        // adds is that the material now sits in the admitting transaction's
+        // calldata permanently, which outlives any log-retention policy.
+        //
+        // `dayIds.length` is not compared against `p.dayCount` separately —
+        // the commitment is over the whole encoded array, so a list of a
+        // different length cannot hash to it.
+        bytes32 supplied = keccak256(abi.encode(dayIds));
+        if (supplied != p.dayListHash) {
+            revert IVaipakamErrors.TransportDayListMismatch(packetHash, p.dayListHash, supplied);
         }
         uint256 untyped = p.unclassified;
         if (untyped == 0) revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);

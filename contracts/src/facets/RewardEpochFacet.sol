@@ -299,11 +299,24 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @notice Open the transport epoch of an old-wire packet that landed
     ///         before this ledger existed.
     /// @dev    Permissionless, and the authority is the packet's own record —
-    ///         balance, membership commitment and day count are all read from
-    ///         it, so a stranger calling this can only make the ledger state
-    ///         what the ingress already wrote. No role gates it for the same
-    ///         reason none gates materialization or the release (Codex #2232
-    ///         r2): what makes the call valid is STATE, never the caller.
+    ///         balance and day count are read from it, so a stranger calling
+    ///         this can only make the ledger state what the ingress already
+    ///         wrote. No role gates it for the same reason none gates
+    ///         materialization or parking (Codex #2232 r2): what makes the
+    ///         call valid is STATE, never the caller.
+    ///
+    ///         It does, however, require the COMMITTED DAY LIST, and that is
+    ///         not a authority check — it is the symmetry that keeps the call
+    ///         safe to leave open. This admission closes the classification
+    ///         gate on a packet that was ungated until now, and the only route
+    ///         back through that gate runs via
+    ///         {materializeTransportBatchPage}, which proves the list against
+    ///         the same commitment. Taking the hash here means closing the
+    ///         gate costs exactly what opening it costs; without it, anyone
+    ///         could close a gate only a list-holder could reopen — a liveness
+    ///         regression a stranger could inflict on the oldest deliveries,
+    ///         whose list survives only in long-past event data. The list is
+    ///         not stored, so this is not a second copy of the membership.
     ///
     ///         Design §5c records the day-list commitment on every arrival on
     ///         a wire older than d6 precisely so "a packet landing between 3a
@@ -317,8 +330,11 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         membership is then built by {materializeTransportBatchPage} —
     ///         one path afterwards, whichever entry opened the epoch.
     /// @param  packetHash The packet's ingress stamp, which is its batch's key.
+    /// @param  dayIds     The delivery's WHOLE day list, proved against the
+    ///                    commitment its ingress stamped. Not written — the
+    ///                    membership is still built in pages afterwards.
     /// @return batchId    The batch's key, equal to the packet's stamp.
-    function admitLegacyTransportBatch(bytes32 packetHash)
+    function admitLegacyTransportBatch(bytes32 packetHash, uint256[] calldata dayIds)
         external
         nonReentrant
         returns (bytes32 batchId)
@@ -331,6 +347,6 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         // deployment the packet's tokens are Diamond-side and the activation
         // envelope is what attributes them.
         if (!LibRewardCustody.active(s)) revert RewardCustodyNotActivated();
-        batchId = LibRewardCustody.admitLegacyTransportBatch(s, packetHash);
+        batchId = LibRewardCustody.admitLegacyTransportBatch(s, packetHash, dayIds);
     }
 }
