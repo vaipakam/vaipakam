@@ -19,12 +19,20 @@
  * a Push API outage logs and returns, so a single Push hiccup never
  * stalls the broader watcher loop or blocks the Telegram rail.
  *
- * SDK note: `@pushprotocol/restapi` (installed: 0.0.1 — an earlier
- * revision of this line said `^1.7`, #1450 r26) exposes the legacy
- * modular API (`payloads.sendNotification(...)`), not the v2
- * `PushAPI` class — the docs site documents both, only the v1 form
- * is available on the version range we install. Push channels live
- * on Ethereum mainnet by default, so the CAIP-2 prefix is
+ * SDK note: `@pushprotocol/restapi` (installed: 1.7.32) exposes the
+ * legacy modular API (`payloads.sendNotification(...)`) as well as the
+ * v2 `PushAPI` class — the docs site documents both, and this call site
+ * uses the modular form.
+ *
+ * THE PIN WAS THE BUG (#2220). It read `^0.0.1`, and on a `0.0.x`
+ * version a caret does NOT widen — it meant exactly `0.0.1`, which
+ * declares `peerDependencies: { ethers: "^5.6.8" }` against a workspace
+ * on ethers 6, and signed with the v5-only `signer._signTypedData(...)`.
+ * Every send threw inside the SDK before issuing any request. 1.7.32
+ * declares `ethers: "^5.0.0 || ^6.0.0"` and wraps the signer in its own
+ * `PushSigner`, which dispatches to `signTypedData` for ethers v6.
+ *
+ * Push channels live on Ethereum mainnet by default, so the CAIP-2 prefix is
  * `eip155:1` for both channel id and recipient id; the recipient
  * wallet's actual chain doesn't need to match (Push routes by raw
  * wallet, the chain prefix is metadata).
@@ -106,6 +114,15 @@ function getSignerAndChannel(channelPk: string): {
  *
  * If the pin ever moves, re-check that marker: a changed prefix means this
  * silently stops filtering, and that failure is invisible by construction.
+ *
+ * THE PIN MOVED, AND THE MARKER WAS RE-CHECKED (#2220, 2026-09-20). On
+ * `1.7.32` the `payloads/` path contains no `console.log` and the string
+ * `API call` appears nowhere in the package, so the leak this filter stops no
+ * longer happens on our call path and the filter is currently INERT. Retained
+ * rather than deleted because the asymmetry is one-sided — an inert filter
+ * costs a few lines, a wrongly removed one costs subscriber wallets in Worker
+ * logs — and because the caret pin allows a future patch to reintroduce
+ * logging. Re-run the check on the next pin move.
  */
 const realConsoleLog = console.log;
 console.log = (...args: unknown[]) => {
@@ -149,7 +166,13 @@ export async function sendPush(
       },
       recipients: `${CAIP_PREFIX}:${payload.subscriber}`,
       channel: channelCaip,
-      env: 'prod',
+      // `CONSTANTS.ENV.PROD` rather than the bare string: 1.7.32 types this
+      // field as its own `ENV` enum, which the package exports only through
+      // `CONSTANTS` — the enum itself is not a root export. The runtime value
+      // is unchanged (`ENV.PROD` IS `'prod'`), so this is a type-level
+      // adjustment and the upgrade does not silently retarget the
+      // environment (#2220).
+      env: PushAPI.CONSTANTS.ENV.PROD,
     });
     // #1450 — a POSITIVE signal, deliberately. Only the unset-key and
     // failure branches logged before, so a channel Push does not recognise

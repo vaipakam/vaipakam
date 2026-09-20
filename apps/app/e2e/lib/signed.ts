@@ -21,6 +21,7 @@ import {
   forkChain,
   pub,
   walletFor,
+  confirm,
 } from './chain';
 import { accountFor, type Role } from './wallets';
 
@@ -181,7 +182,7 @@ export async function fundVaultFreeBalance(
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: createHash });
+  await confirm(createHash, 'getOrCreateUserVault');
   const proxy = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -198,7 +199,7 @@ export async function fundVaultFreeBalance(
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: transferHash });
+  await confirm(transferHash, 'transfer (fund the vault)');
 
   // Tick the protocol-tracked counter as the Diamond (msg.sender ==
   // address(this) satisfies onlyDiamondInternal).
@@ -212,6 +213,6 @@ export async function fundVaultFreeBalance(
   const recordHash = await anvilRpc<`0x${string}`>('eth_sendTransaction', [
     { from: DIAMOND, to: DIAMOND, data, gas: '0x2dc6c0' },
   ]);
-  await pub.waitForTransactionReceipt({ hash: recordHash });
+  await confirm(recordHash, 'recordVaultDepositERC20');
   await anvilRpc('anvil_stopImpersonatingAccount', [DIAMOND]);
 }

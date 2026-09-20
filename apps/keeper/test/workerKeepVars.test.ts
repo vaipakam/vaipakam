@@ -117,9 +117,14 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
    * Worker through a config it excluded — `--name`, `--compatibility-date`,
    * `env.<name>.name` under `--env`, a path outside both roots, and a sixth
    * Worker's alternate config. So the predicate is gone: the requirement is
-   * unconditional, and a config is identified by wrangler's own filename
-   * convention, which is a test on a string rather than a judgement about
-   * content.
+   * unconditional, and a config is identified by EITHER of two total tests:
+   * wrangler's filename convention, or a top-level string
+   * `compatibility_date` (#2245). This block said "the filename convention,
+   * which is a test on a string rather than a judgement about content" until
+   * the second test landed — an account the code no longer matched, and the
+   * kind of stale contract that gets a recogniser deleted as a design
+   * violation. What both tests share is that neither infers which config a
+   * COMMAND would load; that is the inference this file rules out.
    *
    * Each case seeds a COPY, for the reason `copiedRoot` documents.
    */
@@ -298,6 +303,141 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
+    /**
+     * A config named outside the convention is identified by CONTENT (#2171 r8).
+     *
+     * Retiring the command scanner removed this coverage: it read whatever
+     * path the command selected, and its deleted fixture `a config selected
+     * through an argv array is the one consulted` seeded `apps/agent/
+     * unsafe.jsonc` and asserted the deploy was refused. The header used to
+     * accept the loss, reasoning that recognising such a file meant
+     * classifying arbitrary JSON — which is what turned the round-one tree red
+     * on `ops/mesh-watcher/package.json`. That draft keyed on `name`. Keying
+     * on `compatibility_date` does not have the property that broke it: no
+     * manifest, tsconfig, lockfile or ABI in this tree carries the field.
+     *
+     * The bounds guards below are the half that matters most, since the
+     * failure this replaces was a FALSE REPORT rather than a miss.
+     */
+    const OUTSIDE = 'configs/agent-staging.jsonc';
+    const OUTSIDE_BODY = { name: 'vaipakam-agent', compatibility_date: '2026-01-01' };
+
+    it('rejects a deployable config whose name is not `wrangler*`', () => {
+      withSeeded(OUTSIDE, `${JSON.stringify(OUTSIDE_BODY)}\n`, (r) => {
+        expect(r.ok, `${OUTSIDE} was accepted without keep_vars`).toBe(false);
+        expect(r.out).toContain(OUTSIDE);
+        // Reported for the right reason, not incidentally: the message has to
+        // tell the reader why a file they did not name `wrangler*` is here.
+        expect(r.out).toContain('not named `wrangler*`');
+        expect(r.out).toContain('compatibility_date');
+      });
+    });
+
+    it('accepts it once it declares the key, and says how it was identified', () => {
+      withSeeded(OUTSIDE, `${JSON.stringify({ ...OUTSIDE_BODY, keep_vars: true })}\n`, (r) => {
+        expect(r.ok, `${OUTSIDE} was rejected despite declaring keep_vars: ${r.out}`).toBe(true);
+        expect(r.out).toContain('identified by a top-level `compatibility_date`');
+        expect(r.out).toContain(OUTSIDE);
+      });
+    });
+
+    it('sees the field spelled with a JSON escape (#2245 r1)', () => {
+      // `"compatibility_date"` IS the key `compatibility_date` — JSON
+      // says so, and `parseJsonc` resolves it. The first revision prefiltered
+      // candidates on a raw substring of the field name to avoid parsing the
+      // tree's ABIs and lockfiles, so this spelling was skipped and a
+      // deployable config missing `keep_vars` passed. The prefilter is
+      // deleted rather than taught about escapes: the parser is the only
+      // thing that knows what a key is, and a predicate that has to stay in
+      // step with a parser is what this file exists to stop reintroducing.
+      withSeeded(
+        'configs/escaped.jsonc',
+        `{"name": "vaipakam-agent", "compatibility\\u005fdate": "2026-01-01"}\n`,
+        (r) => {
+          expect(r.ok, 'an escaped spelling of the discriminator was skipped').toBe(false);
+          expect(r.out).toContain('configs/escaped.jsonc');
+        },
+      );
+    });
+
+    it('counts a content-identified Pages config as exempt, not as asserted', () => {
+      // A count is a claim (#2171 r6). A Pages config reached by the second
+      // identification declares nothing and cannot, so it must not appear in
+      // the "identified by content" total either.
+      withSeeded(
+        'configs/site.jsonc',
+        `{"name": "vaipakam-site", "compatibility_date": "2026-01-01", "pages_build_output_dir": "./dist"}\n`,
+        (r) => {
+          expect(r.ok, r.out).toBe(true);
+          expect(r.out).toContain('1 Pages config(s) are exempt');
+          expect(r.out).not.toContain('identified by a top-level');
+        },
+      );
+    });
+
+    // BOUNDS GUARDS for the second identification. These pass with or without
+    // it; they pin that it is a test for ONE wrangler-invented field and not a
+    // general attempt to classify JSON, which is the failure it has to avoid.
+    it('bounds guard: `name` + `main` is NOT the discriminator', () => {
+      // The shape a package manifest has. An earlier draft keyed on `name`
+      // and reddened the committed tree; `name` + `main` would repeat it.
+      withSeeded(
+        'apps/agent/package.json',
+        `{"name": "vaipakam-agent", "main": "dist/index.js", "version": "1.0.0"}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: an unparseable .json is passed over, not reported', () => {
+      // Discovery by content is a RECOGNISER. A file it cannot parse is not a
+      // config; making that an error would fail the check on files it has no
+      // business judging. A `wrangler*`-named file keeps the stricter
+      // treatment, because there the name is a claim — asserted below.
+      withSeeded('apps/agent/broken.json', 'not json at all {{{\n', (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('a `wrangler*`-named file that does not parse IS still reported', () => {
+      withSeeded('apps/agent/wrangler.broken.jsonc', 'not json at all {{{\n', (r) => {
+        expect(r.ok, 'a malformed config named `wrangler*` was passed over').toBe(false);
+        expect(r.out).toContain('apps/agent/wrangler.broken.jsonc');
+      });
+    });
+
+    it('bounds guard: the field mentioned somewhere other than the top level', () => {
+      // The test is a SHAPE test on the parsed object, so a nested or
+      // string-valued mention does not make a file a config.
+      withSeeded(
+        'apps/agent/notes.json',
+        `{"docs": {"compatibility_date": "wrangler requires this"}}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: TOML is NOT identified by content — a stated trade', () => {
+      // Recognising TOML by content needs the grammar this check refuses to
+      // carry; the only thing available without it is a raw substring, which
+      // would report a `.toml` that merely mentions the field in a comment.
+      // Buying one narrow case with a new false-report class is the trade
+      // #1995 says not to make. Pinned so the gap stays deliberate — if
+      // someone later adds TOML content discovery, this test is where the
+      // argument has to be answered.
+      withSeeded(
+        'configs/agent.toml',
+        'name = "vaipakam-agent"\ncompatibility_date = "2026-01-01"\n',
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: vendored trees are not walked for content either', () => {
+      withSeeded(
+        'apps/agent/node_modules/pkg/config.jsonc',
+        `{"name": "x", "compatibility_date": "2026-01-01"}\n`,
+        (r) => expect(r.ok, 'a vendored config was treated as ours').toBe(true),
+      );
+    });
+
     it('the real tree carries the key on EVERY config, app and www included', () => {
       // The two Workers with no `vars` are the ones the deleted predicate
       // excluded, so their declarations are the part of this change most
@@ -353,6 +493,24 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       expect(
         re.test(`${dir}/wrangler.jsonc`),
         `${dir}/wrangler.jsonc does not trigger the required workspaces job`,
+      ).toBe(true);
+    }
+
+    // …and for a config the check identifies by CONTENT, which can sit at a
+    // path no name pattern predicts (#2245 r1, P1). The detector matched only
+    // `wrangler*` paths, so such a file would be rejected by the
+    // unconditional job — which is NOT in the ruleset — while the required
+    // job that also runs the invariant was path-skipped, leaving the unsafe
+    // config mechanically mergeable. Paths chosen outside `apps/` and
+    // `packages/` so neither prefix can satisfy the assertion by accident.
+    for (const rel of [
+      'configs/agent-staging.jsonc',
+      'configs/agent-staging.json',
+      'deploy/envs/staging/worker.jsonc',
+    ]) {
+      expect(
+        re.test(rel),
+        `${rel} does not trigger the required workspaces job, so a content-identified config could merge unchecked`,
       ).toBe(true);
     }
   });

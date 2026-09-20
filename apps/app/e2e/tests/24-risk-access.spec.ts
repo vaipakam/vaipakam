@@ -20,7 +20,7 @@
  */
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
-import { DIAMOND, DIAMOND_ABI_VIEM, forkChain, pub, walletFor } from '../lib/chain';
+import { confirm, DIAMOND, DIAMOND_ABI_VIEM, forkChain, pub, walletFor } from '../lib/chain';
 import type { Account } from 'viem';
 
 async function riskWrite(
@@ -37,7 +37,7 @@ async function riskWrite(
     chain: forkChain,
     account,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, `${functionName} (risk-access setup)`);
 }
 
 /** Restore the wallet's risk state to the suite baseline (Blue-chip,

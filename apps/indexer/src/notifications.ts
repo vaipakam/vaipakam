@@ -481,7 +481,14 @@ export async function materializeNotifications(
  * detail worth not copying: D1 caps a statement at 100 bound parameters, so
  * a catch-up touching >99 distinct loans would blow the limit, throw, and —
  * fail-open — skip those rows forever, with the cursor already advanced
- * (Codex #1292 r1). 90 ids plus the chainId bind stays safely under.
+ * (Codex #1292 r1).
+ *
+ * That cap now lives in `@vaipakam/lib/d1Binds` rather than as a local `90`
+ * here (#2234). This comment is where the repository's knowledge of it was
+ * written down, and it stayed local knowledge: two other files copied the
+ * number and two more never learned it at all. The chunker subtracts this
+ * statement's own fixed binds, so the width follows the `WHERE` clause
+ * instead of a reader having to check that it still does.
  *
  * Returns `null` when the lookup itself failed, which callers treat as "write
  * nothing this pass" rather than "this loan has no parties".
@@ -493,18 +500,15 @@ async function loadLoanParties(
 ): Promise<Map<number, LoanParties> | null> {
   const partiesByLoan = new Map<number, LoanParties>();
   try {
-    const CHUNK = 90;
-    for (let i = 0; i < loanIds.length; i += CHUNK) {
-      const slice = loanIds.slice(i, i + CHUNK);
-      const placeholders = slice.map(() => '?').join(',');
+    for (const c of chunkD1InList(loanIds, { before: [chainId] })) {
       const res = await db
         .prepare(
           `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner,
                   status, is_sale_vehicle
              FROM loans
-            WHERE chain_id = ? AND loan_id IN (${placeholders})`,
+            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
         )
-        .bind(chainId, ...slice)
+        .bind(...c.binds)
         .all<{
           loan_id: number;
           lender: string | null;
@@ -590,6 +594,7 @@ export const DERIVED_LOG_INDEX = 1_000_000;
  *  the row rendering as a plain announcement (#2190 r5 `4007500682`). */
 export { NOTIF_EVENT_KIND_RECONCILED as RECONCILED_EVENT_KIND } from '@vaipakam/lib/notificationProvenance';
 import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
+import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 
 /**
  * Inbox rows for terminals the repair found rather than an event announced

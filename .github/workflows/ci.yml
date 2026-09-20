@@ -92,9 +92,12 @@
 # change no PR can make. Until then the invariant is ALSO run inside
 # apps/keeper's `typecheck`, which the REQUIRED `workspaces` job invokes —
 # so removing `keep_vars` from any covered Worker fails a blocking check
-# today, and `WORKSPACES_RE` matches ANY `wrangler*` config path — at any
-# depth, in any directory — so that job is not path-skipped on exactly that
-# change. It listed the two ops configs by exact path until #2171 r2, which
+# today, and `WORKSPACES_RE` matches ANY `.json`/`.jsonc` path — at any depth,
+# in any directory — plus `wrangler*.toml`, so that job is not path-skipped on
+# exactly that change. It matched only `wrangler*` paths until #2245, which
+# added identification by a top-level `compatibility_date`: a config can then
+# sit at a path no name pattern predicts, and the detector has to cover the
+# whole extension rather than the convention. It listed the two ops configs by exact path until #2171 r2, which
 # pointed out that the check had grown to reject configs the detector could
 # not see: a non-canonical ops config could be added, be correctly rejected by
 # the unconditional job, and still merge, because that job is not in the
@@ -333,7 +336,17 @@ jobs:
           # mergeable with the unconditional job red (Codex #1995 r22). The
           # config files rather than the directories, so ordinary ops work does
           # not pull in every workspace typecheck.
-          WORKSPACES_RE='^(apps/|packages/|.*wrangler[^/]*\.(jsonc|json|toml)$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # ANY `.json`/`.jsonc` PATH, not only `wrangler*` ones (#2245 r1,
+          # P1). The keep_vars invariant identifies a config by its filename
+          # OR by a top-level `compatibility_date`, so a deployable config can
+          # live at a path no pattern predicts — `configs/agent-staging.jsonc`
+          # is the example the check's own header uses. A name-shaped detector
+          # cannot see it, so the REQUIRED job that runs the invariant would be
+          # path-skipped on exactly the file it exists to reject, leaving the
+          # PR mechanically mergeable with only the non-required unconditional
+          # job red. `wrangler*.toml` stays listed because TOML is identified
+          # by name alone.
+          WORKSPACES_RE='^(apps/|packages/|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -1091,8 +1104,17 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
-      - name: Typecheck
+      # BOTH programs (#2235 r1 P2). `tsconfig.json` is src-only so Node's
+      # types stay out of the Worker's program; `tsconfig.test.json` adds them
+      # for the store tests, which drive the real schema through `node:sqlite`.
+      # Running only the first would leave `test/**` unchecked entirely — the
+      # split has to be matched here or it is a quiet reduction in coverage
+      # rather than a separation of concerns.
+      - name: Typecheck (src)
         run: ./node_modules/.bin/tsc --noEmit
+
+      - name: Typecheck (tests)
+        run: ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit
 
       - name: Unit tests
         run: ./node_modules/.bin/vitest run

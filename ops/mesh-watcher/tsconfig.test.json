@@ -1,0 +1,12 @@
+{
+  // The TEST program. See the note in `tsconfig.json` for why this is
+  // separate rather than one `include` covering both.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `node`, because the store tests run the real schema through
+    // `node:sqlite` and read the migration from disk rather than keeping a
+    // second copy of the DDL that could drift from it.
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

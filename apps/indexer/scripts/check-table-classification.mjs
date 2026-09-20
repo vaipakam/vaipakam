@@ -79,6 +79,13 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  prenotify_scan_cursor: {
+    class: 'replay-derived',
+    reason:
+      'pre-notify scan watermark — a deadline to resume at (#2219). Nothing ' +
+      'is born here: a cleared row restarts the scan at the nearest deadline, ' +
+      'which re-reads rather than skips',
+  },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   notifications: {
     class: 'replay-derived',

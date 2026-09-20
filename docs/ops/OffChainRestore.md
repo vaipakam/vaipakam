@@ -1399,7 +1399,8 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 ## 6. Re-bootstrap the indexer
 
 For the re-derivable tables (`offers`, `loans`, `activity_events`,
-`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`),
+`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
+`prenotify_scan_cursor`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
@@ -1429,8 +1430,25 @@ DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
+DELETE FROM prenotify_scan_cursor; \
 DELETE FROM indexer_cursor"
 ```
+
+`prenotify_scan_cursor` (#2219) is a watermark like `indexer_cursor`,
+not data: it records the DEADLINE at which the pre-notify scan resumes.
+Clearing it restarts that scan at the nearest deadline, which prefers
+duplicated work to stepping over a nearer one — the direction this
+failure must take. That is a property of the restarted run, not a
+guarantee about the reminders: if the lane has more due loans than one
+run can examine, a run restarting at the front spends its allowance on
+the prefix, and a loan in the tail close to its own deadline can leave
+the notification window before a later run reaches it. The single
+statement of what a pass does and does not promise is in
+`docs/FunctionalSpecs/Alpha02ConnectedApp.md` under the reminder-run
+bullets; this note does not restate it.
+
+Leaving the row would be worse than clearing it: it would point the lane
+at a deadline from a database the replay is in the middle of rebuilding.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never

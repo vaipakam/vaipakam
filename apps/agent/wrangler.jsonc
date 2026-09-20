@@ -73,14 +73,23 @@
   //                          compares its RPC head against so it never
   //                          confirms a loan from a source lagging behind
   //                          what the platform has already indexed. WRITE
-  //                          under kinds `prenotify_scan` (per chain: where
-  //                          that chain's candidate scan stopped) and
-  //                          `prenotify_rotation` (one row at chain_id 0:
-  //                          which chain leads the next invocation). Those
-  //                          two kinds are this Worker's alone; `last_block`
-  //                          carries a list position rather than a block, the
-  //                          same repurposing the indexer uses for its market
-  //                          sweep.)
+  //                          under ONE kind, `prenotify_rotation` (one row at
+  //                          chain_id 0: which chain leads the next
+  //                          invocation). That kind is this Worker's alone;
+  //                          `last_block` carries a rotation index rather than
+  //                          a block, the same repurposing the indexer uses
+  //                          for its market sweep. The per-chain scan position
+  //                          was a second kind here, `prenotify_scan`, until
+  //                          #2219 moved it to its own table below and
+  //                          migration 0050 deleted those rows.)
+  //   - `prenotify_scan_cursor` (WRITTEN and READ by this Worker alone, though
+  //                          it lives in the shared database and its schema is
+  //                          owned by apps/indexer/migrations like every other
+  //                          table here. One row per chain recording the
+  //                          DEADLINE the periodic pre-notify scan resumes at
+  //                          — a position in the candidate list could not
+  //                          survive the list being rebuilt each tick, #2219.
+  //                          Created by migration 0050.)
   //   - `loans`             (cross-Worker READ AND WRITE of the indexer's
   //                          loan rows: the periodic-pre-notify scan reads
   //                          them, then stamps `period_pre_notified_at` back

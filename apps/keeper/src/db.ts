@@ -4,6 +4,8 @@
  * changes in `migrations/*.sql` touch only this file.
  */
 
+import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
 export interface UserThresholds {
@@ -509,7 +511,27 @@ export async function putRemitAckScanState(
     .run();
 }
 
-/** Last ack-attempt timestamps for a set of pending remit ids. */
+/**
+ * Last ack-attempt timestamps for a set of pending remit ids.
+ *
+ * CHUNKED, because this list is bounded by the BACKLOG and not by anything
+ * this statement controls (#2234). The caller collects every Pending
+ * reservation in a scan window `MAX_SCAN_PER_TICK = 200` ids wide, so with
+ * 99 or more pending it asked for more than D1's 100-parameter cap allows and
+ * threw — and threw again on every later tick, because a backlog does not
+ * shrink while the pass that would drain it is failing.
+ *
+ * The consequence was worse than a lost tick: `putRemitAckScanState` runs
+ * BEFORE this call, so the cursor had already moved past a window whose
+ * acknowledgements were never attempted. Deliveries landed and the
+ * bookkeeping that closes them did not follow.
+ *
+ * ONE SUBREQUEST, not one per chunk. `batch()` costs a single subrequest
+ * however many statements it carries, which matters on a Worker with a
+ * 50-per-invocation ceiling that this pass already spends against. It is also
+ * transactional, which for a read of attempt counters buys consistency at no
+ * cost worth naming.
+ */
 export async function getRemitAckAttempts(
   db: D1Database,
   baseChainId: number,
@@ -518,19 +540,30 @@ export async function getRemitAckAttempts(
 ): Promise<Map<number, { attempts: number; lastAttemptAt: number }>> {
   const out = new Map<number, { attempts: number; lastAttemptAt: number }>();
   if (remitIds.length === 0) return out;
-  const placeholders = remitIds.map(() => '?').join(',');
-  const rows = await db
-    .prepare(
-      `SELECT remit_id, attempts, last_attempt_at FROM keeper_remit_ack
-       WHERE base_chain_id = ? AND diamond = ? AND remit_id IN (${placeholders})`,
-    )
-    .bind(baseChainId, diamond.toLowerCase(), ...remitIds)
-    .all<{ remit_id: number; attempts: number; last_attempt_at: number | null }>();
-  for (const r of rows.results ?? []) {
-    out.set(r.remit_id, {
-      attempts: r.attempts,
-      lastAttemptAt: r.last_attempt_at ?? 0,
-    });
+  const chunks = chunkD1InList(remitIds, {
+    before: [baseChainId, diamond.toLowerCase()],
+  });
+  const results = await db.batch<{
+    remit_id: number;
+    attempts: number;
+    last_attempt_at: number | null;
+  }>(
+    chunks.map((c) =>
+      db
+        .prepare(
+          `SELECT remit_id, attempts, last_attempt_at FROM keeper_remit_ack
+       WHERE base_chain_id = ? AND diamond = ? AND remit_id IN (${c.placeholders})`,
+        )
+        .bind(...c.binds),
+    ),
+  );
+  for (const part of results) {
+    for (const r of part.results ?? []) {
+      out.set(r.remit_id, {
+        attempts: r.attempts,
+        lastAttemptAt: r.last_attempt_at ?? 0,
+      });
+    }
   }
   return out;
 }

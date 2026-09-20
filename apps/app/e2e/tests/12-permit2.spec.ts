@@ -27,7 +27,7 @@
 import { erc20Abi, maxUint256 } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
-import { pub, DIAMOND, WETH, forkChain, walletFor } from '../lib/chain';
+import { confirm, pub, DIAMOND, WETH, forkChain, walletFor } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 
 const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const;
@@ -62,7 +62,7 @@ async function setLenderWethAllowance(
     chain: forkChain,
     account,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, `ERC-20 approve for ${account.address}`);
 }
 
 test('a wallet without a Permit2 approval keeps the classic path, silently', async ({

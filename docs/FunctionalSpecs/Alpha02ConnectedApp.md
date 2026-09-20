@@ -287,14 +287,287 @@ The app uses chain reads and indexed reads for different jobs.
   never refreshed by a later sighting of the same problem.
 - A record is released as soon as a turn settles it, by any route: corrected,
   found genuinely running, or ended by someone else. It is ALSO released by a
-  standing sweep over every held record whose loan is no longer running, so a
+  standing sweep over held records whose loan is no longer running, so a
   release missed at close-out — for any reason, including one nobody
   anticipated — is picked up later rather than leaving the record held for
-  good. A loan that has ended can generate no reminders, so holding its record
+  good. The sweep runs on every turn and clears a limited number each time,
+  so "picked up later" can mean several turns where many are waiting; it is
+  not a promise that one turn catches them all. A loan that has ended can generate no reminders, so holding its record
   withholds nothing and only buries the records that do need a person. Holding a record back
   forever on the strength of one unreadable moment is the same defect facing
   the other way, and it is the failure this rule is most likely to produce if
   it is written carelessly.
+- **A lookup that covers many records at once must not fail BECAUSE there are
+  many.** The platform decides who an inbox row is for, and who a sold-offer
+  row belongs to, by asking its own store about every record in the batch it
+  is working on. How many that is depends on how busy the network was and on
+  how far behind the platform had fallen — so it is largest exactly when a
+  catch-up is running. A question the store refuses because it names too many
+  records at once is not a slow answer, it is no answer: the work it belonged
+  to fails whole, and it fails identically next time, because the backlog that
+  made the question too large is still there. So such a question is split into
+  as many as it takes and the answers combined, and the splitting is one shared
+  rule rather than a number each caller remembers — a limit that has to be
+  recalled at five call sites is a limit two of them will not know about.
+- **A held record is NEVER released on an inference that the position has
+  changed.** A record is released when the position it names is settled, or
+  found to have ended — facts the platform establishes. It is not released on
+  a judgement that "the identifier must belong to something else now", because
+  every basis for that judgement available to the platform has proved unsound:
+  a recorded start time may be the platform's own clock substituted when the
+  network could not be read; a recorded place in the network's sequence goes
+  stale, restarts on a test-network reset, and can be left behind by a
+  reorganisation the platform never revisits. Acting on any of them would
+  release a record — and resume reminders — on the strength of a read that
+  failed.
+- **Holding a record is NOT free, and the platform says so rather than
+  inferring its way out.** A held record withholds reminders from whatever
+  position currently bears that identifier, so where an identifier has come
+  round again — after a network redeployment or a reset — a legitimate
+  position goes without reminders. The report a person reads therefore names,
+  for every long-held record it DESCRIBES, what its identifier points at now:
+  no stored position at all, or a stored position in a given state that began
+  at a given point — **labelled as stored and unverified**, because that record
+  may itself be stale or left behind by a reorganisation, which is the same
+  unsoundness that stopped the platform acting on it. A person can see from
+  that whether the record is still about the position it was made for, and
+  clear it if not.
+
+  Records past the described page are named but not described, and the report
+  says so in those terms: being named is not being examined, and nothing above
+  such an identifier says what it points at now. That is the check the
+  described records got and these did not — see the bounded-report point
+  below, which this one does not override.
+  Clearing is a deliberate act, and names the exact record that was read, so
+  that a re-observation arriving between the reading and the clearing is not
+  silently discarded.
+- **Held records are named, not merely counted — up to a stated limit, and
+  the limit is never silent.** Where more are held than the report describes
+  in full, the remainder are still listed by identifier, because a record left
+  out entirely would be withholding reminders with nothing anywhere saying
+  which position it concerned, and this report is the only surface that
+  discloses that at all. The report says plainly that those identifiers are
+  named but **not** described, that the descriptions are of the longest-held
+  records and do not take turns, and that resolving one of those is what
+  brings the next into view. It does not promise detail that a later run
+  would supply, because no later run would. Past the listing limit it names
+  no more, says exactly how many it is not naming, and gives the enquiry that
+  lists them — see the bounded-report point below, which this one does not
+  override.
+- **A described record's removal is written out in full, to be run exactly as
+  printed.** Nothing is left for a person to assemble. Printing the *pieces*
+  of a removal and describing how to combine them was tried three times and
+  failed three different ways, each only noticed by a reader; the platform now
+  emits a finished instruction, and it is checked by being executed rather
+  than by being read.
+
+  Records named but not described do not carry one in the message — there is
+  no room for hundreds of finished instructions in one line — so the report
+  gives them an enquiry that RETURNS each one's instruction, already written.
+  Not the values to build one from: the assembly is the thing that kept going
+  wrong, and an enquiry handing back parts would have preserved it in the one
+  place hardest to check. The store builds the text, so the quoting is done by
+  the same engine that will parse it. Naming a record while leaving it
+  unactionable would, in practice, push a person toward the unguarded removal
+  this report spends a paragraph warning against, and because the described
+  page does not rotate it would push them there indefinitely.
+
+  That value is a token **together with** the time of the sighting, and it
+  takes both because neither covers the other's case. An ordinary write
+  rotates the token, which is what separates two sightings inside the same
+  second — a recorded time cannot. A write made while the store is still on
+  the older shape CANNOT rotate it, and those are caught by the time moving
+  instead. Saying simply that the token changes on every sighting would
+  describe protection the fallback path does not provide. Either gap lets a
+  removal delete a finding recorded after the person read the report — resuming reminders for a position nothing has
+  settled, the exact harm this memory exists to prevent. A guard that can
+  silently fail is worse than none, because its value is that it can be
+  trusted without checking.
+
+  One gap is left open and is written down rather than implied: a sighting by
+  the older write shape landing in the same second as the one the person is
+  holding moves neither half. That needs a deployment window or a failed
+  question to the store, AND two sightings inside one second. Closing it would
+  mean forcing the recorded time forward on a collision, which corrupts the
+  one thing telling a person how long ago a record was actually made.
+
+  A record written before that value existed carries an empty one, and the
+  report prints it in a form that can be pasted as it stands rather than a
+  word standing in for it. A record the platform never re-examines — the very
+  case this report is for — would otherwise be named and permanently
+  unremovable by the safe route.
+- **An upgrade never costs a run its memory.** A deployment can publish new
+  platform code before the store it reads has been updated to match, so for a
+  short window the code runs against the older shape. Recording a withheld
+  position is written to succeed against BOTH shapes, and the report is
+  written to be readable against both, because a run that cannot record a
+  withheld position leaves the next run free to remind on it — the exact
+  failure this memory exists to prevent, arriving during its own upgrade. The
+  platform asks the store which shape it has rather than assuming, and keeps
+  asking until the newer one appears. Where the sweep that releases records
+  must read the store to find them, what it REMOVES is bounded together with
+  what it reads, so one run clears up to a stated number and the rest wait for
+  later runs — the sweep runs on every run. That number is smaller than the
+  report's, and for a harder reason: the store refuses a single instruction
+  carrying more than a fixed count of supplied values, and an instruction that
+  exceeds it fails the SAME way on every run, releasing nothing while
+  appearing to work. The removal also re-checks, at the moment of removing,
+  the fact that licensed it — between finding a record and removing it, the
+  position under that identifier can have been replaced by a live one, which
+  is precisely the reuse this memory is about. The reading itself still grows with
+  how much is held, and that is stated rather than claimed away: no index can
+  bound a question that spans two records and is not stored anywhere.
+
+  While the older shape is in use, the report names withheld positions on the
+  same terms as ever — up to its stated limit, with an exact count of any
+  beyond it — because a deployment is exactly when a suppression most needs to
+  be visible. What it withholds there is the removal procedure, and it says
+  why: every such command names something the older shape does not have, so
+  printing one would hand a person an instruction that cannot run and invite
+  them to improvise the unguarded removal the report warns against. The
+  enquiry that would fetch instructions for the records past the limit is
+  withheld for the same reason.
+
+  It does **not** promise how long that lasts. In an ordinary rollout it is
+  minutes, and the report says so — but asking the store establishes only that
+  the newer shape is ABSENT, never when it will arrive, and an update that
+  failed or was skipped leaves this indefinitely. So the report tells a person
+  what to do with a second sighting: if the same message appears on a later
+  run, the update did not land and wants looking at, because these
+  suppressions cannot be cleared safely until it does.
+- **The report is bounded, and says so where the bound bites — and says
+  exactly what is NOT bounded.** Reporting takes the same small number of
+  enquiries every run, returns no more than a stated number of records to the
+  platform, and lists no more than a stated number of identifiers however many
+  are held. One thing is deliberately *not* fixed: establishing **how many**
+  are held requires the database to consider every record that qualifies, so
+  that part grows with the size of the fault. It is kept because the
+  alternative is telling a person "more than 200" when the true figure might
+  be three thousand — and the magnitude is the most actionable thing the
+  report carries. The growth is confined to a counting pass the database can
+  satisfy from its index rather than from the records themselves, and the
+  page the person actually reads is a bounded walk of that same index rather
+  than a sort of everything held.
+
+  Stating this precisely matters more than stating it strongly. Earlier
+  drafts of this point claimed fixed work outright, and each time the claim
+  outran the implementation it was the *claim* that had to be chased — first
+  the message length, then the volume returned, then the work the database
+  does. A specification that promises more than the system delivers turns
+  every review into a search for the next unbounded layer. The run holding
+  the most records is the one least able to afford extra work, and the one
+  whose failure would leave the network's reading position unrecorded and its
+  view frozen; a report whose OUTPUT grew with the fault would fail on the
+  only network that needed it. Where more are held than it will name, it
+  states **how many** — an exact figure, not "at least", and taken in the same
+  instant as the records it describes, so the two cannot disagree about a
+  removal that happened between them — and gives the enquiry that lists the
+  rest, returning for each that record's removal instruction already written,
+  rather than the identifier alone or the values to build one from. A listing that simply stopped would
+  be the silent truncation everything here is written to avoid.
+- **Every route by which the PLATFORM releases a LONG-HELD record announces
+  it, and there is only one way to write such a release of a single record.** The qualifier is not
+  hedging: a record released before it was ever reported is deliberately NOT
+  announced, because that is the ordinary case this memory is built around — a
+  reading failed, the record was held for a turn, the next turn settled it —
+  and a line for each would bury the ones that need a person. What must never
+  be silent is the release of a record a person has been reading about.
+
+  The platform releases records from more than one place — a periodic sweep, a
+  run that settles the position, and the close-out that ends it — and
+  disclosure was added to those one at a time as each was noticed, which is
+  precisely how one of them stayed silent. A release the platform performs BY
+  ITSELF, of a single record, is now expressible only through one shared form
+  that always carries back what it removed, so no route has to remember to ask
+  for that, and a new route cannot be added without deciding what it
+  discloses.
+
+  A removal a PERSON runs is outside that rule, and deliberately so. The
+  report writes those out for them, one per record, and they are the subject
+  of their own points above — guarded against a sighting arriving in between,
+  reporting whether they matched, withheld entirely where they could not run.
+  Routing them through a form built to announce what the platform did by
+  itself would be announcing a person's action back to the person who took
+  it. The rule is about routes that act unwatched; that is exactly why it
+  exists.
+
+  The periodic sweep is the exception, and naming it is the point. It removes
+  a batch in one instruction, so it cannot use a per-record form and a check
+  that demanded it would be wrong rather than strict. It carries its own
+  disclosure instead, and it is the only such place: one instruction, and a
+  check that refuses any OTHER single-record removal the platform executes by
+  hand — the report's own instructions for a person are outside it, as above.
+  An
+  invariant with a stated exception is worth more than one that reads as
+  absolute and is not.
+
+  This is deliberately stated as a strong default rather than a guarantee. A
+  route that obtained the shared form and then discarded what it returned
+  would still be silent; nothing in the platform can prevent that, because
+  these releases exist to be committed together with unrelated work and so
+  cannot own their own execution. What closes the gap in practice is that the
+  omission is now a deliberate act rather than an oversight, and that a check
+  refuses any platform-executed release written by hand. Saying "by
+  construction" here would
+  promise more than the mechanism delivers, and a guarantee a reader trusts
+  without checking is worse than one they check.
+- **What a release announces depends on what licensed it, and there are four
+  different licences.** A run that read the network for an identifier and got
+  an answer has the soundest evidence the platform holds, and says so. A
+  repair is a network read too, but of a position whose ending was never
+  announced — so it says the ending was FOUND, rather than claiming one
+  arrived.
+
+  A repair only says that when its own write is the one that recorded the
+  ending. Where it finds another writer got there first, it says less: on
+  that path the other writer may well have been the announcement arriving,
+  which is the very race the check exists to detect, so claiming no
+  announcement came would deny the likeliest explanation. It reports a
+  network read and nothing about announcements.
+
+  A close-out did see the ending announced, and establishes that the position
+  *currently* bearing the identifier ended, not that the record being released
+  was ever about that position. Each names its own basis; none borrows
+  another's. Sharing a mechanism does not license sharing a claim, and one
+  announcement wired to every route said the strongest of them on all of
+  them.
+- **One automatic release remains an identity assumption, and is stated as
+  one — by the release itself.** A record is released when a stored position
+  bearing its identifier is no longer running. Where an identifier has been
+  reused, that establishes the replacement ended, not the position the record
+  was about — so the original unresolved finding is erased. The platform does
+  not have a verifiable identity for a position and so cannot tell the two
+  apart; this is recorded as a known limit rather than presented as a settled
+  outcome. **The disclosure is made where the assumption is exercised**: the
+  release names the CANDIDATES it read immediately before removing — a roster
+  bounded by a stated limit — together with a count of what went, where the
+  store reports one. Not a list of what it removed: the removal re-checks its
+  condition, so fewer can go than were listed, and the platform then knows
+  only how many, never which, and not why. Where the store reports no count, that is said:
+  the number that qualified a moment earlier is given as exactly that, and
+  explicitly not as a count of what went, because any of them may have been
+  cleared or become live in between. The removal also re-checks its condition,
+  so fewer records can go than were listed, and where that happens the
+  difference is stated rather than left for a reader to notice. Leaving this to the held-record report would disclose
+  nothing in the very case that matters, since a release can empty the report
+  it would have appeared in.
+- **A record is also released, correctly, the moment a run examines its
+  identifier and the network answers — and that release is announced when the
+  record was long-held.** This is a second path on which a reused identifier
+  clears a record, and it is deliberately not prevented: the network's own
+  answer about that identifier is the only sound evidence the platform has,
+  and every basis it declines to act on is a stored value standing in for
+  exactly this. Blocking it would withhold reminders indefinitely from a live,
+  settled position on the strength of a finding about a position that no
+  longer exists — the mirror-image fault this memory was built to avoid.
+  What it must not be is invisible: where the record had been held long enough
+  to appear in the report a person reads, its release is stated, along with
+  the fact that if the identifier had come round, the answer concerns the
+  position bearing it now and the earlier unresolved finding is gone with it.
+  A record released before it was ever reported is not announced, for the same
+  reason it was never reported: the ordinary case is a reading that failed
+  once and succeeded on the next run, and announcing those would bury the
+  records that need a person.
 - The payment-due reminder for a loan paying interest on a schedule is
   confirmed against the chain before it is sent, rather than against the
   memory above — and the confirmation covers the PERIOD as well as the loan.
@@ -380,6 +653,44 @@ The app uses chain reads and indexed reads for different jobs.
   stay inside its allowance and re-read the same prefix on every later run,
   which is the starvation the remembered position exists to prevent — so the
   two requirements are held together rather than traded off.
+- **The place it saves is a DEADLINE, not a position in a list.** The run
+  resumes at the first record whose deadline is at or after the one it
+  recorded. This is what stops the saved place drifting: the list of records
+  awaiting a reminder is rebuilt each run, and the ones reminded last time are
+  no longer in it, so a remembered *position* points further along than it did
+  — past exactly as many of the nearest remaining deadlines as were handled.
+  A deadline does not move when other records are handled or leave. Where the
+  recorded place cannot be read at all, the run begins at the nearest
+  deadline.
+- **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
+  surface that describes a run beginning at the nearest deadline — because the
+  place was missing, unreadable, malformed, or deliberately cleared during a
+  restore — means exactly this and nothing more: *for that run*, beginning at
+  the front repeats work already done rather than stepping over anything,
+  which is the direction the failure must take. It is **not** a guarantee that
+  no reminder is missed. A run that always restarts at the same place makes no
+  progress through the list, so records further down are not reached and can
+  pass their deadlines; and a single restarted run whose front fills the whole
+  allowance leaves the tail for a later one that may arrive too late. The run
+  therefore announces each time that the place could not be read, rather than
+  falling back quietly on the strength of one run being safe.
+
+  This is written here once because it was written in five places and was
+  wrong in all of them, in four consecutive reviews: the per-run property was
+  stated as an absolute, corrected where it was flagged, and re-derived in the
+  next surface. Anything needing it points here instead of restating it.
+- **What "nearest first" does and does not promise, stated exactly.** Within
+  one pass through the list, records are taken nearest deadline first. Across
+  passes, the saved place means the run continues rather than restarting, so
+  every record gets its turn within one pass of the list rather than
+  competing forever with the nearest ones. It does NOT promise preemption: a
+  record that becomes known *after* the run has already passed its deadline in
+  the order waits for the next pass rather than jumping the queue. That
+  matters only where a pass takes longer than the notice period itself — a
+  backlog deep enough that the list cannot be worked through in the days the
+  reminder window covers — and in that state the service is under-provisioned
+  in a way no ordering can conceal. The honest statement is that this is
+  bounded by how long a pass takes, not that it cannot happen.
 - **The same allowance governs the runs that keep the records current, and
   those runs COUNT what they spend rather than estimating it.** The service
   that follows each network and writes down what happened draws on the same
@@ -593,22 +904,29 @@ The app uses chain reads and indexed reads for different jobs.
   examined again on every run. If enough such records sit ahead of a record
   that WOULD send, starting at the front every time hides it for good. So a
   run REMEMBERS where it stopped and the next one continues from there,
-  wrapping to the front when it reaches the end. Where it resumes is a
-  remembered position rather than anything derived from the time of day —
-  deliberately, because any schedule-derived position can fall into step with
-  another schedule and then never move: the platform's other rotations, or the
-  interval between runs itself. Which network a run begins with is remembered
-  for the same reason and in the same way. Where neither position can be
-  remembered, the run says so — starting from the front every time restores
-  the unfairness the memory exists to remove, and would otherwise do it
-  silently. A remembered position advances on the work
-  actually done, which nothing else can align with. When the window fits in
-  one run, which is the ordinary case, the nearest deadline is examined first
-  as before.
-- The remembered position is approximate, and the platform does not pretend
-  otherwise: the list it indexes into changes between runs as records enter
-  the window, are handled, or pass their deadline. It resumes near where it
-  stopped, which is all that forward progress requires.
+  wrapping to the front when it reaches the end. Where it resumes is
+  remembered rather than derived from the time of day — deliberately, because
+  anything schedule-derived can fall into step with another schedule and then
+  never move: the platform's other rotations, or the interval between runs
+  itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither can be remembered,
+  the run says so — starting from the front every time restores the unfairness
+  the memory exists to remove, and would otherwise do it silently. What is
+  remembered advances on the work actually done, which nothing else can align
+  with. When the window fits in one run, which is the ordinary case, the
+  nearest deadline is examined first as before.
+- **What is remembered is the DEADLINE it stopped at, not a position in the
+  list** — stated here as well as above because this bullet used to say the
+  opposite, and a specification that describes one behaviour in two
+  incompatible ways invites the defect back. It said the remembered place was
+  approximate, on the reasoning that the list it indexed into changes between
+  runs, and that resuming *near* where it stopped was all forward progress
+  required. Forward progress was not all that was required: the list is
+  rebuilt each run and the records handled last run are gone from it, so an
+  index resumed past exactly as many of the nearest remaining deadlines as
+  were handled — running the nearest-first rule backwards, which is the one
+  guarantee this part of the platform makes. A deadline is not approximate and
+  does not move when other records are handled or leave.
 - A run that stops early says which limit stopped it, where in the window it
   resumed, and separates what it found — examined, reminded, reached nobody,
   had nobody to tell, declined by the chain, and unreadable — so the categories

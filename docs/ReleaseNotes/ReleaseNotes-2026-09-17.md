@@ -1,7 +1,12 @@
 # Release Notes — 2026-09-17
 
-Three entries, in the order the file assembles them: the keeper's arming
-flags, the transport epochs, the reminder hold. The transport epochs are
+Nine entries, in the order the file assembles them: the keeper's arming
+flags, the transport epochs, the reminder hold, the indexer's request count,
+the order payment reminders go out in, what a held record now tells a person
+about the loan number it is holding, a lookup that no longer fails because a
+lot is waiting for it, a correction to what the notification service does when
+a change merges, and — following directly from that one — how to tell whether
+any service is running the code that was merged. The transport epochs are
 the substantial one — the last part of the #1566 programme before the role
 carry-forward — and what that change adds is deliberately inert where it
 counts: no ledger arithmetic moves, and no classification comes out
@@ -20,7 +25,26 @@ Alongside it, every arrival now commits to the days it names, so the ledger
 that comes next can check a re-supplied list against the chain's own record
 rather than against an event.
 
-The two corrections are both cases where a record and the thing it
+The last entry is a different kind of correction: a figure the system was
+asserting rather than knowing. The indexer works to a fixed allowance of
+outbound requests per run, and the number it was working to lived in a
+hand-written note that three consecutive reviews corrected and three
+consecutive reviews got wrong. It is now measured as it is spent. The same
+entry records what measuring it honestly cost — the count had to stop
+following a moved address, because counting those moves exactly would have
+meant re-implementing the web's own forwarding rules and keeping the copy in
+step forever.
+
+The reminder-ordering entry is a near neighbour of that one, and shares its
+shape: a service that knew where it had stopped, recorded that place in a form
+that stopped meaning what it said, and carried on confidently. It kept its
+place in a list that is rebuilt every run, so once the loans it had just
+handled dropped out, the remembered place pointed past the very deadlines that
+should have come next. It now records the deadline instead. Whether any
+reminder was actually missed is recorded as unknown rather than assumed either
+way, which is the honest state of it.
+
+The two remaining corrections are both cases where a record and the thing it
 described had drifted apart. A Worker's configuration file called three
 arming flags plain settings when they are secrets, which matters to anyone
 reconstructing what a deployment actually holds. Two of the three were
@@ -37,6 +61,54 @@ records are unconfirmed is written after each turn rather than within it,
 so a turn interrupted in between loses its entry and leaves that turn's
 worth of exposure — the next turn to examine the record writes it again.
 The entry states that limit rather than leaving it to be discovered.
+
+The sixth entry continues that same hold, and the reason it is worth reading
+is what it decided NOT to do. A held record silently withholds reminders from
+whatever loan currently bears its number, so releasing it automatically once
+the number belongs to a different loan looks like the obvious fix. It was
+built, and then removed: every way of establishing "this is a different loan"
+from what the platform has stored proved unsound, four different ways, each
+found after the previous was fixed. The platform now tells a person what the
+number points at today and lets them decide, and labels that description as
+stored and unverified rather than presenting the same record it refused to act
+on as settled fact.
+
+The seventh and eighth entries are both about a claim that was true when it was written
+and had stopped being true, which is the day's recurring shape. One is a
+question the platform asks its own store about many records at once: it can be
+refused for naming too many things, and the refusal arrives exactly when a
+backlog has built up — so the pass that would drain the backlog is the one that
+cannot run. Three places had independently learned the limit and two had never
+heard of it, so it now lives in one place that works out the size from the
+question being asked.
+
+The other began as a single stale sentence — documentation saying a service is
+not deployed automatically when a change merges, when it is — and turned into a
+longer lesson about what could be promised alongside it. The surrounding
+guidance described how to protect a database change by closing the ways users
+write. Review found one more way in each time it looked: work on a timer, a
+background alarm that restarts itself, work already running when the closure
+went up, addresses that bypass it. Listing the ways code can reach a database
+turns out not to be a finishable task, so the document now states the hazard
+plainly and says the procedure is unsettled, rather than offering a list that
+reads complete and is not. That is a smaller promise than it made this morning,
+and the only one it can keep.
+
+The ninth entry grew out of the eighth, and it is worth reading for what it
+stopped claiming rather than for what it established. Having corrected one
+stale sentence about which services deploy themselves, the obvious next move
+was a reliable way to check. Two candidate checks were tried and both
+misled — looking for a build to have run, then reading a deployment's age —
+so what survives is deliberately one-sided, and weaker than it first reads:
+a deployment older than the newest change is **evidence that the service may
+be behind and worth inspecting**, while a newer one establishes nothing at
+all. Not even the first half is certainty — a change can carry a timestamp
+later than the moment it landed, so a current service can compare as behind.
+Being wrong that way costs a second look; being wrong the other way is what
+the check exists to prevent. Saying only the half that holds, and saying it
+as evidence rather than as a verdict, is less satisfying than a green tick
+and is the only version that does not eventually tell somebody the wrong
+thing.
 
 ## Thread — the keeper's arming flags are secrets, and its own config finally says so (PR #2223, issue #1465)
 
@@ -933,3 +1005,647 @@ than left for someone to discover.
 
 Closes #2212.
 <!-- assembled-fragment: 2212-quarantine.md sha256=6a8b8cf979c31bb1f3fc4ebc4548d951dd81e6f8c0e195e12c687260ea115f48 -->
+
+## The indexer now counts the requests it makes, instead of estimating them (PR #2227, issue #2221)
+
+Each run of the indexer is allowed a fixed number of outbound requests before
+the platform stops it. Until now, the indexer did not count them. The figure
+lived in a note written by hand, and that note was corrected three times in
+three consecutive reviews — and was wrong each time. Every correction came from
+a person re-reading the sum, because nothing in the running system knew the
+number.
+
+Being wrong about it has a specific cost. Going over the allowance does not make
+a run slower; it stops the run before it records how far it got. The next run
+starts from the same place and does the same thing, so a chain can stop moving
+forward entirely while appearing to run normally.
+
+The indexer now keeps a live count of what a whole scheduled run spends. The
+allowance belongs to the run, not to any one job inside it, and a run does
+several things at once — reading the chain, catching up records, retrying an
+earlier listing that failed to publish, tidying old rows. Counting each job
+separately would have produced several comfortable-looking numbers for a run
+that had already been stopped. There is now one count, and every job draws on
+it: reads from the chain, reads and writes to the indexer's own database, the
+credentials it fetches at the start, and the listings it sends to the
+marketplace.
+
+Two details are worth stating because they are what made hand-counting
+unreliable in the first place. Several database statements sent together travel
+as a single request, not one each. And a statement that is prepared but never
+sent on its own costs nothing. A count that got either of those wrong would be
+a confident number that was still incorrect, which is what was there before.
+
+Those statements are also why there are now **two** counts rather than one.
+The platform sets two separate allowances — how many requests a run may send,
+and how many database statements it may submit — and they are the same size on
+the tier this is built for. A batch sent together is one request but many
+statements, so one number would have had to be wrong about one of the two: it
+would have reported a comfortable figure for a run about to be stopped for its
+statement count. Both are counted and both are reported, and a run that passes
+either one says so.
+
+A third detail was found by review of the first attempt, and it is the reason
+this note no longer claims more than it should. The counting originally wrapped
+the two objects the run was known to use, and was described as if it counted
+everything the run sent. It did not: a failed read is retried automatically up
+to three more times, and those attempts were invisible; a second reader built
+elsewhere in the run was invisible; and the message sent to the marketplace was
+invisible. The counting now happens where requests actually leave — so a retry
+costs what a retry costs, and code that knows nothing about the allowance is
+counted anyway.
+
+Two things follow from that, and both are deliberate. Every run reports what it
+spent, including runs that end early or fail — the ordinary figure is the one
+worth having, and it was previously reported only on the busiest path. And when
+a run does pass its allowance, it says so at the moment it happens rather than
+at the end, because by the end the run may no longer be alive to say anything.
+
+Review found two further places the count fell short, and both are now closed.
+A run is counted to its own end rather than to the end of its main job — the
+step that tells connected apps what changed reads records too, and a figure
+published before it ran was short by that much.
+
+The second is a deliberate change in behaviour and is worth stating plainly.
+A request answered with "this has moved elsewhere" used to be followed
+automatically, and each move is a further request that the count did not see.
+Following them and counting each one was tried first, and it meant
+reproducing the web's own forwarding rules — which method survives which kind
+of move, which requests keep their body, what happens to credentials when the
+new address is on another host. Review found three separate places where that
+second copy of the rules did not match the original, which is what a second
+copy of anybody's rules does.
+
+So these runs no longer follow. A moved address is reported, naming where the
+request was being sent, and the request fails there. What these runs talk to
+is a configured address for each network, a marketplace and the platform's own
+services — none of which should be moving — and if one does, the fix is to
+correct the configured address rather than to have the indexer quietly follow
+a provider somewhere new. The count stays exactly right either way, which is
+the property the rest of this work exists to establish.
+
+What is still not counted is stated in the code rather than left to be
+discovered: requests served to visitors of the public read endpoints are a
+separate allowance and a separate count.
+
+This is the groundwork for the allowance being enforced rather than only
+observed. The figures the indexer works to are still the conservative ones set
+while the true cost was unknown; now that it can be measured, they can be set
+from evidence.
+<!-- assembled-fragment: 2221-indexer-subrequest-counter.md sha256=e169fb7633944626c5ad02738b9f44d0ccb163b0fa258c57fbdc503668e3052e -->
+
+## Payment reminders again go out nearest-deadline-first after a busy run (PR #2229, issue #2219)
+
+The service that reminds people about an upcoming interest payment works
+through a list of loans ordered by how soon the payment is due, nearest first,
+and stops when it has used its allowance for that run. It then records where it
+stopped, so the next run picks up rather than starting over.
+
+What it recorded was a **position in the list** — "I stopped at the sixth". The
+list is rebuilt from scratch each run, and a loan reminded on the previous run
+is no longer in it. So the sixth place in the new list is not the sixth loan
+from before: it is the eleventh. The five loans in between — the nearest
+remaining deadlines, the very ones that should have been next — were stepped
+over.
+
+Under sustained load this ran the service's own rule backwards: reminders about
+payments further away went out while nearer ones waited.
+
+Whether any reminder was actually missed is **not known, and is not claimed
+here**. The reasoning that made this look harmless was that the position wraps
+to the front when it runs off the end, so a stepped-over loan is reached on a
+later pass — but that argument holds only if the list is worked through. If
+loans enter the list about as fast as they are handled, its end keeps moving,
+the wrap may not come, and a loan stepped over near the front can pass its
+deadline and leave the window before anything reaches it. That is the same
+sustained load the fault needs to appear in the first place. Establishing
+which of those actually happened would take production evidence nobody has
+gathered, so this is recorded as an ordering fault of unknown consequence
+rather than as one known to be harmless.
+
+It now records **the deadline** it stopped at, and resumes at the first loan due
+at or after that moment. A deadline does not move when other loans are reminded,
+settled, or pass out of the window, so the resumption is exact rather than
+approximate — and the note in the code claiming an exact resumption was
+impossible here has been corrected, because it was wrong about why.
+
+Two consequences worth stating. Where the recorded place cannot be read at all —
+a database problem, or a deployment that arrives before the schema change it
+needs — the run starts at the nearest deadline instead. For any one run that
+repeats work already done rather than stepping over anything, which is the only
+acceptable direction for that failure. It is not harmless if it persists: a
+service that always restarts at the same place never works its way down the
+list, so loans further along stop being reached. That is why the run says so
+every time rather than falling back quietly.
+
+And the old recorded positions are cleared rather than left behind: a stale
+number in a table other things still read is how a later reader comes to trust
+a position that means nothing. That clearing is best-effort rather than
+guaranteed, which is worth stating plainly — the schema change is applied
+before the new service is deployed, so a last run of the old one can write its
+position back in between. A row written back that way is inert, because
+nothing reads it any more, and an operator can remove it once the new service
+is live.
+<!-- assembled-fragment: 2219-prenotify-deadline-cursor.md sha256=9282e48e9103a808ffb997efe5f02cb6543ae901524fd2795f7e1f0efbd5822c -->
+
+## Thread — A held record now says what its loan number points at, instead of silently withholding (PR #2231, issue #2222)
+
+When the platform cannot confirm what happened to a loan, it remembers that and
+holds that loan's reminders back rather than sending ones it cannot stand
+behind. The memory is released when the loan is settled, or found to have
+ended.
+
+One case releases neither: a loan the network denies exists, which may have no
+stored record either. That is deliberate — nothing proves such a position
+ended, and keeping it held and visible in the report a person reads is the most
+useful thing this memory does. But the documented way for an operator to
+resolve one is to delete the fabricated record, and once they do, the held
+entry matches nothing and stays.
+
+That is worse than untidy, and the reason is the part worth stating. A held
+entry withholds reminders from **whatever loan currently bears that number** —
+so if the number ever comes round again, after a network redeployment or a
+reset, a real loan goes without reminders and nothing says so.
+
+The obvious remedy is for the platform to notice that the loan bearing the
+number now is a different one and release the entry by itself. That was built,
+and then removed, because every way of establishing "this is a different loan"
+from what the platform has stored turned out to be unsound:
+
+- the recorded start time can be the platform's own clock, substituted when the
+  network could not be read at the moment the loan was recorded;
+- a recorded place in the network's sequence goes stale as soon as an entry is
+  rewritten by a path that cannot rewrite it too;
+- that sequence restarts on a test-network reset, so a newer loan can appear
+  older;
+- and the sequence value itself can be left behind by a reorganisation the
+  platform is documented as never revisiting.
+
+Each of those was found by review after the previous one was fixed. Acting on
+any of them would have released a hold — and resumed reminders — on the
+strength of a read that failed, which is precisely what the memory exists to
+prevent.
+
+So the platform does not guess. The report a person reads now names, for every
+long-held entry IT DESCRIBES, what its number points at today: no stored loan at all, or a
+stored loan in a given state that began at a given point. That description is
+explicitly labelled as **stored and unverified** — the same record that proved
+unsound to act on is not then presented as settled fact — and held numbers are
+listed even when there are more than the report describes in full, up to a
+stated limit, because an entry left out entirely would be withholding reminders
+with nothing anywhere naming it. Those listed-but-undescribed numbers get no
+such lookup, and the report says so in terms: being named is not being
+examined, and nothing above one of them says what it points at now.
+
+Someone reading it can see whether the entry is still about the loan it was
+made for, and clear it if not. That is a deliberate act, spelled out in the
+report, and it names the exact entry that was read: a check that ran between
+the reading and the clearing can have recorded a fresh finding under the same
+number, and an unguarded removal would discard it.
+
+Where more entries are held than the report describes in full, it also says
+what it is not doing: those numbers are named but not described, the
+descriptions are of the longest-held entries and do not take turns, and
+resolving one of those is what brings the next into view. It would be easy to
+write "described next time" there, and it would be untrue — nothing would ever
+supply that detail.
+
+Each described entry carries its removal command already written out, to be
+run exactly as printed. That is deliberate and it replaced three earlier
+attempts to print the *pieces* and let a person assemble them — each of which
+turned out not to run, in a different way each time. The command is checked by
+being executed: the tests take the text the report emits and run it.
+
+The value it quotes is two values, not one: a token and the time of the
+sighting, and they cover different things rather than doubling up. An ordinary
+write rotates the token; a write made while the store is still on the older
+shape cannot, and those are caught by the time moving instead. A time recorded to the second cannot
+tell two sightings within the same second apart, and a token cannot be
+refreshed by the older write shape, so either on its own would let a removal
+delete a finding recorded *after* the person read the report — resuming
+reminders for a loan nothing has settled, which is exactly the harm this
+memory exists to prevent. One narrow gap remains and is written down further
+below. The window is narrow, and that is no defence: the whole value of a
+safety check is that it can be trusted without being checked, so one that can
+fail silently is worse than none. Naming an entry while withholding what it takes to act on it
+sounds harmless and is not: because the described page does not take turns,
+the entry would stay unactionable indefinitely, and a person who needed it
+gone would be pushed toward exactly the unguarded removal this report spends a
+paragraph warning against.
+
+One release does still happen on its own — when a stored loan bearing the
+number is no longer running — and that carries the same identity assumption in
+smaller form: where a number has been reused, it establishes that the
+replacement ended rather than that the original position did. It is recorded as
+a known limit rather than presented as settled, **and it is the release itself
+that says so**, giving a count where the store reports one — and saying so
+plainly where it does not — alongside a bounded roster of the CANDIDATES it
+read immediately before removing. Not of what it removed: the removal re-checks
+its condition, so fewer can go than were listed, and where that happens it says
+how many and that it does not know which, or why.
+Leaving that to the held-entry report would have disclosed nothing in the one
+case that matters: a release can clear the last held entry, and the report says
+nothing when nothing is held.
+
+That roster took two goes as well, and the first was worse than it looked. It
+named at most a set number of entries — but only after asking the database for
+every single one and holding them all in memory, so the *appearance* of a limit
+sat on top of work that still grew without one. A limit that only shortens the
+message is not a limit; it hides the cost rather than removing it. The entries
+are now read back under a limit the database itself applies; the count is
+exact where the store reports one, and where it does not the report says so
+rather than supplying a number. The roster is described for what it is: what the sweep was
+about to release, read immediately beforehand, rather than a claim about the
+removal itself.
+
+There is a second way a held entry clears by itself, and it is the sound one:
+a run examines the number, the network answers, and the entry goes. That is
+deliberately left alone — the network's own answer about a number is the only
+solid evidence in any of this, and every basis the platform declines to act on
+is a stored value standing in for exactly that answer. Blocking it would leave
+a live, settled loan without reminders indefinitely on the strength of a
+finding about a loan that no longer exists. But where the entry had been held
+long enough to be appearing in the report a person reads, its release is now
+announced, together with what that release cannot establish: if the number had
+come round, the answer concerns the loan bearing it now, and the earlier
+unresolved finding has gone with it. An entry cleared before it was ever
+reported stays unannounced — that is the everyday case of a reading that failed
+once and succeeded next time, and a line for each would bury the ones that
+need a person.
+
+Reporting takes the same small number of database enquiries however many
+entries are held, and the first attempt at that left the amount READ and
+PRINTED still growing with the number of entries — so the report would have
+failed on exactly the network that most needed it, inside the run that must
+also record how far the chain has been read. It now names at most a set number
+of entries, says **exactly** how many more are held, and hands over the
+enquiry that lists them. A listing that simply stopped would be the silent
+truncation this whole change exists to avoid.
+
+What matters there is that the work does not vary with the size of the fault
+more than it must — not that it is as small as it could be. A shorter version
+was written and set aside: it would have saved one database enquiry by using a query feature the
+database's own documentation neither promises nor rules out, and which nothing
+else in this codebase has ever asked it for. This is the one report that makes
+a withheld position visible at all, so a query the database declined would not
+degrade it — it would hide every withheld position on every run, which is the
+fault the whole change exists to prevent. One saved enquiry is not worth that.
+
+A held entry can be cleared from more than one place — a periodic sweep, a run
+that settles the loan, and the close-out that ends it — and announcing each was
+done one at a time, as each was noticed. That is how the third one stayed
+silent: in the very case worth disclosing, a reused number's replacement
+closing normally, the entry vanished without a word while the other two paths
+announced themselves. The missing piece was never a case, it was a rule. There
+is now a single shared way for the platform to release ONE entry by itself — a
+removal a PERSON runs is a different thing and outside this rule, written out
+for them one per entry and guarded as described above — and it reports
+what it removed, and a new route cannot be added without deciding what it
+announces.
+
+The periodic sweep is the exception, and saying so matters more than a tidy
+rule would. It removes a batch in one instruction, so it cannot use a
+per-entry form — a check demanding one would force it back into removing rows
+one at a time, which is what several rounds of this change were spent getting
+away from. It carries its own announcement instead, and it is the only such
+place.
+
+That is a strong default, not a guarantee, and the difference is worth stating
+because the first version of this paragraph claimed the stronger thing. A route
+that took the shared form and threw away what it returned would still be
+silent, and nothing can prevent that: these releases have to be committed
+together with unrelated work, so they cannot control their own execution. What
+changed is that staying silent is now a deliberate act rather than an
+oversight, and a check refuses any release the platform itself performs with a
+hand-written statement — the commands it writes out for a person are a
+different thing, covered above. A guarantee a
+reader trusts without checking is worse than one they check.
+
+What a release says also depends on what licensed it, and there turned out to
+be four different licences rather than two. A run that read the network for a
+number and got an answer holds the soundest evidence in any of this, and says
+so. A repair is a network read too, but of a loan whose ending was never
+announced — so it says the ending was FOUND, rather than claiming one arrived,
+which on the one path defined by a missing announcement would have described
+the opposite of what happened. It only says that where its own write is the
+one that recorded the ending; where another writer got there first it says
+less, because that writer may have been the announcement arriving, and
+claiming none came would deny the likeliest explanation. A close-out did see the ending announced, and
+establishes that the loan CURRENTLY bearing the number ended, never that the
+entry being released was about that loan. Each names its own basis and none
+borrows another's. Sharing a mechanism does not license sharing a claim, and
+one announcement wired to every route briefly said the strongest of the three
+on all of them.
+
+Two things about the upgrade itself. A deployment publishes the new code
+before the store is updated to match, so for a while — minutes in an ordinary
+rollout — the code runs against the older shape — and a run that cannot record a withheld loan lets
+the next run remind on it, which is the failure this memory exists to prevent,
+arriving during its own upgrade. Recording is therefore written to succeed
+against both shapes, and the platform asks the store which shape it has rather
+than assuming. While the older shape is in use the report still names
+withheld loans on the same terms as ever — up to its stated limit, with an
+exact count of any beyond it, because a deployment is exactly when a
+suppression most needs to be visible — but offers no removal command at all,
+and says why: every such command names something the older shape does not
+have, so printing one would hand a person an instruction that cannot run. The
+enquiry that would hand back instructions for entries past the limit is
+withheld there too, for the same reason.
+
+It also does not promise how long that lasts. Asking the store establishes
+only that the newer shape is ABSENT, never when it will arrive, and an update
+that failed or was skipped leaves this indefinitely — so the report says what
+to do with a second sighting: if the same message turns up on a later run, the
+update did not land and wants looking at, because these entries cannot be
+cleared safely until it does.
+
+The safety value also had to become two values rather than one. The older
+write shape cannot refresh the token, so a token on its own would go on
+matching after a fresh sighting; the time of the sighting moves instead. One
+narrow gap is left and is written down rather than implied — an older-shape
+sighting in the same second as the one a person is holding moves neither
+half — because closing it would mean pushing the recorded time forward on a
+collision, which corrupts the one thing telling a person how long ago a record
+was really made. And an entry written before the new safety value existed
+carries an empty one; the report prints that in a form that can be pasted as
+it stands, because an entry nothing ever re-examines — exactly the kind this
+report is for — would otherwise be named and permanently unremovable by the
+safe route.
+
+The sweep that releases entries clears a limited number on each run and leaves
+the rest for later ones, and that limit is not a matter of taste: the store
+refuses a single instruction carrying more than a fixed count of supplied
+values, and one that exceeds it fails the same way every run — releasing
+nothing while appearing to work. The removal also re-checks, as it removes,
+the fact that licensed it, because between finding an entry and removing it
+the loan under that number can have been replaced by a live one. That is
+exactly the reuse this whole change is about.
+
+The count of how many entries are held and the list of them are also now read
+in the same instant. Taken separately, a removal happening in between left the
+report claiming entries that no longer existed — an "exact" figure that
+described no moment that ever was.
+
+Finally, the report's promises and its behaviour are now the same size. Three
+separate rounds each bounded a different cost of the same report — the length
+of the message, the volume handed back to the platform, and the work the
+database does to produce it — and each was found only because the previous one
+was fixed. The common cause was not the implementation but the claim: the
+specification promised fixed work outright, so every review went looking for
+the next place that was not fixed. It now says precisely what is bounded and
+names the one thing that is not — establishing HOW MANY entries are held grows
+with how many there are, and that is kept deliberately, because telling someone
+"more than 200" when the true figure is three thousand hides the only number
+that tells them how bad it is. A supporting index makes the page a bounded walk
+rather than a sort of everything held.
+
+A suppression a person can see and undo is worth more than an automatic release
+built on evidence that has been wrong four different ways.
+<!-- assembled-fragment: 2222-quarantine-id-reuse-release.md sha256=b46f0c77b690c49c757cf5585bb331b336dbf6d1e9e2f19e32df597f61a611de -->
+
+## Thread — A lookup no longer fails because there is a lot waiting for it (PR #2235, issue #2234)
+
+The platform's back-office services ask their own store about many records at
+once: who each inbox notification is for, who owns a sold offer row, which
+delivered cross-chain remittances have already been acknowledged. Each of those
+questions names every record in the batch being worked on, and the store
+refuses a question that names more than a hundred things at a time.
+
+Refusal is not a slow answer — it is no answer, and the work the question
+belonged to fails whole. Worse, it fails the same way on the next attempt,
+because what made the question too large is a backlog, and a backlog does not
+shrink while the thing that would drain it is failing. That is the shape worth
+naming: not a flaky moment, a stall, and one that arrives precisely when the
+platform has fallen behind and most needs to catch up.
+
+Three of these lookups already split their question up. Two did not. The one
+that mattered most is the pass that acknowledges cross-chain reward
+remittances: it examines a window two hundred wide, so a hundred or more
+unacknowledged deliveries in that window made every attempt fail — and because
+that pass records its new position **before** asking, each failing attempt also
+moved past a window whose acknowledgements were never sent. Value had been
+delivered and the bookkeeping that closes it would never have followed. The
+likeliest moment to meet that is the first time the pass is switched on, since
+nothing has been acknowledging while it was off.
+
+That pass has not run in production — this service's schedule is currently
+empty and the feature is not enabled — so this is a defect on the arming path
+rather than an incident. It was found by reading the arming prerequisites, not
+by anything reporting it.
+
+**The fix is one shared rule rather than five careful authors.** The store's
+limit and the splitting now live in one place used by every service. Callers
+hand over the rest of their question's contents and get back complete,
+correctly sized pieces, so there is no count for anyone to keep in step with a
+condition added later — which is how the three that knew about the limit came
+to be three rather than five. Splitting costs nothing extra: the pieces travel
+together as one request, so a lookup that used to be one request still is.
+
+One place deliberately does **not** use the shared splitter, and the reason is
+recorded where it lives: the sweep that releases long-held records limits how
+many it examines per pass so that what comes back always fits a single
+instruction. That is a bound on how much work one pass does, and splitting
+would remove it rather than respect it. An exception with a stated reason is
+worth more than a rule that reads absolute and quietly is not.
+
+A fourth service, the internal mesh watcher, asks similar questions. The first
+version of this change exempted it on the grounds that its lists are sized by
+how the deployment is configured. **That was wrong, and review caught it**: the
+set of chains it watches is read from the canonical chain itself, where nothing
+limits how many may be registered, and one chain can raise more than one
+finding. So the exemption was the same unexamined assumption of smallness that
+this change set out to remove — written in the same breath as removing it.
+
+Two of its questions could not simply be split, and the reason is worth
+recording. They were phrased as "delete everything EXCEPT these", and that
+phrasing cannot be broken into pieces: the first piece deletes what the second
+was going to keep. They now ask the opposite question — read what is stored,
+work out what is not being kept, and delete that in bounded pieces — which
+splits safely and means the same thing. The read happens inside the same
+guarded boundary as the writes, so a failure of it is reported rather than
+escaping.
+
+That service also had no test of what those two operations actually delete —
+only of how they behave when the database is unavailable. So the rewrite could
+have changed the retention behaviour with every existing test still passing.
+Tests for the behaviour itself were written first, and then deliberately broken
+to confirm they would object.
+
+The watcher stays outside the shared package for trust reasons — its own
+database, its own alerting channel — but it now uses the same splitting rule,
+reached the same way it already reads shared deployment data. One definition
+beats a copy that drifts.
+
+Closes #2234.
+<!-- assembled-fragment: 2234-d1-bind-cap-shared.md sha256=2c280741ff86793a71acf0fba1d03a568a4aa81fa208cf120d317b2521bbf498 -->
+
+## Thread — The notification service does deploy itself on merge, and two places said it did not (PR #2238, issue #2237)
+
+Operational documentation and a comment in the service's own source both stated
+that the notification service is **not** deployed automatically when a change
+merges, and that an operator therefore has to deploy it by hand in the same
+sitting. Both are now corrected: it is deployed automatically, along with the
+two services already described that way.
+
+The claim was true when it was written, and it stated its own test — *does a
+build check appear on a recent merge?* — which is what makes it checkable now.
+It does: the build runs on the merge commits that touch this service, and the
+live deployment was created seconds before that build check finished — the
+deployment happens during the build, which is what produces it. The test is
+kept and the answer refreshed, rather than the test being removed.
+
+**Believing the old wording was worse than the problem it warned about.** It
+told a reader that a merged change to that service is not live when it is, and
+nobody goes looking for the effects of a change they think never shipped. The
+source comment carried the same claim into the file it most affects — the
+sweep that clears expired account-linking codes, which had been moved to this
+service precisely so it would keep running when another service stopped.
+
+Two things the correction does **not** sweep away:
+
+- **The nightly backup worker still is not deployed automatically**, and the
+  step still says so, with the same evidence checked the same way.
+- **The configuration hazard the old comment described is real and matters
+  more now, not less.** Two operator-tuned settings live only in the
+  deployment dashboard, and a deploy that does not know about them removes
+  them. An automatic deploy passes no flags at all, so the protection cannot
+  be something a person remembers to type — it is declared in the service's
+  own configuration file, which every deploy route reads. The comment now says
+  that, instead of naming a command an automatic deploy never runs.
+
+The step in the runbook also warned that, during the gap before a hand-run
+deploy, this service would read and write the *old* database while its
+neighbours used the new one — so a setting changed or a support request filed
+in that window would land in a database about to be deleted.
+
+**A first version of this change said that gap no longer opens; a second said
+it is now a short, measured one. Both were wrong, and review caught each in
+turn.** What is true is smaller and more useful: each service reaches a new
+database binding through its own independent build, so from the merge until
+every binding has been *checked*, the set is in a mixed state — with no
+guarantee about which services have switched, in what order, or for how long,
+and no guarantee that a given one switched at all, because a build can fail
+and leave that service on the old binding until a person repairs it.
+
+The second version's "short window" came from comparing two build-completion
+timestamps. That comparison does not measure what it was used for: a
+deployment is created *during* its build, not at the end, and the other
+service's activation time was never collected. The document now says the
+duration is not derivable rather than printing a number that was not measured
+where it matters.
+
+So the guidance is one requirement covering both directions, rather than a
+caveat per path: **before any binding change is merged — the cutover or its
+undo — no service may still be able to write to either database, and normal
+operation resumes only once every service's binding has been confirmed on the
+database it is meant to be on.**
+
+That is stated as a CONDITION rather than as an action, and the difference is
+the whole of what this change learned. "Close the routes through which users
+write" was the action an earlier version prescribed, and it does not achieve
+the condition: it leaves timed work, background alarms and already-running
+work untouched. Someone following it would believe the change was protected
+and lose rows anyway.
+
+The framing also corrects two narrower errors: it named only one of the two
+services that accept user writes, and it pointed an undo at the same checks as
+the rollout, which would have passed a service still stuck on the database
+being abandoned.
+
+What the automatic deployment genuinely changes is *who* closes the window — it
+no longer waits on somebody remembering a command. It does not make the window
+zero, bounded, or safe to leave unguarded.
+
+Trying to state that protection precisely enough to be tested against is where
+this change stopped. Each review round found another way a service reaches the
+database that the previous wording had not covered — a second service's public
+routes, then diagnostic routes, then work scheduled on a timer, then a
+self-rearming background alarm, then work already in flight when the closure
+went up, then addresses that bypass it, then the fifteen minutes a schedule
+change takes to take effect.
+
+**Listing the ways code can reach a database is not a finishable task**, and a
+list that reads authoritative while being incomplete is worse than none: an
+operator follows it, believes the writers are stopped, and loses exactly the
+records the step exists to protect. So the document now states the hazard and
+says plainly that the procedure is unspecified, with the requirements and the
+decisions it needs recorded separately. One of those decisions is whether the
+closure should work by removing the database from the service entirely rather
+than by naming its entry points — the only formulation that does not depend on
+having listed them all correctly.
+
+What did get settled: the checks that prove a binding moved cannot all run
+while writes are closed, since two of them work by writing. Confirmation is in
+two passes — read each service's binding directly, which is what authorises
+restoring traffic, then run the write checks afterwards.
+
+None of these mechanics has been exercised on the live account; they are
+reasoned from how the deployments work, and the document says so.
+
+One service writes nothing at all today because its schedule is empty. That is
+recorded as a fact about today rather than a property of the service: restore
+the schedule and it writes user-visible alerts that a later re-check cannot
+reconstruct, because the condition they describe may have passed.
+
+Closes #2237.
+<!-- assembled-fragment: 2237-agent-auto-deploy-correction.md sha256=dafc0b7ee4ad0be5742e5f146d9a24dbb8f61df394c488cde52de7ea50531c96 -->
+
+## Thread — How to tell whether a service is actually running the code that was merged (PR #2243, issue #2242)
+
+A cutover step told an operator which services deploy themselves when a change
+merges, and which need deploying by hand. It was corrected earlier the same day
+because it named one service as manual when it is automatic. Measuring every
+service afterwards showed the corrected list was **also** wrong, in the other
+direction: another service deploys itself and was left out.
+
+Two errors in one list on one day is a sign the list is the wrong thing to
+maintain, so the step now leads with the test rather than the answer — and the
+test it used to name turns out not to work.
+
+**Looking for a build to have run misleads in both directions.** A change to a
+single file at the top of the repository starts a build for every one of the
+five services that build automatically; a change confined to the documentation
+folder starts none at all.
+
+And **building is not deploying** — which is the distinction that matters most
+here, and the easiest to lose. One of those five builds automatically and is
+still deployed **by hand**: its build reported success four days after its last
+deployment, and that deployment is still the one serving. Only the nightly
+backup worker has no automatic build at all. So "a build ran" can
+be true of a service the change never touched, and "no build ran" can be true
+of one that does deploy itself. The same kind of change behaves differently
+again on a branch than on the main line, which removes the last way a reader
+might have salvaged the signal. Worse, a **successful build does not mean
+anything was deployed**: one service's build reported success four days after
+its last deployment, and that deployment is still the one serving.
+
+**The deployment timestamp is the thing worth reading — in one direction
+only.** If a service's last deployment is older than the newest change
+affecting it, that change is almost certainly not live. Almost, because a
+change can carry a timestamp later than the moment it actually landed — but
+that is the safe direction to be wrong in: it costs a redundant deployment or
+a second look, where the opposite mistake costs the thing the step exists to
+prevent. The reverse does not hold: a recent-looking deployment proves
+nothing, because the comparison can be made against a stale local copy of the
+project's history, because a service can be affected by changes outside its own
+folder, and because undoing a deployment creates a *new, recent* record that
+points at *old* code.
+
+An intermediate version of this change also used staleness to infer that a
+service must be hand-deployed. That is wrong in a way worth naming: a service
+whose automatic deployment **failed** is also behind, and reading that as "this
+one is manual" sends someone to deploy around a broken build instead of fixing
+it. Being behind says the code is not live and says nothing about why.
+
+Running that comparison found two services behind: the connected app by four
+days, and the nightly backup worker by twenty-eight. Both are hand-deployed by
+design, and both had simply not been deployed. Their figures are now recorded
+in the step, as the reason to check rather than assume — "somebody will have
+deployed it" is not a safe default for either.
+
+One service appears in no deployment list at all, and that is correct: it is
+deployed as part of an arming ceremony that has not happened. The step says so,
+so it is not mistaken for drift.
+
+Part of #2242.
+<!-- assembled-fragment: 2242-deploy-currency-check.md sha256=9e6be06c94440e55c26b38d02334d51d2c73ef63444ee96f78ac31c8c6bbf8bb -->

@@ -620,7 +620,7 @@ else
   fi
 fi
 
-# ── [4c] REMOVED — the facet-registry gate moved to #1800 ────────────
+# ── [4c] REMOVED — the facet-registry gate LIVES IN THE DEPLOY (#1800) ──
 #
 # This step read `DeployDiamond.s.sol` and `RefreshAllFacetsInPlace.s.sol` as
 # TEXT and tried to prove that every cut facet is also recorded in the
@@ -640,15 +640,27 @@ fi
 # green verdict it had not earned, which on a pre-deploy check is worse than
 # having no check — a red one gets read.
 #
-# What actually settles the question needs no parsing at all: run the deploy with
-# artifact writing enabled and assert that every address `facetAddresses()`
-# reports appears in the JSON it wrote. That does not care how a registration is
-# spelled, which function hosts it, what guards it, or which writer performed it.
-# It is #1800, and it is where the refresh-key-identity check goes too.
+# What actually settles the question needs no parsing at all, and IT NOW EXISTS
+# (#1800): `DeployDiamond` Step 7b reads back the artifact the run just wrote and
+# requires every address `facetAddresses()` reports — plus `diamondCutFacet`,
+# which the Diamond's constructor installs outside that enumeration — to appear
+# under some `.facets.*` key. It does not care how a registration is spelled,
+# which function hosts it, what guards it, or which writer performed it.
+#
+# It lives in the DEPLOY rather than here, and that placement is the point. A
+# first version asserted the same property from a test that deployed across a
+# matrix of chain ids; review found the matrix incomplete twice running, because
+# a write can be guarded on chain id, on admin≠deployer, on the treasury, on
+# anything — so a matrix only ever covers what somebody enumerated. Inside the
+# deploy there is no matrix to be incomplete: the conditions under test are the
+# conditions in effect. This gate therefore does NOT re-check the property; a
+# pre-deploy check over committed files could only reintroduce the enumeration.
 #
 # The thirteen MISSING writes this PR found are fixed in `DeployDiamond.s.sol`
-# regardless — that was the bug. What is deferred is the guard against it
-# recurring, which is honestly stated rather than approximated.
+# regardless — that was the bug. What remains outstanding is only the
+# refresh-key-identity check (that `RefreshAllFacetsInPlace`'s artifact key for
+# each facet equals `DeployDiamond`'s), which `RefreshScriptFacetParityTest`
+# documents as out of its own scope.
 # ── Verdict ───────────────────────────────────────────────────────────
 echo
 if [ "$FAIL" -ne 0 ]; then

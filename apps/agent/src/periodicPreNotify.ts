@@ -668,15 +668,22 @@ async function preNotifyChain(
   // irrelevant to coverage — which is why this change also deletes the test
   // that pinned that schedule.
   //
-  // WHAT IS APPROXIMATE, stated rather than implied: the stored value is an
-  // index into a list that changes between ticks as loans enter the window,
-  // are stamped, or pass their deadline. So this resumes NEAR where it
-  // stopped, not exactly. That is enough for the property being bought —
-  // forward progress independent of any clock — and an exact resumption would
-  // need a key that survives reordering, which a deadline-ordered list does
-  // not have.
-  const storedOffset = await scanOffset(env, chain.id, budget);
-  const start = storedOffset < due.length ? storedOffset : 0;
+  // AND IT RESUMES EXACTLY, because the stored value is a DEADLINE (#2219).
+  //
+  // This note used to say the resumption was approximate and that an exact one
+  // "would need a key that survives reordering, which a deadline-ordered list
+  // does not have". The second half was wrong: the list is sorted by
+  // `(nextCheckpoint, loanId)`, and that pair IS such a key — it does not move
+  // when other loans enter or leave. What the list does not have is a stable
+  // POSITION, which is what was being stored.
+  //
+  // The cost of getting that wrong was not an approximation. Stamping the
+  // nearest five and persisting 5 meant the next tick started at what was now
+  // the eleventh loan, stepping over the sixth through tenth — the nearest
+  // remaining deadlines. Under sustained load the lane's own
+  // nearest-deadline-first guarantee ran backwards.
+  const resumeKey = await scanResumeKey(env, chain.id, budget);
+  const start = resumeIndex(due, resumeKey);
 
   let cursor = start;
   let reminded = 0;
@@ -743,8 +750,16 @@ async function preNotifyChain(
   // WHERE THE NEXT TICK PICKS UP. Written even when nothing was examined, so
   // a pass that stopped for want of allowance does not re-read the same
   // prefix next time.
-  const resumeAt = cursor < due.length ? cursor : 0;
-  const resumeRecorded = await saveScanOffset(env, chain.id, resumeAt, budget);
+  //
+  // The DEADLINE of the next unexamined candidate, not its position — so a
+  // loan stamped by this tick leaving the list cannot shift what the next tick
+  // resumes at. A finished window stores the bottom of the order, which is how
+  // the scan wraps.
+  const resumeAtEnd = cursor >= due.length;
+  const resumeKeyNext: ScanResume = resumeAtEnd
+    ? SCAN_FROM_TOP
+    : { checkpoint: due[cursor].nextCheckpoint, loanId: due[cursor].row.loan_id };
+  const resumeRecorded = await saveScanResumeKey(env, chain.id, resumeKeyNext, budget);
 
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
   const examined = cursor - start;
@@ -753,7 +768,7 @@ async function preNotifyChain(
   // it examined 50 — so the old `examined < due.length` was true and the tick
   // announced a remainder it had just consumed, telling an operator the run
   // was partial when it had completed the window.
-  if (cursor < due.length) {
+  if (!resumeAtEnd) {
     // THE SAME THRESHOLD THE LOOP TESTS (#2213 r14 `4013761165`). The loop
     // needs a batch read AND a loan's sends to continue, so a tick stopping
     // with exactly four left was halted by the allowance and reported only
@@ -783,7 +798,8 @@ async function preNotifyChain(
         `The remainder is not dropped: nothing is stamped for it, and the ` +
         `next tick ${
           resumeRecorded
-            ? `RESUMES from ${resumeAt} rather than re-reading this prefix`
+            ? `RESUMES at the loan due ${resumeKeyNext.checkpoint} (loan ` +
+              `${resumeKeyNext.loanId}) rather than re-reading this prefix`
             : `starts from where THIS one did, because the position could ` +
               `not be recorded (see the warning above) — so this prefix is ` +
               `re-read and the tail stays unreached until a write lands`
@@ -840,16 +856,24 @@ async function preNotifyChain(
     // while the wording still said the deployment had none. That sends an
     // operator to look for an unset binding when the value is sitting there
     // and invalid, which is the slower of the two things to discover.
+    //
+    // A THIRD CAUSE WAS REMOVED, not forgotten (#2220 r1). This line used to
+    // name "the installed Push SDK and the installed ethers major disagree
+    // about how to sign" and to spell out the v5 `_signTypedData` call. That
+    // WAS the live condition — the SDK pin was `^0.0.1`, which on a `0.0.x`
+    // version means exactly `0.0.1`, and that release signs the v5 way only.
+    // Correcting the pin removed it: `1.7.32` adapts to either signing style,
+    // and the guard in `push.ts` now accepts either too. Leaving the sentence
+    // would point a responder at a dependency pair that can no longer be the
+    // answer — the most expensive kind of stale diagnostic, because it reads
+    // as specific expertise.
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured.size} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
         `deployment cannot send Push at all, so no Push was sent to them and ` +
-        `none can be. They were reached on Telegram or not at all. Three ` +
+        `none can be. They were reached on Telegram or not at all. Two ` +
         `things produce this and the fix differs: PUSH_CHANNEL_PK is unset, ` +
-        `it is set but not a valid key, or the installed Push SDK and the ` +
-        `installed ethers major disagree about how to sign (the SDK calls ` +
-        `the v5 '_signTypedData', which an ethers v6 wallet does not have). ` +
-        `Check the secret first, then the dependency pair — either way the ` +
+        `or it is set but not a valid key. Check the secret — either way the ` +
         `Push channel on those subscriptions is inert.`,
     );
   }
@@ -1153,18 +1177,15 @@ async function messageBatch(
 /** The `indexer_cursor` row the indexer advances for its own chain scan. */
 const INDEXER_SCAN_KIND = 'diamond';
 
-/**
- * The `indexer_cursor` row THIS lane advances for its own window scan.
- *
- * A separate `kind` in the existing table rather than a new table, so this
- * needs no migration and therefore does not walk into the deploy-window
- * hazard #2214 describes — which was the reason round 8 reached for a
- * clock-derived rotation in the first place. `last_block` carries a position
- * in the candidate list rather than a block; the indexer already repurposes
- * the column this way for its market sweep, so the shape is the established
- * one here rather than an invention.
- */
-const PRENOTIFY_SCAN_KIND = 'prenotify_scan';
+// The scan position USED to live in `indexer_cursor` under the kind
+// 'prenotify_scan', as an index into the candidate list — chosen so it needed
+// no migration and so it could not walk into the deploy-window hazard #2214
+// describes. That reasoning was sound about the cost and wrong about the
+// value: an index into a list rebuilt every tick does not point where it did
+// (#2219). It now lives in `prenotify_scan_cursor` as the deadline to resume
+// at, which migration 0050 creates and whose old row that migration deletes.
+// The rotation position below is genuinely a small integer and stays where it
+// is.
 
 /** The row carrying which chain leads the next invocation. */
 const PRENOTIFY_ROTATION_KIND = 'prenotify_rotation';
@@ -1204,7 +1225,7 @@ async function rotationStart(env: Env, chainCount: number, budget: TickBudget): 
 
 /** Remember which chain leads next. Reported when it fails — see `saveScanOffset`. */
 async function saveRotationStart(env: Env, next: number, budget: TickBudget): Promise<void> {
-  await persistCursor(env, ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND, next, budget);
+  await persistRotationCursor(env, ROTATION_ROW_CHAIN_ID, next, budget);
 }
 
 /**
@@ -1232,7 +1253,12 @@ async function saveRotationStart(env: Env, next: number, budget: TickBudget): Pr
  * half of an either/or, and it earned its complexity in findings rather than
  * in behaviour.
  */
-type PrenotifyCursorKind = typeof PRENOTIFY_SCAN_KIND | typeof PRENOTIFY_ROTATION_KIND;
+/**
+ * The two positions this lane keeps — named by what they MEAN, not by where
+ * they are stored (#2219). They now live in different tables, and a union over
+ * storage keys would have stopped describing them the moment one moved.
+ */
+type PrenotifyCursorKind = 'scan' | 'rotation';
 
 /**
  * What a failed write of THIS cursor costs, in the terms its own reader uses.
@@ -1261,7 +1287,7 @@ function describeCursorLoss(kind: PrenotifyCursorKind, chainId: number): {
   consequence: string;
 } {
   switch (kind) {
-    case PRENOTIFY_ROTATION_KIND:
+    case 'rotation':
       return {
         subject: 'the chain rotation position',
         consequence:
@@ -1270,7 +1296,7 @@ function describeCursorLoss(kind: PrenotifyCursorKind, chainId: number): {
           'holds the shared allowance and the chains behind it may not be ' +
           'reached at all.',
       };
-    case PRENOTIFY_SCAN_KIND:
+    case 'scan':
       return {
         subject: `the scan position for chain ${chainId}`,
         consequence:
@@ -1282,10 +1308,19 @@ function describeCursorLoss(kind: PrenotifyCursorKind, chainId: number): {
   }
 }
 
-async function persistCursor(
+/**
+ * Writes the ROTATION row — the only position still kept in `indexer_cursor`,
+ * since the scan's moved to its own table in #2219.
+ *
+ * It takes no `kind` any more. It briefly did, typed by the LOGICAL kind that
+ * `describeCursorLoss` switches on, and bound that value straight into the
+ * storage column — writing `rotation` where the reader a few lines above looks
+ * for `prenotify_rotation`, which would have left the rotation permanently at
+ * its default while reporting success. One caller, one row, one literal.
+ */
+async function persistRotationCursor(
   env: Env,
   chainId: number,
-  kind: PrenotifyCursorKind,
   at: number,
   budget: TickBudget,
 ): Promise<boolean> {
@@ -1298,11 +1333,11 @@ async function persistCursor(
          last_block = excluded.last_block,
          updated_at = excluded.updated_at`,
     )
-      .bind(chainId, kind, at, Math.floor(Date.now() / 1000))
+      .bind(chainId, PRENOTIFY_ROTATION_KIND, at, Math.floor(Date.now() / 1000))
       .run();
     return true;
   } catch (err) {
-    const { subject, consequence } = describeCursorLoss(kind, chainId);
+    const { subject, consequence } = describeCursorLoss('rotation', chainId);
     console.warn(
       `[periodicPreNotify] could not persist ${subject} at ${at}: ` +
         `${describeFailure(err)}. ${consequence}`,
@@ -1316,43 +1351,206 @@ async function persistCursor(
   }
 }
 
-/** @returns whether the position actually landed — the summary depends on it. */
-async function saveScanOffset(
+/**
+ * Record the DEADLINE to resume at (#2219).
+ *
+ * Its own table rather than the shared cursor row, because the value is a pair
+ * and a pair does not fit an integer column honestly. Packing both into one
+ * number would have avoided a migration and left a figure nobody can read; an
+ * operator looking at this table sees a deadline and a loan.
+ *
+ * ONE ROW, ONE WRITE. The pair has to move together — a checkpoint stored
+ * without its tiebreak, or the two written separately and one failing, is a
+ * cursor that points between two loans.
+ *
+ * @returns whether the position actually landed — the summary depends on it.
+ */
+async function saveScanResumeKey(
   env: Env,
   chainId: number,
-  at: number,
+  key: ScanResume,
   budget: TickBudget,
 ): Promise<boolean> {
-  return persistCursor(env, chainId, PRENOTIFY_SCAN_KIND, at, budget);
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
+  try {
+    await env.DB.prepare(
+      `INSERT INTO prenotify_scan_cursor (chain_id, next_checkpoint, loan_id, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(chain_id) DO UPDATE SET
+         next_checkpoint = excluded.next_checkpoint,
+         loan_id = excluded.loan_id,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(chainId, key.checkpoint, key.loanId, Math.floor(Date.now() / 1000))
+      .run();
+    return true;
+  } catch (err) {
+    const { subject, consequence } = describeCursorLoss('scan', chainId);
+    console.warn(
+      `[periodicPreNotify] could not persist ${subject} at deadline ` +
+        `${key.checkpoint} (loan ${key.loanId}): ${describeFailure(err)}. ` +
+        `${consequence}`,
+    );
+    // REPORTED, not swallowed (#2213 r25 `4015755019`). The caller's summary
+    // tells an operator where the next tick resumes, and that sentence is only
+    // true if this landed. Returning void let the summary promise a resume the
+    // database had just refused — contradicting the warning printed one line
+    // above it.
+    return false;
+  }
 }
 
 
-/** Where this chain's scan stopped last tick. Absent or unreadable → start over. */
-async function scanOffset(env: Env, chainId: number, budget: TickBudget): Promise<number> {
+/**
+ * WHERE THIS CHAIN'S SCAN RESUMES — a DEADLINE, not a list position (#2219).
+ *
+ * The position used to be an index into the candidate list. That list is
+ * rebuilt every tick and a loan stamped last tick is no longer in it, so the
+ * index did not point where it did: stamp the nearest five, persist 5, and
+ * next tick position 5 is the ELEVENTH original loan — the sixth through
+ * tenth, the NEAREST remaining deadlines, stepped over. Under sustained load
+ * that inverts the nearest-deadline-first guarantee this lane states, which is
+ * the whole of #2219.
+ *
+ * A deadline survives insertion and removal; a position does not. So the
+ * cursor is the ordering key itself — the same `(nextCheckpoint, loanId)` pair
+ * `candidatesInWindow` sorts by — and resuming means "the first candidate at
+ * or after this", which is well defined however the list has changed.
+ *
+ * ABSENT OR UNREADABLE RESUMES AT THE TOP, and the direction of that failure
+ * is the point: starting at the nearest deadline re-reads a prefix, it never
+ * steps over one.
+ *
+ * THAT IS A PROPERTY OF ONE TICK, never an absolute. A read that fails on
+ * EVERY tick is a different thing entirely: each tick reprocesses the same
+ * allowance-filling prefix, the scan never advances, and loans in the tail can
+ * pass their deadline. Duplicated work is the cost of one failed read; a
+ * persistent one costs reminders, which is precisely why both non-throwing
+ * paths below announce themselves rather than absorbing it.
+ *
+ * The full statement lives ONCE, in `docs/FunctionalSpecs/
+ * Alpha02ConnectedApp.md` under "THE RESTART PROPERTY", and is not restated
+ * here or in the migration, the restore runbook or the release note. Four
+ * consecutive review rounds each caught this property overstated in a
+ * different surface, every one of them written by re-deriving it locally
+ * instead of pointing at it (#2229 r1-r4).
+ */
+interface ScanResume {
+  checkpoint: number;
+  loanId: number;
+}
+
+/** Before every real deadline, so it resumes at the nearest one. */
+const SCAN_FROM_TOP: ScanResume = { checkpoint: 0, loanId: 0 };
+
+/**
+ * One rule for both halves of the key, so they cannot drift apart.
+ *
+ * `Number.isSafeInteger` covers whole, exact and within the range where
+ * integer comparison means what it says; the sign check covers the rest,
+ * since neither a unix second nor a loan id is negative and a negative key
+ * would sort before every candidate and silently disable the resume.
+ */
+function isCursorNumber(v: number): boolean {
+  return Number.isSafeInteger(v) && v >= 0;
+}
+
+async function scanResumeKey(
+  env: Env,
+  chainId: number,
+  budget: TickBudget,
+): Promise<ScanResume> {
   budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     const row = await env.DB.prepare(
-      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+      `SELECT next_checkpoint, loan_id FROM prenotify_scan_cursor WHERE chain_id = ?`,
     )
-      .bind(chainId, PRENOTIFY_SCAN_KIND)
-      .first<{ last_block: number }>();
-    const at = row ? Number(row.last_block) : 0;
-    return Number.isFinite(at) && at > 0 ? at : 0;
+      .bind(chainId)
+      .first<{ next_checkpoint: number; loan_id: number }>();
+    // SAID, BOTH WAYS (#2229 r1 `4034434474`). A cursor that is gone and a
+    // cursor that is unreadable have the same consequence — the lane re-reads
+    // a prefix — and this file's own promise is that an unavailable position
+    // is announced rather than absorbed. Returning quietly on the two
+    // non-throwing paths would have made that promise true only of the
+    // throwing one, and a row being deleted or corrupted repeatedly is
+    // exactly the case an operator would never hear about.
+    //
+    // A chain that has genuinely never been scanned has no position to be
+    // missing, so that first tick is not reported as a loss: it is the same
+    // absent row, and the sentence says which it is.
+    if (!row) {
+      console.warn(
+        `[periodicPreNotify] chain ${chainId}: no stored scan position; ` +
+          `starting from the nearest deadline. Expected once for a chain this ` +
+          `lane has not scanned before, and after a restore clears the row — ` +
+          `repeated appearances otherwise mean the position is not being kept.`,
+      );
+      return SCAN_FROM_TOP;
+    }
+    const checkpoint = Number(row.next_checkpoint);
+    const loanId = Number(row.loan_id);
+    // A WHOLE, NON-NEGATIVE, EXACTLY-REPRESENTABLE pair, or it is not a
+    // position (#2229 r2 `4034537653`). Finiteness alone was not enough: an
+    // ordinary SQLite column accepts a REAL, and `(deadline, 7.5)` is finite
+    // and sorts between loan 7 and loan 8 — so the scan would resume just past
+    // loan 7 and step over it, silently, which is the defect this cursor
+    // exists to remove. The table is STRICT so this should be unreachable
+    // through the migration; a restored or hand-made table is why it is
+    // checked here too.
+    if (!isCursorNumber(checkpoint) || !isCursorNumber(loanId)) {
+      console.warn(
+        `[periodicPreNotify] chain ${chainId}: the stored scan position is ` +
+          `not a pair of whole numbers (${String(row.next_checkpoint)}, ` +
+          `${String(row.loan_id)}); starting from the nearest deadline. THIS ` +
+          `tick re-reads a prefix rather than skipping one, but the position ` +
+          `is not being kept: until it is, the tail is not reached and loans ` +
+          `in it can pass their deadline.`,
+      );
+      return SCAN_FROM_TOP;
+    }
+    return { checkpoint, loanId };
   } catch (err) {
     // A failure here is safe to absorb — nothing is decided on this value
     // except where to start looking, so the worst case is a repeated prefix
     // rather than a wrong message. It is NOT safe to absorb silently: a
     // repeated prefix IS the starvation this persistence removed.
+    //
+    // This is also what a deploy landing ahead of its migration looks like
+    // (#2214): the table is absent, every tick says so, and the lane keeps
+    // working from the nearest deadline until the migration lands.
     console.warn(
       `[periodicPreNotify] chain ${chainId}: could not read the stored scan ` +
-        `position (${describeFailure(err)}); starting from the front of the ` +
-        `window. Repeated appearances mean loans behind a run of unreachable ` +
-        `ones are not being reached.`,
+        `position (${describeFailure(err)}); starting from the nearest ` +
+        `deadline. THIS tick re-reads a prefix rather than skipping one. If ` +
+        `this keeps appearing the position is not being kept at all, and a ` +
+        `prefix that fills a tick then holds the allowance every tick — the ` +
+        `tail is not reached, and loans in it can pass their deadline.`,
     );
-    return 0;
+    return SCAN_FROM_TOP;
   }
 }
 
+/**
+ * The index to resume at: the first candidate AT OR AFTER the stored key.
+ *
+ * "At or after" rather than "after", because the key names the next
+ * UNEXAMINED candidate rather than the last examined one. If that exact loan
+ * is still in the list it is the one to start with; if it has been stamped,
+ * settled or has passed its deadline, the next one along is — which is what
+ * makes this stable under removal, and what a position could never be.
+ *
+ * No match means every remaining deadline is nearer than the stored one: the
+ * window has moved past where this chain stopped, so the scan wraps to the
+ * front rather than doing nothing.
+ */
+function resumeIndex(due: DueLoan[], key: ScanResume): number {
+  const at = due.findIndex(
+    (c) =>
+      c.nextCheckpoint > key.checkpoint ||
+      (c.nextCheckpoint === key.checkpoint && c.row.loan_id >= key.loanId),
+  );
+  return at === -1 ? 0 : at;
+}
 
 /**
  * The block the indexer has scanned this chain through: a number, `null` when

@@ -33,6 +33,7 @@ import {
   forkChain,
   pub,
   walletFor,
+  confirm,
 } from './chain';
 import { accountFor, type Role } from './wallets';
 
@@ -132,7 +133,7 @@ export async function seedDeskOffer(opts: {
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: approveHash });
+  await confirm(approveHash, 'approve (createOffer allowance)');
   const params = {
     offerType: isLend ? 0 : 1,
     lendingAsset: WETH,
@@ -169,7 +170,7 @@ export async function seedDeskOffer(opts: {
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, 'createOffer');
   return newestOfferIdFor(account.address);
 }
 
@@ -319,7 +320,7 @@ export async function acceptOfferDirect(
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: approveHash });
+  await confirm(approveHash, 'approve (acceptOffer allowance)');
 
   // The chain clock judges the signature deadline — never Date.now()
   // (evm_increaseTime moves the fork far from wall time).
@@ -404,7 +405,7 @@ export async function acceptOfferDirect(
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, 'acceptOffer');
   // The acceptor's side is the mirror of the creator's.
   return newestLoanIdFor(account.address, creatorIsLender ? 'borrower' : 'lender');
 }
@@ -437,7 +438,7 @@ export async function repayLoanInFull(role: Role, loanId: bigint): Promise<void>
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: approveHash });
+  await confirm(approveHash, 'approve (repayLoan allowance)');
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -446,7 +447,7 @@ export async function repayLoanInFull(role: Role, loanId: bigint): Promise<void>
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, 'repayLoan');
   const after = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,

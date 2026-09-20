@@ -82,7 +82,12 @@
  * chain.
  */
 
-import { resolveEnv, type Env, type WorkerEnv } from './env';
+import { resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
+import {
+  hasD1Binding,
+  maintenanceRefusal,
+  maintenanceSkipNotice,
+} from '@vaipakam/lib/d1Maintenance';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
@@ -129,6 +134,15 @@ export default {
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // #2239 — decline the whole tick when this build has no D1 binding.
+    // Every pass below reads or writes the database, so one line here beats a
+    // separate failure from each `waitUntil` continuation.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      return;
+    }
+
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; all three passes get the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -164,26 +178,43 @@ export default {
     // identical copy so the watcher still sweeps once rescheduled;
     // both are idempotent, so overlapping runs are harmless.
     //
-    // REQUIRES A DEPLOY OF THIS WORKER TO TAKE EFFECT (Codex #1924 r17).
-    // `apps/agent` does NOT auto-deploy on merge — see
-    // `docs/ops/D1CutoverArchiveToWarm.md` step 2 — while `apps/keeper`
-    // does. So the merge that empties the keeper's schedule removes the
-    // only live sweep and does NOT start this one: without an explicit
-    // `pnpm --filter @vaipakam/agent run deploy` in the same sitting, the
-    // migration makes the leak worse rather than fixing it.
+    // THIS WORKER AUTO-DEPLOYS ON MERGE, so a merge that TOUCHES this Worker
+    // now carries its changes live without a hand-run deploy (#2237,
+    // correcting Codex #1924 r17).
     //
-    // `run deploy`, NOT `exec wrangler deploy` — the line above used to spell
-    // the unsafe form, and r31 added this correction BENEATH it instead of
-    // replacing it, leaving one comment that gave two different commands with
-    // the wrong one first (Codex #1924 r32). There is now one instruction.
-    // This Worker has the same var
-    // hazard the keeper does: `env.ts` reads `RECIPIENT_VALIDATING_TOKENS`
-    // and `OPENSEA_OFFERS_MAX_PAGES`, neither of which is declared in
-    // `wrangler.jsonc`, so a bare deploy would delete them — silently
-    // disabling recipient-token validation and resetting OpenSea pagination
-    // while trying to turn this sweep on. The package script now carries the
-    // flag; `--keep-vars` only skips the DELETE step, so the config's own
-    // vars are still applied.
+    // WHAT THAT DOES NOT SAY, deliberately (#2238 r3 P2). It says nothing
+    // about when THIS sweep first went live. The sweep predates this comment,
+    // the evidence gathered for #2237 is about later commits, and the
+    // paragraph below accepts that the old warning was true when it was
+    // written — so the adding merge may well have landed before this Worker
+    // was built on merge at all. Claiming "it went live with the merge that
+    // added it" would swap one unsupported operational history for another,
+    // which is the defect #2237 exists to correct rather than repeat. If the
+    // first live deployment ever needs to be known, read it from the
+    // deployment history; do not infer it from here.
+    //
+    // What stood here said the opposite — "`apps/agent` does NOT auto-deploy
+    // on merge", citing `docs/ops/D1CutoverArchiveToWarm.md` step 2 — and
+    // concluded that without a hand-run deploy in the same sitting, the
+    // migration that moved this sweep off the keeper made the leak worse
+    // rather than fixing it. That was true when written and is not now:
+    // Cloudflare Workers Builds posts a `Workers Builds: vaipakam-agent`
+    // check on the merge commits that touch this Worker, and the live
+    // deployment timestamps line up with those checks to the second. The
+    // runbook step it cited is corrected in the same change.
+    //
+    // Believing the old line is worse than the hazard it warned about: it
+    // tells a reader that a merged agent change is NOT live when it is, and
+    // nobody looks for the effects of a change they think never shipped.
+    //
+    // THE VAR HAZARD IS REAL AND IS HANDLED STRUCTURALLY, which matters more
+    // now, not less — an automatic deploy passes no flags at all. `env.ts`
+    // reads `RECIPIENT_VALIDATING_TOKENS` and `OPENSEA_OFFERS_MAX_PAGES`,
+    // neither declared in `wrangler.jsonc`'s `vars`, and wrangler deletes
+    // undeclared vars on deploy. `"keep_vars": true` in that config is what
+    // stops it, on every route including Workers Builds; the package script's
+    // `--keep-vars` is belt-and-braces for a hand-run deploy. See CLAUDE.md,
+    // "Dashboard-managed vars survive a deploy — declared, not remembered".
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console
@@ -194,6 +225,44 @@ export default {
 
   async fetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+
+    // #2239 — one answer for every route while this build has no D1 binding.
+    //
+    // Blunt ON PURPOSE. A few routes here touch no database (the aggregator
+    // quote proxies, the Frames image), and refusing those too costs their
+    // callers a short window. The alternative is a per-route list of which
+    // routes read D1, kept correct by hand forever — which is precisely the
+    // enumeration this whole mechanism exists to stop. One rule at the
+    // entrance cannot fall out of step with the routes below it.
+    //
+    // 503 + Retry-After, and a body that says nothing was recorded: a caller
+    // whose write is refused must be told it did not happen, rather than be
+    // handed a 500 that could mean anything.
+    if (!hasD1Binding(env.DB)) {
+      // CARRY THE NORMAL CORS POLICY (#2252 r3 P1). This branch sits above the
+      // preflight and Origin gate, and a 503 with no
+      // `Access-Control-Allow-Origin` is invisible to a browser: the caller
+      // sees an opaque network failure, never the status and never the body
+      // that says the write was not recorded. That would defeat the entire
+      // point of answering rather than throwing.
+      //
+      // The preflight must SUCCEED for the same reason. A refused `OPTIONS`
+      // means the browser never issues the real request, so there is no 503
+      // for anyone to read.
+      if (req.method === 'OPTIONS') return preflight(req, env);
+      const { body, status, headers } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, {
+        status,
+        headers: {
+          ...headers,
+          'Access-Control-Allow-Origin': resolveAllowedOrigin(req, env),
+          // The echoed origin varies by request, so caches must key on it —
+          // even under `no-store`, intermediaries and the browser's own
+          // preflight cache read this.
+          Vary: 'Origin',
+        },
+      });
+    }
 
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; every route handler below gets the plain resolved
@@ -732,7 +801,17 @@ async function handleTelegramWebhook(
 
 // ─── CORS helpers ──────────────────────────────────────────────────
 
-function preflight(req: Request, env: Env): Response {
+/**
+ * The CORS policy is a function of `FRONTEND_ORIGIN` ALONE, so these helpers
+ * take that field rather than the resolved `Env` (#2252 r3 P1). The
+ * maintenance branch answers BEFORE `resolveEnv`, and a CORS policy that
+ * demanded a resolved env would have forced either a duplicate policy there
+ * or a resolve the branch exists to avoid. `FRONTEND_ORIGIN` is a plain var,
+ * present identically on the raw and resolved envs.
+ */
+type CorsEnv = { FRONTEND_ORIGIN?: string };
+
+function preflight(req: Request, env: CorsEnv): Response {
   const origin = req.headers.get('Origin') ?? '';
   if (!isOriginMatch(origin, env)) return new Response(null, { status: 403 });
   return new Response(null, {
@@ -746,15 +825,37 @@ function preflight(req: Request, env: Env): Response {
   });
 }
 
-function isAllowedOrigin(req: Request, env: Env): boolean {
+function isAllowedOrigin(req: Request, env: CorsEnv): boolean {
   const origin = req.headers.get('Origin') ?? '';
   return isOriginMatch(origin, env);
 }
 
-function isOriginMatch(origin: string, env: Env): boolean {
+function isOriginMatch(origin: string, env: CorsEnv): boolean {
   if (!origin) return false;
-  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
-  return allow.includes(origin);
+  return allowList(env).includes(origin);
+}
+
+/**
+ * The configured origins, tolerating an ABSENT `FRONTEND_ORIGIN`.
+ *
+ * The type said `string` and the runtime does not guarantee it: it is a
+ * wrangler var, and a deployment can simply not carry it. Both helpers used
+ * to call `.split` on it directly, which threw a `TypeError` — harmless while
+ * every caller sat behind route handling that would have failed anyway, and
+ * NOT harmless once the maintenance branch runs before everything else
+ * (#2252 r3 P1). A throw there turns the deliberate 503 into a 500, which is
+ * precisely the indistinguishable failure the maintenance answer exists to
+ * replace. Caught by the entry-point tests, which pass an env with no vars at
+ * all — which is also what a maintenance build can look like.
+ *
+ * Empty entries are dropped so a trailing comma cannot put `''` in the list
+ * and make an empty `Origin` header match.
+ */
+function allowList(env: CorsEnv): string[] {
+  return (env.FRONTEND_ORIGIN ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -766,9 +867,9 @@ function isOriginMatch(origin: string, env: Env): boolean {
  * — returning a different allow-list entry, even one that's also
  * authorized, makes the browser reject the response.
  */
-function resolveAllowedOrigin(req: Request, env: Env): string {
+function resolveAllowedOrigin(req: Request, env: CorsEnv): string {
   const origin = req.headers.get('Origin') ?? '';
-  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
+  const allow = allowList(env);
   if (origin && allow.includes(origin)) return origin;
   return allow[0] ?? '*';
 }

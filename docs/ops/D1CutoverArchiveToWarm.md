@@ -35,9 +35,18 @@ verified —
 - `docs/ops/DeploymentRunbook.md` for the per-Worker deploy commands;
 - `apps/keeper/README.md` for the kill-switch and its confirmation.
 
-Where a command does appear here it is marked **[run]** if that exact form
-was executed against the live account on 2026-08-03, or **[unrun]** if it was
-written but not executed. That distinction is the honest one, and it is the
+Where a command does appear here it is marked **[run] `<date>`** if that exact
+form was executed against the live account on that date, or **[unrun]** if it
+was written but not executed. Every `[run]` block carries its date — there are
+no undated ones and no relative words like "today", which say nothing to
+someone reading on another day.
+
+The date moved into the blocks when a later one was added on 2026-09-17
+(#2243 r5): a single date in this paragraph made the marker ambiguous the
+moment a second sitting contributed to the file, which is the opposite of what
+it is for. The existing blocks were dated in the same change (#2243 r6) —
+changing the convention without migrating its instances would have left the
+marker exactly as ambiguous, by a different route. That distinction is the honest one, and it is the
 one the defect history above argues for: treat an unrun line as a description
 of intent to check against the canonical runbook, not as something to paste
 into a terminal during an irreversible operation.
@@ -105,8 +114,8 @@ person waiting for a reply, and a contract redeploy does not change that. If
 those are real, export that one table before starting:
 
 ```bash
-install -m 700 -d ~/vaipakam-cutover        # [run] private directory FIRST
-# [run]
+install -m 700 -d ~/vaipakam-cutover        # [run] 2026-08-03 — private dir FIRST
+# [run] 2026-08-03
 (cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
 chmod 600 ~/vaipakam-cutover/tickets.sql
@@ -199,7 +208,10 @@ preparation and execution, the Workers will come up against a database
 missing its schema.
 
 ```bash
-# [run] — this exact form was used on the source today
+# [run] 2026-08-03 — this exact form was used on the source that day
+# ("today" until #2243 r6: a relative word in a file read on other days says
+# nothing about when the command was verified, which is the whole job of the
+# marker)
 (cd apps/indexer && npx wrangler d1 migrations apply "$TARGET_DB" --remote)
 (cd apps/indexer && npx wrangler d1 migrations list "$TARGET_DB" --remote)   # expect none pending
 ```
@@ -215,60 +227,360 @@ vaipakam-warm   e5e927cf-56c3-42c7-9820-179a235cc84f
 ```
 
 `check-d1-name-consistency` is a required status check and fails unless all
-four agree on both fields, so a partial switch cannot merge. That is the
-protection worth having here: half-switched is the only genuinely bad state,
-because migrations and reads would target different databases.
+four agree on both fields, so a partial switch cannot **merge**.
+
+**That is a claim about the repository, not about production** (#2238 r7 P1).
+The check reads committed configuration: it guarantees the four files change
+together in one commit. It says nothing about the four *live* Workers, which
+take that commit through four independent builds — so a partially switched
+deployment is not merely possible, it is what every merge produces for as long
+as those builds take, and a failed build can leave it that way indefinitely.
+
+An earlier revision called this "the protection worth having here", which
+would let an operator read a green check as cover for the live hazard and
+leave the writers running. It is worth having, and what it protects against is
+a half-switched *tree* — where migrations and reads would target different
+databases on the next clean checkout. **Live safety comes only from stopping
+the writers and confirming each Worker's binding individually**, which the
+sections below are about.
 
 Update the docs that describe the live binding in the same PR — the same
 check scans `wrangler d1` commands in scripts and runbooks.
 
-### Step 2 — deploy the two that do not auto-deploy
+### Step 2 — deploy the ones that do not auto-deploy
 
-`apps/indexer` and `apps/keeper` deploy automatically on merge.
-**`apps/agent` and `ops/offchain-data-warm` do not** — no
-`Workers Builds: vaipakam-agent` check appears on any recent main commit, and
-its last deploy predates several merges.
+`apps/indexer`, `apps/keeper`, `apps/agent` **and `apps/www`** deploy
+automatically on merge, via Cloudflare Workers Builds. **`ops/offchain-data-warm`
+does not, and `apps/app` is operator-deployed by design.**
+
+**Corrected twice on 2026-09-17, in opposite directions**, which is why the
+test below matters more than the list:
+
+- **#2237** — this step named `apps/agent` as not auto-deploying. It does.
+- **#2242** — the corrected list then omitted `apps/www`, which also does.
+
+**Do not test this by looking for a build check.** That is what #2237's
+correction used, and measuring every Worker afterwards showed it misleads in
+both directions:
+
+On **`main`** commits:
+
+| Commit | Touched | Build checks that ran |
+| --- | --- | --- |
+| `9623117ac` | `CLAUDE.md` only | **all five** |
+| `7a3545b58` | `docs/` only | **none** |
+| `51c21a4b6` | `apps/indexer`, `docs/` | indexer only |
+
+A root-level file change triggers every Worker's build; a `docs/`-only change
+triggers none. So "a check appeared" can be true of a Worker the commit never
+touched, and "no check appeared" can be true of one that is on the automatic
+path.
+
+**And PR heads behave differently again**, so do not read the table above as
+the rule for a branch. Three `docs/`-only PR heads — `c4e0582b3`, `37aba6d4b`,
+`7d3f02d90` — each got exactly one build check, `vaipakam-app`, where the same
+shape of commit on `main` got none at all. Whatever governs these triggers,
+"which Worker deploys itself" is not recoverable from it. Worse, a **green check does not imply a deployment** — `apps/app`'s build
+reported success on `06d657b9f` (2026-09-13) and that Worker's latest
+deployment is still `2026-09-10T00:38:56Z` (#2241).
+
+### The deployment timestamp can prove a Worker is BEHIND. It cannot prove one is CURRENT.
+
+That asymmetry is the whole of what this step can offer, and stating it as a
+symmetric test is the mistake this section has now made twice — first with
+build checks, then with timestamps (#2243 r1, six findings, four of them this).
+
+First, the concrete pair that was executed, with its **verbatim** output —
+`apps/indexer`, on 2026-09-17:
 
 ```bash
-pnpm --filter @vaipakam/agent run deploy
-# `run deploy`, not `exec wrangler deploy`: the package script carries
-# --keep-vars. A bare deploy deletes RECIPIENT_VALIDATING_TOKENS and
-# OPENSEA_OFFERS_MAX_PAGES, which env.ts reads and the config does not declare.
+# [run] 2026-09-17 — exactly these two commands, run in this order from the
+# repo root, exactly this STDOUT. wrangler also writes a banner and config
+# warnings to stderr; they are not reproduced here and `grep` does not
+# suppress them.
+#
+# The SUBSHELL is load-bearing (#2243 r5): without it the first command leaves
+# the shell in apps/indexer, and the second's `-- apps/indexer` pathspec then
+# resolves to apps/indexer/apps/indexer and matches nothing.
+$ ( cd apps/indexer && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
+Created:     2026-09-17T16:09:37.144Z
+
+$ TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- apps/indexer
+838c25cf3 2026-09-17T16:08:34+00:00
+```
+
+**What that example does and does not show**, since it is the wrong way round
+from the heading and it would be easy to misread. The deployment is 63 seconds
+NEWER than the commit, so the test returns nothing: it is consistent with the
+Worker being current and does not establish it, for the four reasons below. It
+is quoted because it is what a healthy reading looks like — not as a pass.
+
+And the generic form, which is a **template and was not executed as written**
+— `<worker-dir>` is a placeholder, not a path:
+
+```bash
+# [unrun] — parameterised. The concrete instance above is the executed one.
+git fetch origin main                      # the left side goes stale silently
+
+# In-workspace Workers (apps/*): pnpm has already installed wrangler.
+( cd <worker-dir> && npx wrangler deployments list | grep -E '^Created:' | tail -1 )
+
+# ops/* packages are OUTSIDE the pnpm workspace and may have no local
+# wrangler, in which case `npx` silently downloads an UNPINNED one from the
+# registry (#2243 r3). Install first and call the installed binary:
+( cd ops/offchain-data-warm && npm ci \
+    && ./node_modules/.bin/wrangler deployments list | grep -E '^Created:' | tail -1 )
+
+# TZ=UTC with %cd, NOT %cI: `%cI` ignores `--date` and prints the commit's
+# ORIGINAL offset (+05:30 on this repo), while wrangler prints UTC `Z`.
+# Comparing those two literally makes a healthy deployment look older.
+TZ=UTC git log -1 --date=iso-strict-local --format='%h %cd' origin/main -- <worker-dir>
+```
+
+**The split is the point** (#2243 r4). An earlier revision marked the whole
+block `[run]` and pasted a hand-aligned summary underneath — text neither
+wrangler nor git emits — which presents a template and a reconstruction as
+execution evidence. In a runbook whose only validation is that its commands
+were tested, that is the marker meaning less than it says, one round after
+this PR corrected the same slip elsewhere.
+
+**`%cd` under `TZ=UTC`, not `%ad` and not `%cI`** (#2243 r2, r3). An author date
+is user-controlled and survives rebase, so a commit can carry one LATER than
+the moment it reached `main` — reporting a deployment that already includes it
+as behind. `%cI` fixes that and introduces a zone mismatch instead, because it
+ignores `--date`. `%cd` with `--date=iso-strict-local` under `TZ=UTC` is the
+form that is both committer-dated and directly comparable to wrangler's `Z`.
+On the five most recent `main` commits the author and committer dates are
+identical, so the figures quoted below are unaffected by the field change.
+
+**A deployment older than the newest commit means that code is not live** —
+and this is the direction to rely on. It is not absolutely proof: a commit
+bearing a timestamp later than when it actually landed would read as behind
+while already deployed. But that is the **safe direction to be wrong in**. A
+false "behind" costs a redundant deploy or a second look; a false "current"
+costs exactly what this whole step exists to prevent.
+
+**A deployment NEWER than the newest commit establishes nothing**, for four
+separate reasons, all of which produce a false "current":
+
+- **The left side is not the build input set.** Every workspace Worker depends
+  on `@vaipakam/contracts`, and this cutover explicitly allows
+  `packages/contracts/src/deployments.json` to change without touching a Worker's
+  own directory. `apps/www` can then pass while serving old addresses.
+- **`origin/main` is a cached ref.** A clone last fetched before the merge
+  compares against a commit that predates it. Hence the `git fetch` above, and
+  the reason it is the first line rather than assumed.
+- **A rollback creates a fresh deployment pointing at OLD code.** `wrangler
+  rollback` makes a new deployment record for a previously built version, so
+  `Created:` is recent and the running code is not. `grep '^Created:'` reads
+  exactly the field that lies here; the per-version timestamps underneath it
+  are what to read during any rollback or recovery.
+- **A failed automatic build looks exactly like a Worker that is behind** —
+  because it is one.
+
+**Do NOT infer the deployment MECHANISM from staleness.** An earlier revision
+said "a Worker more than a few minutes behind is not on the automatic path".
+That is wrong and it is actively harmful: a Worker whose automatic build
+FAILED is also behind, and this document says elsewhere that the mixed state
+then persists until someone repairs the build. Reading staleness as "this one
+is manual" sends an operator to hand-deploy around a broken build instead of
+fixing it. Staleness says *the code is not live*, and nothing about why.
+
+For reference, when every automatic Worker was healthy on 2026-09-17 each had
+deployed **63–151 seconds** after the commit touching it. That is a sense of
+the normal gap, not a classifier.
+
+As of that measurement, `ops/offchain-data-warm` was **28 days behind** (newest
+commit `d5d3b3083` 2026-08-31, last deployment 2026-08-03) and `apps/app`
+**4 days behind** (#2242) — both in the direction the test can prove.
+`ops/mesh-watcher` does not exist on the account at all, which is the expected
+pre-arm state — GovernanceRunbook Step 3f deploys it as part of the arming
+ceremony — and is not a drift to act on here.
+
+Both hand-deployed Workers need a hand in the same sitting as the merge.
+
+```bash
 # [unrun here] — verified form, from OffChainRestore.md §7b.
 # NOT `npx wrangler` from the repo root: this package is outside the
 # pnpm workspace, so that would be an unpinned download.
 ( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
-Do this in the same sitting as the merge. Until it is done, **agent reads and
-writes the old database while the other two use the new one** — and that
-split is user-visible, independently of the no-migration decision.
+```bash
+# [unrun] — apps/app is operator-deployed because its build env lives in a
+# gitignored `apps/app/.env.local`, which a build from a git clone cannot see.
+pnpm --filter @vaipakam/app run deploy
+```
 
-A threshold set, a Telegram link made, or a support ticket filed in that
-window lands in the database about to be deleted. The user sees it succeed;
-it then vanishes. "We are not migrating data" covers rows that a redeploy
-obsoletes — it does not cover a write the user watched succeed minutes ago.
+**That command is NOT sufficient on its own, and the guard does not make it
+so** (#2243 r1). `run deploy` carries `REQUIRE_INDEXER_ORIGIN=1`, which checks
+exactly one variable. `docs/ops/DeploymentRunbook.md` lists a deployable
+`.env.local` as **nineteen** operator variables — keyed RPC endpoints, the
+WalletConnect project id, the agent origin, feature flags and the rest. A file
+carrying only the indexer origin passes the guard and deploys **successfully**,
+replacing the live app with a preview-grade configuration.
 
-Two ways to close it, and the choice is the operator's:
+So follow DeploymentRunbook's full procedure for this one. An earlier revision
+of this step implied the guard was the safety net; it is a single assertion
+about a single variable, and reading it as coverage is how a four-day-stale app
+gets replaced by something worse.
 
-- **Shortest window.** Have the `wrangler deploy` for agent ready to run
-  before merging, and run it the moment the merge lands. The exposure is the
-  couple of minutes it takes.
-- **No window.** Put agent's mutating routes behind a `503` for the interval
-  (unbind the route, or deploy a rejecting build), then restore them after
-  the redeploy. A user who is told "try again shortly" has lost nothing; one
-  whose ticket silently disappeared has.
+**Neither is optional here**, and the staleness figures above are the reason
+to check rather than assume: both were behind on the day this step was
+written, so "somebody will have deployed it" is not a safe default for either.
 
-**Chosen 2026-08-03: the shortest window.** Have the agent deploy ready to
-run and execute it the moment the merge lands. Defensible pre-live, and the
-exposure is a couple of minutes. If circumstances change — real users, a
-support queue in use — revisit it rather than inheriting this line.
+### A binding change puts the deployment set in a MIXED STATE — this is the rule everything else follows from
+
+Two revisions of this step got this wrong in two different ways, and both
+errors came from the same place: they reasoned about **agent** as the odd one
+out whose lag is the risk. That frame was right while agent was hand-deployed
+and is wrong now, so it kept producing wrong conclusions — one per path — and
+review kept finding them one at a time (#2238 r1 P1, r2 × 5). Replacing the
+frame is the fix; another caveat per path is not.
+
+**The frame.** A binding change reaches each Worker through its own,
+independent Workers Builds job. So from the moment the merge lands until every
+Worker's binding has been *confirmed*, the deployment set is in a mixed state
+with these properties, none of which the platform gives you any control over:
+
+| | |
+| --- | --- |
+| **Which** Workers have switched | unknown without checking each one |
+| **In what order** | not guaranteed; agent-last was one observation, not the shape |
+| **For how long** | not derivable — see below |
+| **Whether at all** | a build can FAIL, and that Worker then stays on the old binding until a person repairs it |
+
+That last row is the one that kills any "the window is bounded now" claim. On
+the failure path it is unbounded exactly as before, and the operator is
+investigating a build while writes keep landing in the wrong database.
+
+**Why the duration is not derivable, including from this PR's own evidence.**
+An earlier revision said "43 seconds, measured", from the build-check
+completion times on `819623903` (indexer `08:54:56Z`, agent `08:55:39Z`). That
+number does not mean what it was used for (#2238 r2 P2). A deployment is
+created DURING its build — agent's live deployment is stamped `08:55:34Z`,
+five seconds before its own check reported — so check-completion spread is not
+activation spread, and the indexer's activation timestamp was never collected.
+The real interval could be shorter or longer. **Do not put a number here that
+has not been measured at the bindings themselves.**
+
+**The rule, and it is one rule for both directions.**
+
+> Before merging any change to a D1 binding — the cutover or its revert —
+> **quiesce every user-facing writer.** Restore traffic only once **every**
+> Worker's binding has been confirmed on the intended database.
+
+**"Every user-facing writer" is more than agent**, which is the second thing
+the old frame got wrong (#2238 r2 P1) — and establishing HOW MANY more turned
+out to be the hard part. Known writers include both public Workers' user
+routes, the agent's diagnostic routes (including a legal hold and its audit
+record), both Workers' cron ticks, and the indexer's Durable Object alarm;
+`apps/keeper` joins them the moment its schedule is restored, and its HF-band
+inbox rows cannot be regenerated once the crossing has recovered.
+
+**That list is known to be incomplete**, which is why the next section refuses
+to present one as a procedure.
+
+### The writers must be quiesced across the change — and the procedure for that is NOT specified here
+
+**What is established**, and it is the part this step needs:
+
+- A binding change reaches each Worker through its own independent build, so
+  the deployment set is in a mixed state until every binding is confirmed:
+  unknown which have switched, no guaranteed order, a duration not derivable
+  from the data gathered in #2237, and no guarantee a given one switched at
+  all — a build can fail and leave that Worker on the old binding until a
+  person repairs it.
+- Writes reaching the abandoned database in that window are lost, and some of
+  them are things a user watched succeed: a threshold, a signed offer, a
+  support ticket, a legal hold **and its audit record**.
+- So the writers must be stopped across the change, and restarted only once
+  every binding is confirmed.
+
+**How to stop them was an open question. The MECHANISM is now settled (#2239,
+shipped in #2252); the PROCEDURE is not (#2255)** — see the update below, and
+read the rest of this section as the record of why an inventory was refused.
+Four
+review rounds of #2238 tried to write that procedure as an inventory of
+writers to close, and each round found another way one reaches D1 that the
+previous wording missed — a second Worker's routes, a cron event that
+traverses no route, the diagnostic routes, a Durable Object alarm that
+re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
+aliases that bypass a zone rule, and a schedule change that takes up to
+fifteen minutes to propagate.
+
+**UPDATE 2026-09-20: the MECHANISM now exists; the PROCEDURE still does not**
+(#2239, shipped in #2252). The Workers can be held off the database by
+capability removal — a deployment whose `d1_databases` entry is absent, so
+nothing in the isolate can obtain a handle whatever entry point it arrives
+through — and they now cooperate with that state rather than crashing into it.
+`docs/FunctionalSpecs/ProjectDetailsREADME.md` §13 states the intent under
+"Off-Chain Data Services".
+
+**That is the mechanism, not the runbook.** Writing the step-by-step procedure
+around it needs four things this document does not yet have: tooling to produce
+a maintenance build without hand-editing production config (#2250), an owner
+decision on whether retained rows are archived or restored, a drain criterion
+that survives its own premise, and the contract-redeploy sequencing in §2.
+**#2255 carries that work and the open findings against the draft.** Until it
+lands the procedure is unspecified, and the paragraphs that follow explain why
+writing one anyway is worse than saying so. Their references have been moved
+from #2239 to #2255 so the distinction holds: the mechanism is settled, the
+procedure is not.
+
+**Enumerating the ways code can reach a database is an unbounded predicate.**
+Writing a list here that reads authoritative and is incomplete is worse than
+saying so: an operator follows it, believes the writers are stopped, and loses
+exactly the rows this section exists to protect. #2239 carried the
+requirements and the evidence for each, and **its central question is now
+answered**: a maintenance build carries **no D1 binding at all**, which is the
+one formulation that does not depend on having enumerated the entry points
+correctly. That is shipped. What remains open is the procedure built on it —
+#2255.
+
+**Until #2255 lands, treat this cutover as requiring an operator who
+accepts that exposure** — the mechanism to avoid it exists, the procedure for
+applying it safely does not — which is what the next section describes, honestly
+labelled.
+
+### The alternative, and when it is defensible
+
+**Watch it through (the 2026-08-03 choice, defensible only pre-live).** Merge
+when someone is watching and run Step 3 immediately, accepting that anything
+written in between may be lost. This was chosen when there were no real users.
+It is not a decision to inherit once there are.
+
+**Until #2255 lands, this is effectively the only procedure this document can
+honestly offer** — and the reason to say that out loud is that a partial gate
+is this option wearing a disguise. Closing the public routes while cron still
+ticks, or while a Durable Object alarm re-arms itself, accepts the same
+exposure and hides it behind a step that looks like protection.
+
+What the auto-deploy correction genuinely changes is **who** closes the
+window: it no longer waits on a person remembering a command. It does not make
+the window zero, bounded, or safe to ignore.
+
+`ops/offchain-data-warm` writes no user-facing rows — it is the nightly
+backup Worker — so its lag is an operator concern rather than a user-visible
+split.
 
 ### Step 3 — confirm from behaviour, not configuration
 
 `wrangler deployments list` prints deployment metadata, not bindings, and
 happily shows an older successful deploy after a failed one. Confirm each
-Worker is actually on the new database:
+Worker is actually on the database it is supposed to be on.
+
+**"Supposed to be on" is a direction, and this step is used in BOTH** (#2238
+r2 P2). On the cutover the intended database is `$TARGET_DB`; during a
+rollback it is the SOURCE. The probes below are written for the cutover
+direction and **must be inverted for a rollback** — reading them literally
+there makes a correctly rolled-back Worker fail its check, and, far worse,
+makes a Worker still stuck on the target appear to pass. The discriminator
+also inverts: on the way out the target's EMPTINESS is what proves the
+switch; on the way back it is the source's accumulated rows.
+
+Wherever this step says "the target", read "the intended database", and pick
+the discriminator that can only be true of it.
 
 **The probe must distinguish the databases.** An earlier revision listed
 checks that all pass against the OLD binding too — a keeper tick logs cleanly
@@ -308,8 +620,51 @@ empty, its emptiness is the discriminator:
   Use it when no observable write is available, and prefer the write when one
   is.
 - **agent** — perform one threshold write through the API, then read it back
-  from `$TARGET_DB` directly. If it landed in the source instead, its manual
-  deploy did not take.
+  from the INTENDED database directly. If it landed in the other one, **its
+  Workers Builds deployment has not completed, or it failed** — agent is not
+  hand-deployed on this path (#2237). Check the `Workers Builds:
+  vaipakam-agent` check on the merge commit: still running means wait and
+  re-test, `failure` means the build is the thing to fix and the mixed state
+  persists until it is.
+
+  A threshold row is operator-owned configuration on a wallet you control, and
+  can be deleted afterwards — pick the probe accordingly.
+
+  **NEVER probe the indexer with `POST /signed-offers`** (#2238 r6 P1). An
+  earlier revision said to, on the reasoning that the ingest cursor proves
+  only that the scan switched. The reasoning was wrong and the instruction was
+  dangerous: that route is not a diagnostic. It validates a real EIP-712
+  order, inserts it `status = 'active'`, and `GET /signed-offers` then serves
+  it to takers to fill on-chain. Confirming a database binding is not worth
+  leaving a fillable order behind.
+
+  It is also unnecessary, because **a Worker has ONE D1 binding**. `env.DB` is
+  the same object for every route, every tick and every alarm in that Worker,
+  so a write observed from ANY of them proves where ALL of them write. For the
+  indexer, its own ingest write — the cursor advancing in the intended
+  database — is therefore sufficient, and it costs nothing and risks nothing.
+
+**THE ORDER MATTERS, and it survives whether or not the writers were stopped**
+(#2238 r3 P1, adjusted r6 P2). Confirmation is two passes, and the first is
+the one that authorises restoring normal operation:
+
+1. **Binding read — control plane.** Read each Worker's D1 binding
+   (*Settings → Bindings*, or the API) and confirm every one names the
+   intended database. A configuration check, labelled as such. It is the only
+   check that distinguishes "build still running" and "build failed" from
+   "switched", since it reflects what is actually deployed — and the only one
+   available at all if the writers have been stopped, because the write probes
+   below go through the very surfaces a stoppage closes.
+2. **Write probes — behaviour.** Run them once traffic is flowing again. They
+   can still find something the binding read could not, so they are not
+   redundant; they are simply not available while anything is closed. If one
+   fails here, stop the writers again rather than leaving them running while
+   investigating — by deploying the maintenance build the mechanism provides,
+   though the surrounding procedure for doing so safely is still #2255.
+
+An earlier revision made the agent write probe "the test that closes the
+deployment window". It cannot be: it is unavailable exactly when the window is
+open. The binding read closes the window; the write confirms it afterwards.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the
@@ -319,9 +674,64 @@ empty, its emptiness is the discriminator:
 
 ## 4. Rollback
 
-**Free until the Workers start writing to the target.** Until then the source
-is untouched and current: revert the binding PR, redeploy `apps/agent` and
-`ops/offchain-data-warm` by hand, done.
+**Free until the Workers start writing to the target — and staying free is
+something you have to DO, not something you observe** (#2238 r2 P1).
+
+A revert is a binding change, so everything above applies to it unchanged —
+including that the procedure for stopping the writers is unspecified (#2255;
+the mechanism it will use is shipped).
+The revert has the same mixed state, in the same shape, and the same
+consequence for a write that lands on the wrong side of it.
+Confirming afterwards cannot make the window safe — during the revert's own
+independent builds, a Worker still serving the target can accept the first
+threshold, signed order or support ticket written there, and that row is lost
+the moment the source becomes canonical again. A rollback that began inside
+the free period can leave it while it runs, and nothing after the fact undoes
+that.
+
+Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
+`apps/keeper` and `apps/agent` automatically through Workers Builds — the
+revert is a merge like any other (#2237). Then redeploy
+`ops/offchain-data-warm` by hand, since it is not built on merge.
+
+**`apps/app` is conditional. `apps/www` is not a rollback step at all**
+(#2243 r4, corrected r5).
+
+- **`apps/app`** must be hand-deployed **only if** the reverted PR also moved
+  `packages/contracts/src/deployments.json`. It imports
+  `@vaipakam/contracts/deployments` in its own source, so those addresses are
+  baked into its bundle. On the separate-PR flow it has no changed input, and
+  a manual deploy is then an unnecessary production change carrying the
+  nineteen-variable environment hazard below for nothing.
+- **`apps/www` does NOT need waiting for, in either flow.** An earlier
+  revision said it did. `apps/www/src` contains **no import from
+  `@vaipakam/contracts`** — the package is a `package.json` dependency and
+  nothing more — so its bundle cannot carry contract addresses and cannot be
+  serving reverted ones. Cloudflare may still start a www build off the
+  workspace dependency; blocking an urgent rollback on a build whose output
+  is irrelevant is a cost with no corresponding risk.
+
+**Both additions matter here specifically** (#2243 r1). This step named only
+the three Workers and the backup, which is the pre-#2242 deployment set, and
+the omissions bite harder on the way back than on the way out:
+
+- **`apps/app` is the public surface an operator is least likely to remember**,
+  because nothing on the automatic path reminds them. If the reverted PR also
+  changed `packages/contracts/src/deployments.json` — which this plan explicitly
+  permits in one PR — then leaving the app unredeployed leaves it serving the
+  NEW contract addresses against a rolled-back database and rolled-back
+  Workers. The rollback then looks complete and the public surface is the one
+  thing still on the other side of it.
+- **`apps/www` is never re-checked by anything downstream**, because Step 3's
+  probes are D1-binding probes and `apps/www` has no D1 binding. That is worth
+  knowing in general — but it is not a reason to gate a rollback on it, since
+  its bundle carries nothing the rollback changes (see above).
+
+Then confirm with the Step 3 probes **inverted**: the intended database is the
+SOURCE, so a write must land there, and the discriminator is the source's
+accumulated rows rather than the target's emptiness. Running them as written
+would pass a Worker still bound to the target, which is the failure this
+rollback is trying to escape.
 
 **After that it is not free, and this plan does not offer a clean one.**
 New support tickets, thresholds, signed offers, notification state and

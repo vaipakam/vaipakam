@@ -13,6 +13,7 @@ import {
   type PublicClient,
   type WalletClient,
   type Chain,
+  type TransactionReceipt,
 } from 'viem';
 import { ANVIL_URL } from './anvil';
 import { loadDeployment, loadDiamondAbi } from './artifacts';
@@ -55,6 +56,46 @@ export function walletFor(account: Account): WalletClient {
     transport: http(ANVIL_URL),
     account,
   });
+}
+
+/**
+ * Wait for a transaction and FAIL if it reverted (#2183).
+ *
+ * `waitForTransactionReceipt` does not throw on a reverted transaction — it
+ * resolves with `status: 'reverted'`. Every bare `await pub.waitForTransaction-
+ * Receipt(...)` therefore reads as "the write succeeded" when it means "the
+ * write was mined", and a revert continues the setup as though its effect had
+ * landed. The test then fails much later, on a surface three steps downstream,
+ * with a message about the wrong thing.
+ *
+ * That is the mechanism behind #2183: a `createLoanSaleOffer` that reverts
+ * against live forked state let the spec go on to assert a hold card that had
+ * nothing to render, failing 60s later with "element(s) not found" — a message
+ * that says nothing about the listing never having existed, on a line three
+ * steps from the cause. The suite had 19 of these calls and exactly ONE read
+ * `status`, by hand.
+ *
+ * `label` is what makes the failure worth reading: it names the write that
+ * reverted, so the first line of the error is the cause rather than a hash.
+ *
+ * Use this instead of a bare `waitForTransactionReceipt` for every write. If a
+ * test genuinely EXPECTS a revert, call `waitForTransactionReceipt` directly
+ * and assert on `status` there, so the expectation is visible at the call site.
+ */
+export async function confirm(
+  hash: `0x${string}`,
+  label: string,
+): Promise<TransactionReceipt> {
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    throw new Error(
+      `${label} REVERTED (tx ${hash}, block ${receipt.blockNumber}). ` +
+        `The transaction was mined, so nothing here timed out — its effect ` +
+        `simply did not happen, and every assertion after this point would ` +
+        `have been testing a state that was never reached.`,
+    );
+  }
+  return receipt;
 }
 
 export const ERC20_MIN_ABI = [

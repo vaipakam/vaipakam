@@ -259,6 +259,10 @@ let cursorReadFails: boolean;
 let cursorWriteFails: string | null;
 /** The lane's own persisted scan position, surviving across ticks like D1 does. */
 const scanOffsets = new Map<string, number>();
+/** #2219 — the pre-notify scan cursor: a deadline, not a position. */
+const scanKeys = new Map<number, { checkpoint: number; loanId: number }>();
+/** Deploy landed ahead of migration 0050 — the table is not there yet. */
+let scanKeyTableMissing = false;
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
 const pinnedAt: (bigint | undefined)[] = [];
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
@@ -393,6 +397,20 @@ function tenLoans() {
   return loans.reverse();
 }
 
+/**
+ * The stored resume key that makes the next tick start at the nth candidate of
+ * `tenLoans()` — #2219's cursor is a DEADLINE, so a test says which deadline
+ * rather than which slot.
+ *
+ * Derived from the same arithmetic the lane uses (settled-at plus the cadence
+ * interval) rather than from a copied constant, so a change to either moves
+ * the fixture and the expectation together.
+ */
+function resumeKeyForNth(n: number): { checkpoint: number; loanId: number } {
+  const settledAt = NOW - 29 * DAY + n * 3600;
+  return { checkpoint: settledAt + 30 * DAY, loanId: 100 - n };
+}
+
 /** Run with the clock pinned to a minute of the given parity. */
 async function atMinute(minute: number, extra: Record<string, unknown> = {}) {
   vi.useFakeTimers();
@@ -424,9 +442,23 @@ function env(extra: Record<string, unknown> = {}) {
       const isIndexerCursor =
         sql.includes('FROM indexer_cursor') && sql.includes('kind = ?');
       const isCursorWrite = sql.includes('INSERT INTO indexer_cursor');
+      // #2219 — the scan position moved to its own table, as a DEADLINE
+      // rather than a list index. Modelled here the way D1 holds it: one row
+      // per chain, both halves of the key written together.
+      const isScanKeyRead = sql.includes('FROM prenotify_scan_cursor');
+      const isScanKeyWrite = sql.includes('INSERT INTO prenotify_scan_cursor');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
         first: async () => {
+          if (isScanKeyRead) {
+            if (scanKeyTableMissing) {
+              throw new Error('D1_ERROR: no such table: prenotify_scan_cursor');
+            }
+            const key = scanKeys.get(Number(params[0]));
+            return key
+              ? { next_checkpoint: key.checkpoint, loan_id: key.loanId }
+              : null;
+          }
           if (isIndexerCursor) {
             const kind = String(params[1] ?? '');
             if (kind.startsWith('prenotify_')) {
@@ -443,6 +475,17 @@ function env(extra: Record<string, unknown> = {}) {
         run: async () => {
           if (stampThrows && sql.includes('period_pre_notified_at')) {
             throw new Error('D1_ERROR: write failed');
+          }
+          if (isScanKeyWrite) {
+            if (cursorWriteFails === 'prenotify_scan') {
+              throw new Error('D1_ERROR: cursor write failed');
+            }
+            scanKeys.set(Number(params[0]), {
+              checkpoint: Number(params[1]),
+              loanId: Number(params[2]),
+            });
+            record(params);
+            return { meta: { changes: 0 } };
           }
           if (isCursorWrite && String(params[1] ?? '').startsWith('prenotify_')) {
             if (cursorWriteFails === String(params[1])) {
@@ -580,6 +623,8 @@ beforeEach(() => {
   cursorReadFails = false;
   cursorWriteFails = null;
   scanOffsets.clear();
+  scanKeys.clear();
+  scanKeyTableMissing = false;
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
   tgAccepts = 'accepted';
@@ -1441,19 +1486,79 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // cursor announced a remainder the tick had just consumed, telling an
     // operator the run was partial when it had completed.
     loanRows = tenLoans();
-    scanOffsets.set('prenotify_scan:84532', 7);
+    scanKeys.set(84532, resumeKeyForNth(7));
     const { stamped, said } = await run();
     expect(stamped.length).toBe(3);
     expect(said).toBe('');
   });
 
-  it('starts over once it has been round the window', async () => {
-    // The position wraps rather than running off the end, so a window that
-    // shrinks below the stored offset is not skipped entirely.
-    scanOffsets.set('prenotify_scan:84532', 5_000);
+  it('starts over once every remaining deadline is nearer than the stored one', async () => {
+    // The cursor wraps rather than running off the end. With a deadline as
+    // the key this is the honest statement of the case: the window has moved
+    // past where this chain stopped, so there is no candidate at or after the
+    // stored key and the scan goes back to the nearest.
+    scanKeys.set(84532, { checkpoint: NOW + 500 * DAY, loanId: 1 });
     loanRows = tenLoans();
     const { stamped } = await run();
     expect(stamped.length).toBe(LOANS_PER_TICK);
+  });
+
+  it('refuses a cursor that is not a pair of whole numbers, and says so', async () => {
+    // #2229 r2 `4034537653`. A non-STRICT SQLite column accepts a REAL, and
+    // `(deadline, 7.5)` is finite: it sorts between loan 7 and loan 8, so the
+    // scan would resume just past loan 7 and step over it — the exact defect
+    // the cursor exists to remove, arriving through the type system. The
+    // migration makes the table STRICT; this is the reader's half, for a
+    // table a restore or a hand-run statement produced instead.
+    loanRows = tenLoans();
+    scanKeys.set(84532, { ...resumeKeyForNth(7), loanId: 93.5 });
+    const { stamped, said } = await run();
+    // Fell back to the nearest deadline rather than resuming past loan 93.
+    expect(stamped[0]).toBe(100);
+    expect(said).toContain('not a pair of whole numbers');
+  });
+
+  it('says so when there is no stored cursor at all', async () => {
+    // #2229 r1 `4034434474`. Falling back silently contradicted this lane's
+    // own promise that an unavailable position is announced — and a row being
+    // deleted repeatedly is precisely what an operator would never otherwise
+    // hear about.
+    loanRows = tenLoans();
+    const { said } = await run();
+    expect(said).toContain('no stored scan position');
+  });
+
+  it('resumes at the nearest REMAINING deadline after a stamped prefix (#2219)', async () => {
+    // THE DEFECT THIS REPLACED. The lane stamped the nearest few and stored
+    // its POSITION; next tick those loans were gone from the list, so the same
+    // position pointed that many loans further along and the nearest remaining
+    // deadlines were stepped over — farther-out reminders going while nearer
+    // ones waited, which inverts the guarantee this lane states.
+    //
+    // Two ticks, with the first tick's loans removed from the second's list
+    // exactly as being stamped removes them.
+    const manyLoans = () =>
+      Array.from({ length: LOANS_PER_TICK * 4 }, (_, k) =>
+        periodicLoan(100 - k, NOW - 29 * DAY + k * 3600),
+      ).reverse();
+    loanRows = manyLoans();
+    const first = await run();
+    expect(first.stamped.length).toBe(LOANS_PER_TICK);
+
+    const stampedIds = new Set(first.stamped);
+    loanRows = manyLoans().filter((l) => !stampedIds.has(l.loan_id));
+    const second = await run();
+
+    // The nearest remaining deadlines, not the ones a shifted index points at.
+    const expected = Array.from({ length: LOANS_PER_TICK }, (_, i) =>
+      resumeKeyForNth(LOANS_PER_TICK + i).loanId,
+    );
+    expect(second.stamped).toEqual(expected);
+    // GUARDS THE GUARD: this case only distinguishes the two cursors while a
+    // stamped prefix still leaves more loans behind it than the prefix was
+    // long — otherwise the old position-based resume would have fallen off the
+    // end, wrapped to the front, and passed for the wrong reason.
+    expect(loanRows.length).toBeGreaterThan(LOANS_PER_TICK * 2);
   });
 
   it('keeps the tick\u2019s outcomes when a checkpoint stamp fails', async () => {
@@ -1473,7 +1578,8 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain('could not be stamped');
     expect(said).toContain('will send it again');
     // ...and the scan position was still saved, so the next tick moves on.
-    expect(scanOffsets.get('prenotify_scan:84532')).toBe(LOANS_PER_TICK);
+    // A DEADLINE now: the next unexamined loan's, not a count of examined rows.
+    expect(scanKeys.get(84532)?.loanId).toBe(500 - LOANS_PER_TICK);
   });
 
   it('admits a chain on what identity ACTUALLY costs when the cache is warm', async () => {
@@ -1596,7 +1702,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     };
     const { said } = await run();
     // The position WAS written — the tick kept enough to record itself.
-    expect(scanOffsets.has('prenotify_scan:84532')).toBe(true);
+    expect(scanKeys.has(84532)).toBe(true);
     // And it stopped for the allowance rather than running out inside a loan:
     // whatever it reports as left is non-negative, which is the observable
     // form of "it never overshot".
@@ -1832,14 +1938,16 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run({ PUSH_CHANNEL_PK: undefined });
     // "missing or unusable", because this disclosure covers both (#2213 r25
     // `4015755007`) — an unset binding and a present-but-malformed value.
-    // r29 `4016866267` widened this: the signer being unset or malformed is no
-    // longer the only way a deployment cannot send Push — the installed SDK
-    // and ethers major can also disagree about how to sign. The line names
-    // all three, because the fix differs and an operator sent to look for an
-    // unset secret will not find a dependency mismatch.
+    //
+    // r29 `4016866267` had added a THIRD cause, the installed SDK and ethers
+    // major disagreeing about how to sign, and this case asserted the line
+    // named it. #2220 removed that cause by correcting the SDK pin, so the
+    // assertion is removed with it (#2220 r1). Keeping it would have pinned a
+    // diagnostic pointing responders at a dependency pair that can no longer
+    // be the answer — a test holding a stale explanation in place.
     expect(said).toContain('deployment cannot send Push at all');
     expect(said).toContain('PUSH_CHANNEL_PK is unset');
-    expect(said).toContain('disagree about how to sign');
+    expect(said).not.toContain('disagree about how to sign');
     // Telegram still worked, so this is a disclosure and not an outage.
     expect(sends.some((x) => x.startsWith('tg:'))).toBe(true);
     expect(sends.some((x) => x.startsWith('push:'))).toBe(false);
@@ -2233,8 +2341,10 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { stamped } = await run();
     expect(sends.length).toBe(1); // the refused rail was tried, and refused
     expect(stamped).toEqual([]); // and the opted-out party keeps their tick
-    // The cursor moved anyway, which is what bounds the cost above.
-    expect(scanOffsets.get('prenotify_scan:84532')).toBe(0);
+    // The cursor moved anyway, which is what bounds the cost above. A single
+    // examined loan finishes the window, so what is stored is the bottom of
+    // the deadline order — the wrap.
+    expect(scanKeys.get(84532)).toEqual({ checkpoint: 0, loanId: 0 });
   });
 
   it('DOES stamp a loan the service refused — there is nothing to retry there', async () => {
