@@ -22,6 +22,13 @@ vi.mock('@pushprotocol/restapi', () => ({
       return { status: 204 };
     }),
   },
+  // `CONSTANTS` is part of the surface `sendPush` uses, so the mock has to
+  // carry it (#2220). Omitting it does not fail loudly: `CONSTANTS.ENV.PROD`
+  // throws a TypeError INSIDE the try block, which `sendPush` catches and
+  // reports as `failed` — a send that looks like a provider rejection and is
+  // really a broken test double. That is this issue's own lesson about mocks
+  // standing in for the code that breaks, arriving one layer up.
+  CONSTANTS: { ENV: { PROD: 'prod' } },
 }));
 
 const { sendPush } = await import('../src/push');
@@ -36,27 +43,55 @@ const payload = {
 };
 
 /**
- * Give the wallet the method the pinned SDK actually calls.
+ * Signer shapes, and why the compatible one is now the STOCK wallet.
  *
- * `@pushprotocol/restapi@0.0.1` signs with the ethers-v5 `_signTypedData`,
- * and the workspace resolves ethers 6, whose `Wallet` has `signTypedData`
- * without the underscore — so a stock v6 wallet cannot drive that SDK at all
- * (#2213 r29 `4016866267`). The cases below that mean to exercise a WORKING
- * rail have to say so explicitly; before r29 they were silently exercising a
- * rail that cannot work in production, because the SDK is mocked here and the
- * mock does not sign.
+ * Under `@pushprotocol/restapi@0.0.1` these helpers existed because the SDK
+ * signed with the ethers-v5 `_signTypedData` while the workspace resolves
+ * ethers 6, whose `Wallet` exposes `signTypedData` without the underscore —
+ * so a stock v6 wallet could not drive that SDK at all (#2213 r29
+ * `4016866267`), and a case meaning to exercise a WORKING rail had to say so.
+ *
+ * On `1.7.32` (#2220) that is no longer true. The SDK wraps the signer in its
+ * own `PushSigner`, which dispatches to a viem account, else `_signTypedData`
+ * for ethers v5, else `signTypedData` for ethers v6. A stock `Wallet` is
+ * therefore compatible with no help, which is the whole point of the upgrade.
+ *
+ * What still has to be pinned is the GUARD: a signer that can sign NEITHER
+ * way must still be refused without entering the SDK. That is what
+ * `withoutAnySigner` is for, and it replaces the old "stock v6 wallet is
+ * incompatible" case, whose premise the upgrade retired.
  */
-function withCompatibleSigner() {
-  (Wallet.prototype as unknown as Record<string, unknown>)._signTypedData =
-    async () => '0xsignature';
+/**
+ * `signTypedData` is SHADOWED, not deleted, and that detail is load-bearing.
+ *
+ * ethers v6 defines it further up the chain than `Wallet.prototype` (it comes
+ * from the base wallet class), so `delete Wallet.prototype.signTypedData`
+ * removes nothing and the method is still inherited. A first draft of these
+ * helpers did exactly that, and the "signs neither way" case passed
+ * `accepted` — i.e. the test asserting the guard still exists would have been
+ * green while testing nothing. Defining an own property whose value is not a
+ * function shadows the inherited one for `typeof`, which is what the guard
+ * reads; `restoreSigner` deletes the shadow and the real method reappears.
+ */
+function withV5OnlySigner() {
+  const proto = Wallet.prototype as unknown as Record<string, unknown>;
+  proto._signTypedData = async () => '0xsignature';
+  proto.signTypedData = undefined;
 }
-function removeCompatibleSigner() {
-  delete (Wallet.prototype as unknown as Record<string, unknown>)._signTypedData;
+function withoutAnySigner() {
+  const proto = Wallet.prototype as unknown as Record<string, unknown>;
+  proto.signTypedData = undefined;
+  proto._signTypedData = undefined;
+}
+function restoreSigner() {
+  const proto = Wallet.prototype as unknown as Record<string, unknown>;
+  delete proto._signTypedData;
+  delete proto.signTypedData;
 }
 
 afterEach(() => {
   sdkThrows = false;
-  removeCompatibleSigner();
+  restoreSigner();
   vi.restoreAllMocks();
 });
 
@@ -84,9 +119,19 @@ describe('what sendPush says it did', () => {
   });
 
   it('reports a request it made and the provider accepted', async () => {
-    withCompatibleSigner();
+    // No signer help: on 1.7.32 the stock ethers-v6 wallet is what production
+    // has AND what the SDK accepts, so this case now exercises exactly the
+    // production pair (#2220).
+    const sdk = await import('@pushprotocol/restapi');
+    const send = vi.mocked(sdk.payloads.sendNotification);
+    send.mockClear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await sendPush(usableKey, payload)).toBe('accepted');
+    // And it still targets production. `env` became a typed enum in 1.7.32;
+    // the runtime value must not have moved with the type, because a silent
+    // retarget to staging would look exactly like a working rail and deliver
+    // to nobody.
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ env: 'prod' });
   });
 
   it('reports a request it made and could NOT confirm', async () => {
@@ -94,28 +139,28 @@ describe('what sendPush says it did', () => {
     // out, so the allowance is spent, and nobody can say the message arrived,
     // so it is not a reminder. Folding this into either neighbour is what let
     // a run claim deliveries it had no evidence for.
-    withCompatibleSigner();
+    //
+    // Stock signer: the guard passes, the SDK is entered, and it throws — so
+    // this exercises the throw-after-entry branch rather than the refusal.
     sdkThrows = true;
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await sendPush(usableKey, payload)).toBe('failed');
   });
 
-  it('makes no request when the SDK and the wallet disagree about signing', async () => {
-    // #2213 r29 `4016866267`, and the finding is about the CHECKED dependency
-    // set rather than a hypothetical: `@pushprotocol/restapi@0.0.1` calls the
-    // ethers-v5 `signer._signTypedData` in `payloads/helpers.js`, before its
-    // POST, and `pnpm-lock.yaml` resolves it against ethers 6.16, whose
-    // `Wallet` exposes `signTypedData` instead. Every Push send on this
-    // deployment therefore throws inside the SDK having issued nothing.
+  it('makes no request when the signer can sign NEITHER way', async () => {
+    // The surviving half of #2213 r29 `4016866267`. The original case pinned
+    // "stock ethers-v6 wallet against an SDK that calls `_signTypedData`",
+    // and #2220 retired that premise by correcting the pin — on 1.7.32 the
+    // SDK accepts v5 and v6 alike, so there is no disagreement left to pin.
     //
-    // It used to land in the `failed` branch, which charged the invocation's
-    // allowance for a request nobody made and called the attempt one whose
-    // fate is unknown — and since r28 an unknown BLOCKS the retry of a
-    // Telegram message the service merely deferred. A rail that cannot issue
-    // anything was suppressing the retry of the rail that can.
-    //
-    // No `withCompatibleSigner()` here: this is the stock v6 wallet, which is
-    // what production has.
+    // What must NOT be lost with it is the guard itself: a signer exposing
+    // neither method still has to be refused BEFORE the SDK is entered. The
+    // consequence is the one r29 established — landing in `failed` instead
+    // would charge the invocation's allowance for a request nobody made and
+    // call the attempt one whose fate is unknown, and since r28 an unknown
+    // BLOCKS the retry of a Telegram message the service merely deferred. A
+    // rail that cannot issue anything must not suppress the rail that can.
+    withoutAnySigner();
     const sdk = await import('@pushprotocol/restapi');
     const send = vi.mocked(sdk.payloads.sendNotification);
     send.mockClear();
@@ -129,13 +174,15 @@ describe('what sendPush says it did', () => {
     expect(err).not.toHaveBeenCalled();
   });
 
-  it('takes the normal path again if the SDK is ever made compatible', async () => {
-    // The check asks a CAPABILITY question rather than matching an error
-    // message, so an upgrade that fixes the pair needs no change here. Stated
-    // as a test because the alternative — a classifier over exception text —
-    // is what this PR has argued against twice, and it would silently keep
-    // refusing after the upgrade.
-    withCompatibleSigner();
+  it('accepts an ethers-v5 style signer too, because the SDK does', async () => {
+    // 1.7.32's `PushSigner.signTypedData` dispatches on `_signTypedData`
+    // before `signTypedData` (`src/lib/helpers/signer.js:52-58`), so a v5
+    // signer is genuinely usable and the guard must not refuse it. This is
+    // the case that would fail if the check were narrowed back to "has
+    // `signTypedData`" — the mirror-image of the bug #2220 fixed, and just as
+    // invisible, since the lane would report `not-requested` and look exactly
+    // like an unset key.
+    withV5OnlySigner();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await sendPush(usableKey, payload)).toBe('accepted');
   });

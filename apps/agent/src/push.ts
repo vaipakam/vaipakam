@@ -19,12 +19,22 @@
  * a Push API outage logs and returns, so a single Push hiccup never
  * stalls the broader watcher loop or blocks the Telegram rail.
  *
- * SDK note: `@pushprotocol/restapi` (installed: 0.0.1 — an earlier
- * revision of this line said `^1.7`, #1450 r26) exposes the legacy
- * modular API (`payloads.sendNotification(...)`), not the v2
- * `PushAPI` class — the docs site documents both, only the v1 form
- * is available on the version range we install. Push channels live
- * on Ethereum mainnet by default, so the CAIP-2 prefix is
+ * SDK note: `@pushprotocol/restapi` (installed: 1.7.32) exposes the
+ * legacy modular API (`payloads.sendNotification(...)`) as well as the
+ * v2 `PushAPI` class — the docs site documents both, and this call site
+ * uses the modular form.
+ *
+ * THE PIN WAS THE BUG (#2220). It read `^0.0.1`, and on a `0.0.x`
+ * version a caret does NOT widen — `^0.0.1` means exactly `0.0.1`, so
+ * the range could never reach 1.x. An earlier revision of this comment
+ * said `^1.7` and was "corrected" to match the install (#1450 r26);
+ * the install was what needed correcting. `0.0.1` also declares
+ * `peerDependencies: { ethers: "^5.6.8" }` against a workspace on
+ * ethers 6, so the peer requirement had been unsatisfied all along
+ * without anything failing loudly. 1.7.32 declares
+ * `ethers: "^5.0.0 || ^6.0.0"`, which is the range we actually satisfy.
+ *
+ * Push channels live on Ethereum mainnet by default, so the CAIP-2 prefix is
  * `eip155:1` for both channel id and recipient id; the recipient
  * wallet's actual chain doesn't need to match (Push routes by raw
  * wallet, the chain prefix is metadata).
@@ -141,6 +151,22 @@ export type PushAttempt = 'accepted' | 'failed' | 'not-requested';
  *
  * If the pin ever moves, re-check that marker: a changed prefix means this
  * silently stops filtering, and that failure is invisible by construction.
+ *
+ * THE PIN MOVED, AND THE MARKER WAS RE-CHECKED (#2220, 2026-09-20). On
+ * `1.7.32` the `payloads/` path contains **no** `console.log` at all and the
+ * string `API call` does not appear anywhere in the package. The only logging
+ * left in `src/lib/` is in `channels/subscribeV2`, `chat/getGroupByName` and
+ * `pushstream/PushStream` — none on the `payloads.sendNotification` path, and
+ * none of them logs a payload or a recipient. So the leak this filter exists
+ * to stop no longer happens on our call path, and the filter is currently
+ * INERT.
+ *
+ * It is retained deliberately rather than deleted, because the asymmetry is
+ * one-sided: an inert filter costs a few lines, and a filter removed on a
+ * wrong reading costs subscriber wallets written into Worker logs. The pin is
+ * a caret, so a future patch inside `^1.7` could reintroduce logging without
+ * any change here. Re-run the check above on the next pin move; converting it
+ * from a hand-check into an executable one is filed separately.
  */
 const realConsoleLog = console.log;
 console.log = (...args: unknown[]) => {
@@ -179,34 +205,38 @@ export async function sendPush(
     void err;
     return 'not-requested';
   }
-  // THE SDK AND THE SIGNER MUST AGREE, and on the checked dependency set they
-  // do not (#2213 r29 `4016866267`). `@pushprotocol/restapi@0.0.1` signs the
-  // verification proof with `signer._signTypedData(...)` — an ethers **v5**
-  // method — in `payloads/helpers.js`, and it does so BEFORE the Axios POST.
-  // The workspace resolves ethers 6.16, whose `Wallet` exposes
-  // `signTypedData` without the underscore. So on this deployment every Push
-  // send throws inside the SDK having issued no request at all.
+  // THE SDK AND THE SIGNER MUST AGREE. The capability question stays; what
+  // counts as a capable signer widened when the pin was corrected (#2220).
   //
-  // Reported as `not-requested`, which is the fact: no request left. Before
-  // this it fell into the `failed` branch below, which charged the
-  // invocation's allowance for a request nobody made, counted the attempt as
-  // one whose fate is unknown — and, since r28, therefore BLOCKED the retry
-  // of a Telegram message the service had merely deferred. A rail that cannot
-  // issue anything was suppressing the retry of the rail that can.
+  // #2213 r29 asked for `_signTypedData` because `@pushprotocol/restapi@0.0.1`
+  // called exactly that — an ethers **v5** method — and the workspace resolves
+  // ethers 6.16, whose `Wallet` exposes `signTypedData` without the
+  // underscore. Every send therefore threw inside the SDK having issued no
+  // request, and this branch reported `not-requested`, which was the fact.
   //
-  // ASKED AS A CAPABILITY QUESTION, not inferred from the error text. "Does
-  // this object have the method the SDK will call" has a definite answer;
-  // "was that exception an ethers-version mismatch" is a guess about a
-  // message, and this PR has already argued once (see the quarantine table
-  // probe) that a failure classifier narrowed round after round cannot be
-  // sharpened into correctness. It also keeps working if the SDK is upgraded:
-  // a signer that HAS the method takes the normal path with no change here.
+  // 1.7.32 does not call either method directly. It wraps the signer in its
+  // own `PushSigner`, whose `signTypedData` dispatches
+  // (`src/lib/helpers/signer.js:40-61`): a viem account, else
+  // `'_signTypedData' in signer` for ethers v5, else `'signTypedData' in
+  // signer` for ethers v6, else it throws `Signer does not support
+  // signTypedData`.
   //
-  // RESTORING the rail is a dependency decision — upgrade the SDK or adapt
-  // the signer — and is deliberately not attempted here; this change only
-  // stops the lane claiming something it did not do. See the follow-up issue.
+  // SO THE CHECK MUST MIRROR THE DISPATCH, NOT ONE ARM OF IT. Left as
+  // `_signTypedData`-only, this guard would have gone on returning
+  // `not-requested` for our ethers-v6 `Wallet` **after** the upgrade — the
+  // rail would have stayed dark, with the dependency fixed and nothing
+  // saying so. That failure would have been invisible: the lane reports
+  // `not-requested`, which is indistinguishable from an unset key.
+  //
+  // Still a capability question and not an error-message classifier, for the
+  // reason r29 gave: "does this object expose a typed-data signer" has a
+  // definite answer, "was that exception a version mismatch" is a guess about
+  // a string. And it keeps working across a future bump in either direction,
+  // because it asks the same question the SDK asks.
+  const asRecord = signer as unknown as Record<string, unknown>;
   const signsTheWaySdkExpects =
-    typeof (signer as unknown as Record<string, unknown>)._signTypedData === 'function';
+    typeof asRecord.signTypedData === 'function' ||
+    typeof asRecord._signTypedData === 'function';
   if (!signsTheWaySdkExpects) {
     // Silent for the same reason the malformed-key branch above is: this is a
     // property of the DEPLOYMENT and fails identically for every subscriber,
@@ -238,7 +268,13 @@ export async function sendPush(
       },
       recipients: `${CAIP_PREFIX}:${payload.subscriber}`,
       channel: channelCaip,
-      env: 'prod',
+      // `CONSTANTS.ENV.PROD` rather than the bare string: 1.7.32 types this
+      // field as its own `ENV` enum, which the package exports only through
+      // `CONSTANTS` — the enum itself is not a root export. The runtime value
+      // is unchanged (`ENV.PROD` IS `'prod'`), so this is a type-level
+      // adjustment and the upgrade does not silently retarget the
+      // environment (#2220).
+      env: PushAPI.CONSTANTS.ENV.PROD,
     });
     // #1450 — a POSITIVE signal, deliberately. Only the unset-key and
     // failure branches logged before, so a channel Push does not recognise
