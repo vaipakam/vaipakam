@@ -576,25 +576,46 @@ than re-describing it. **If you change a property, change it here.**
 as they always did. What the maintenance build changes is what the others are
 doing meanwhile:
 
-> During the window the deployment set is only ever **{on the target, unbound
-> and refusing}**. It is never **{on the target, on the source}**.
+> **Once Q1's four control-plane confirmations have all succeeded**, and for
+> the rest of the procedure, the deployment set is only ever **{on the target,
+> unbound and refusing}**. It is never **{on the target, on the source}**.
 
-Nothing can write to the abandoned database, because after Q1 nothing is
-bound to it. The mixed state still exists and is now harmless — which is the
-whole difference between staggered activation and a write-loss window.
+**The scoping words are load-bearing** (#2252 r5 P2). Q1 itself is sequential,
+so while it is running the set is `{source, unbound}` — Workers not yet
+redeployed are still bound to the database being abandoned, which is the
+ordinary state the procedure is working to leave and not a violation of
+anything. The invariant is a property of the window AFTER Q1, which is the
+window in which the bindings move. An earlier revision stated it
+categorically, which made it false of a state the procedure necessarily
+passes through.
+
+Nothing can write to the abandoned database once Q1 is complete, because
+nothing is bound to it. The mixed state during Q3 still exists and is
+harmless — which is the whole difference between staggered activation and a
+write-loss window.
 
 **P2 — staggered restoration onto the TARGET is acceptable; a writer live on
 the SOURCE is not.** This is the amended rule above, and it is what makes
 "deploying the binding is also what restores the Worker" safe rather than a
 contradiction.
 
-**P3 — a failed build fails SAFE.** A Worker whose build errors stays on the
-maintenance deployment: refusing, not writing to the old database. Fix the
-build; nothing accumulates in the wrong place meanwhile.
+**P3 — a failed Q3 build fails SAFE; a failed Q1 deploy does NOT** (#2252 r5
+P2). These are opposite cases and an earlier revision stated only the
+favourable one.
+
+- **Q3** — a Worker whose build errors stays on the maintenance deployment:
+  refusing, not writing to the old database. Fix the build; nothing
+  accumulates in the wrong place meanwhile.
+- **Q1** — a Worker whose maintenance deploy fails stays bound to the
+  **source**. That is not safe and it is not a state to proceed from: it is
+  the whole condition Q1 exists to remove. **A Q1 failure BLOCKS the
+  procedure.** Do not start Q2's drain, and do not merge Q3, until all four
+  Q1 confirmations have passed — the binding move is only safe under the
+  invariant, and the invariant is what Q1 establishes.
 
 **P4 — the merge freeze is a PRECONDITION, not a closing note** (#2252 r4 P1).
 It must be in force **before Q1's first maintenance deploy** and stay in
-force through step 4's final confirmation. Every merge to `main` triggers
+force through Q4's final confirmation. Every merge to `main` triggers
 every Worker's build, and during this window the committed tree names the
 SOURCE right up until the Q3 merge — so any unrelated merge landing after
 Q0 rebuilds an already-unbound Worker straight back onto the database
@@ -679,8 +700,17 @@ wanted, that is a separate, designed step.
    the empty target without re-taking them discards exactly the rows §1 set
    out to protect, and they are the ones a redeploy does NOT obsolete.
 
-   So re-run the counts across all nine born-off-chain tables here, compare
-   against the earlier export, and take a fresh export of anything that moved.
+   **Re-export all nine born-off-chain tables UNCONDITIONALLY. Do not compare
+   row counts and skip the ones that "did not move"** (#2252 r5 P1) — an
+   earlier revision said to, and a count cannot see the changes that matter
+   most here. `user_thresholds` is written with `ON CONFLICT … DO UPDATE`, so
+   a user changing an alert band rewrites a row without adding one; unlinking
+   Telegram clears a chat id in place. Both leave the count identical and the
+   content different, so a count-gated re-export keeps the STALE file and the
+   archive silently holds a superseded version of the user's settings. Nine
+   small tables cost nothing to export; a wrong archive costs the thing the
+   archive is for.
+
    This is the moment when it is safe to do so and still true: everything is
    unbound, the drain has finished, so nothing can add a row after this read
    and before the target goes live. Taking it any earlier leaves a gap; taking
@@ -874,10 +904,32 @@ open. The binding read closes the window; the write confirms it afterwards.
 **Free until the Workers start writing to the target — and staying free is
 something you have to DO, not something you observe** (#2238 r2 P1).
 
-A revert is a binding change, so everything above applies to it unchanged —
-including the maintenance-build quiescence procedure, which a revert needs just
-as much as the cutover did. The revert has the same mixed state, in the same shape, and the same
-consequence for a write that lands on the wrong side of it.
+A revert is a binding change, so everything above applies to it — including the
+maintenance-build quiescence procedure, which a revert needs just as much as
+the cutover did. The revert has the same mixed state, in the same shape, and
+the same consequence for a write that lands on the wrong side of it.
+
+**"Unchanged" was the wrong word, and Q2b is where it bites** (#2252 r5 P1).
+Every step of the procedure is written in terms of the database being LEFT
+BEHIND, and on a revert that is the **target**, not the source. So:
+
+- **Q2b inverts.** Archive the TARGET's nine born-off-chain tables before
+  reverting the bindings. By the time a revert is being considered the target
+  has been live and may hold thresholds, support tickets, diagnostics or legal
+  holds that exist nowhere else — and the source, which is about to become
+  canonical again, has no record of them. Running Q2b as literally written
+  would re-export the source, which is the database being kept, and leave the
+  one being abandoned unarchived. That is the same defect as the cutover's
+  original gap, with the databases swapped.
+- **P1 and P2 invert with it.** During a revert the set is
+  `{on the source, unbound and refusing}`, and a writer live on the TARGET is
+  the thing that must not happen.
+- Step 3's probes invert too, which this document already states in its own
+  terms — see "Supposed to be on is a direction" there.
+
+Read every mention of "source" and "target" in §3 as "the database being kept"
+and "the database being left behind", and the procedure runs in both
+directions. Read them literally on a revert and it runs backwards.
 Confirming afterwards cannot make the window safe — during the revert's own
 independent builds, a Worker still serving the target can accept the first
 threshold, signed order or support ticket written there, and that row is lost
