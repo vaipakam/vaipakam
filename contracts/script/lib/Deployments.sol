@@ -90,8 +90,8 @@ library Deployments {
     ///      `deployments/.` — gets wrong in the dangerous direction: not equal,
     ///      therefore "redirected", therefore writes forced on, therefore the
     ///      committed artifact overwritten. The fact is already known without
-    ///      inferring it, and `ArtifactRootBase.SCRATCH_PREFIX` makes an
-    ///      override that aliases the default unrepresentable.
+    ///      inferring it, and `ARTIFACT_SCRATCH_PREFIX` makes an override
+    ///      that aliases the default unrepresentable.
     function artifactIsRedirected() internal view returns (bool) {
         try IArtifactRoot(address(this)).artifactRootOverride() returns (
             string memory overridden
