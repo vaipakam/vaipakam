@@ -935,3 +935,56 @@ only in long-past event data, which this programme already has an open blocker
 on reading (#2095). The admission now takes the committed list and proves it,
 so closing the gate costs exactly what opening it costs. The list is not
 stored; admission stays compact.
+
+### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
+
+**This one needs a human intent-decision**, unlike entry 1. It is recorded
+here rather than resolved because the two readings below lead to materially
+different products, and picking one by myself would be resolving a fund
+guarantee by preference.
+
+| Intent, as the design states it | Where the code stands | Status |
+| --- | --- | --- |
+| "The cutover's classification entry **refuses a packet whose batch still lists an outstanding obligation** and admits it once the remainder is parked with its acknowledgment" (design §5c). And: any remainder goes to the pending position "after the currently-known targeted obligations terminate". | 3b-i refuses classification unless the batch is released, and nothing tests whether a listed day still carries an unsettled obligation. Parking is permissionless; the acknowledgment is the administrator's. | **Open — owner decision.** Raised by Codex on #2232 r6. |
+
+**The fact that decides which remedy is even possible.** There is no per-day
+outstanding-obligation figure in 3b-i's state to test. Obligations live per
+ENTRY (`rewardEntries`, keyed by entry id); `DayPoolStamp` carries a day's
+schedule floor, recycled budget and finalize-time figures, and
+`dayClosedByRemitId` marks a day FUNDED by a remittance, which is not the same
+claim as "every obligation on this day has terminated". Answering the design's
+question for a batch's listed days therefore means walking entries — the
+unbounded work the design itself defers to 3b-ii's staging and reference
+tracking. So "add the check" is not available to 3b-i at any price; only the
+two options below are.
+
+**Reading A — the acknowledgment IS the check, performed by a person.** §5c
+calls the acknowledgment "a deliberate operator disposition carrying a recorded
+acknowledgment" and says the lane "cannot prove a per-target closure", so
+choosing to stop waiting is an owner decision with its consequence written
+down (later obligations for those days are refused to the extent they looked to
+that batch). On this reading the code already implements the rule, with a human
+supplying the judgement the chain cannot, and the divergence is that the design
+ALSO describes it as an automatic refusal in a second passage.
+
+**Reading B — the machine check is load-bearing and its absence is a defect.**
+Until 3b-ii there is no way for a listed day's obligation to draw from an
+epoch. So an operator who acknowledges early, and a classification that follows,
+move the delivery's value out of the membership-bound holding and into the
+general live/recycled backing any day can draw. Nothing is lost from the
+holder and no obligation becomes unpayable — but the earmark that is the whole
+purpose of the epoch is gone, and it cannot be reinstated.
+
+**Recommendation, if the decision falls to whoever reads this first:** Reading B,
+and the conservative remedy — withhold classification of epoch-backed packets
+until 3b-ii lands the tracking, by not shipping the release entries in 3b-i.
+The cost is narrow: such a packet's value simply stays protected and visible in
+`Unclassified`, which is where it already is, and becomes classifiable when the
+machinery that lets its days draw exists. The cost of the other direction is an
+earmark that cannot be restored once spent. That is the direction §5c takes
+everywhere else it is forced to choose.
+
+**Do not resolve this by rewriting the design to match the code.** The rule in
+`CLAUDE.md` applies with full force here: the design states the stricter of the
+two behaviours, and softening it to "the operator decides" would retire a fund
+guarantee by edit.
