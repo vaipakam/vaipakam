@@ -30,10 +30,13 @@
  * RPCs in a follow-up — schema PKs already include `chain_id`.
  */
 
+// NOTE: `createPublicClient` / `http` are deliberately NOT imported here.
+// Every chain client this module builds comes from `createChainClient`, sending
+// through the invocation's counted `env.fetchFn`, so a read cannot leave this
+// lane uncounted — see the module header of `subrequestBudget.ts` and the guard
+// in `test/meteredEgress.test.ts`.
 import {
-  createPublicClient,
   decodeEventLog,
-  http,
   toEventSignature,
   type Abi,
   type AbiEvent,
@@ -43,6 +46,38 @@ import {
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import {
+  reconcileAfterScan,
+  ReconcilePartialError,
+  type LoanMutableColumns,
+  type ReconcileOptions,
+  type ReconcileReport,
+} from './loanReconcile';
+// #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
+// block-pinned read can land on. ONE definition, shared with the repair pass;
+// see the module for why the copy it replaced was a defect (#2190 round 3).
+import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import {
+  quarantineStatements,
+  discloseQuarantineReleases,
+  quarantineReleaseStatement,
+  releaseTerminalQuarantine,
+  reportStaleQuarantine,
+  settledRows,
+} from './loanQuarantine';
+import { createQuarantineAvailability } from './loanQuarantine';
+import {
+  verifyRpcChainIdentity as verifyRpcIdentityShared,
+  type RpcIdentityVerdict,
+} from '@vaipakam/lib/rpcIdentity';
+import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import {
+  blockToNumber,
+  resolveSettledHead,
+  SAFE_FALLBACK_BUFFER,
+  type SettledHead,
+} from './settledHead';
+import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   DIAMOND_OFFER_DETAILS_ABI,
@@ -65,7 +100,11 @@ import {
   refreshMarketSummaries,
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
-import { materializeNotifications } from './notifications';
+import {
+  materializeNotifications,
+  notificationInsertStatement,
+  planReconciledNotifications,
+} from './notifications';
 import {
   applyRewardLoopLedger,
   ensureRewardLoopBackfill,
@@ -77,7 +116,17 @@ import {
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
+  type CalendarSweepResult,
 } from './calendarNotifications';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  createChainClient,
+  meterEnv,
+  reportSpend,
+  spent,
+  type TickBudget,
+} from './subrequestBudget';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -168,7 +217,7 @@ async function stampNotifiedWatermark(
       .bind(
         chainId,
         NOTIFIED_CURSOR_KIND,
-        Number(block),
+        blockToNumber(block),
         Math.floor(Date.now() / 1000),
       )
       .run();
@@ -177,27 +226,10 @@ async function stampNotifiedWatermark(
   }
 }
 
-/** `LibVaipakam.LoanStatus` (uint8) → the indexer's TERMINAL status string, for
- *  the subset that are terminal end-of-block states an `InternalMatchExecuted`
- *  block-pinned read can land on (#762/#766). Append-only enum, so the slots are
- *  stable: Active=0, Repaid=1, Defaulted=2, Settled=3, FallbackPending=4,
- *  InternalMatched=5. Active(0) and FallbackPending(4) are deliberately ABSENT:
- *  they're non-terminal-from-a-match (a partial match leaves the loan `Active`;
- *  a partial rescue leaves it `FallbackPending`) and get a numbers-only refresh,
- *  never a status overwrite. An unknown future value also maps to `undefined`
- *  here → numbers-only, so we never write a guessed status. */
-const LOAN_STATUS_TO_INDEXER_TERMINAL: Record<number, string> = {
-  1: 'repaid',
-  2: 'defaulted',
-  3: 'settled',
-  5: 'internal_matched',
-};
-
 /** Conservative reorg-horizon buffer used when an RPC doesn't support
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
  *  (Base / Arb / OP / Polygon zkEVM) settle well within ~10. 32 covers
  *  every chain we ship on with a comfortable margin. */
-const SAFE_FALLBACK_BUFFER = 32n;
 
 /** #1415 — how far the reported head may sit below the stored cursor
  *  before the caught-up path logs a loud stale/mis-pointed-RPC
@@ -208,6 +240,21 @@ export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
   scannedTo: bigint;
+  /**
+   * Outbound requests THE INVOCATION had issued when this pass returned,
+   * MEASURED (#2221).
+   *
+   * The invocation is what the platform's ceiling applies to, and on the cron
+   * path several passes share one tick — so the honest figure is the tick's,
+   * not this pass's. Naming it for the invocation rather than the pass is the
+   * point: a per-pass number would have to be a delta, and deltas are not
+   * attributable while the sweep and the scan run concurrently.
+   *
+   * Set on EVERY exit including a throw, by the one wrapper that owns the
+   * reporting (#2227 r1 `4033546273`) — the early returns below do not each
+   * remember to carry it.
+   */
+  invocationSubrequestsSpent?: number;
   newOffers: number;
   statusUpdates: number;
   detailRefreshes: number;
@@ -236,6 +283,20 @@ export interface ChainIndexerResult {
    *  missed entitlement changes until a poll. Optional so the early-return
    *  paths stay untouched (absent reads as 0). */
   loanEntitlementUpdates?: number;
+  /** #2101 — loan rows this scan REPAIRED from the chain rather than from an
+   *  event: a terminal whose announcement was missed for good. Optional so
+   *  the early-return paths stay untouched (absent reads as 0).
+   *
+   *  It is its own field rather than folded into `loanStatusUpdates` because
+   *  the two are different facts — one is "an event said so", the other is
+   *  "nothing ever said so and we went and looked" — and an operator reading
+   *  a metric should be able to tell a chain whose terminals arrive normally
+   *  from one that is being repaired every tick. `invalidationKeysFromResult`
+   *  maps both to the same coarse `loan.updated` key, which is the point of
+   *  the field existing at all: without it a repair with no accompanying
+   *  event corrected D1 and broadcast nothing, so every open client kept
+   *  showing the ghost until its next poll (#2190 r2 `4005986348`). */
+  reconciledLoans?: number;
   /** RPC read-diet PR 0 — position-NFT `Transfer` events that actually
    *  re-pointed a tracked row's `*_current_owner` column (secondary trade,
    *  claim-burn, borrower migration). Feeds the new `ownership.changed`
@@ -271,7 +332,16 @@ export interface ChainIndexerResult {
  * = one worker per chain (no schema changes needed — `chain_id` PK
  * already keys every table).
  */
-export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
+export async function runChainIndexer(
+  rawEnv: Env,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    'cron tick',
+  ),
+): Promise<ChainIndexerResult[]> {
+  // The round-robin pointer's own read and write are requests too, and they
+  // come out of the same tick's allowance as the chain pass they schedule.
+  const env: Env = meterEnv(rawEnv, budget);
   const chains = getChainConfigs(env);
   if (chains.length === 0) return [];
 
@@ -301,11 +371,30 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
 
   const results: ChainIndexerResult[] = [];
   try {
-    const r = await runChainIndexerForChain(env, chain);
+    // LEGACY INLINE PATH — this scan shares one 50-subrequest invocation
+    // with `captureBackingSnapshot` (~4) and `sweepUnpublishedListings`
+    // (up to 35: 5 rows x 7 calls each) on top of its own ~38. That is ~77
+    // against a cap of 50 BEFORE this pass exists, which is #2194 and not
+    // something this PR created or can fix. The repair therefore takes the
+    // minimum that still turns the rotation — 2 — rather than a number
+    // justified by headroom, because there is none to claim.
+    const r = await runChainIndexerForChain(
+      env,
+      chain,
+      RECONCILE_BUDGET_SHARED_TICK,
+      budget,
+    );
     results.push(r);
   } catch (err) {
     console.error(`[chainIndexer] chain ${chain.id} failed`, err);
-    results.push({ ...emptyResult('chain-error'), chainId: chain.id });
+    // The count belongs on the failure result too. A pass that threw still
+    // spent what it spent, and the tick that went wrong is the one an
+    // operator most wants the figure for.
+    results.push({
+      ...emptyResult('chain-error'),
+      chainId: chain.id,
+      invocationSubrequestsSpent: spent(budget),
+    });
   }
 
   // Advance pointer regardless of pass success — sticking on a failing
@@ -339,12 +428,23 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
  * to rows whose `posted_at` is at least `SWEEP_MIN_AGE_S` old (so
  * the inline event-ingest publish gets a chance to land first).
  *
- * Subrequest budget: per row we spend ~6 calls (getReceipt +
- * getBlock + getPrepayContext + 2 readContract + 1 OpenSea fetch),
- * so a batch of 5 fits well under the 50/tick free-tier ceiling
- * alongside the normal scan + offer prune.
+ * Subrequest budget: this sweep shares ONE tick's allowance with the scan and
+ * the other cron passes, which is why it takes the invocation's counter rather
+ * than opening its own. The per-row figure this note used to assert (~6) is no
+ * longer stated here: it is the class of claim #2221 exists to stop making,
+ * and the counter now reports what a batch actually costs.
  */
-export async function sweepUnpublishedListings(env: Env): Promise<void> {
+export async function sweepUnpublishedListings(
+  rawEnv: Env,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    'listing sweep',
+  ),
+): Promise<void> {
+  // Metered once, shadowing, for the reason the chain pass does it — and
+  // idempotently, so handing this an already-metered env (which the cron entry
+  // point does) counts each call once rather than twice.
+  const env: Env = meterEnv(rawEnv, budget);
   const SWEEP_BATCH = 5;
   const SWEEP_MIN_AGE_S = 60; // give the inline publish a minute.
   const cutoff = Math.floor(Date.now() / 1000) - SWEEP_MIN_AGE_S;
@@ -402,7 +502,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
     // salt / executor — skip them. The proper migration window for
     // those is the original-tx redrive, which is out of scope here.
     if (!row.conduit_key || !row.salt || !row.executor) continue;
-    const client = createPublicClient({ transport: http(chain.rpc) });
+    const client = createChainClient(chain.rpc, env.fetchFn);
     // T-086 Round-5 Block A (#313) — decode the recorded fee
     // legs from D1 back into the shape the JS reconstruction
     // needs. Rows from before this migration have NULL
@@ -554,56 +654,22 @@ async function sweepMarketSummaries(
 // both route through it). Unchanged behaviour: one cursor-derived,
 // safe-head-bounded scan that advances the cursor. `scannedTo` is the new
 // cursor, which the DO's catch-up loop compares against its target block.
-/** #1415 — RPC chain-identity assertion. A mis-pointed RPC secret
- *  (wrong `network=` slug, swapped URLs) fails in the ONE shape that
- *  produces zero signal: a different network whose head sits below our
- *  cursor reads as "caught up" — no error, no log, no cursor movement
- *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
- *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
- *  scan is skipped as a RETRYABLE failure so the caught-up check can
- *  never mistake it for success. A transport failure is not an
- *  identity VERDICT, but it is not license to proceed either (Codex
- *  #1527 r1 P1): an unverified endpoint could be the mis-pointed one,
- *  and a foreign chain whose head sits ABOVE our cursor would let the
- *  pass read an empty foreign log range and advance the monotonic
- *  cursor past real blocks — permanent, silent data loss. So a
- *  transport failure aborts the pass as a retryable `rpc-error`; the
- *  pair stays uncached and is re-probed next pass. Identity is a
- *  PRECONDITION of cursor advancement, never assumed. */
-const verifiedRpcIdentity = new Set<string>();
-
-export type RpcIdentityVerdict =
-  | { ok: true }
-  | { ok: false; reason: 'transport' }
-  | { ok: false; reason: 'mismatch'; reported: number };
-
+/**
+ * RPC chain-identity assertion — the rule itself now lives in
+ * `@vaipakam/lib/rpcIdentity`, because the agent's reminder lane needs the
+ * same precondition before it trusts a loan state (#2213 r14 `4013761179`).
+ *
+ * Kept as a named export here with the caller's own log prefix baked in, so
+ * this Worker's call sites and their tests read exactly as before. Identity is
+ * a PRECONDITION of cursor advancement, never assumed: a transport failure
+ * aborts the pass as a retryable `rpc-error` and the pair stays uncached.
+ */
 export async function verifyRpcChainIdentity(
   client: { getChainId: () => Promise<number> },
   chainId: number,
   rpc: string,
 ): Promise<RpcIdentityVerdict> {
-  const key = `${chainId}:${rpc}`;
-  if (verifiedRpcIdentity.has(key)) return { ok: true };
-  let reported: number;
-  try {
-    reported = await client.getChainId();
-  } catch {
-    return { ok: false, reason: 'transport' }; // no verdict — re-probe next pass
-  }
-  if (reported !== chainId) {
-    // Deliberately NO fragment of the RPC URL here — not even the host.
-    // Some providers put the generated credential in the HOSTNAME itself
-    // (Codex #1527 r1 P2), so any slice of the URL risks turning this
-    // diagnostic into a key leak. The expected chain id alone names the
-    // mis-pointed `RPC_*` secret unambiguously.
-    console.error(
-      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} — ` +
-        `mis-pointed RPC_* secret for this chain; skipping scan until it is fixed`,
-    );
-    return { ok: false, reason: 'mismatch', reported };
-  }
-  verifiedRpcIdentity.add(key);
-  return { ok: true };
+  return verifyRpcIdentityShared(client, chainId, rpc, 'chainIndexer');
 }
 
 /** The scan-skip kinds the ingest loop must treat as FAILURES (rewound
@@ -613,18 +679,1185 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
   return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
 }
 
-export async function runChainIndexerForChain(
+/**
+ * How many rows the #2101 repair pass may examine on THIS invocation.
+ *
+ * It is a parameter rather than a constant because the answer depends on
+ * what else shares the invocation, and only the caller knows that. The DO
+ * path's scan runs inside the Durable Object's own invocation and shares it
+ * with nothing else here; the legacy inline cron path shares one invocation
+ * with `captureBackingSnapshot` and `sweepUnpublishedListings`.
+ *
+ * DO NOT READ THE TIGHT BUDGET AS "WHAT FITS". An earlier revision of this
+ * comment said the legacy path had 2 subrequests of headroom, which was
+ * wrong: the sweep's worst case is 5 rows x 7 subrequests = 35, not the ~6
+ * that arithmetic assumed, so that invocation's worst case is already about
+ * 77 against a cap of 50 WITHOUT this pass (#2194). Taking 2 instead of 6
+ * is the minimum non-zero cost, not a fit — and removing those 2 would not
+ * make 77 safe, so this pass neither claims to fix that nor pretends to be
+ * free. `CHAIN_INGEST_VIA_DO` is "true" on the deployed config, so the
+ * repair runs in the DO's invocation and is not a contributor there at all.
+ *
+ * The DEFAULT is the tight one on purpose. A future caller that forgets to
+ * pass anything gets the budget that costs the shared invocation least, not
+ * the one that costs it most.
+ *
+ * THE OWN-INVOCATION FIGURE CAME DOWN FROM 5 TO 3, and that is a trade
+ * rather than a tightening (#2190 r5 `4007360368`). Verifying who currently
+ * holds a repaired position costs two `ownerOf` reads for each loan actually
+ * repaired, so the worst case is `1 + maxRows * 3`: 10 at three rows, which
+ * fits the ~12 the DO invocation has beside the scan's own ~38, and 16 at
+ * five, which does not. Fewer rows examined per pass and correct recipients
+ * beats more rows and a terminal notice sent to somebody who exited the
+ * position. The rotation still reaches every row; it takes more turns.
+ */
+/**
+ * WHAT QUARANTINE MAINTENANCE COSTS A PASS, stated as a number because the
+ * reconcile allowance below is now sized around it (#2213 r29 `4016866252`).
+ *
+ * This PR added D1 work to every pass and did not put it in anybody's
+ * arithmetic — the same defect r27 `4016129218` found in the agent's lane,
+ * arriving here by the other door. Worst case per pass, with the r28
+ * pass-scoped probe already counted:
+ *
+ * - 1 — the write side's `sqlite_master` probe, once per pass however many
+ *       close-outs
+ * - 1 — the CALENDAR sweep's own probe. It runs in this same invocation, via
+ *       `_sweepCalendarIfEstablished`, and holds a SEPARATE cache: the two
+ *       lanes read the same fact and take opposite readings of `'unknown'`,
+ *       so they were built as independent probes. The write side's answer
+ *       cannot satisfy the calendar side's cache, so a cold pass pays twice
+ *       (#2213 r30 `4017166962`)
+ * - 2 — `releaseTerminalQuarantine`, worst case: a bounded read of the ids it
+ *       is about to release, then the release itself. ONE when nothing is
+ *       terminal, which is most passes, because the read is what decides.
+ *       It was a single `DELETE … RETURNING` until #2231 r8 `4036084552`
+ *       pointed out that this bounded only the log — D1 was still asked to
+ *       return every deleted id, and the Worker to materialise them all, on
+ *       a sweep that can cover thousands. A `LIMIT` the database honours
+ *       costs one statement and removes a linear response
+ * - 1 — the stale report: its count and its bounded listing, in ONE
+ *       `batch()`. Two statements, one round trip — and a transaction, which
+ *       is why they were folded together (#2231 r11 `4036569628`): read
+ *       separately, the exact total could be taken before an operator's
+ *       guarded clear and the page after it, so the report would describe
+ *       overflow entries that no longer existed. The snapshot was the
+ *       requirement; costing one subrequest instead of two came with it.
+ *       CONSTANT WHATEVER THE DATA SAYS, and the constancy is the point
+ *       rather than the number
+ *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
+ *       a chain holding more rows than one page fits paid for a roll call of
+ *       the remainder — a cost that VARIED with the data, under a ceiling
+ *       whose overrun aborts the pass before the scan cursor is written, so
+ *       the pass paying the extra was by definition the one holding the most
+ *       rows. It then briefly became 1, by folding the count into the
+ *       listing with a window function; that is reverted because D1
+ *       documents no version and nothing here has run one against it, and
+ *       this is the one statement whose failure would make every suppression
+ *       invisible. A constant cost settles that dependency whatever the
+ *       number is
+ * - 1 — the repair's own quarantine writes, when a repair happened
+ *
+ * The close-out statements themselves are folded into batches that already
+ * existed, so they add nothing.
+ *
+ * The second entry is the one r29 missed, and missing it is instructive: r29
+ * counted the probe it had just changed rather than every probe the
+ * invocation makes. One probe per LANE, not one per pass — which is only
+ * visible if you go looking for callers rather than reading the code you
+ * edited. Sharing one answer between the lanes would remove the entry
+ * entirely and is noted on #2221.
+ */
+export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
+
+export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
+/**
+ * THREE CAME DOWN TO TWO for the quarantine maintenance above (#2213 r29
+ * `4016866252`), and it is the same trade the note above records, made again
+ * for the same reason.
+ *
+ * The DO invocation's arithmetic, worst case: the scan's own ~38, plus
+ * `1 + maxRows * 3` here, plus `QUARANTINE_MAINTENANCE_SUBREQUESTS`. At three
+ * rows that was 38 + 10 + 5 = 53, over the 50 this repository targets — and
+ * going over does not merely drop a repair, it aborts the pass before the
+ * scan cursor is recorded, which is the frozen chain this whole PR keeps
+ * working to avoid.
+ *
+ * THE SUM IS NOT ESTABLISHED, AND THIS NOTE NO LONGER PRETENDS IT IS.
+ *
+ * Three consecutive review rounds each corrected a worst-case figure stated
+ * here, and each correction was found by someone else looking rather than by
+ * anything in the code: r29 said 50 and it was 51 (the calendar lane's own
+ * probe, r30 `4017166962`); r30 said 48 and it is at least 57 (nine
+ * uncounted D1 calls inside the reconciliation pass itself, r31
+ * `4017540301`). A fourth number asserted the same way would be worth
+ * exactly as much as the first three.
+ *
+ * So what is claimed here is only what can be substantiated:
+ *
+ * - The scan is about 38, this pass contributes `1 + maxRows * 3` chain
+ *   reads, and quarantine maintenance is 6.
+ * - The reconciliation pass makes at least nine further D1 calls per
+ *   repaired row that NOBODY counts — pointer, lap boundary, maximum id, row
+ *   selection, party lookup, repair batch, cursor writes. They were believed
+ *   free; `loanReconcile.ts` carried that belief in a comment until r31, and
+ *   this PR is what disproved it.
+ * - Therefore the invocation's true worst case is ABOVE 50 and its exact
+ *   value is unknown. Going over aborts the pass before the scan cursor is
+ *   recorded, which is a frozen chain.
+ *
+ * ONE ROW is what this constant can do about that, and it is a mitigation
+ * rather than a fix: it takes the pass from three repaired rows to one,
+ * removing roughly two thirds of the uncounted reconciliation cost as well
+ * as six chain reads. The risk predates this PR — those D1 calls were always
+ * made and never counted — and this PR is what made it visible, so leaving
+ * the allowance where it was would be worse.
+ *
+ * It now equals the shared-tick budget, which is itself the signal: the
+ * constant whose name means "the roomy one" has been squeezed until it is
+ * the tight one, and there is nothing left to give here.
+ *
+ * #2221 is the fix — an explicit counter, as the agent's lane got in r27 —
+ * and it is a blocker for this lane rather than a tidy-up. Do not add
+ * another request to this path, or another number to this note, before it
+ * lands.
+ *
+ * The rotation still reaches every row; it takes more turns.
+ */
+export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, minRows: 1 };
+
+/**
+ * ONE reconciliation call site, used by BOTH of the scan's caught-up paths.
+ *
+ * It exists because #2190 r2 (`4005986356`) found the pass wired only into
+ * the scanned tail: a chain producing no new safe block returns from the
+ * quiet path every tick, so on a quiet chain the rotation never turned at
+ * all — and the chain carrying #2101's ghost loans is exactly that. Two call
+ * sites with the same body would have made the next such divergence just as
+ * easy, so there is one.
+ *
+ * Returns the number of rows REPAIRED, which the caller folds into its
+ * result so the DO's invalidation reaches subscribed clients (`4005986348`);
+ * a repair with no accompanying event would otherwise correct D1 while every
+ * open client kept showing the ghost until its next poll.
+ *
+ * Never throws: a repair failure must not wedge a scan that is otherwise
+ * healthy, and the rotation returns to those rows next tick.
+ */
+/**
+ * The CURRENT holder of each side of a position, read from the chain.
+ *
+ * The repair cannot use the index's own `*_current_owner` columns to decide
+ * who to notify: the scan window that lost the terminal event could equally
+ * have contained the position transfer, the borrower-obligation migration or
+ * the claim burn, so those columns are stale for exactly the same reason the
+ * status was (#2190 r5 `4007360368`).
+ *
+ * TWO answers, and deliberately so after a third was tried and removed.
+ * An address is a holder this pass can address a notice to, and record.
+ * `null` is anything else — unreadable, or a token that no longer exists —
+ * and gets NO notice and NO write, because there is nobody substantiated.
+ *
+ * An earlier revision returned a third, `'burned'`, and wrote the zero
+ * address into the owner column for it (#2190 r6 `4007752763`). Review
+ * then narrowed the classifier: `isRevert` also catches a missing selector
+ * and an empty reply, so a facet hiccup would clear a live holder and hide
+ * their claim (`4008330661`). That is the #2107 shape — a failure
+ * classifier narrowed round after round — and this repo's answer to it is
+ * to delete the classifier rather than sharpen it.
+ *
+ * Deleting it took the owner write with it, and that went too far
+ * (`4008463632`). The unsafe half was inferring a BURN from a failure; an
+ * address `ownerOf` actually returned at the pinned safe head infers
+ * nothing. So the caller records a side it got an answer for and leaves a
+ * side it did not exactly as it was — an asymmetry that needs no
+ * classifier, which is why it stands where the three-answer version fell.
+ *
+ * Telling the wrong person their position ended, while the real holder
+ * hears nothing, is worse than the silence this notification exists to
+ * end — which is why an unresolved side stays silent either way.
+ *
+ * A side this pass could not read is therefore left stale rather than
+ * retried: `null` is not separable into "gone" and "unreachable", so
+ * aborting the repair on it would block the ghost-row fix indefinitely on
+ * a position whose token is legitimately burned. The published record is
+ * corrected; that one notice is not sent. The release note says so.
+ *
+ * Reads are pinned to the same safe head as the rest of the repair, and are
+ * made only for a loan that IS being repaired — rare by construction. Two
+ * subrequests per repaired loan; the reconcile budget constants account for
+ * them.
+ */
+async function resolveCurrentHolders(
+  client: PublicClient,
+  diamond: Address,
+  head: bigint,
+  tokenIds: { lender: string; borrower: string },
+): Promise<{ lender: string | null; borrower: string | null }> {
+  const one = async (tokenId: string): Promise<string | null> => {
+    // '0' is the stub-row sentinel, never a real ERC721 id.
+    if (!tokenId || tokenId === '0') return null;
+    try {
+      const owner = (await client.readContract({
+        address: diamond,
+        abi: ERC721_OWNER_OF_ABI,
+        functionName: 'ownerOf',
+        args: [BigInt(tokenId)],
+        blockNumber: head,
+      })) as string;
+      return owner.toLowerCase();
+    } catch {
+      // Unreadable, or gone. This pass does not need to know which: it uses
+      // a holder only when it has one, and writes no owner column.
+      return null;
+    }
+  };
+  const [lender, borrower] = await Promise.all([
+    one(tokenIds.lender),
+    one(tokenIds.borrower),
+  ]);
+  return { lender, borrower };
+}
+
+/**
+ * The mutable columns a `getLoanDetails` post-image can correct, as
+ * `column = ?` fragments plus their values.
+ *
+ * ONE list, used by `refreshStubLoans` (which heals a stub row) and by the
+ * #2101 repair (which corrects a stale one). Both are answering the same
+ * question — "what does the chain's current answer say that our row does
+ * not?" — and the repair spent three review rounds having that list
+ * extended a field at a time: the amounts, then the position-token ids
+ * after a missed `LoanObligationTransferred` left `claimables` serving a
+ * burned one, then the rate / start / duration after a missed
+ * `LoanExtended` left the route serving an old maturity (#2190 r6
+ * `4008216425`). A column added HERE now reaches both.
+ *
+ * `init_*` is deliberately absent: those are the executed terms at
+ * origination, immutable history the candle endpoint reads, and the stub
+ * heal only ever COALESCEs them into place when they are missing.
+ */
+function mutableLoanColumnsFromDetail(detail: Record<string, unknown>): LoanMutableColumns {
+  const d = detail as {
+    assetType: number; collateralAssetType: number;
+    principalAsset: string; collateralAsset: string;
+    durationDays: bigint; tokenId: bigint; collateralTokenId: bigint;
+    lenderTokenId: bigint; borrowerTokenId: bigint;
+    principal: bigint; collateralAmount: bigint;
+    interestRateBps: bigint; startTime: bigint;
+    allowsPartialRepay: boolean;
+    periodicInterestCadence?: bigint; lastPeriodicInterestSettledAt?: bigint;
+  };
+  const pairs: Array<[string, string | number]> = [
+    ['asset_type', Number(d.assetType)],
+    ['collateral_asset_type', Number(d.collateralAssetType)],
+    ['lending_asset', d.principalAsset.toLowerCase()],
+    ['collateral_asset', d.collateralAsset.toLowerCase()],
+    ['duration_days', Number(d.durationDays)],
+    ['token_id', d.tokenId.toString()],
+    ['collateral_token_id', d.collateralTokenId.toString()],
+    ['lender_token_id', d.lenderTokenId.toString()],
+    ['borrower_token_id', d.borrowerTokenId.toString()],
+    ['principal', d.principal.toString()],
+    ['collateral_amount', d.collateralAmount.toString()],
+    ['interest_rate_bps', Number(d.interestRateBps)],
+    ['start_time', Number(d.startTime)],
+    ['allows_partial_repay', d.allowsPartialRepay ? 1 : 0],
+    ['periodic_interest_cadence', Number(d.periodicInterestCadence ?? 0)],
+    ['last_period_settled_at', Number(d.lastPeriodicInterestSettledAt ?? 0n)],
+  ];
+  return {
+    assignments: pairs.map(([c]) => `${c} = ?`),
+    values: pairs.map(([, v]) => v),
+  };
+}
+
+/**
+ * Turn a reconciliation report into operator output.
+ *
+ * ONE place does this and it is reached ONCE, from neither ending (#2203).
+ * `_runLoanReconcilePass` resolves the report — returned normally, or lifted
+ * off a `ReconcilePartialError` — and the two paths JOIN before anything is
+ * said, so there is no reporting in the catch, and none in the success path
+ * either. That is the point rather than an implementation detail: the bug
+ * was a second place deciding what an operator hears, and "the catch calls
+ * it too" would have restored exactly that, one review round from being
+ * written differently again.
+ *
+ * What the catch used to do was read only `report.repaired` off the error
+ * and drop everything else — so a pass that examined an orphaned row,
+ * correctly identified it as unresolvable, and then failed its cursor write
+ * reported nothing about it. Worse: if the pointer write succeeded and only
+ * the lap-boundary write failed, the rotation had already moved past that
+ * row, so it was examined, not named, and not examined again until the lap
+ * wrapped.
+ *
+ * The diagnostics ARE the feature. `unread`, `unresolvable` and
+ * `unknownStatus` each exist because a review round established that silence
+ * was the defect; losing them on a late failure reaches that same silence by
+ * another route. `ReconcilePartialError` already carries the whole report
+ * for exactly this reason — the error was introduced (#2190 `4007262520`,
+ * `4007752788`) on the rule that a failure after real work landed must not
+ * discard the record of that work. Repairs were the work in view then; the
+ * diagnostics are work too, and half the payload went unread.
+ *
+ * Copying the blocks into the catch instead would leave the next set added
+ * to the report reported in one path and forgotten in the other, which is
+ * the shape of the bug itself. Sharing this function and calling it from
+ * both endings is better and still leaves "call it" as something an ending
+ * can be written without — which is why the call sits after the join.
+ */
+export function _reportReconcilePass(chainId: number, report: ReconcileReport): void {
+  if (report.repaired.length > 0) {
+    console.warn(
+      `[chainIndexer] reconciled chain ${chainId}: ` +
+        report.repaired.map((r) => `loan ${r.loanId} ${r.from}->${r.to}`).join(', '),
+    );
+  }
+  // A row whose chain read failed is NOT silently dropped. If a deployed
+  // facet stops matching the compiled ABI, every read fails every pass and
+  // the statuses stay stale forever while the scan looks healthy — so the
+  // unread set is said out loud (#2190 r1).
+  if (report.unread.length > 0) {
+    console.warn(
+      `[chainIndexer] reconcile could not read ${report.unread.length} loan(s) on ` +
+        `chain ${chainId}: ${report.unread.join(', ')} — retried next rotation`,
+    );
+  }
+  // A loan the chain says does NOT EXIST is an orphaned row — indexed
+  // once and never substantiable again. It is reported at error level
+  // because nothing in this pass will ever resolve it: the read
+  // succeeded, so retrying changes nothing, and it is not counted as a
+  // running loan either (#2190 r6 `4006071749`).
+  if (report.unresolvable.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile chain ${chainId}: the chain has NO SUCH LOAN for ` +
+        `indexed row(s) ${report.unresolvable.join(', ')} — orphaned rows that ` +
+        `will not resolve themselves; they are not counted as running`,
+    );
+  }
+  // An on-chain status this build does not know. Refusing to guess is
+  // right; refusing silently is how a newly-appended TERMINAL member
+  // leaves rows published as active while every pass looks healthy.
+  if (report.unknownStatus.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile chain ${chainId}: unrecognised LoanStatus for ` +
+        report.unknownStatus.map((u) => `loan ${u.loanId} = ${u.status}`).join(', ') +
+        ` — this build cannot project it; no status written`,
+    );
+  }
+  // A failing WRITE with a succeeding read points at D1, not the RPC, so
+  // it is reported separately rather than folded into `unread`. The row
+  // is untouched — the repair is one transaction — so the rotation
+  // returns to it.
+  if (report.writeFailed.length > 0) {
+    console.error(
+      `[chainIndexer] reconcile could not WRITE ${report.writeFailed.length} repair(s) ` +
+        `on chain ${chainId}: ${report.writeFailed.join(', ')} — rows untouched, ` +
+        `retried next rotation`,
+    );
+  }
+  // A DISAGREEMENT NOBODY CAN REPAIR is the quietest failure this pass
+  // has, and it was invisible (#2190 r2 `4006071758`). When the counts
+  // differ because a `LoanInitiated` was MISSED rather than a terminal,
+  // every indexed row legitimately reads Active: nothing is repaired,
+  // nothing is unread, and the pass looks perfectly healthy while the
+  // index stays permanently short of the chain AND spends the larger
+  // mismatch budget on every tick forever. Reported once the lap has been
+  // round — a mid-lap mismatch is expected, since the repairs that would
+  // settle it have not been made yet.
+  // `wrappedLap` OR an EMPTY EXAMINED SET (#2190 r6 `4007752774`). The
+  // lap gate alone is unsatisfiable in the case that matters most: when
+  // the missed event was a `LoanInitiated`, D1 can hold ZERO live rows,
+  // so the pointer and the lap boundary stay at zero, no lap ever
+  // completes, and the chain/index disagreement stays silent on every
+  // tick forever — the exact shape this warning was added for.
+  if (
+    !report.agreed &&
+    report.repaired.length === 0 &&
+    (report.wrappedLap || report.examined.length === 0)
+  ) {
+    // A lap that left rows UNREAD or UNWRITTEN established nothing about
+    // them, so it cannot rule anything out (#2190 r6 `4008330681`). An
+    // earlier version said "NOT a missed terminal" over a lap whose only
+    // stale row failed its read twice — a confident conclusion drawn
+    // from an absence of evidence.
+    //
+    // `unknownStatus` belongs in the same condition and was left out of
+    // that fix (#2190 r11 `4009116593`). It is the same defect one field
+    // further along, and the sharpest instance of it: the logger would
+    // report "this build cannot project status N" and then, in the very
+    // next line, rule out a missed terminal — when an appended terminal
+    // status from a newer deployment is PRECISELY what that unknown
+    // would be, and precisely what would cause the mismatch being
+    // diagnosed. Three ways to learn nothing about a row, one rule.
+    const settled =
+      report.unread.length === 0 &&
+      report.writeFailed.length === 0 &&
+      report.unknownStatus.length === 0;
+    console.warn(
+      `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
+        `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
+        `full lap repaired none — ` +
+        (settled
+          ? `the difference is NOT a missed terminal (most likely a missed ` +
+            `LoanInitiated, which this pass cannot repair)`
+          : // Every reason is named, or the line reads as a contradiction:
+            // an unknown status leaves both failure counts at zero, so
+            // "0 read(s) and 0 write(s) failed, cause UNDETERMINED" would
+            // send an operator looking for a fault that is not there.
+            `but ${report.unread.length} read(s) failed, ` +
+            `${report.writeFailed.length} write(s) failed, and ` +
+            `${report.unknownStatus.length} row(s) carry a status this build ` +
+            `cannot project, so the cause is UNDETERMINED — this lap ruled ` +
+            `nothing out`),
+    );
+  }
+}
+
+/**
+ * Every row this pass looked at and could not settle.
+ *
+ * The four buckets the report already keeps, read as one question: which
+ * rows are still recorded active WITHOUT this tick having confirmed that
+ * against the chain? `repaired` rows are not here (they are no longer
+ * active) and neither are `superseded` ones (another writer terminalized
+ * them, which is the better-informed write — the row is terminal either
+ * way).
+ *
+ * `unresolvable` belongs here even though the chain DID answer, because the
+ * answer was "no such loan" and the row is still published as open. It is
+ * the most alarming member of the set, not an edge of it.
+ */
+export function _unestablishedRows(report: ReconcileReport): number[] {
+  return [
+    ...report.unread,
+    ...report.writeFailed,
+    ...report.unresolvable,
+    ...report.unknownStatus.map((u) => u.loanId),
+  ];
+}
+
+/**
+ * What a tick learned about its live loan rows — and whether it learned
+ * anything at all (#2211 r1 `4011103056`).
+ *
+ * A bare `number[]` could not express the difference between "checked, and
+ * nothing was wrong" and "could not check", so every caller read a refusal
+ * as a clean bill of health. That mattered because of what runs NEXT: the
+ * calendar sweep derives one-shot maturity and grace reminders from the
+ * `status = 'active'` rows in D1, and those rows are exactly what a ghost
+ * loan leaves behind. Never retracted, either — so an unchecked tick could
+ * tell a user to prepare for the default of a loan that already ended.
+ */
+export type ReconcilePassOutcome =
+  | {
+      established: true;
+      repairedLoanIds: number[];
+      /**
+       * Rows the pass looked at and could NOT settle — an orphan the chain
+       * has never heard of, a status it could not read, a repair write that
+       * failed, a status this build cannot project (#2211 r3 `4011279296`).
+       *
+       * A pass that returns normally has still established only the rows it
+       * established. Each of these is sitting at `status = 'active'` and is
+       * exactly the shape a missed terminal leaves behind, so each is
+       * withheld from the reminder sweep BY ID — not by deferring the whole
+       * sweep, which would punish every healthy loan on the chain for one
+       * unreadable row.
+       */
+      unestablishedLoanIds: number[];
+    }
+  | { established: false; reason: string };
+
+/**
+ * Sweep the calendar ONLY on a tick that established the live set.
+ *
+ * ONE place decides, and it is not either call site. Both paths already
+ * computed a reason they might not reconcile, and both then swept anyway —
+ * including the pre-existing cursor-ahead-of-head skip, which has had this
+ * exposure since it was written.
+ *
+ * Deferring is the established answer to this shape rather than a new
+ * invention: `sweepCalendarNotifications` already defers itself when the
+ * grace schedule has not been snapshotted, on the same reasoning — a
+ * reminder derived from a prerequisite this tick could not establish is
+ * unretractable once minted, and the reminder's own window is hours to
+ * days, so waiting a tick costs nothing.
+ */
+export async function _sweepCalendarIfEstablished(
   env: Env,
+  chainId: number,
+  nowSec: number,
+  headBlock: number,
+  outcome: ReconcilePassOutcome,
+): Promise<CalendarSweepResult> {
+  if (!outcome.established) {
+    console.warn(
+      `[chainIndexer] calendar sweep DEFERRED on chain ${chainId}: the live ` +
+        `loan set was not checked against the chain this tick (${outcome.reason}). ` +
+        `Reminders are derived from rows recorded active and are never ` +
+        `retracted, so an unchecked row could be reminded about a loan that ` +
+        `has already ended. Retried next tick.`,
+    );
+    return EMPTY_SWEEP;
+  }
+  // The tick established SOME rows; the ones it did not are named and held
+  // back individually (#2211 r3 `4011279296`).
+  //
+  // BOTH THIS AND THE QUARANTINE TABLE, and they are not redundant (#2212).
+  // The table is the durable answer and covers the ticks that did not examine
+  // the row — but it is written fail-open, so a tick whose quarantine write
+  // failed would have nothing there. This set is what still protects THIS
+  // tick in that case: it comes straight from the report in memory and needs
+  // no write to have succeeded.
+  //
+  // THIS NARROWS THE WINDOW, IT DOES NOT CLOSE IT (#2212). The exclusion is
+  // derived from THIS tick's report, and the rotation examines one or three
+  // rows a turn — so on the next turn an unsettled row is simply not in the
+  // report, the set is empty for its id, and the sweep can remind about it.
+  // Closing it needs a quarantine that OUTLIVES the pass that found the row:
+  // a persisted marker, cleared when a later pass settles it, which is a
+  // table, a migration and a clearing lifecycle of its own.
+  //
+  // Recorded rather than quietly left: before this change the row was never
+  // excluded on any tick, so nothing regresses — but a reader must not take
+  // the exclusion for a guarantee. The same aliasing defeats the cruder
+  // remedy too (deferring the WHOLE sweep whenever the report is dirty): the
+  // next tick's report is clean because it looked at different rows.
+  return sweepCalendarNotifications(
+    env.DB,
+    chainId,
+    nowSec,
+    headBlock,
+    new Set(outcome.unestablishedLoanIds),
+  );
+}
+
+/**
+ * Name the rows this chain has been withholding reminders for, if any.
+ *
+ * Its own function, called from the per-chain ENTRY POINT rather than from
+ * the reconciliation pass (#2213 r3 `4011960607`). Quarantined rows suppress
+ * reminders whatever else happens on a tick — including during an RPC outage,
+ * when nothing is being re-examined and the suppression is therefore at its
+ * most invisible. A reporter reachable only after a chain check is silent for
+ * exactly as long as the chain is unreachable.
+ *
+ * It reads D1 and nothing else, so it has no reason to sit behind any chain
+ * check at all.
+ */
+export async function _reportQuarantineForChain(env: Env, chainId: number): Promise<void> {
+  // 'absent' AND 'unknown' both mean "do not name the table": a statement
+  // naming a table that might not exist fails the whole batch, and that batch
+  // advances the chain cursor. The reminder SWEEP takes the opposite reading
+  // of 'unknown' for the opposite reason — see the probe's own doc.
+  const reportAvailability = await quarantineAvailableForWrites(env.DB as never);
+  if (reportAvailability === 'unknown') {
+    // SAID, not returned silently (#2213 r14 `4013761194`). This reporter is
+    // the ONLY surface that names long-held rows, and the rows it names are
+    // the ones suppressing reminders — so an operator investigating missing
+    // reminders during a probe outage would find the report simply absent,
+    // which reads as "nothing is held" rather than "I could not look".
+    console.warn(
+      `[chainIndexer] chain ${chainId}: could not establish whether ` +
+        `loan_reconcile_quarantine exists, so the held-row report is ` +
+        `UNAVAILABLE this tick — not empty. Rows may be held back and ` +
+        `unreported until this clears.`,
+    );
+    return;
+  }
+  if (reportAvailability !== 'present') return;
+  try {
+    // RELEASE BEFORE REPORTING, so the report never names a row that is
+    // already resolvable (#2213 r15 `4013952990`). This is also the durable
+    // cleanup path for a release the close-out could not make: it keys on the
+    // row's own state rather than on remembering what failed, so it runs every
+    // pass until there is nothing to release.
+    // SEPARATE CATCHES, because a failed CLEANUP must not silence the REPORT
+    // (#2213 r26 `4015927513`). r15 put the release first so the report never
+    // names an already-resolvable row, and sharing one `try` was the cost of
+    // that ordering: a recurring write failure here — a transient D1 fault,
+    // say — returned before the report ran, so every long-held row on every
+    // tick went unnamed while the reads that would have named them were
+    // perfectly healthy. Broken maintenance hiding the disclosure is the
+    // worse half of the pair, because the disclosure is what tells anyone the
+    // maintenance is broken.
+    try {
+      await releaseTerminalQuarantine(env.DB, chainId);
+    } catch (err) {
+      console.error(
+        `[chainIndexer] quarantine RELEASE failed for chain ${chainId} — rows ` +
+          `whose loan has ended stay held until a later pass releases them, ` +
+          `and every held row withholds reminders from whatever loan now bears ` +
+          `its id. The report below may therefore name rows that are already ` +
+          `resolvable`,
+        err,
+      );
+    }
+    await reportStaleQuarantine(
+      env.DB,
+      chainId,
+      Math.floor(Date.now() / 1000),
+      quarantineAvailableForWrites.guardColumn() === true,
+    );
+  } catch (err) {
+    // The marks are unaffected: this is the read that NAMES long-held rows.
+    // Withholding continues; what is lost is the operator being told.
+    console.error(
+      `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
+        `withholding is unaffected, but long-held rows are not being named`,
+      err,
+    );
+  }
+}
+
+/**
+ * One reconciliation pass: repair what the chain disagrees with, then say
+ * what happened.
+ *
+ * Exported for tests (#2203 r3 `4010916222`). Pinning what
+ * `_reportReconcilePass` SAYS is not the same as pinning that it is REACHED:
+ * with the report-side cases alone, deleting the join's single call left
+ * forty tests green. The wiring needs a seam of its own, because "the
+ * diagnostics reached the operator" is the whole claim this pass makes.
+ */
+export async function _runLoanReconcilePass(input: {
+  env: Env;
+  chain: ChainConfig;
+  chainId: number;
+  diamond: Address;
+  /**
+   * The head this path resolved, WITH its provenance. Every read pins to
+   * its block; a head the chain did not call settled is refused here rather
+   * than at the call sites (#2201).
+   */
+  head: SettledHead;
+  /**
+   * The block this tick's stored records are current through — the cursor on
+   * a quiet tick, the scanned tail on a busy one.
+   *
+   * The pass refuses unless this EQUALS the head. Both call sites used to
+   * test their own version of that (`lastBlock > head`, `scanTo === head`),
+   * which is how the unsettled-head refusal ended up unreachable from one of
+   * them (#2211 r2 `4011201404`): a guessed head below the cursor took the
+   * cursor branch, and the operator was told the RPC head had regressed when
+   * the truth was that no settled block could be read at all. One
+   * precondition, checked in one order, in one place.
+   */
+  readThrough: bigint;
+  budget: ReconcileOptions;
+}): Promise<ReconcilePassOutcome> {
+  // `head` STAYS A BLOCK NUMBER inside this function (#2211 r2
+  // `4011201400`). Rebinding the name to the provenance-carrying object was
+  // how `Number(head)` — correct for years — silently became `NaN` and
+  // stamped every repaired terminal notification with a non-block value. The
+  // typechecker caught the uses that wanted a `bigint` and could not catch
+  // that one, because `Number()` accepts anything. Reverting the name to the
+  // number makes the whole class impossible rather than fixing the one site;
+  // anything wanting provenance names `settled` explicitly.
+  const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
+  const head = settled.block;
+  // Already reported once per chain at the entry point (#2213 r3
+  // `4011960607`), which runs even when this pass is never reached.
+  // BEFORE ANY REFUSAL (#2213 r2 `4011776398`). Long-held rows go on
+  // suppressing reminders whatever this tick does, so naming them cannot be
+  // conditional on this tick having produced a report. Placed below the
+  // refusals, it never ran during a backfill, a cursor/head mismatch, or a
+  // stretch with no settled head — exactly the stretches where an operator
+  // most needs to know what is being withheld and why.
+  //
+  // Guarded on availability rather than caught: in the deploy window the read
+  // would throw deterministically, and a catch there would have to say
+  // something about withholding it cannot know.
+
+  // A GUESSED HEAD BUYS NOTHING HERE, AND COSTS EVERYTHING (#2201).
+  //
+  // `latest - 32` is a heuristic finality margin, not the chain's statement
+  // about finality, and a reorg deeper than the margin presents a terminal
+  // state that later disappears. This pass selects only live rows, so a row
+  // it terminalizes leaves the live set and is never examined again: a wrong
+  // read publishes an OPEN position as closed, permanently, and the
+  // correction that exists to end ghost rows would be minting them.
+  //
+  // Refusing here is not a claim that the guess is safe for the scan — it is
+  // not, and #2201 stays open for that half. It is that this consumer's
+  // wrong record is the worse one and is the one its own mechanism cannot
+  // revisit.
+  //
+  // And the refusal is SAID. A chain that cannot supply a settled point has
+  // NO correction running at all; an operator must learn that from the log
+  // rather than from a divergence months later, because a check that quietly
+  // declines to run reports perfect health while records stay wrong — the
+  // whole argument of #2203.
+  //
+  // The MESSAGE NAMES THE PROVIDER'S OWN REASON rather than asserting one.
+  // The fallback is taken on any failure of the settled read, so a timeout on
+  // a provider that normally answers looks identical here to a provider that
+  // cannot; telling an operator to "configure an RPC that supports `safe`"
+  // when theirs does would send them to fix something that is not broken.
+  if (!settled.settled) {
+    console.warn(
+      `[chainIndexer] reconcile NOT RUNNING on chain ${chainId}: no settled ` +
+        `block could be read, so the only head available is a guess ` +
+        `(latest - ${SAFE_FALLBACK_BUFFER}). A correction may not act on ` +
+        `that — a row it closes is never re-examined. Loans whose terminal ` +
+        `event was missed stay published as open on this chain until the ` +
+        `settled read succeeds. The provider said: ` +
+        `${settled.fallbackReason ?? 'no reason given'}`,
+    );
+    return {
+      established: false,
+      reason: `no settled block could be read (${settled.fallbackReason ?? 'no reason given'})`,
+    };
+  }
+  // THE TICK'S RECORDS AND THE HEAD MUST DESCRIBE THE SAME BLOCK.
+  //
+  // The status read and the holder read have to agree on one block, and only
+  // the head is safe for the status — so when what we have stored runs past
+  // it, or has not yet reached it, there is no block that satisfies both.
+  //
+  // The two shapes are not the same event and must not read alike. Falling
+  // short is the ordinary backfill: every catch-up tick is in that state and
+  // it resolves itself, so it is not worth a line. Running PAST the head is
+  // not ordinary — a provider swapped for one whose head persistently trails
+  // our cursor would disable reconciliation on that chain indefinitely with
+  // every tick reporting health, which is the silent-skip failure this pass
+  // exists to end, pointed at the pass itself.
+  if (readThrough !== head) {
+    if (readThrough > head) {
+      console.warn(
+        `[chainIndexer] reconcile SKIPPED on chain ${chainId}: records are ` +
+          `current through ${readThrough} but the head resolved to ${head}. ` +
+          `No block is safe for both the status read and the holder read ` +
+          `while those disagree; retried next tick. Every tick = a stuck or ` +
+          `regressed RPC head.`,
+      );
+    }
+    return {
+      established: false,
+      reason:
+        readThrough > head
+          ? `records are current through ${readThrough}, past the head ${head}`
+          : `records are current through ${readThrough}, short of the head ${head}`,
+    };
+  }
+  // Asked once per pass, before any repair builds its batch: every repair's
+  // close-out statements are gated on the same answer, so a pass cannot half
+  // include the release (#2213 r2 `4011776381`).
+  const closeOutAvailability = await quarantineAvailableForWrites(env.DB as never);
+  const quarantineAvailable = closeOutAvailability === 'present';
+  // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
+  // The scan's client takes viem's default `retryCount: 3`, so each of this
+  // pass's "one subrequest per read" could be four, and the whole budget
+  // argument the caller's constants encode would be off by that factor
+  // exactly when the provider is rate-limiting — the moment it matters. A
+  // read that fails is not worth retrying here anyway: the row is left
+  // alone, reported in `unread`, and the rotation returns to it next tick.
+  const reconcileClient = createChainClient(chain.rpc, env.fetchFn, {
+    retryCount: 0,
+  });
+  // ONE reporting call, on ONE path, whatever happened (#2203 r1). The
+  // failure path used to do its own reporting, which is how it came to
+  // report only `repaired` — a second place deciding what an operator hears
+  // is a second place that can decide wrongly. Resolving the report first
+  // and reporting after the try/catch makes "the failure path forgot" not a
+  // thing that can be written: there is no reporting in the catch to
+  // forget. `ReconcilePartialError` carries the report precisely so this
+  // works.
+  let report: ReconcileReport | null = null;
+  let failure: unknown = null;
+  try {
+    report = await reconcileAfterScan(
+      {
+        db: env.DB,
+        chainId,
+        diamond,
+        head,
+        readContract: (args) =>
+          reconcileClient.readContract(args as never) as Promise<unknown>,
+        metricsAbi: DIAMOND_METRICS_ABI,
+        loanAbi: DIAMOND_LOAN_DETAILS_ABI,
+        mutableColumns: mutableLoanColumnsFromDetail,
+        // The same tables every terminal handler clears, as STATEMENTS so
+        // the repair can commit them in one transaction with its status
+        // write. Handed in so the repair keeps no list of its own: round 1
+        // found the prepay listing missing, round 2 the swap-to-repay
+        // intent, and a table added to `_closedLoanSideTableStatements`
+        // reaches the repair with no change here (#2190 rounds 1-3).
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
+        discloseSideTableBatch: (results, wonTheCas) =>
+          // `reconciled` when this pass's own write landed, NOT `closed-out`
+          // (#2231 r11 `4036569613`): the repair reaches this list from a
+          // safe-head chain READ that found the loan already terminal — the
+          // terminal event is the thing that was MISSED, which is why the
+          // repair exists.
+          //
+          // But only when the write landed. A compare-and-set that changed
+          // nothing means another writer terminalized the row first, and on
+          // this path that writer may have been the event handler — so
+          // claiming no event arrived would assert the absence of the very
+          // thing the race is about (#2231 r14 `4037027847`). Then the honest
+          // basis is the weaker one: a chain read, nothing said about events.
+          discloseQuarantineReleases(
+            chainId,
+            results,
+            Math.floor(Date.now() / 1000),
+            wonTheCas ? 'reconciled' : 'chain-read',
+          ),
+        // The holders of a ghost position got NO terminal inbox row: the
+        // event was missed for good, so the event materializer never saw
+        // one, and the correction is the only chance left to keep the
+        // promise the notification surface makes. These ride the repair's
+        // own transaction — written afterwards they could be lost for good,
+        // since the repaired row leaves the live set the rotation selects
+        // from (#2190 r4 `4007360360`).
+        terminalHolderStatements: async (loanId, to, tokenIds, fingerprint) => {
+          // WHO HOLDS THIS POSITION NOW, asked of the chain rather than of
+          // our own `*_current_owner` columns (#2190 r5 `4007360368`). The
+          // window that lost the terminal could equally have contained the
+          // position transfer, the borrower-obligation migration or the
+          // claim burn — the columns are stale for the same reason the
+          // status was — so trusting them can send the one notice a holder
+          // gets to somebody who exited, while the actual holder is told
+          // nothing. Two reads, and only for a loan actually being
+          // repaired, which is rare by construction; the budget constants
+          // account for them.
+          const holders = await resolveCurrentHolders(
+            reconcileClient,
+            diamond,
+            head,
+            tokenIds,
+          );
+          // OWNER WRITE, FOR A SUBSTANTIATED SIDE ONLY (#2190 r7
+          // `4008463632`). An earlier revision wrote the zero address when
+          // the read came back empty, which review showed could not be made
+          // safe: `null` covers both "the token is gone" and "the call did
+          // not answer", and a facet hiccup would have erased a live holder
+          // (`4008330661`). `9e5375efc` removed the write — and removed too
+          // much with it, because the two halves are not alike. An ADDRESS
+          // returned by `ownerOf` at the pinned safe head is not a guess
+          // about anything; writing it can only replace a stale owner with
+          // a verified one. `null` is the ambiguous half, and it alone is
+          // the reason the classifier had to go.
+          //
+          // So: an answer is recorded, a non-answer changes nothing. That
+          // asymmetry is the whole rule, and it needs no classifier — which
+          // is why it survives where the three-answer version did not.
+          // A side the chain named is recorded; a side it did not is left
+          // exactly as it was — see `_verifiedHolderStatements`.
+          const statements: D1PreparedStatement[] = [
+            ..._verifiedHolderStatements(env, chainId, loanId, holders, fingerprint.updatedAt),
+          ];
+          const rows = await planReconciledNotifications(
+            env.DB,
+            chainId,
+            [{ loanId, to }],
+            blockToNumber(head),
+            Math.floor(Date.now() / 1000),
+            holders,
+          );
+          // The notices self-gate on the compare-and-set having won; the
+          // owner refresh above deliberately does NOT, for the same reason
+          // the side-table deletes do not — a chain-verified holder is the
+          // holder whoever closed the loan, while "we found this by
+          // checking" is only true if this pass was the one that did
+          // (#2190 r6 `4007588180`).
+          statements.push(
+            ...rows.map((r) =>
+              notificationInsertStatement(env.DB, r, {
+                chainId,
+                loanId,
+                status: to,
+                updatedAt: fingerprint.updatedAt,
+              }),
+            ),
+          );
+          return statements;
+        },
+      },
+      budget,
+    );
+  } catch (err) {
+    failure = err;
+    if (err instanceof ReconcilePartialError) report = err.report;
+  }
+
+  // Everything the pass noticed reaches the operator, whether it finished or
+  // died on its cursor write.
+  if (report) _reportReconcilePass(chainId, report);
+  // THE SAME REPORT, REMEMBERED (#2212). Reporting tells the operator; this
+  // tells the NEXT tick. The rotation examines one or three rows a turn, so
+  // a row this pass could not settle is absent from every later report until
+  // the rotation comes round again — and a surface reading only the current
+  // report would go on acting on it as though it were confirmed.
+  //
+  // Fail-open, deliberately. This is a withholding mechanism: if it cannot
+  // write, the correct outcome is the behaviour that existed before it — not
+  // a failed tick. It is loud about failing, because a quarantine that
+  // silently stops recording is a surface that silently resumes reminding.
+  if (report) {
+    // The WRITE only. The stale-report READ moved to the top of the pass
+    // (#2213 r2 `4011776398`), which also settles r1's `4011674998`: the two
+    // operations no longer share a catch because they no longer share a
+    // place.
+    const nowSec = Math.floor(Date.now() / 1000);
+    // ASKED BEFORE BUILDING THE BATCH (#2213 r19 `4014677444`). The probe is
+    // memoised per isolate and the close-out path already consults it, so this
+    // costs nothing and removes a guaranteed failure: with migration 0049
+    // DEFINITIVELY absent, this built a `DELETE` per settled row against a
+    // table that does not exist, failed every pass, and then described the
+    // consequences in terms of withholding — while the calendar lane was
+    // simultaneously and correctly telling the operator that nothing was being
+    // withheld, because there is nowhere to withhold anything. Two lanes
+    // contradicting each other about the same table is worse than either being
+    // silent.
+    //
+    // ONLY on `absent`. `unknown` still attempts, because this is a
+    // fail-open withholding mechanism and a probe that could not answer is not
+    // evidence the table is missing.
+    const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
+    if (writeAvailability !== 'absent') {
+      try {
+        const writes = quarantineStatements(
+          env.DB,
+          chainId,
+          report,
+          nowSec,
+          quarantineAvailableForWrites.guardColumn() === true,
+        );
+        if (writes.length > 0) {
+          const outcome = await env.DB.batch(writes);
+          // The settle path releases held markers too, including on an id
+          // that has come round again, and it did so silently (#2231 r7
+          // `4035821181`). The batch already carries back which rows it
+          // deleted; this only decides which of them are worth a line.
+          discloseQuarantineReleases(chainId, outcome, nowSec);
+        }
+      } catch (err) {
+        // THE MESSAGE NAMES WHAT WAS IN THE BATCH (#2213 r3 `4011960578`). One
+        // batch carries two opposite operations — marks that START withholding
+        // and releases that STOP it — so a fixed message describes the wrong
+        // one half the time, and is nonsense on a batch that carried only
+        // releases. Both counts come from the report the batch was built from.
+        const marks = _unestablishedRows(report).length;
+        const releases = settledRows(report).length;
+        // THE RELEASE HALF CANNOT NAME A STATE IT NEVER READ (#2213 r20
+        // `4014807959`). `settledRows` is every row this pass settled, not
+        // every row that was marked: the overwhelming majority are ordinary
+        // healthy loans whose `DELETE` was a no-op against a marker that was
+        // never there. Saying they "stay withheld" asserts suppression for
+        // rows nothing was ever suppressing — and the batch failed, so which
+        // of them had markers is exactly what this pass does not know.
+        //
+        // r19 hedged this on the PROBE (`present` vs `unknown`) and left the
+        // `present` branch confident, which was the wrong axis. Knowing the
+        // table exists says nothing about whether THESE rows had rows in it.
+        // What is true in every case is that their quarantine state could not
+        // be updated, and a later pass reaches them — `releaseTerminalQuarantine`
+        // keys on the row's own state rather than on remembering this failure.
+        const effects = [
+          marks > 0
+            ? // THE BOUNDARY, not just the outcome (#2213 r21 `4015014122`).
+              // "NOT withheld" was true of later ticks and false of this one.
+              // This tick still hands the same ids to
+              // `_sweepCalendarIfEstablished` through
+              // `ReconcilePassOutcome.unestablishedLoanIds`, which holds them
+              // back from memory and needs no write to have succeeded — the
+              // belt-and-braces this failure is exactly why the code carries.
+              // Saying they are unprotected NOW would send an operator
+              // hunting for reminders that cannot have escaped yet, and would
+              // understate the real risk, which starts quietly on the next
+              // tick.
+              `${marks} row(s) this pass could not settle are still withheld ` +
+              `THIS tick from the report in memory, but nothing durable ` +
+              `records them — so a later tick that does not re-examine them ` +
+              `can remind about them, until a pass records them or settles them`
+            : null,
+          releases > 0
+            ? `the quarantine state of ${releases} row(s) it settled could not be ` +
+              `updated — any that were withheld stay withheld until a later ` +
+              `pass releases them, and the rest were never withheld at all`
+            : null,
+        ].filter(Boolean);
+        console.error(
+          `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
+            `${effects.join('; ')}`,
+          err,
+        );
+      }
+    }
+  }
+
+  if (failure === null) {
+    // The IDS, not just a count (#2190 r5 `4007500668`). The coarse
+    // `loan.updated` key is not enough on its own: `scopeInvalidationRoots`
+    // drops holder-scoped refetches when the frame's hint set is complete
+    // and does not mention the loan — and a repaired loan is old, so it is
+    // never in `allLogs`. The holders of the position just corrected would
+    // have been precisely the ones whose refetch was scoped away.
+    return {
+      established: true,
+      repairedLoanIds: report!.repaired.map((r) => r.loanId),
+      unestablishedLoanIds: _unestablishedRows(report!),
+    };
+  }
+
+  {
+    const err = failure;
+    // A repair failure must not wedge the scan that found nothing wrong;
+    // the rotation returns to these rows.
+    //
+    // REPAIRS THAT ALREADY COMMITTED ARE STILL RETURNED (#2190 r6
+    // `4007752788`). Per-row isolation covers a failing write, but the
+    // cursor and lap-boundary writes come AFTER the loop and can throw too
+    // — and by then the repaired rows have left the live set, so no retry
+    // can rediscover them. Returning an empty set there would lose their
+    // `loan.updated` frame permanently: the corrections would be in D1 and
+    // announced to nobody.
+    const partial = report ? report.repaired.map((r) => r.loanId) : [];
+    // ONE VARIABLE WAS ANSWERING TWO QUESTIONS, and that is the seam this
+    // block kept failing at — rounds 1, 4 and 5 of #2211 are all the same
+    // mistake in different clothes. `partial.length` is about REPAIRS, and
+    // it was being used to decide both what the operator hears and what the
+    // caller is told. Those are independent:
+    //
+    //   - the operator hears about the FAILURE, always. It happened.
+    //   - the caller is told what was ESTABLISHED, which is whatever the
+    //     carried report says, repairs or no repairs.
+    //
+    // Keyed on repairs, a healthy chain whose pointer write keeps failing
+    // produced NOTHING: no repairs, no row anomalies, so the reporter is
+    // silent, and this branch swallowed the error (#2211 r5 `4011464228`).
+    // The rotation re-examines the same one or three rows every tick, later
+    // loans are never reached, and every surface reports health — the exact
+    // silent stall this pass exists to end.
+    console.error(
+      partial.length > 0
+        ? `[chainIndexer] reconcile chain ${chainId} failed AFTER repairing ` +
+            `loan(s) ${partial.join(', ')} — those corrections stand and are ` +
+            `broadcast; the rotation pointer may not have advanced`
+        : `[chainIndexer] reconcile chain ${chainId} failed. If this is the ` +
+            `cursor write, the rotation pointer did not advance: the same rows ` +
+            `are re-examined every tick and later loans are never reached. ` +
+            `Every tick = a stalled rotation, not a passing blip`,
+      // THE CAUSE, not the wrapper. `ReconcilePartialError`'s own message
+      // says how many rows it repaired — which the line above already says,
+      // better — while the thing an operator has to act on is what actually
+      // threw underneath it.
+      err instanceof ReconcilePartialError ? err.cause : err,
+    );
+    // A CARRIED REPORT MEANS THE ROWS WERE CHECKED, REPAIRS OR NOT (#2211 r4
+    // `4011404507`). `ReconcilePartialError` carries the whole report, so a
+    // pass that examined only healthy rows and then failed its cursor write
+    // has established exactly as much as one that examined them and wrote
+    // its cursor. Keying this on `partial.length` instead treated the common
+    // case — a healthy chain, nothing to repair — as if nothing had been
+    // checked, so a recurring bookkeeping-write failure would have silenced
+    // that chain's reminders for as long as it lasted.
+    if (report) {
+      return {
+        established: true,
+        repairedLoanIds: partial,
+        unestablishedLoanIds: _unestablishedRows(report),
+      };
+    }
+    // No report at all: the pass threw before producing one, so nothing
+    // about the live set was established.
+    return { established: false, reason: 'the reconciliation pass failed' };
+  }
+}
+
+/**
+ * ONE exit, so the count is reported on all of them (#2227 r1
+ * `4033546273` / `4033546280`).
+ *
+ * The pass body below has more than a dozen returns — the identity abort, the
+ * caught-up quiet path, the RPC-error rewind — and r1 found the reporting
+ * attached to exactly one of them: the busy path. So the common tick, the one
+ * an operator would look at to learn what a quiet pass costs, reported
+ * nothing, and a throw reported nothing at all. Adding the field to each
+ * return is the per-path patch that stops being true at the fourteenth
+ * return; a wrapper that owns entry and exit cannot miss one, and `finally`
+ * covers the throw for free.
+ *
+ * What it cannot cover is the platform killing the invocation mid-request —
+ * nothing downstream runs then, which is exactly why the CEILING is announced
+ * at `spend()` rather than here.
+ */
+export async function runChainIndexerForChain(
+  rawEnv: Env,
   chain: ChainConfig,
+  reconcileBudget: ReconcileOptions = RECONCILE_BUDGET_SHARED_TICK,
+  budget: TickBudget = createBudget(
+    MAX_SUBREQUESTS_PER_INVOCATION,
+    `chain ${chain.id} pass`,
+  ),
 ): Promise<ChainIndexerResult> {
+  try {
+    const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
+    return { ...result, invocationSubrequestsSpent: spent(budget) };
+  } finally {
+    // The NORMAL figure, on every tick. A number that is only logged when it
+    // is already too late tells an operator nothing about the headroom they
+    // have; this is what makes the constants re-tunable from evidence instead
+    // of from argument.
+    //
+    // NOT the last word on the invocation, and it does not claim to be: the
+    // ingest DO does more work after this returns, and reports again at its
+    // own exit (#2227 r2 `4033723744`). `at` is in the line precisely so two
+    // readings of one counter cannot be mistaken for a disagreement.
+    reportSpend(budget, `chain ${chain.id} pass exit`);
+  }
+}
+
+async function runChainPass(
+  rawEnv: Env,
+  chain: ChainConfig,
+  reconcileBudget: ReconcileOptions,
+  budget: TickBudget,
+): Promise<ChainIndexerResult> {
+  // EVERY REQUEST THIS PASS ISSUES IS COUNTED FROM HERE (#2221), and counted
+  // BECAUSE OF WHAT IT GOES THROUGH rather than because someone remembered to
+  // account for it.
+  //
+  // `env` shadows the parameter deliberately. The body below reaches D1 as
+  // `env.DB` in over two hundred places and hands `env` to the reconciliation
+  // pass, the reminder sweep and the quarantine helpers, which reach it the
+  // same way; metering the env once here therefore covers all of them — the
+  // binding and the HTTP sender both — including code written later that has
+  // never heard of this budget. The
+  // alternative — a decrement beside each call — is the shape the agent lane
+  // uses at fifteen sites, and at this lane's scale it would rebuild the very
+  // defect #2221 was filed for: an enumeration nothing verifies, which the
+  // hundred-and-twentieth site escapes in silence.
+  const env: Env = meterEnv(rawEnv, budget);
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
+  // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
+  // `4016565774`). Every close-out in this pass now shares one answer, so a
+  // backfill full of terminal events costs one `sqlite_master` read rather
+  // than one per event — which during the deploy-before-migration window
+  // (#2214) could spend the invocation's whole subrequest allowance on
+  // identical probes and abort before the cursor advanced, freezing the very
+  // rollout this guard exists to survive. Drawn HERE, at the top of a chain's
+  // pass, rather than threaded through the fifteen close-out call sites: the
+  // rule is one rule and belongs in one place, and threading it is how the
+  // fourteenth site gets missed.
+  quarantineAvailableForWrites.beginPass();
   // Each chain has its own deployBlock; resolved via getChainConfigs
   // → deployments.json. We re-look it up here because ChainConfig
   // intentionally exposes only the runtime essentials.
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // METERED AT EGRESS, not at the client's methods (#2227 r1 `4033546264`).
+  // viem retries a failed request up to three more times INSIDE one method
+  // call, so counting method calls undercounts by a factor of four in exactly
+  // the condition that matters — a provider rate-limiting this pass. The
+  // transport sends through a counted `fetch`, so each attempt is one request,
+  // which is what the platform also thinks.
+  const client = createChainClient(chain.rpc, env.fetchFn);
 
   // One-time activity_events backfills, run BEFORE every return out of
   // this function — including the identity aborts just below (Codex
@@ -640,6 +1873,19 @@ export async function runChainIndexerForChain(
   // Cheap after the first run — one flag SELECT each.
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
+
+  // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
+  // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
+  // during an RPC outage — the outage is precisely when nothing is being
+  // re-examined — so a reporter placed after the identity check is silent for
+  // exactly as long as the condition lasts. It reads D1 only and needs no
+  // chain at all, so there is no reason for it to sit behind a chain check.
+  //
+  // Round 2 moved it above the reconcile pass's own refusals and I called it
+  // unconditional; it was unconditional within that function. This is the
+  // same claim tested one level up, which is where it should have been
+  // tested the first time.
+  await _reportQuarantineForChain(env, chainId);
 
   // #1415 — identity before any chain read: a wrong-network RPC must
   // fail LOUDLY here, not silently as "caught up" below. A transport
@@ -659,16 +1905,21 @@ export async function runChainIndexerForChain(
   // block, leaving the stale row in D1 forever. Reading at the safe
   // head keeps the cursor reorg-proof — by the time a block is
   // safe-tagged its reorg horizon is past. Falls back to
-  // `latest - SAFE_FALLBACK_BUFFER` when the RPC doesn't support the
-  // safe tag (older nodes / some private RPCs).
-  let head: bigint;
-  try {
-    const safeBlock = await client.getBlock({ blockTag: 'safe' });
-    head = safeBlock.number;
-  } catch {
-    const latest = await client.getBlockNumber();
-    head = latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
-  }
+  // `latest - SAFE_FALLBACK_BUFFER` when the settled read does not answer —
+  // an old node or a private RPC that lacks the tag, and equally a timeout
+  // from one that has it, since the catch cannot tell those apart.
+  //
+  // THE FALLBACK IS NOT SAFE HERE EITHER, AND THIS PR DOES NOT FIX IT
+  // (#2201). Do not read the correction's refusal below as "the guess is
+  // fine for the scan": the cursor advances monotonically from
+  // `lastBlock + 1`, exactly as the paragraph above says, so a
+  // reorganised-out block is never revisited and its rows stay wrong for
+  // good. What differs is severity — the correction publishes an OPEN
+  // position as closed and cannot re-examine it — not recoverability.
+  // `_CodeVsDocsAudit.md` carries the retraction of the self-correcting
+  // claim, which has had to be made more than once.
+  const settledHead = await resolveSettledHead(client);
+  const head = settledHead.block;
 
   // Resume cursor: last block we successfully processed. On first
   // run, start from deployBlock — but cap the per-tick work at
@@ -727,11 +1978,72 @@ export async function runChainIndexerForChain(
     // also the CONSISTENT one (D1 reflects everything up to the safe
     // head), so the sweep always runs here; rows stamp the cursor's
     // caught-up position.
-    const quietCal = await sweepCalendarNotifications(
-      env.DB,
+    // #2190 r2 `4005986356` — the repair runs on THIS path too, and it is
+    // the path that matters most. A chain producing no new safe block
+    // returns here every tick, so wiring the pass only into the scanned
+    // tail meant the rotation never turned on a quiet chain — which is
+    // exactly what the chain carrying #2101's three ghost loans is. The
+    // pass as first placed might never have fired for the case that
+    // motivated it.
+    //
+    // PINNED TO `head`, NOT `lastBlock`, and the difference is not
+    // cosmetic (#2190 r4 `4007262512`). I wrote `lastBlock` reasoning that
+    // `scanFrom > head` means the cursor has reached the safe head — but it
+    // means `lastBlock >= head`, and the branch is ALSO the one the
+    // `HEAD_BEHIND_CURSOR_WARN` case above lands in, where a lagging or
+    // mis-pointed replica reports a head BELOW our cursor. Passing
+    // `lastBlock` there asks the repair to trust a block above the
+    // currently resolved safe head, which is exactly the unpinned read this
+    // whole pass was restructured to avoid: a terminal at that height can
+    // still be reorged away, and the live→terminal write is irreversible
+    // because the rotation only ever selects live rows.
+    //
+    // `head` is the resolved safe head on both paths. In the ordinary quiet
+    // case the two are equal and nothing changes.
+    //
+    // A REGRESSED HEAD SKIPS THE PASS ENTIRELY rather than reading at the
+    // older block (#2190 r8 `4008583627`). Pinning the status read to `head`
+    // (`9b29d525f`) fixed the direction that could invent a terminal, and
+    // left a second one: `head` also drives WHO the notice goes to and where
+    // the row sorts in the feed. With `lastBlock > head`, D1 already reflects
+    // ownership transfers and claim burns processed through the cursor, so a
+    // terminal predating `head` could be repaired correctly and its one
+    // notice addressed to the holder as of the older block — the exact harm
+    // `4007360368` established, reintroduced by the clock rather than by the
+    // column. The two reads must agree on a block, and only `head` is safe
+    // for the status, so when the cursor is ahead of it there is no block
+    // that satisfies both. A regression is transient; the next tick with a
+    // recovered head does the work, and the rotation loses nothing but a
+    // turn.
+    //
+    // AND IT SAYS SO WHEN IT SKIPS. A silent skip is the failure this whole
+    // pass exists to end, pointed at the pass itself: a provider swapped for
+    // one whose safe head persistently trails our cursor would disable
+    // reconciliation on that chain indefinitely, with every tick reporting
+    // health. One transient regression is noise, so this is `warn` and names
+    // both blocks — an operator seeing it every tick is seeing a stuck
+    // provider, not a passing cloud.
+    // No branch here any more (#2211 r2 `4011201404`). The cursor-vs-head
+    // test used to live at this call site, which meant a guessed head below
+    // the cursor never reached the pass and the operator was told the RPC
+    // head had regressed when no settled block could be read at all. The
+    // pass takes both facts and decides, in one order.
+    const quietOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+      env,
+      chain,
+      chainId,
+      diamond,
+      head: settledHead,
+      readThrough: lastBlock,
+      budget: reconcileBudget,
+    });
+    const quietReconciledIds = quietOutcome.established ? quietOutcome.repairedLoanIds : [];
+    const quietCal = await _sweepCalendarIfEstablished(
+      env,
       chainId,
       Math.floor(Date.now() / 1000),
-      Number(lastBlock),
+      blockToNumber(lastBlock),
+      quietOutcome,
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
@@ -753,9 +2065,25 @@ export async function runChainIndexerForChain(
       // the hints so client relevance scoping keeps the refetch on the
       // wallets that hold those loans.
       calendarNotifications: quietCal.inserted,
+      // #2101 — a quiet tick that repaired a ghost has changed loan state
+      // with no event behind it, so it must broadcast like any other loan
+      // change. This path used to return a hard-coded zero result, which is
+      // what made the repair invisible to subscribed clients here.
+      reconciledLoans: quietReconciledIds.length,
+      // The repaired ids ride the hints for the same reason the calendar
+      // ids do: without them the frame looks irrelevant to the holders of
+      // the very position that changed, and their scoped refetch is dropped.
+      // A repair additionally TRUNCATES the set — see the scanned path's
+      // note: a refreshed owner is a holder whose cache cannot contain this
+      // old loan, so only a coarse frame reaches them (#2190 r6).
       hints:
-        quietCal.inserted > 0
-          ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
+        quietCal.inserted > 0 || quietReconciledIds.length > 0
+          ? mergeHintLoanIds(
+              quietReconciledIds.length > 0
+                ? { ...emptyHints(), truncated: true }
+                : emptyHints(),
+              [...quietCal.loanIds, ...quietReconciledIds],
+            )
           : undefined,
       headBlock: head,
       skipped: 'caught-up',
@@ -998,7 +2326,7 @@ export async function runChainIndexerForChain(
        updated_at = excluded.updated_at
      WHERE excluded.last_block > indexer_cursor.last_block`,
   )
-    .bind(chainId, CURSOR_KIND, Number(scanTo), now)
+    .bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now)
     .run();
 
   // #1270 — market_summary sweep: recompute discovery rows for every
@@ -1015,6 +2343,30 @@ export async function runChainIndexerForChain(
   // data, fail-open INSIDE (see notifications.ts), after the cursor
   // advance — a hiccup here must never fail a scan whose authoritative
   // activity_events / loans writes already landed.
+  // #2101 — repair loan rows whose terminal event was missed for good, and
+  // do it BEFORE the two notification surfaces below (#2190 r2
+  // `4006071765` / `4006071734`). Both are derived from D1 state at the
+  // moment they run and neither retracts what it writes: the calendar sweep
+  // would mint a non-retractable maturity or past-due reminder for a loan
+  // that had already ended, and the inbox materializer would settle the
+  // terminal question for this tick with the ghost still active. Ordering
+  // is the whole fix for the first; the second is narrower and is answered
+  // separately (see the reply on that thread).
+  // Likewise unconditional: `scanTo === head` was this path's copy of the
+  // same precondition, and the pass now owns it (#2211 r2 `4011201404`).
+  const reconcileOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
+    env,
+    chain,
+    chainId,
+    diamond,
+    head: settledHead,
+    readThrough: scanTo,
+    budget: reconcileBudget,
+  });
+  const reconciledLoanIds = reconcileOutcome.established
+    ? reconcileOutcome.repairedLoanIds
+    : [];
+
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
   // RPC read-diet PR B — keep the display config snapshot current
@@ -1051,10 +2403,17 @@ export async function runChainIndexerForChain(
   // chunk-capped busy scan just defers to the tick that catches up; the
   // caught-up quiet path above sweeps every tick thereafter (reminders
   // have hours-to-days of window, so a deferred tick costs nothing).
-  const cal =
-    scanTo === head
-      ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
-      : EMPTY_SWEEP;
+  // The full-catch-up gate is now expressed through the reconcile outcome
+  // rather than re-tested here: `scanTo !== head` is one of the ways a tick
+  // fails to establish the live set, and an unsettled head is another that
+  // this condition could not see (#2211 r1 `4011103056`).
+  const cal = await _sweepCalendarIfEstablished(
+    env,
+    chainId,
+    now,
+    blockToNumber(scanTo),
+    reconcileOutcome,
+  );
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
   // for OTHER writers of the notifications table (today: the keeper's
@@ -1092,7 +2451,7 @@ export async function runChainIndexerForChain(
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,
-        blocks: [Number(scanFrom), Number(scanTo)],
+        blocks: [blockToNumber(scanFrom), blockToNumber(scanTo)],
         loanIdCount: hintStats.loanIdCount,
         offerIdCount: hintStats.offerIdCount,
         linkCount: hintStats.linkCount,
@@ -1103,6 +2462,13 @@ export async function runChainIndexerForChain(
     );
   }
 
+  // NOTHING IS REPORTED HERE ANY MORE (#2227 r1 `4033546273` / `4033546277`).
+  // The over-ceiling warning that used to sit at this point could not fire in
+  // the case it was written for: the platform kills the invocation AT the
+  // request that passes the ceiling, so this line is downstream of the event
+  // it was meant to announce. It now happens in `spend()`, before the
+  // offending request is issued. The ordinary figure is reported by the
+  // wrapper, on every exit including a throw.
   return {
     scannedFrom: scanFrom,
     scannedTo: scanTo,
@@ -1121,17 +2487,31 @@ export async function runChainIndexerForChain(
     // tail feed the `notification.created` push key; their loan ids join
     // the hints below so client relevance scoping still applies.
     calendarNotifications: cal.inserted,
+    reconciledLoans: reconciledLoanIds.length,
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).
     // Stub HEALS mutate rows without a corresponding log in THIS scan
     // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
     // can't claim its id list is complete (Codex #1244 r1).
+    // A repaired loan is OLD, so it is never in `allLogs` — its id has to
+    // be merged in explicitly or the hint set is "complete" while omitting
+    // the one position this scan actually corrected (#2190 r5).
+    //
+    // And a repair also marks the set TRUNCATED (#2190 r6 `4007752754`).
+    // The id alone is not enough when the missed window also carried a
+    // position transfer: the repair refreshes the owner to a holder whose
+    // cached `myLoanIds` cannot contain this old loan, so `pushHintScope`
+    // finds neither a cached id nor a holder link and drops `myLoans`,
+    // `claimables` and `notifications` from the NEW holder's refetch — the
+    // one person who most needs it. Truncation makes the frame coarse,
+    // which is the same answer a stub heal already takes for the same
+    // reason: the scan cannot enumerate who is affected.
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 || loanDetailRefreshes > 0
+      detailRefreshes > 0 || loanDetailRefreshes > 0 || reconciledLoanIds.length > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
-      cal.loanIds,
+      [...cal.loanIds, ...reconciledLoanIds],
     ),
   };
 }
@@ -2195,17 +3575,14 @@ async function refreshStubLoans(
       // post-mutation terms. Acceptable: stubs are vanishingly rare
       // (companion event in the same tx), heal runs on the next tick,
       // and mutations inside that window are rarer still.
+      // THE SAME mutable set the #2101 repair writes — one builder, so
+      // "which columns does a chain post-image correct?" is answered once
+      // (#2190 r6). `init_*` stays COALESCE-only here: the executed terms
+      // at origination are immutable history, filled in when missing and
+      // never overwritten.
+      const mutable = mutableLoanColumnsFromDetail(detail as Record<string, unknown>);
       const updated = await env.DB.prepare(
-        `UPDATE loans SET asset_type = ?, collateral_asset_type = ?,
-                          lending_asset = ?, collateral_asset = ?,
-                          duration_days = ?, token_id = ?,
-                          collateral_token_id = ?,
-                          lender_token_id = ?, borrower_token_id = ?,
-                          principal = ?, collateral_amount = ?,
-                          interest_rate_bps = ?, start_time = ?,
-                          allows_partial_repay = ?,
-                          periodic_interest_cadence = ?,
-                          last_period_settled_at = ?,
+        `UPDATE loans SET ${mutable.assignments.join(', ')},
                           init_principal = COALESCE(init_principal, ?),
                           init_rate_bps = COALESCE(init_rate_bps, ?),
                           init_duration_days = COALESCE(init_duration_days, ?),
@@ -2214,22 +3591,7 @@ async function refreshStubLoans(
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
-          detail.assetType,
-          detail.collateralAssetType,
-          detail.principalAsset.toLowerCase(),
-          detail.collateralAsset.toLowerCase(),
-          Number(detail.durationDays),
-          detail.tokenId.toString(),
-          detail.collateralTokenId.toString(),
-          detail.lenderTokenId.toString(),
-          detail.borrowerTokenId.toString(),
-          detail.principal.toString(),
-          detail.collateralAmount.toString(),
-          Number(detail.interestRateBps),
-          Number(detail.startTime),
-          detail.allowsPartialRepay ? 1 : 0,
-          Number(detail.periodicInterestCadence ?? 0),
-          Number(detail.lastPeriodicInterestSettledAt ?? 0n),
+          ...mutable.values,
           detail.principal.toString(),
           Number(detail.interestRateBps),
           Number(detail.durationDays),
@@ -2710,7 +4072,7 @@ export async function processLoanLogs(
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
       // T-086 step 12 — clear any live prepay-listing row.
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayExecuted') {
       // T-090 Sub 2 — borrower swap-to-repay full close. The contract
       // path transitions Active→Repaid (same status flip as `LoanRepaid`)
@@ -2718,7 +4080,7 @@ export async function processLoanLogs(
       // the LoanRepaid handler exactly.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayIntentCommitted') {
       // T-090 v1.1 (#389) Sub 2 (#417) — intent-based commit. INSERT
       // a `swap_to_repay_intents` row keyed by (chain_id, loan_id);
@@ -2779,41 +4141,32 @@ export async function processLoanLogs(
       }
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, loanId);
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      // The loan CLOSED here, so the shared close-out cleanup covers both
+      // the prepay listing and this fill's own intent row — the separate
+      // intent DELETE this branch used to carry is inside it. The
+      // `committed_by` read above still happens first, which is the one
+      // ordering constraint `_clearClosedLoanSideTables` documents.
+      await _clearClosedLoanSideTables(env, chainId, loanId);
     } else if (log.eventName === 'SwapToRepayIntentCancelled') {
       // T-090 v1.1 Sub 2 — borrower cancel OR permissionless
       // `cancelExpired` poke. Loan stays Active (the cancel only
       // tears down the v1.1 commit + returns collateral to the
-      // borrower vault). Delete the intent row.
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, Number(a.loanId as bigint))
-        .run();
+      // borrower vault). Delete the intent row — and ONLY that: this is
+      // not a close, so the loan's prepay listing survives it.
+      await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayIntentForceCancelled') {
       // T-090 v1.1 Sub 2 — HF-liquidation OR time-default path
       // force-cancelled the intent. The lender-protection action
       // proceeds in the same tx via downstream events
       // (LoanLiquidated / LoanDefaulted etc.) — those handlers do
-      // the loan-side flip. Here we just delete the intent row.
-      await env.DB.prepare(
-        `DELETE FROM swap_to_repay_intents
-         WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, Number(a.loanId as bigint))
-        .run();
+      // the loan-side flip and its cleanup. Here we just delete the
+      // intent row.
+      await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'OffsetCompleted') {
       // Preclose Option 3 — offsetWithNewOffer + completeOffset. The
       // *original* loan transitions Active→Repaid (the new loan emits
@@ -2828,7 +4181,7 @@ export async function processLoanLogs(
         origLoanId,
       );
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, origLoanId);
+      await _clearClosedLoanSideTables(env, chainId, origLoanId);
     } else if (log.eventName === 'LoanRefinanced') {
       // Refinance — the *old* loan transitions Active→Repaid (the new
       // loan emits its own LoanInitiated). Keyed by `oldLoanId`.
@@ -2842,7 +4195,7 @@ export async function processLoanLogs(
         oldLoanId,
       );
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, oldLoanId);
+      await _clearClosedLoanSideTables(env, chainId, oldLoanId);
     } else if (log.eventName === 'LoanExtended') {
       // T-092 Phase 3 (#503) — `extendLoanInPlace` mutates
       // `loan.startTime`, `interestRateBps`, and `durationDays` in
@@ -3227,7 +4580,7 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanStatusChanged') {
       // #1782 — the SAFETY NET, not a replacement for the specific terminal
       // handlers above. `LibLifecycle.transition` is the one primitive every
@@ -3265,7 +4618,7 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'HFLiquidationTriggered') {
       // #1293 — HF-based liquidation terminalizes the loan Active→Defaulted
       // through `EncumbranceMutateFacet.terminalize` (RiskFacet.sol:930 full
@@ -3279,7 +4632,7 @@ export async function processLoanLogs(
       // idempotent no-op on re-scan.
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LiquidationDiscounted') {
       // #1293 — the flash-loan discount liquidation (RiskFacet.sol:1665) is the
       // same Active→Defaulted terminalize and likewise emits ONLY its own
@@ -3288,7 +4641,7 @@ export async function processLoanLogs(
       // the loan `active`.
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'BackstopAbsorbedLoan') {
       // #630 backstop Role B — the liquidator-of-last-resort bought out the
       // lender slice of a FallbackPending loan for cash. This is the lender-side
@@ -3302,7 +4655,7 @@ export async function processLoanLogs(
       // Mirror LoanDefaulted/LoanLiquidated: clear any indexed prepay-listing
       // row on this terminal so the frontend can't serve a stale live listing
       // (the on-chain LibPrepayCleanup clear emits no cancel event).
-      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
@@ -3464,9 +4817,11 @@ export async function processLoanLogs(
           // subsequent Seaport fill would revert at the executor's
           // `getPrepayContext` check, but the indexed projection needs to mirror
           // the terminal state immediately. (A superseded loan's own terminal
-          // handler — LoanRepaid/SwapToRepayExecuted — also deletes the listing;
-          // both are idempotent.)
-          await _deletePrepayListing(env, chainId, loanId);
+          // handler — LoanRepaid/SwapToRepayExecuted — also runs this cleanup;
+          // both are idempotent.) The loan CLOSED, so the shared close-out
+          // cleanup applies: a matched-out loan holding a committed
+          // swap-to-repay intent would otherwise keep publishing it.
+          await _clearClosedLoanSideTables(env, chainId, loanId);
         } else {
           // Non-terminal-from-a-match: a genuine PARTIAL match (chain status
           // still `Active`, principal > 0) or a partial rescue of a
@@ -3812,13 +5167,11 @@ export async function processLoanLogs(
     } else if (log.eventName === 'PrepayListingCanceled') {
       // Cancel (borrower / grace-expired) terminates the listing
       // WITHOUT closing the loan — loan stays Active until a
-      // separate terminal (repay / default / liquidation) fires.
+      // separate terminal (repay / default / liquidation) fires. LISTING
+      // ONLY, therefore — a committed swap-to-repay intent on a loan that
+      // is still running must survive this.
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
-        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      await _deletePrepayListing(env, chainId, loanId);
     } else if (log.eventName === 'PrepayCollateralSaleSettled') {
       // Successful Seaport fill: loan went Active → Settled
       // ATOMICALLY in `PrepayListingFacet.executorFinalizePrepaySale`
@@ -3829,11 +5182,9 @@ export async function processLoanLogs(
       // would treat the loan as forever-claimable. Codex P1
       // round-1 on PR #304.
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
-        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .run();
+      // A CLOSE, not a listing end — the loan goes Active→Settled in this
+      // same call — so the shared close-out cleanup applies.
+      await _clearClosedLoanSideTables(env, chainId, loanId);
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       const r = await env.DB.prepare(
         `UPDATE loans
@@ -4017,12 +5368,22 @@ export async function processLoanLogs(
       `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
-      .bind(terminal, Number(blockNumber), now, now, chainId, loanId)
+      .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
       .run();
-    if ((r.meta?.changes ?? 0) > 0) {
-      statusUpdates++;
-      await _deletePrepayListing(env, chainId, loanId);
-    }
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    // CLEANUP RUNS WHETHER OR NOT THE UPDATE CHANGED A ROW (#2190 r4
+    // `4007191882`). Guarding it on `changes > 0` made it unreachable on a
+    // REPLAY: an isolate that dies after this UPDATE commits but before the
+    // cleanup leaves the cursor unadvanced, so the event is re-processed —
+    // and the re-processed UPDATE matches zero rows, because the row is
+    // already terminal, so the guard skipped the cleanup permanently and
+    // the closed loan kept publishing a stale listing or swap action.
+    //
+    // Unconditional is also the rule the repair path settled on for the
+    // same reason: what licenses clearing the side tables is the loan being
+    // closed, not this particular writer having been the one to close it.
+    // The deletes are idempotent.
+    await _clearClosedLoanSideTables(env, chainId, loanId);
   }
 
   // Rate Desk (#1129) — propagate the sale-vehicle flag from the initiating
@@ -4104,15 +5465,32 @@ export async function recordActivityEvents(
   }
   const creatorByOfferId = new Map<number, string>();
   if (consumedOfferIds.size > 0) {
-    const placeholders = Array.from(consumedOfferIds, () => '?').join(',');
-    const rows = await env.DB.prepare(
-      `SELECT offer_id, creator FROM offers
-        WHERE chain_id = ? AND offer_id IN (${placeholders})`,
-    )
-      .bind(chainId, ...Array.from(consumedOfferIds))
-      .all<{ offer_id: number; creator: string }>();
-    for (const r of rows.results ?? []) {
-      creatorByOfferId.set(r.offer_id, r.creator);
+    // CHUNKED (#2234). The comment above says "one batched lookup … so the
+    // per-row D1 round-trips stay bounded", and that was true of the
+    // round-trips and not of the BINDS: this set is as large as the number of
+    // `OfferConsumedBySale` events in the ingest batch, which nothing here
+    // caps, and D1 refuses a statement carrying more than 100 bound
+    // parameters. A busy range would have thrown, and — this being inside the
+    // batch that writes the activity rows — taken the whole batch with it.
+    //
+    // Still one subrequest: `batch()` costs one however many statements it
+    // carries, so the "one batched lookup" the comment promises survives
+    // becoming several statements.
+    const chunks = chunkD1InList(Array.from(consumedOfferIds), {
+      before: [chainId],
+    });
+    const parts = await env.DB.batch<{ offer_id: number; creator: string }>(
+      chunks.map((c) =>
+        env.DB.prepare(
+          `SELECT offer_id, creator FROM offers
+        WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+        ).bind(...c.binds),
+      ),
+    );
+    for (const part of parts) {
+      for (const r of part.results ?? []) {
+        creatorByOfferId.set(r.offer_id, r.creator);
+      }
     }
   }
 
@@ -4348,6 +5726,218 @@ async function _deletePrepayListing(
   )
     .bind(chainId, loanId)
     .run();
+}
+
+/// @dev T-090 v1.1 Sub 2 — drop a loan's committed swap-to-repay intent.
+///      Extracted from the three intent handlers that each carried this
+///      DELETE inline, so the close-out helper below can reuse it rather
+///      than growing a fourth copy.
+async function _deleteSwapToRepayIntent(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+  )
+    .bind(chainId, loanId)
+    .run();
+}
+
+/// @dev EVERY side-table row that represents a LIVE ACTION on a loan and
+///      must not outlive it. Call this wherever a loan CLOSES — not
+///      wherever a listing happens to end.
+///
+///      This exists because #2190 found the same gap twice in consecutive
+///      review rounds: the #2101 reconciliation pass repaired a loan row
+///      to terminal and left first a live prepay listing and then a live
+///      swap-to-repay intent behind it, each of which the app goes on
+///      publishing with an action attached (`/loans/:id/prepayListing`,
+///      and `handleLoanById`'s `swapToRepayIntent` block). Patching the
+///      second table the way the first was patched would have left the
+///      third to be found the same way, so the repair no longer keeps its
+///      own list of tables: it calls THIS, and a table added here reaches
+///      it with no change on that side.
+///
+///      The distinction it encodes is real and not cosmetic —
+///      `LoanExtended` and `PrepayListingCanceled` end a LISTING without
+///      closing the loan, so they keep calling `_deletePrepayListing`
+///      alone and must not acquire the intent delete.
+///
+///      Idempotent, and deliberately safe to run more than once per loan:
+///      a close-out tx normally also emits the intent's own
+///      `SwapToRepayIntentFilled` / `ForceCancelled`, whose handlers delete
+///      the same row. One caution for a future editor — the
+///      `SwapToRepayIntentFilled` handler reads `committed_by` off that row
+///      BEFORE deleting it (the #421 attribution), so this helper must
+///      never be moved ahead of that read. Today no contract path emits a
+///      loan-terminal event in the same tx as an intent fill (the fill's
+///      own transition surfaces as `LoanStatusChanged`, which is applied
+///      after the log loop), so the order cannot arise; if one ever does,
+///      pre-index the lookup the way `loanDetailsByLoanId` is pre-indexed
+///      rather than reordering the cleanup.
+///      The LIST is exposed separately from the EXECUTION
+///      (`_closedLoanSideTableStatements`) so a caller that must close the
+///      loan and clear its side tables ATOMICALLY can fold these statements
+///      into its own `batch` instead of running them afterwards. The
+///      reconciliation pass does exactly that (#2190 round 3): a repair that
+///      committed the status and then died would leave a row that is no
+///      longer live, so nothing would ever re-examine it, and the listing or
+///      intent would stay published forever. Keeping the list here and the
+///      transaction at the call site is what lets both be true — one place
+///      names the tables, and each caller decides what it must be atomic
+///      with.
+export function _closedLoanSideTableStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  /**
+   * Whether `loan_reconcile_quarantine` exists on this database.
+   *
+   * REQUIRED, not defaulted (#2213 r2 `4011776381`). These statements go into
+   * a D1 batch, and D1 rejects the WHOLE batch if one names a missing table —
+   * which during the deploy window (#2214) would throw out of
+   * `processLoanLogs` and stop the chain cursor advancing, so the chain would
+   * index nothing until the migration landed. That is far worse than the
+   * defect the quarantine fixes, and it is what my own round-1 fix introduced
+   * by adding an unguarded reference to a shared batch.
+   *
+   * A default of `true` would put the hazard one forgotten argument away; a
+   * default of `false` would silently skip the release. Making it explicit
+   * costs each caller one word and makes neither possible.
+   */
+  quarantineAvailable: boolean,
+): D1PreparedStatement[] {
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+    env.DB.prepare(
+      `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+  ];
+  // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
+  //
+  // Without this the release could only ever come from the reconciliation
+  // pass's own report — and a loan quarantined after a transient read, whose
+  // ordinary terminal event then arrives before the rotation revisits it,
+  // leaves the live set for good. The pass never selects it again, so no
+  // report can name it, and the mark sits there being reported stale forever.
+  // A mark that cannot be released is the mirror image of the defect the
+  // quarantine fixes.
+  //
+  // Here rather than in the pass because this is the list every close-out
+  // already shares — which is exactly why the list exists.
+  //
+  // Omitted entirely when the table is absent, rather than added and allowed
+  // to fail: there is no mark to release on a database that has no memory,
+  // and a batch naming a missing table takes the close-out down with it.
+  if (quarantineAvailable) {
+    // THROUGH THE SHARED BUILDER, so this release is disclosed like every
+    // other (#2231 r9 `4036242408`). It was a hand-written DELETE, and that
+    // is exactly how it came to be the one release path nothing announced:
+    // disclosure was added to the sweep and to the settle path as each was
+    // noticed, and nothing made a third site inherit it.
+    statements.push(quarantineReleaseStatement(env.DB, chainId, loanId));
+  }
+  return statements;
+}
+
+/**
+ * One probe for the WRITE side, matching the one the reminder lanes hold.
+ *
+ * Separate instance rather than a shared module-level cache: each is a cache
+ * of "this database has the table", and they are asked at different moments.
+ * Caching only a TRUE means they converge as soon as the migration lands.
+ */
+let quarantineAvailableForWrites = createQuarantineAvailability();
+
+/**
+ * Test seam — the probe latches on a TRUE and is otherwise unobservable.
+ *
+ * The calendar lane has carried `_resetQuarantineTableProbe` for its own
+ * probe since it grew one; this module needed the same and did not have it
+ * (#2213 r19). Without it a suite is order-dependent in the worst direction:
+ * one earlier case answering "the table is there" latches `present` for the
+ * whole file, so a later case that means to exercise the ABSENT path silently
+ * exercises the present one and passes for the wrong reason.
+ */
+export function _resetQuarantineWriteProbe(): void {
+  quarantineAvailableForWrites = createQuarantineAvailability();
+}
+
+async function _clearClosedLoanSideTables(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<void> {
+  const availability = await quarantineAvailableForWrites(env.DB as never);
+  const outcome = await env.DB.batch(
+    _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
+  );
+  // This batch can carry a quarantine release, so it reports one (#2231 r9
+  // `4036242408`). Nothing else observes it: the terminal sweep runs later
+  // and finds the marker already gone, and the settle path never sees this
+  // loan again because it has left the set the rotation selects from.
+  discloseQuarantineReleases(chainId, outcome, Math.floor(Date.now() / 1000), 'closed-out');
+  // NO FOLLOW-UP DELETE HERE, deliberately (#2213 r15 `4013952990`).
+  //
+  // r14 added one for the `'unknown'` case, and a single attempt in the same
+  // invocation is not a retry path: if it failed too, this loan was terminal
+  // by then and had left the set the reconciliation rotation selects from, so
+  // its row was held and reported stale forever. `releaseTerminalQuarantine`
+  // sweeps every held row whose loan is no longer live, on every pass, so a
+  // release missed for ANY reason is picked up — which covers this case
+  // without a second code path that has to be right.
+}
+
+/// The `*_current_owner` refresh a repair may fold into its own batch, for
+/// the sides whose holder the chain actually named (#2190 r7 `4008463632`).
+///
+/// AN ANSWER IS RECORDED; A NON-ANSWER CHANGES NOTHING. `resolveCurrentHolders`
+/// returns `null` both for a token that no longer exists and for a read that
+/// did not complete, and those two are not separable — the classifier that
+/// tried was deleted as a #2107 shape (`4008330661`). But only the ABSENCE was
+/// ever ambiguous: an address `ownerOf` returned at the pinned safe head
+/// infers nothing and can only replace a stale owner with a verified one.
+/// `9e5375efc` removed the whole write when it removed the classifier, which
+/// took the safe half with the unsafe one.
+///
+/// TWO LITERAL STATEMENTS rather than one interpolated on the side name. A
+/// `${side}_current_owner` template would be the third time dynamic SQL in
+/// this PR slipped past the `#1149` schema guard, which can only check column
+/// names it can read; raising that guard's skip pin to accommodate string
+/// building is how it stops checking anything.
+///
+/// Deliberately NOT gated on the repair's compare-and-set, for the same reason
+/// the side-table deletes are not: a chain-verified holder is the holder
+/// whoever closed the loan, whereas "we found this by checking" is true only if
+/// this pass was the one that did.
+export function _verifiedHolderStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  holders: { lender: string | null; borrower: string | null },
+  updatedAt: number,
+): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = [];
+  if (holders.lender) {
+    out.push(
+      env.DB.prepare(
+        `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(holders.lender, updatedAt, chainId, loanId),
+    );
+  }
+  if (holders.borrower) {
+    out.push(
+      env.DB.prepare(
+        `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      ).bind(holders.borrower, updatedAt, chainId, loanId),
+    );
+  }
+  return out;
 }
 
 /// Exported for `activityRefs.test.ts` only — it is not imported by any other

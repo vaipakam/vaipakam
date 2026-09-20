@@ -38,6 +38,10 @@
 
 import { clearLastError, readLastError } from '../diagnostics/lastError';
 import { announceErase } from './eraseBroadcast';
+// Moved to `lib/withTimeout` when the forced-close card needed the same
+// bound (round 52). Same implementation, same TimeoutError identity — the
+// `instanceof` checks below still work because there is only one class.
+import { TimeoutError, withTimeout } from './withTimeout';
 
 /**
  * Every prefix this app writes browser storage under.
@@ -1477,40 +1481,6 @@ export const DISCONNECT_TIMEOUT_MS = 10_000;
  * others.
  */
 export const PER_CONNECTOR_TIMEOUT_MS = 4_000;
-
-/**
- * Thrown by `withTimeout` when the WAIT expired, as opposed to the awaited
- * work rejecting on its own.
- *
- * The distinction is load-bearing (round 11 P2). Late cleanup exists for work
- * that is STILL RUNNING after we stopped waiting for it; a promise that
- * rejected promptly has finished, will write nothing more, and needs no
- * cleanup. Treating the two alike scheduled that cleanup immediately — and
- * since it now clears IndexedDB, it raced `eraseMyDataFully`'s own counted
- * clear and could empty the stores first, so the erasure reported zero
- * database records over records it had removed.
- */
-class TimeoutError extends Error {}
-
-/** Reject after `ms` if `promise` has not settled. */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new TimeoutError('timeout')),
-      ms,
-    );
-    promise.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(timer);
-        reject(e as Error);
-      },
-    );
-  });
-}
 
 /**
  * Counts how many connections have been ESTABLISHED, in a way no later write

@@ -111,11 +111,23 @@ interface ICrossChainMessageRecipient {
      *                      {ICrossChainMessenger.sendMessage}.
      * @param tokens        Tokens delivered with the message, now held by
      *                      this contract; empty for a data-only message.
+     * @param transportMessageId The transport's own id for this delivery
+     *                      (CCIP's `messageId`), passed through so a
+     *                      value-bearing recipient can stamp what it books
+     *                      with `keccak256(sourceChainId, transportMessageId)`
+     *                      — the ingress identity the #1566 custody design
+     *                      reconciles by (§5c: never an operator-supplied
+     *                      tuple). Zero for a transport that has none; the
+     *                      Diamond then allocates a per-source sequence
+     *                      inside its authenticated ingress. One interface
+     *                      version: the adapter and every recipient are
+     *                      upgraded together (#1566 closure 2 cutover PR 1).
      */
     function onCrossChainMessage(
         uint256 sourceChainId,
         address sourceSender,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
     ) external;
 }

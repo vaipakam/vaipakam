@@ -14,10 +14,22 @@
       "default": "./src/address.ts"
     },
     "./cronCadence": {
-   "types": "./src/cronCadence.ts",
-   "default": "./src/cronCadence.ts"
-  },
-  "./multicall": {
+      "types": "./src/cronCadence.ts",
+      "default": "./src/cronCadence.ts"
+    },
+    "./periodicEligibility": {
+      "types": "./src/periodicEligibility.ts",
+      "default": "./src/periodicEligibility.ts"
+    },
+    "./errorDescription": {
+      "types": "./src/errorDescription.ts",
+      "default": "./src/errorDescription.ts"
+    },
+    "./rpcIdentity": {
+      "types": "./src/rpcIdentity.ts",
+      "default": "./src/rpcIdentity.ts"
+    },
+    "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"
     },
@@ -56,6 +68,22 @@
     "./alertsMessage": {
       "types": "./src/alertsMessage.ts",
       "default": "./src/alertsMessage.ts"
+    },
+    "./notificationProvenance": {
+      "types": "./src/notificationProvenance.ts",
+      "default": "./src/notificationProvenance.ts"
+    },
+    "./contractRevert": {
+      "types": "./src/contractRevert.ts",
+      "default": "./src/contractRevert.ts"
+    },
+    "./d1Binds": {
+      "types": "./src/d1Binds.ts",
+      "default": "./src/d1Binds.ts"
+    },
+    "./d1Maintenance": {
+      "types": "./src/d1Maintenance.ts",
+      "default": "./src/d1Maintenance.ts"
     }
   },
   "scripts": {

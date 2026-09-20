@@ -2347,3 +2347,256 @@ a.item-row:hover {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* ─── Public transparency surfaces (#1959) ────────────────────────────
+   `/analytics` (`an-*`) and `/protocol-console` (`pc-*`).
+
+   Added in review round 2: both pages shipped referencing these class
+   names with nothing defining them, so every grid, banner and row
+   collapsed to a browser-default vertical stream. On these two pages in
+   particular that is not merely untidy — a counter loses its label's
+   association when the pairing is only visual, and a governance value
+   read against the wrong label is the failure the console is built to
+   avoid.
+
+   Composed from the same tokens as the rest of the app rather than
+   fresh colours, so both inherit theme changes automatically. */
+
+.an-page,
+.pc-page {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.an-head,
+.pc-head {
+  margin: 0 0 24px;
+}
+
+.an-head h1,
+.pc-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+
+.an-sub,
+.pc-sub {
+  color: var(--text-muted);
+  margin: 0 0 16px;
+  max-width: 68ch;
+}
+
+.an-refresh,
+.pc-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--taptarget);
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.an-refresh:hover,
+.pc-actions > button:hover {
+  background: var(--surface-hover);
+}
+
+/* Status banners. Both pages report an absence far more often than a
+   fault, so these read as information, not as an error. */
+.an-unreachable,
+.pc-unavailable,
+.pc-stale {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--text-body);
+  margin: 0 0 24px;
+  max-width: 72ch;
+}
+
+.an-section,
+.pc-section {
+  margin: 0 0 32px;
+}
+
+.an-section h2,
+.pc-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* auto-fit rather than a fixed column count: these counters are read on
+   phones as often as on a desktop, and a six-across grid squeezed into
+   360px is unreadable in a way a stacked one is not. */
+.an-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.an-grid-sub {
+  margin-top: 12px;
+}
+
+.an-stat {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.an-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+
+/* An unreported counter must not look like a measured one. The em dash
+   alone is too quiet next to a column of real figures. */
+.an-stat-value[data-reported='false'] {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.an-stat-label {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-top: 4px;
+}
+
+.an-stat-note {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+/* A caveat about what a figure above it counts. Muted rather than
+   faint: it qualifies a headline number, so it has to be readable —
+   this page's whole claim is that its figures can be checked, and a
+   caveat nobody reads is one that was not really made. */
+.an-note {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  margin: 10px 0 0;
+  max-width: 68ch;
+}
+
+.an-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0 0 16px;
+}
+
+.an-facts dt {
+  color: var(--text-muted);
+}
+
+.an-facts dd {
+  margin: 0;
+}
+
+.an-addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  /* A 42-character address must wrap rather than widen the page. */
+  word-break: break-all;
+}
+
+.an-caveat {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  max-width: 72ch;
+}
+
+/* The console's rows. A label and its value are laid out as one row so
+   the pairing survives every width — the console's whole claim is that
+   a number is shown against the right name. */
+.pc-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(120px, 1fr);
+  gap: 4px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pc-row-label {
+  color: var(--text-body);
+}
+
+.pc-row-value {
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+  text-align: right;
+}
+
+.pc-row-value[data-reported='false'] {
+  color: var(--text-faint);
+}
+
+.pc-row-note {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+
+.pc-row-hint {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  max-width: 72ch;
+}
+
+@media (max-width: 560px) {
+  /* Stacked, and the value left-aligns with its label — a right-aligned
+     value under its own label reads as belonging to the next row. */
+  .pc-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-row-value {
+    text-align: left;
+  }
+}
+
+/* The console's header actions: a refresh control and the link out to
+   the prose reference, on one row that wraps rather than overflows. */
+.pc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.pc-actions > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Where the values came from and when. Set quieter than the rows above
+   it — it is provenance for the figures, not another figure. */
+.pc-provenance {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  max-width: 72ch;
+}

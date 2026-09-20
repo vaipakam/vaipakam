@@ -38,11 +38,20 @@ Provisioned 2026-05-17:
 | `KEEPER_PRIVATE_KEY` | keeper | **on-chain signing key** (moves funds) | no |
 
 **Not migrated** — non-secret config stays in `wrangler.jsonc`
-`vars`: `TG_BOT_USERNAME`, `FRONTEND_ORIGIN`, `KEEPER_ENABLED`,
-`DIAG_SAMPLE_RATE`, `DIAG_RETENTION_DAYS`,
-`CANCELLED_OFFER_RETENTION_DAYS`, and the `LIQ_*` / `SPLIT_*` /
-`PARTIAL_LIQ_*` keeper tuning knobs. These are configuration, not
-secrets.
+`vars`: `TG_BOT_USERNAME`, `FRONTEND_ORIGIN`, `DIAG_SAMPLE_RATE`,
+`DIAG_RETENTION_DAYS`, `CANCELLED_OFFER_RETENTION_DAYS`, and the
+`LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` keeper tuning knobs. These are
+configuration, not secrets.
+
+**Also not migrated, but for the opposite reason** — the keeper's three
+arming flags (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
+`REWARD_COMMIT_ENABLED`) are per-Worker `secret_text` bindings, set with
+`wrangler secret put`. They stay out of the Secrets Store because they are
+operator switches rather than credentials, **not** because they are
+non-secret — `KEEPER_ENABLED` was listed in the paragraph above until
+#2223, which is the misclassification #1465 tracked. They are not entries
+in the `vars` block and must not be moved there; see
+`apps/keeper/wrangler.jsonc`'s `vars` comment for why.
 
 > **`BLOCKAID_API_KEY` — binding dropped (2026-05-17).** The
 > operator holds no Blockaid key, and ET-001 ([#32]) replaces the

@@ -1713,46 +1713,50 @@ phase_cf_app() {
   # rail and no config snapshot — silently. (#1958 Codex F4.)
   #
   # CUTOVER ADVISORY (#1854). This phase publishes the `vaipakam-app`
-  # Worker. Whether users can REACH what it publishes depends on two
-  # an operator-side fact no script can read from the repository: whether
-  # apps/www was built with VITE_APP_TARGET=app. (`app.vaipakam.com` IS
-  # bound now — that half is settled — but binding alone routes nobody:
-  # the marketing site decides where Launch App points.) While the flip
-  # is outstanding, every Launch App link still resolves to the legacy
-  # host, so a contract redeploy's new addresses reach this Worker and
-  # the repo but NOT the surface users are actually on. There is no
-  # second frontend to fall back on: the retired app's source was deleted
-  # with #1854, so `vaipakam-defi` CANNOT be rebuilt to carry the new
-  # addresses. Hence a banner rather than a silent publish — and an
-  # advisory rather than a hard stop, because blocking every contract
-  # deploy until the remaining blocker (the VPFI deposit anchor; #1960
-  # and #1961 are cleared, and #1959 blocks retiring the legacy host
-  # rather than the flip) clears would be a worse failure mode than an
-  # operator who has been told.
+  # Worker, and #1959 completed the cutover: the last two unported
+  # destinations were built here and `APP_TARGET` was flipped, so the
+  # marketing site's links resolve to `app.vaipakam.com`.
+  #
+  # The advisory stays, in a much narrower form, because the fact it
+  # guards is still one no script can read from the repository: the
+  # marketing site is a SEPARATE Worker with its own build, so a flip
+  # committed in the source reaches users only once apps/www has been
+  # rebuilt and deployed with it. A stale `vaipakam-www` build keeps
+  # sending people to the legacy host no matter what this repository
+  # says, and there is no second frontend to fall back on — the retired
+  # app's source was deleted with #1854, so `vaipakam-defi` CANNOT be
+  # rebuilt to carry new addresses.
+  #
+  # An advisory rather than a hard stop: blocking every contract deploy
+  # on a state this script cannot verify is a worse failure mode than an
+  # operator who has been told what to check.
   cat >&2 <<'ADVISORY'
 
   ─────────────────────────────────────────────────────────────────────
-  NOTE — check the app cutover before trusting this deploy (#1854)
+  NOTE — confirm the marketing site is serving the cutover (#1854)
 
-  This publishes the `vaipakam-app` Worker. `app.vaipakam.com` IS bound
-  to it now, but that alone does not route users here: if apps/www was
-  not built with VITE_APP_TARGET=app, users are still being sent to the
-  LEGACY host and will not see any contract addresses this run changed.
-  As of 2026-09-07 APP_TARGET is still `legacy`, so this warning is
-  LIVE — check the cutover checklist in apps/www/src/lib/appUrl.ts.
+  This publishes the `vaipakam-app` Worker. `app.vaipakam.com` is bound
+  to it, and since #1959 the repository's APP_TARGET points here, so a
+  current apps/www build sends users to this Worker.
 
-  The legacy frontend cannot be rebuilt to carry them — its source was
-  deleted with #1854. Until the cutover completes, treat an
-  address-changing deploy as reaching the repository and this Worker
-  only.
+  What this script cannot check is whether the DEPLOYED marketing site
+  is such a build. apps/www is a separate Worker: if `vaipakam-www` is
+  still serving a build made before the flip, users are being sent to
+  the LEGACY host and will not see any contract addresses this run
+  changed. The legacy frontend cannot be rebuilt to carry them — its
+  code was deleted with #1854.
 
-  Cutover blocker: the VPFI deposit anchor on the app's Vpfi page,
-  which the marketing CTA's landing position depends on. (#1961 ToS
-  gate and #1960 Data Rights are both CLEARED. #1959 — Analytics and
-  Protocol Console not ported — does NOT block APP_TARGET; those links
-  bypass it. It does block retiring defi.vaipakam.com.)
-  Full sequence: the cutover checklist in apps/www/src/lib/appUrl.ts and
-  the hostname map in docs/ops/DeploymentRunbook.md.
+  Check: load the marketing site and confirm a tool link (Analytics,
+  NFT Verifier, Protocol Console) points at app.vaipakam.com rather
+  than defi.vaipakam.com. If it does not, redeploy apps/www.
+
+  Still deliberately on the legacy host: the /recover guide links,
+  which wait on the legacy host's in-flight recovery attempts draining
+  rather than on any route existing here.
+
+  Full sequence: the notes beside APP_TARGET in
+  apps/www/src/lib/appUrl.ts and the hostname map in
+  docs/ops/DeploymentRunbook.md.
   ─────────────────────────────────────────────────────────────────────
 
 ADVISORY

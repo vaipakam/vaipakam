@@ -3,6 +3,10 @@ pragma solidity ^0.8.29;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
+/// @dev #1566 closure 2 cutover PR 1 — the adapter's wire generation; the
+///      refresh script compares the deployed probe against this constant.
+uint256 constant CCIP_MESSENGER_WIRE_GENERATION = 2;
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -623,7 +627,7 @@ contract CcipMessenger is
         //    trusted) but the {ICrossChainMessenger} contract still
         //    requires it to treat the payload as advisory.
         ICrossChainMessageRecipient(handler).onCrossChainMessage(
-            sourceChainId, sourceSender, payload, tokens
+            sourceChainId, sourceSender, payload, tokens, message.messageId
         );
 
         emit MessageReceived(
@@ -908,6 +912,18 @@ contract CcipMessenger is
     }
 
     // ─── UUPS / Ownable MRO ─────────────────────────────────────────────────
+
+    /// @notice #1566 closure 2 cutover PR 1 — the DURABLE upgrade probe for
+    ///         the adapter, the same shape the standalone receivers carry:
+    ///         the facet-refresh script upgrades this proxy when the
+    ///         deployed generation reads below the tree's. Generation 2
+    ///         delivers `transportMessageId` to every recipient; a deployed
+    ///         adapter without this getter (generation 1) reads as 0 and is
+    ///         upgraded in the same run as the recipients, so the port is
+    ///         one interface version end to end.
+    function WIRE_GENERATION() external pure returns (uint256) {
+        return CCIP_MESSENGER_WIRE_GENERATION;
+    }
 
     /// @inheritdoc UUPSUpgradeable
     function _authorizeUpgrade(

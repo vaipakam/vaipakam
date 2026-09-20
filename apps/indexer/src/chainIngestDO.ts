@@ -37,9 +37,22 @@
  * (bounded), and `scanRunning` is always cleared in `finally`.
  */
 
-import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
+import { resolveEnv, getChainConfigs, WORKER_NAME, type WorkerEnv } from './env';
+import {
+  hasD1Binding,
+  maintenanceSkipNotice,
+  resolveD1Binding,
+} from '@vaipakam/lib/d1Maintenance';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  meterD1,
+  meterEnv,
+  reportSpend,
+} from './subrequestBudget';
 import type { PushHints } from './pushHints';
 import {
+  RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
   isRetryableScanSkip,
   runChainIndexerForChain,
@@ -297,10 +310,18 @@ export function invalidationKeysFromResult(
   // advance. They change what a party is owed/holds, so they ride the same
   // coarse key; previously a scan with ONLY these events broadcast nothing
   // beyond `activity.appended`.
+  // `reconciledLoans` (#2101) = a loan row terminalized from the CHAIN
+  // because its event was missed for good. It rides the same coarse key and
+  // must: the repair has no accompanying log, so without it a scan whose
+  // only loan change was a repair broadcast nothing and every open client
+  // kept presenting the ghost as an open position until its next poll
+  // (#2190 r2 `4005986348`). It is the case where the push matters most —
+  // the correction is precisely the news.
   if (
     result.loanStatusUpdates > 0 ||
     result.loanDetailRefreshes > 0 ||
-    (result.loanEntitlementUpdates ?? 0) > 0
+    (result.loanEntitlementUpdates ?? 0) > 0 ||
+    (result.reconciledLoans ?? 0) > 0
   ) {
     keys.push('loan.updated');
   }
@@ -337,6 +358,22 @@ export class ChainIngestDO {
    * persisted — persistence is what made the old time-lease unsafe.
    */
   private scanRunning = false;
+
+  /**
+   * The D1 handle for this object, through the maintenance seam (#2239).
+   *
+   * A Durable Object is the entry point the quiescence discussion kept
+   * tripping over: `alarm()` re-arms itself, so an alarm queued before a
+   * maintenance deploy keeps firing after `fetch()` and `scheduled()` are both
+   * closed, and no route-level or schedule-level gate sees it. It reaches the
+   * database the same way everything else does, so it is held off the same
+   * way — by there being no binding to hold, and by this seam turning that
+   * absence into a refusal that names itself instead of a `Cannot read
+   * properties of undefined`.
+   */
+  private get db(): D1Database {
+    return resolveD1Binding(this.env.DB, WORKER_NAME);
+  }
 
   constructor(
     private readonly state: DurableObjectState,
@@ -413,10 +450,66 @@ export class ChainIngestDO {
 
   /** One catch-up iteration: scan once, then re-arm or finish. */
   async alarm(): Promise<void> {
+    // #2239 — decline, and do NOT re-arm, when this build has no D1 binding.
+    //
+    // This is the entry point the quiescence discussion kept tripping over: an
+    // alarm re-arms itself, so one queued before a maintenance deploy keeps
+    // firing after both `fetch()` and `scheduled()` are closed. Returning
+    // WITHOUT re-arming is the deliberate half — the scan cannot make progress
+    // without a database, and a re-arm would turn a maintenance window into a
+    // retry loop billing DO storage rows every few seconds to discover the
+    // same refusal. The cron backstop restarts the loop once a build with a
+    // binding is deployed, which is exactly what it is for.
+    if (!hasD1Binding(this.env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'the ingest alarm'));
+      // CLOSE THE SOCKETS BEFORE RETURNING (#2252 r9 P2). Returning alone
+      // leaves every hibernatable socket open and auto-answering `ping`, so a
+      // connected client keeps its push rail marked live: `IndexerPushSync`
+      // clears that flag only from `onclose`. The app would go on presenting a
+      // STOPPED ingest rail as healthy — a surface asserting a freshness it no
+      // longer has, which is the exact failure this whole change exists to
+      // prevent, arriving through the one door the entry-point refusals do not
+      // cover.
+      //
+      // It is a LATENCY fix, not the only line of defence, and #2252 r11 is
+      // why that distinction is written down: `railHealth` demotes anyway once
+      // both the last cursor-carrying frame and the last cursor ADVANCE fall
+      // outside `cadenceSec × 1.5` (450s on the 5-minute DO cadence), and an
+      // auto-answered `ping` refreshes neither. So this closes the window
+      // where an alarm is pending; a DO sitting idle keeps its sockets until
+      // the client's own check demotes them, and that residual is stated in
+      // the scheduled handler rather than chased with a wake.
+      //
+      // `1012` is the registered "service restart" close code, which is what
+      // this is: the client's own reconnect/polling fallback is the correct
+      // response and needs no special casing.
+      for (const ws of this.state.getWebSockets()) {
+        try {
+          ws.close(1012, 'maintenance: ingest paused');
+        } catch {
+          // Already closing — nothing to do, same as `webSocketClose`.
+        }
+      }
+      return;
+    }
     // Synchronously (before any await) mark a scan live, so any concurrent
     // `fetch()` trigger sees `scanRunning` and won't arm a second scan. Cleared
     // in `finally` no matter how we exit, so the DO can never wedge "running".
     this.scanRunning = true;
+    // THIS INVOCATION'S COUNTER (#2221), created before anything can send.
+    // At the TOP of the alarm rather than inside the scan, because the scan is
+    // not the last thing that spends here: the post-scan broadcast reads the
+    // cursor, and #2227 r2 (`4033723744`) found that read outside the count —
+    // so a pass finishing at the ceiling could issue an unannounced further
+    // request, which is the failure this counter exists to see.
+    const budget = createBudget(
+      MAX_SUBREQUESTS_PER_INVOCATION,
+      'chain ingest DO alarm',
+    );
+    // Metered ONCE for the whole alarm, so everything downstream — the scan
+    // AND the broadcast — draws on it.
+    const db = meterD1(this.db, budget);
     try {
       // Honor the rollout gate INSIDE the alarm (Codex #764 round 5). If an
       // operator turns `CHAIN_INGEST_VIA_DO` off after it was on, `scheduled()`
@@ -442,14 +535,28 @@ export class ChainIngestDO {
       let headBlock: bigint | undefined;
       let retryableFailure = false;
       try {
-        const resolved = await resolveEnv(this.env);
+        // The Secrets Store reads at the top of the alarm are counted too —
+        // the scan is not the only thing that spends here.
+        const resolved = meterEnv(await resolveEnv(this.env, budget), budget);
         const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
         if (!chain) {
           // Chain not configured here (no RPC / no deployment) — nothing to do.
           await this.clearLoopState();
           return;
         }
-        const result = await runChainIndexerForChain(resolved, chain);
+        // DO PATH — this scan owns its invocation's subrequest budget: the
+        // cron's other passes (`captureBackingSnapshot`,
+        // `sweepUnpublishedListings`) run in the SCHEDULED invocation, not
+        // this one. So the #2101 repair gets the roomier allowance and its
+        // rotation turns faster here than on the legacy inline path. That
+        // difference is a property of the deployment's ingest config, not a
+        // hidden tuning knob.
+        const result = await runChainIndexerForChain(
+          resolved,
+          chain,
+          RECONCILE_BUDGET_OWN_INVOCATION,
+          budget,
+        );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
@@ -467,7 +574,7 @@ export class ChainIngestDO {
         // a recovery broadcast even when this pass's counts are empty.
         const pendingBroadcast =
           (await this.state.storage.get<boolean>('pendingBroadcast')) ?? false;
-        await this.broadcast(chainId, result, pendingBroadcast);
+        await this.broadcast(chainId, result, db, pendingBroadcast);
         if (pendingBroadcast) {
           await this.state.storage.delete('pendingBroadcast');
         }
@@ -510,6 +617,11 @@ export class ChainIngestDO {
       }
     } finally {
       this.scanRunning = false;
+      // THE ALARM'S EXIT is the honest boundary for this invocation's figure
+      // (#2227 r2 `4033723744`). The chain pass reports at its own exit too,
+      // and that reading is true when it is printed; this one is the whole
+      // alarm's, including the post-scan broadcast.
+      reportSpend(budget, 'alarm exit');
     }
   }
 
@@ -557,10 +669,16 @@ export class ChainIngestDO {
     // stale cursor with a live socket must read as "down", design §4.1.1).
     // Best-effort: a failed read reports null, which clients treat as
     // "unknown" → they stay in the polling fallback posture.
+    // DELIBERATELY UNCOUNTED, and said rather than left to be noticed. This is
+    // the DO's `fetch()` — a socket handshake, a DIFFERENT invocation from the
+    // alarm with its own allowance, so there is no alarm counter to draw on
+    // and reaching for one would attribute a handshake's read to a scan. The
+    // alarm's own reads all go through its metered handle (#2227 r2
+    // `4033723744`); this is the one place `this.db` (the unmetered seam handle) is still correct.
     let cursor: { lastBlock: number; updatedAt: number } | null = null;
     if (ingestActive && chainId !== null) {
       try {
-        const row = await this.env.DB.prepare(
+        const row = await this.db.prepare(
           `SELECT last_block, updated_at FROM indexer_cursor
            WHERE chain_id = ? AND kind = 'diamond'`,
         )
@@ -604,6 +722,15 @@ export class ChainIngestDO {
   private async broadcast(
     chainId: number,
     result: ChainIndexerResult,
+    /**
+     * The alarm's METERED D1 handle (#2227 r2 `4033723744`).
+     *
+     * Taken as an argument rather than reached for on `this.env`, because
+     * `this.env` holds the raw binding and has no invocation attached to it —
+     * the counter belongs to one alarm, and reaching past it here is exactly
+     * how this read came to be outside the count.
+     */
+    db: D1Database,
     recoverPending = false,
   ): Promise<void> {
     const sockets = this.state.getWebSockets();
@@ -647,10 +774,11 @@ export class ChainIngestDO {
     // failed cursor read) sends no heartbeat at all.
     if (!isRetryableScanSkip(result.skipped)) {
       try {
-        const row = await this.env.DB.prepare(
-          `SELECT last_block, updated_at FROM indexer_cursor
+        const row = await db
+          .prepare(
+            `SELECT last_block, updated_at FROM indexer_cursor
            WHERE chain_id = ? AND kind = 'diamond'`,
-        )
+          )
           .bind(chainId)
           .first<{ last_block: number; updated_at: number }>();
         if (row) {

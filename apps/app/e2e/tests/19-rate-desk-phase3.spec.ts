@@ -48,6 +48,7 @@ import {
   forkChain,
   pub,
   walletFor,
+  confirm,
 } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import {
@@ -97,7 +98,7 @@ async function fundBorrowerMusdc(decimals: number): Promise<void> {
     account,
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash });
+  await confirm(hash, 'mint (rate-desk seeding)');
 }
 
 /** `OfferMatchFacet.previewMatch(L, B)` — the contract's own verdict

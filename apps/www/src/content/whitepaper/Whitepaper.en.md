@@ -1515,11 +1515,10 @@ the transparency surfaces. It loads no wallet context, no active-chain state, an
 lookups; any "verify on chain" affordance hands off to the connected app's public transparency
 route. The **connected app** hosts wallet-connected actions — dashboard, offer
 book, offer creation, loan details, claim center, activity, VPFI vault, rewards, allowances, and
-alerts — plus public-read shells that work without connecting a wallet. Those read-only shells are
-currently split across two deployments while the connected app completes a move to its final
-hostname: the NFT verifier ships with the app, while analytics and the protocol console are still
-served from the surface the app is replacing. Every link the marketing site emits resolves to
-whichever deployment actually serves the destination, so the split is invisible in use. The app ships in ten locales with a Basic / Advanced mode toggle that controls
+alerts — plus public-read shells that work without connecting a wallet. Those read-only shells —
+the NFT verifier, the analytics dashboard and the protocol console — all now ship with the
+connected app on its final hostname; the split across two deployments that this section previously
+described is finished, and every link the marketing site emits resolves there. The app ships in ten locales with a Basic / Advanced mode toggle that controls
 visibility and density, never policy. The technical whitepaper itself is maintained in English only;
 long-form legal and guide content shows a clear English-only notice in other locales until locale-matched source text exists.
 
@@ -1568,20 +1567,25 @@ log is user-downloadable and user-clearable.
 
 ### 17.4 Transparency Surfaces
 
-- **Public analytics dashboard.** No wallet required. A combined all-chains headline row (TVL with
-  24h/7d change, active loans, lifetime volume and interest, NFTs rented) sits above chain-specific
-  drill-downs behind a visible chain selector. Every metric derives from on-chain contract state or
-  raw event logs — no PII and no off-chain warehousing — and each important number is traceable back
-  to contract view calls, event logs, or explorer links, with CSV / JSON exports stamped with
-  snapshot timestamp, contract addresses, and block number for verifiable provenance.
+- **Public analytics dashboard.** No wallet required. What ships today reports the deployment's
+  loan and offer counts for the chain being read, broken out by state, with every total reconciling
+  against the categories shown beside it, each figure carrying the age of the data behind it, and
+  the protocol's contract address named with a link to a public explorer. A counter the source did
+  not report is shown as not reported rather than as zero. Every metric derives from on-chain
+  contract state or raw event logs — no PII and no off-chain warehousing. A combined all-chains
+  headline row (TVL with 24h/7d change, lifetime volume and interest, NFTs rented), a chain
+  selector, and CSV / JSON exports stamped with snapshot timestamp, contract addresses and block
+  number are **planned and not yet shipped**.
 - **NFT verifier.** A public page where anyone — including a prospective secondary-market buyer —
   can check a position NFT: valid-live versus burned versus never-minted (with a chain-specific
   explanation when the token exists on a different chain), the position's side and terms, and the
   settlement-on-default caveat for in-kind positions.
 - **Protocol console.** A read surface for live protocol configuration — fees, thresholds, tier
   tables, kill-switch states — read from the contracts' bundled config views rather than hardcoded
-  copy, so a governance change appears on next page load. Admin cards compose Safe transactions
-  rather than signing from the app; its public documentation lives on the marketing site.
+  copy, so a governance change appears on next page load. It is **read-only**: the page offers no
+  control that changes protocol state, and every parameter change is a governance action taken
+  elsewhere. Admin cards that compose Safe transactions are **planned and not yet shipped**. Its
+  public documentation lives on the marketing site.
 - **Data-freshness indicators.** A top-bar freshness badge compares the chain's safe head against
   the freshest block reached by the indexer or the page's own RPC tail scan, distinguishing `Live`,
   `Live updating`, `Catching up`, `Behind`, and direct-RPC fallback states, with a per-lane operator

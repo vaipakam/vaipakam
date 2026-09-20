@@ -14,6 +14,8 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
@@ -108,6 +110,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
+    }
+
+    /// @dev The live pause epoch, as the deploy tooling reads it.
+    function _pauseEpoch() internal view returns (uint64 transitions) {
+        (,,, transitions) =
+            LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -231,6 +239,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     function testFundingNeedEqualsCappedPayoutPlusEarmarkUnderLoanSideCap()
         public
     {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
         assertGt(recycled5, 0, "fixture: the armed day has a recycled component");
@@ -317,7 +326,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
         assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
         uint256 perEntry = needLiveOnly - earmark;
-        (, uint256 userLegsLive, uint256 treasuryLegsLive) =
+        (, uint256 userLegsLive, uint256 treasuryLegsLive, ) =
             _lens().getUserArmedFreshNeedWithLegs(alice);
 
         // An identical sibling, FORFEITED. Its value still has to be funded —
@@ -330,7 +339,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // leg. The combined total alone is unchanged if the preview ignored
         // the `forfeited` bit and priced both siblings as live `userLegs`, so
         // the arithmetic could be satisfied by a classification regression.
-        (, uint256 userLegsAfter, uint256 treasuryLegsAfter) =
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter, ) =
             _lens().getUserArmedFreshNeedWithLegs(alice);
         assertEq(
             treasuryLegsLive,
@@ -383,6 +392,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     /// reverts on an empty balance — and hoisting that read into a local puts
     /// this frame one slot over the viaIR budget.
     function testLoanSideCapMakesAClaimAffordableThatRawWouldNotFit() public {
+        _fundCanonical();
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
         _mut().setRecycleBucketRaw(1_000_000 ether);
         _mut().setStrandedRecoveryRaw(address(0xD1), 1, 7_000 ether, 1, 4);
@@ -433,6 +443,26 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 loanSideRewardCapOpen: uint128(cap)
             })
         );
+    }
+
+    /// @dev #1566 slice 4 PR B — a canonical chain prices and pays its fresh
+    ///      side out of what was FUNDED into the custody holder (delivered
+    ///      bound = received − paid). The suite's setUp leaves the chain
+    ///      canonical and unfunded so the role-transition and mirror tests
+    ///      keep their fixtures; the canonical claim / sweep tests call this
+    ///      first. Per test, so the freeze it arms touches nothing else.
+    function _fundCanonical() internal {
+        activateRewardCustodyForTest(address(vpfi), 10_000_000 ether);
+    }
+
+    /// @dev #1566 slice 4 PR B — the canonical column's PRE-ACTIVATION
+    ///      form: the delivered bound reads the ledger (`received − paid`)
+    ///      while backing is still the Diamond's own balance. The tests that
+    ///      probe that pairing — backing dips, the funding-need earmark, the
+    ///      dry-run reservations — give the ledger headroom raw, exactly as
+    ///      the mirror fixtures do, and stay unactivated.
+    function _canonicalLedgerRaw() internal {
+        _mut().setArmedFreshLedgerRaw(10_000_000 ether, 0);
     }
 
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
@@ -494,6 +524,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // ─── 1. Armed claim splits + consumes ────────────────────────────────────
 
     function testArmedClaimSplitsFreshAndRecycled() public {
+        _fundCanonical();
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
         assertGt(recycled5, 0, "armed day carries a recycled term");
 
@@ -536,13 +567,14 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
-    /// @dev #1434 P1-b (Codex #1699 r5 P2, reshaped by r18) — the mirror
-    ///      bound is charged by the ARMED fresh that actually moved, never
-    ///      by the unarmed (legacy) fresh. Under the engine the two legs
-    ///      settle in separate chunks, so the property is now directly
-    ///      observable per chunk instead of inferred from a pro-rata of a
-    ///      clamped aggregate: the legacy chunk charges NOTHING, and the
-    ///      armed chunk charges exactly its own credited fresh.
+    /// @dev #1566 closure 2 (re-pointing #1434 P1-b / Codex #1699 r5 P2) —
+    ///      the mirror bound is charged by the FRESH that actually moved,
+    ///      legacy and armed alike. The P1-b version pinned "the legacy chunk
+    ///      charges NOTHING"; that was the closure-2 defect (a legacy
+    ///      forfeit spent delivered backing without being charged). Under
+    ///      the engine the two legs still settle in separate chunks, so the
+    ///      property stays observable per chunk: each charges exactly its
+    ///      own credited fresh (no recycled in this fixture's legacy leg).
     function testP1bForfeitSweepChargesArmedPortionOfWhatItSpent() public {
         // Arm + finalize while still CANONICAL — finalization is Base-only.
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
@@ -561,15 +593,16 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setLoanActiveLenderEntryId(77, id);
         _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
 
-        // Chunk 1: the LEGACY leg settles and stamps the cursor. Pre-arming
-        // fresh was never delivered, so it must charge the bound NOTHING.
+        // Chunk 1: the LEGACY leg settles and stamps the cursor, and charges
+        // the bound by exactly what it credited (#1566 closure 2).
         vm.prank(makeAddr("keeper"));
         uint256 legacySwept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(legacySwept, 0, "LIVE: the legacy leg settles");
+        uint256 paidAfterLegacy = _mut().getArmedFreshPaidRaw();
         assertEq(
-            _mut().getArmedFreshPaidRaw(),
-            0,
-            "the unarmed leg never charges the delivered bound"
+            paidAfterLegacy,
+            legacySwept,
+            "the legacy leg charges the delivered bound by what it credited"
         );
         assertFalse(
             _mut().getRewardEntryProcessedRaw(id),
@@ -581,10 +614,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
         vm.prank(makeAddr("keeper"));
         uint256 armedSwept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(armedSwept, 0, "LIVE: the armed day settles");
-        uint256 paid = _mut().getArmedFreshPaidRaw();
-        assertGt(paid, 0, "the armed chunk charges the bound");
+        uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidAfterLegacy;
+        assertGt(armedCharge, 0, "the armed chunk charges the bound");
         assertLe(
-            paid,
+            armedCharge,
             armedSwept,
             "and by no more than what that chunk actually moved"
         );
@@ -669,7 +702,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (, uint256 beforeSeed) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(beforeSeed, 1_000 ether, "LIVE: unseeded reads fully available");
 
-        _rep().seedArmedFreshPaid(400 ether);
+        AdminFacet(address(diamond)).pause(); // the seed is bound to the manual pause (Codex #2158 r29 P1)
+        _rep().seedArmedFreshPaid(400 ether, _pauseEpoch());
 
         (uint256 paid, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(paid, 400 ether, "the seed lands on the paid side");
@@ -677,7 +711,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // One-shot: a second call must refuse rather than add again.
         vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        _rep().seedArmedFreshPaid(1 ether);
+        _rep().seedArmedFreshPaid(1 ether, _pauseEpoch());
 
         (, uint256 after_) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(after_, 600 ether, "a refused re-seed changes nothing");
@@ -704,12 +738,15 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
 
         // Measure the UNCLAMPED armed charge first (both chunks, abundant).
+        // #1566 closure 2 — the legacy chunk charges the bound too now, so
+        // the ARMED chunk's nominal charge is the delta across it.
         uint256 snap = vm.snapshotState();
         vm.prank(makeAddr("keeper"));
         _facet().sweepForfeitedInteractionRewards(77);
+        uint256 paidLegacyOnly = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
         uint256 full = _facet().sweepForfeitedInteractionRewards(77);
-        uint256 nominalArmed = _mut().getArmedFreshPaidRaw();
+        uint256 nominalArmed = _mut().getArmedFreshPaidRaw() - paidLegacyOnly;
         vm.revertToState(snap);
         assertGt(full, 0, "LIVE: the armed day genuinely sweeps");
         assertGt(nominalArmed, 0, "LIVE: and it carries an armed charge");
@@ -725,12 +762,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // The armed chunk still settles — the cap trim is terminal, not a
         // wedge — and charges the bound by the truncated figure only.
+        uint256 paidBefore = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(swept, 0, "a cap-truncated forfeit still settles");
-        uint256 paid = _mut().getArmedFreshPaidRaw();
+        uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidBefore;
         assertLt(
-            paid,
+            armedCharge,
             nominalArmed,
             "and the bound is charged the CREDITED figure, not the nominal"
         );
@@ -743,6 +781,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // ─── 2. Recycled forfeit = release, not credit ───────────────────────────
 
     function testRecycledForfeitReleasesWithoutCredit() public {
+        _fundCanonical();
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
 
         uint256 id = _seedEntry(alice, 77, 5, 6);
@@ -812,6 +851,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // ─── 4. Mixed pre/post-cutover window ────────────────────────────────────
 
     function testMixedWindowSlicesAtArmingDay() public {
+        _fundCanonical();
         // Days 4 (pre-arming) and 5 (armed): entry spans both.
         _seedPriorDays(4);
         _mut().setGovernorCommitArmedFromDayRaw(5);
@@ -856,6 +896,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // ─── 4b. RL-3 expiry is ALL-OR-NOTHING (no partial-credit reap) ──────────
 
     function testExpiryIsAllOrNothingAtNearExhaustion() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -937,6 +978,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      entry straddling the boundary. This is that fixture. Revert the
     ///      legacy-leg branch in `sweepExpiredEntry` and this reverts.
     function testP1bSpanningEntryReapsAcrossTheCutover() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1040,6 +1082,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // equal as well.
 
     function testP1bFirstCreditedChunkIsTheRemovalPoint() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1089,6 +1132,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      marked processed — leaving a claim free to pay the SAME entry a
     ///      second time through the whole-window path.
     function testP1bWhollyLegacyEntryTerminalisesOnceOnly() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         // Arm well AFTER the entry's window: days 2-4 are wholly pre-cutover.
         (uint256 floor9, ) = _armAndFinalize(9, 700 ether);
@@ -1131,6 +1175,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      truncate-and-advance after, exactly as a claim does against the
     ///      same monotone budget.
     function testP1bRemovedEntryTerminatesUnderAShortfall() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         // FRESH-ONLY armed day, deliberately. A recycled share moves
         // regardless of the 69M pool, so with any recycled component the
@@ -1147,7 +1192,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _mut().setInteractionPoolPaidOut(0);
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        // "Abundant" delivered headroom: since #1566 slice 4 PR B the canonical
+        // column binds at received - paid too, and this fixture's legacy leg
+        // alone is ~302k VPFI, so the ledger must cover it for the bound to
+        // stay out of the way of what this test measures.
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
@@ -1221,16 +1270,17 @@ contract GovernorDualAccumulatorTest is SetupTest {
             .getDeliveredFreshBound();
         assertEq(residual, 6 ether, "LIVE: the mirror holds a 6 residual");
 
-        // Promote. The canonical era reads UNBOUNDED by design — bounding a
-        // canonical chain would brick it — so the bound itself says nothing
-        // here. What matters is whether the residual survives underneath.
+        // Promote. Since #1566 slice 4 PR B the canonical column bounds at
+        // `received − paid` too, and the transition RETIRES the residual by
+        // levelling paid up to received — so the bound reads zero on the
+        // canonical side as well, never the 6 the mirror held.
         _rep().setIsCanonicalRewardChain(true);
         (, uint256 afterPromote) = RewardRemittanceLensFacet(address(diamond))
             .getDeliveredFreshBound();
         assertEq(
             afterPromote,
-            type(uint256).max,
-            "LIVE: canonical is unbounded, as designed"
+            0,
+            "LIVE: the promotion retired the residual (canonical bounds at received - paid)"
         );
 
         // Demote — THE double-spend vector. Canonical-era armed claims ignore
@@ -1254,6 +1304,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      transient balance dip as terminal let a permissionless sweep
     ///      timed to the dip destroy value one block of patience recovered.
     function testP1bRemovedEntryDefersOnABackingDip() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         // Fresh-only armed day, as in the terminal test: a recycled share
         // moves regardless of the pool and would mask the deferral.
@@ -1265,7 +1316,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _mut().setInteractionPoolPaidOut(0);
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        // "Abundant" delivered headroom: since #1566 slice 4 PR B the canonical
+        // column binds at received - paid too, and this fixture's legacy leg
+        // alone is ~302k VPFI, so the ledger must cover it for the bound to
+        // stay out of the way of what this test measures.
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
@@ -1380,6 +1435,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      pending figure and froze SIBLING entries' expiry clocks behind a
     ///      funding need no balance could satisfy.
     function testP1bRemovedEntryLeavesThePendingAggregates() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1389,7 +1445,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _mut().setInteractionPoolPaidOut(0);
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        // "Abundant" delivered headroom: since #1566 slice 4 PR B the canonical
+        // column binds at received - paid too, and this fixture's legacy leg
+        // alone is ~302k VPFI, so the ledger must cover it for the bound to
+        // stay out of the way of what this test measures.
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
@@ -1549,6 +1609,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      legacy leg consumes first — pausing the expiry clock after Base
     ///      has remitted the capped liability in full.
     function testP1bDryRunReservesTheLegacyLegFirst() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1558,7 +1619,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _mut().setInteractionPoolPaidOut(0);
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        // "Abundant" delivered headroom: since #1566 slice 4 PR B the canonical
+        // column binds at received - paid too, and this fixture's legacy leg
+        // alone is ~302k VPFI, so the ledger must cover it for the bound to
+        // stay out of the way of what this test measures.
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
@@ -1593,6 +1658,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      must too — while the displayed user preview keeps excluding it
     ///      (a forfeited entry pays the claimant nothing).
     function testP1bDryRunReservesTheForfeitLegToo() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1602,7 +1668,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = idX;
         _mut().setInteractionPoolPaidOut(0);
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        // "Abundant" delivered headroom: since #1566 slice 4 PR B the canonical
+        // column binds at received - paid too, and this fixture's legacy leg
+        // alone is ~302k VPFI, so the ledger must cover it for the bound to
+        // stay out of the way of what this test measures.
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
@@ -1745,6 +1815,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      push the fresh-payout ledger past the lifetime cap. The trim is
     ///      terminal (monotone budget, no claimant).
     function testP1bWhollyLegacyForfeitClampsToTheHeadroom() public {
+        _fundCanonical();
         // Wholly pre-cutover: never arm. The entry settles whole O(1).
         _cfg().setRewardClaimHorizonDays(180);
         _seedPriorDays(6);
@@ -1782,6 +1853,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      would strand the unbacked remainder despite that budget
     ///      refilling with the next inflow.
     function testP1bSpanningForfeitLegacyLegDefersOnABackingDip() public {
+        _canonicalLedgerRaw();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -1822,6 +1894,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      bounded advance completes — processing the entry under a
     ///      transient backing clamp and losing the recoverable remainder.
     function testP1bFarBehindLegacyForfeitDefersWhileUnpriced() public {
+        _fundCanonical();
         _cfg().setRewardClaimHorizonDays(180);
         // Wholly-legacy, FAR out: the cursor starts ~1400 days behind the
         // entry end, so one bounded advance cannot price it.
@@ -1857,6 +1930,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     }
 
     function testExpiryReapsExactlyTheRemainingWindow() public {
+        _fundCanonical();
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");

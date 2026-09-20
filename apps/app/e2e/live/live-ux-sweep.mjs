@@ -84,6 +84,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { errors as playwrightErrors } from '@playwright/test';
 import {
   launch,
   ensureConnected,
@@ -106,6 +107,7 @@ requireSiteUrl();
 // check silently turned into a no-op, indistinguishable from a clean
 // deployment (Codex #1859 r3 P2). What runs here is what the tests pin.
 import { BEACON_ORIGIN, isBeaconRefusalMessage, isBeaconUrl, scanBeacon } from './beaconScan.mjs';
+import { navFailureReason } from './navFailure.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -138,6 +140,17 @@ const VIEWPORTS = {
 };
 
 const PROBE_ONLY = process.env.UX_SWEEP_PROBE_ONLY === '1';
+
+/**
+ * How long a route gets to load before the sweep gives up on it.
+ *
+ * NAMED so the row that reports a timeout can cite the budget rather
+ * than leave the reader to infer it from the elapsed figure (#2109). The
+ * two differ in what they tell you: `45002ms` says how long this attempt
+ * took, which is only meaningful once you know what it was allowed.
+ */
+const NAV_BUDGET_MS = 45_000;
+
 
 /** Chain-scoped surfaces — the subset worth re-sweeping on a second
  *  network (VPFI availability, vault, faucet, book/desk market data,
@@ -390,7 +403,7 @@ function pathOf(url) {
  *  so the link should come from the page itself). */
 async function resolveLoanDetailRoute(page) {
   try {
-    await page.goto(`${SITE}/positions`, { waitUntil: 'load', timeout: 45_000 });
+    await page.goto(`${SITE}/positions`, { waitUntil: 'load', timeout: NAV_BUDGET_MS });
     await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
     const href = await page
       .$$eval('a[href^="/positions/"]', (as) => as.map((a) => a.getAttribute('href'))[0] ?? null)
@@ -653,11 +666,12 @@ for (const pass of session.passes) {
     const started = Date.now();
     routesAttempted += 1;
     let navError = null;
+    let navTimedOut = false;
     let httpStatus = null;
     let servedPath = null;
     let landedPath = null;
     try {
-      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: NAV_BUDGET_MS });
       httpStatus = resp?.status() ?? null;
       servedPath = pathOf(resp?.url());
       // Let data views settle: brief idle wait, tolerant of the polls.
@@ -668,6 +682,15 @@ for (const pass of session.passes) {
       // has happened by the time this is sampled.
       landedPath = pathOf(page.url());
     } catch (e) {
+      // CLASSIFY HERE, where the error object still exists. The row
+      // needs to know whether the deadline expired, and asking that of
+      // the message text — `/timeout/i` and `/exceed/i` — is a string
+      // test standing in for a question about a value (#2109 r1). It can
+      // also be wrong in the dangerous direction: a genuine failure
+      // whose text happens to carry those words would be handed the
+      // deliberately softer timeout wording, which is an infrastructure
+      // excuse for a real defect.
+      navTimedOut = e instanceof playwrightErrors.TimeoutError;
       navError = String(e).slice(0, 300);
     }
     // A THROW is not the only way a route can fail to load: `page.goto`
@@ -805,7 +828,11 @@ for (const pass of session.passes) {
               ? ` (${httpError})`
               : redirectedTo !== null
                 ? ` (redirected to ${redirectedTo})`
-                : '')),
+                : // The NAVIGATION case had no parenthetical at all, so a
+                  // timeout printed bare and read as a broken route
+                  // (#2109). Its two siblings above have said why since
+                  // they were written; this one never did.
+                  ` (${navFailureReason({ timedOut: navTimedOut, message: navError }, NAV_BUDGET_MS)})`)),
     );
     sink = null;
   }

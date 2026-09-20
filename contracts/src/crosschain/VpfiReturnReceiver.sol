@@ -52,7 +52,8 @@ interface IStrandedReturnIngress {
         address token,
         uint256 declaredAmount,
         uint256 actualReceived,
-        uint256 remainingAfter
+        uint256 remainingAfter,
+        bytes32 transportMessageId
     ) external;
 }
 
@@ -88,7 +89,7 @@ interface IStrandedReturnIngress {
 ///      contract publishes (the receiver/messenger probe pattern).
 ///      Generation 2 = the B1 stranded-return decode branch (#1434 P2-w5); a proxy
 ///      without the selector is generation 1.
-uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 2;
+uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 3;
 
 contract VpfiReturnReceiver is
     Initializable,
@@ -211,7 +212,11 @@ contract VpfiReturnReceiver is
         // data), and the Diamond ingress binds to it.
         address /* sourceSender */,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        // #1566 closure 2 cutover PR 1 — passed through to the stranded-
+        // return ingress, which records the packet under its ingress stamp
+        // (the repatriation return carries no packet record yet).
+        bytes32 transportMessageId
     ) external override whenNotPaused nonReentrant {
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (sourceChainId > type(uint32).max) {
@@ -225,7 +230,7 @@ contract VpfiReturnReceiver is
         } else if (head == ReturnWire.RETURN_WIRE_TAG_REPAT_CANCEL_ACK_A1) {
             _handleRepatCancelAck(uint32(sourceChainId), payload, tokens);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_STRANDED_B1) {
-            _handleStrandedReturn(uint32(sourceChainId), payload, tokens);
+            _handleStrandedReturn(uint32(sourceChainId), payload, tokens, transportMessageId);
         } else {
             // Fail-closed rollout (the {ReturnWire} property): an unknown
             // keccak tag can never be coerced into a known shape, and the
@@ -322,7 +327,8 @@ contract VpfiReturnReceiver is
     function _handleStrandedReturn(
         uint32 sourceChainId,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
     ) internal {
         if (payload.length != 6 * 32) {
             revert PayloadSizeMismatch(payload.length, 6 * 32);
@@ -366,7 +372,8 @@ contract VpfiReturnReceiver is
             deliveredToken,
             declaredAmount,
             actualReceived,
-            remainingAfter
+            remainingAfter,
+            transportMessageId
         );
 
         emit StrandedReturnForwarded(

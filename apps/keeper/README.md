@@ -50,13 +50,42 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
-| `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). |
-| `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
-| `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). `REWARD_REMIT_ENABLED` also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-archive --remote` from `apps/indexer/`). |
+| `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-archive --remote` from `apps/indexer/`). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
-| `REWARD_COMMIT_LOOKBACK_DAYS` | Recent-day window the commitment pass re-scans for un-reported armed days each tick (default `14`). |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation swap aggregator credentials. |
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
+
+The three arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
+`REWARD_COMMIT_ENABLED`) are `secret_text` bindings, not entries in
+`wrangler.jsonc`'s `vars` block — see that file's `vars` comment for why they
+must not be moved there. Their values cannot be read back from the API or
+dashboard, which is why each gated pass reports at runtime how it resolved
+them (#1475).
+
+Plain vars — dashboard-managed, **not** secrets, and preserved across deploys
+by `keep_vars: true` because this config declares no value for any of them:
+
+| Var | Purpose |
+|---|---|
+| `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
+| `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). |
+| `REWARD_COMMIT_LOOKBACK_DAYS` | Recent-day window the commitment pass re-scans for un-reported armed days each tick (default `14`). |
+| `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` | Liquidation tuning (see `src/env.ts`) — all optional, sensible defaults. |
+| `FRONTEND_ORIGIN` | Connected-app origin for notification deep links. **Optional but without a usable default** — unset, the consumers fall back to the empty string and a "View this loan" link renders as the relative `/loans/{id}`, which is not clickable from Telegram or Push. Set it (e.g. `https://app.vaipakam.com`) on any deploy whose notifications are meant to be followed. |
+
+The first three tune the passes the arming flags gate, but are not themselves
+secrets — they sat in the secrets table above until #2223, where the
+`wrangler secret put` instruction would have provisioned them as unreadable
+values for no benefit.
+
+`TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
+note above: this config **declares** it, so every deploy uploads the declared
+value and a dashboard edit is overwritten rather than preserved. Note though
+that setting it here changes nothing observable — as §"What the kill-switch
+does and does not stop" records below, no keeper code reads it; the Telegram
+deep link that uses the handle is built by `apps/agent` from its own binding.
+It is a legacy config-owned value, kept because the declaration is what makes
+the overwrite behaviour visible, not because the keeper needs it.
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
@@ -133,27 +162,32 @@ Makefile variables, sourced helpers, shell functions and aliases, matrix
 expressions, reusable-workflow inputs, Windows shims, `eval`, marketplace
 actions) without reaching the end.
 
-The flag stays on the package script — it is still correct, and harmless — and
-`scripts/check-deploy-invocations.mjs` remains as defence in depth that
-**switches itself off**: it reports nothing while a Worker declares
-preservation, and resumes full command-level scrutiny for any Worker that
-loses the declaration. `scripts/check-keep-vars.mjs` asserts the declaration
-itself, unconditionally in CI.
+The flag stays on the package script — it is still correct, and harmless.
+`scripts/check-keep-vars.mjs` asserts the declaration itself, unconditionally
+in CI, on **every** wrangler config in the tree — any depth, any directory,
+whatever Worker it names — and is now the whole implemented defence. The rule
+is unconditional because deciding which config a deploy loads, and which
+Worker it targets, are command-line questions (`--config`, `--name`, `--env`,
+`--compatibility-date`) that no file scan can answer; six review findings in
+one round came from trying. `apps/app` and `apps/www` declare the key too,
+though they carry no vars today.
 
 **The trade, stated deliberately:** a deploy can no longer *remove* a var.
 Deleting one is now an explicit dashboard action — see the rollback note in
 `apps/indexer/wrangler.jsonc` for a case where that matters.
 
-**And a guard enforces it tree-wide**: `scripts/check-deploy-invocations.mjs`,
-wired into `pnpm --filter @vaipakam/keeper typecheck`, fails on any
-keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because
-fixing the package script did **not** fix the problem: four subsequent review
-rounds each found another caller reaching wrangler directly — three deploy
-wrappers, a rollout runbook, a deployment runbook, the staging plan — and each
-fix looked complete until the next round. The guard is default-deny with a
-small `ALLOWED` list, each entry carrying a reason, so prose that quotes the
-unsafe command has to be declared rather than guessed at. New prose fails the
-check until someone adds it; that is the intended cost.
+**The tree-wide command scanner that used to sit alongside it is retired.**
+`scripts/check-deploy-invocations.mjs` searched every file in the repository
+for a keeper-scoped `wrangler deploy` lacking `--keep-vars`. It was written
+because fixing the package script did not fix the problem — four review rounds
+each found another caller reaching wrangler directly — but asking whether a
+piece of text will run a command means modelling the execution model of every
+interpreter it might be, and it never got there: seventeen open issues, each a
+different parsing edge, five of them false reports that redden a correct tree,
+and none naming a real file here. The declaration answers the same question
+without parsing anything, so the scanner and its fixtures (about 23,800 lines)
+are gone. What that gives up is listed by name in the header of
+`scripts/check-keep-vars.mjs`.
 
 Keeping vars costs nothing here: the only var this config declares is
 `TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read

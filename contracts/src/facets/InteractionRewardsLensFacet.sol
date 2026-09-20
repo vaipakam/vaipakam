@@ -821,6 +821,17 @@ contract InteractionRewardsLensFacet {
      *         why omitting it overstates the reserve rather than merely
      *         rounding it.
      */
+    /// @dev #1566 slice 4 PR B — on an ACTIVATED deployment (reward custody
+    ///      switched onto the holder) `bucket` and `recoveryPositionReserved`
+    ///      are custody of the HOLDER, not subtrahends of `vpfiBalance`, and
+    ///      `unearmarked` is `vpfiBalance − strandedRecoveryReserved`. The
+    ///      legacy relation `vpfiBalance ≥ bucket + strandedRecoveryReserved
+    ///      + recoveryPositionReserved` no longer holds there BY DESIGN; a
+    ///      watcher recomposes the backing from
+    ///      `RewardCustodyFacet.getRecycleBackingSnapshotV2`, which returns
+    ///      these eight fields unchanged plus the activation flag and the
+    ///      holder's balance and attributed total. This view keeps its shape
+    ///      so an eight-field reader keeps decoding.
     function getRecycleBackingSnapshot()
         external
         view
@@ -852,7 +863,15 @@ contract InteractionRewardsLensFacet {
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
-        strandedRecoveryReserved = s.strandedRecoveryReserved;
+        // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE reservation (the
+        // part the holder backs is netted out), which is what `unearmarked`
+        // above subtracts; identical to the raw counter on a deployment
+        // whose custody is not activated.
+        {
+            uint256 reservedAll = s.strandedRecoveryReserved;
+            uint256 held = s.strandedRecoveryReservedHeld;
+            strandedRecoveryReserved = reservedAll > held ? reservedAll - held : 0;
+        }
         recoveryPositionReserved = s.rewardBudgetRecovered
             - s.rewardBudgetRedispatched
             + s.strandedReturnOverage;
@@ -902,11 +921,21 @@ contract InteractionRewardsLensFacet {
      * @return armed        Capped armed fresh the user's open claim would consume.
      * @return userLegs     Legacy legs bound for the user.
      * @return treasuryLegs Legacy legs bound for treasury (they reserve too).
+     * @return legacyFresh  #1566 closure 2 — the FRESH part of both legacy
+     *                      legs PLUS the legacy window the claim settles
+     *                      first. The executability predicate and the sweeps
+     *                      measure the claimant's aggregate VINTAGE-BLIND fresh
+     *                      need (`armed + legacyFresh`, capped at the pool)
+     *                      against the delivered bound, because the claim's
+     *                      delivery chokepoint now refuses on the TOTAL fresh
+     *                      component: a predicate that measured only `armed`
+     *                      would read a legacy-only claimant executable while
+     *                      their claim reverts, and run their expiry clock.
      */
     function getUserArmedFreshNeedWithLegs(address user)
         external
         view
-        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
     {
         return LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
     }

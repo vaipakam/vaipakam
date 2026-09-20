@@ -219,6 +219,462 @@ interface IVaipakamErrors {
     /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
     ///         second call would double-charge the bound and strand funding.
     error ArmedFreshPaidAlreadySeeded();
+
+    /// @notice #1566 slice 4 PR A — the one-shot paid-side rebase
+    ///         (`rebaseArmedFreshPaid`) has already run on this chain.
+    /// @dev    One-shot because it installs an ABSOLUTE figure and, on the
+    ///         canonical chain, resets `received` to it: a second call could
+    ///         only lower delivered headroom that has since been earned.
+    error ArmedFreshPaidAlreadyRebased();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r11 P1) — the reconstructed
+    ///         paid total offered to the one-shot rebase exceeds the
+    ///         interaction pool's lifetime cap. No honest history can be
+    ///         larger than everything that can ever be rewarded, and a
+    ///         mistyped value would be installed irreversibly — as `paid`,
+    ///         and on the canonical chain as `received` — with no way left
+    ///         to lower it.
+    /// @param total The total offered.
+    /// @param cap   The pool cap it must not exceed.
+    error ArmedFreshRebaseTotalExceedsCap(uint256 total, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P1) — the additive P1-b
+    ///         seed would push the paid counter above the interaction pool's
+    ///         lifetime cap. The seed is the one writer that could install an
+    ///         impossible paid figure ahead of the rebase; bounding it keeps
+    ///         `paid` inside what can ever be rewarded.
+    /// @param resulting The paid counter the seed would produce.
+    /// @param cap       The pool cap it must not exceed.
+    error ArmedFreshSeedExceedsCap(uint256 resulting, uint256 cap);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P2) — the address offered
+    ///         to a custody sweep is not a holder this Diamond CONSTRUCTED.
+    ///         Every holder the Diamond creates (the first and every
+    ///         successor) is registered at construction; a getter an
+    ///         arbitrary contract could imitate is never consulted.
+    /// @param holder The address offered.
+    error RewardCustodyHolderNotConstructedHere(address holder);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
+    ///         rebase was called on an inactive reward role (`Unconfigured`
+    ///         or `Detached`) on a chain that is not history-free: something
+    ///         to import, or something already on the paid OR received side.
+    ///         The role decides whether the received-side baseline is
+    ///         installed, so a one-shot run before the role is known would
+    ///         close the door on state the later role needs levelled. Only a
+    ///         chain with all three at zero may consume the guard while
+    ///         inactive — the fresh-deploy case.
+    /// @param role           The resolved role ordinal.
+    /// @param total          The total offered.
+    /// @param paidBefore     The paid counter as found.
+    /// @param receivedBefore The received counter as found.
+    error ArmedFreshRebaseRequiresActiveRole(uint8 role, uint256 total, uint256 paidBefore, uint256 receivedBefore);
+    /// @notice #1566 slice 4 PR A — the custody holder is already bound;
+    ///         binding is one-shot and changes only through the paused
+    ///         replacement ceremony.
+    error RewardCustodyHolderAlreadyBound();
+    /// @notice #1566 slice 4 PR A — no custody holder is bound yet.
+    error RewardCustodyHolderNotBound();
+    /// @notice #1566 slice 4 PR A — the Diamond has no VPFI token configured,
+    ///         so the replacement ceremony cannot read or move a custody
+    ///         balance; it refuses rather than flip a pointer away from a
+    ///         balance it cannot see.
+    error RewardCustodyTokenUnset();
+    /// @notice #1566 slice 4 PR A — the successor's balance did not grow by
+    ///         exactly the amount released from the old holder, so the
+    ///         ledger would describe a custody the successor does not hold.
+    ///         Growth, not the starting balance: value already sitting at
+    ///         the predicted successor address is reported, never refused.
+    /// @param expected What was released (the old holder's whole balance at
+    ///                 a replacement; the requested amount at a recovery).
+    /// @param delta    What the destination's balance actually grew by.
+    error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r12 P2, r15 P2) — after a
+    ///         release the SOURCE holder was not debited by exactly what was
+    ///         released. Raised by the one measured move every
+    ///         holder-to-holder transfer of the configured VPFI goes through:
+    ///         the replacement (whose source must end empty) and the
+    ///         predecessor recovery. A token that credits the destination
+    ///         without debiting the source would otherwise pass the growth
+    ///         check and, at a replacement, leave VPFI abandoned at an
+    ///         address the Diamond no longer points at (the foreign-token
+    ///         sweep refuses the configured VPFI, so nothing could reach it);
+    ///         at a recovery, report a move that moved nothing and could be
+    ///         repeated against a balance that never leaves.
+    /// @param source   The holder released from.
+    /// @param expected What was released.
+    /// @param debited  What the source's balance actually fell by (zero when
+    ///                 it did not fall).
+    error RewardCustodySourceNotDebited(address source, uint256 expected, uint256 debited);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r17 P2) — after the ERC-721
+    ///         release the treasury does not own the token. A non-conforming
+    ///         token, or a proxy upgraded into an implementation whose
+    ///         transfer returns without moving anything, would otherwise
+    ///         leave the NFT stranded in the holder behind a "recovered"
+    ///         event.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token that did not move.
+    /// @param owner   Who the token reports as its owner after the release.
+    error RewardCustodyErc721NotDelivered(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r23 P2) — the unattributed
+    ///         sweep asked for more configured VPFI than the bound holder
+    ///         holds beyond what the ledger rows describe. Attributed custody
+    ///         is never reachable this way.
+    /// @param requested    The amount asked for.
+    /// @param unattributed The remainder no row describes (held minus
+    ///                     attributed) at the time of the call.
+    error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
+    ///         with a pause epoch that is not the live one: the figure was
+    ///         established under a different pause (or none), and a payout in
+    ///         between may be missing from it.
+    /// @param stated The pause epoch the caller established the figure at.
+    /// @param live   The pause library's current transition count.
+    error ArmedFreshRebaseStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r29 P1) — the seed's twin of
+    ///         the rebase's stale-epoch refusal.
+    /// @param stated The pause epoch the caller established the figure at.
+    /// @param live   The pause library's current transition count.
+    error ArmedFreshSeedStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the ERC-721
+    ///         sweep was asked to recover a token the named holder does not
+    ///         own, so there is nothing to recover from it.
+    /// @param token   The ERC-721 contract.
+    /// @param tokenId The token.
+    /// @param owner   Who the token reports as its owner.
+    error RewardCustodyErc721NotAtHolder(address token, uint256 tokenId, address owner);
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the native sweep
+    ///         was asked to deliver into a Diamond that is its own treasury,
+    ///         which has no tracked native balance and no native claim path;
+    ///         the currency would be stranded in the raw balance.
+    error RewardCustodyNativeToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — an NFT sweep was
+    ///         asked to deliver into a Diamond that is its own treasury, which
+    ///         has no NFT withdrawal path; the token would be stranded there.
+    error RewardCustodyNftToDiamondTreasury();
+    /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P1) — a conditional
+    ///         unpause found the pause epoch moved since the caller observed
+    ///         it: someone else paused or unpaused in between, and this
+    ///         unpause must not clear that.
+    /// @param expected The transition count the caller expected.
+    /// @param live     The current transition count.
+    error PauseEpochMoved(uint64 expected, uint64 live);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
+    ///         sweep was asked to move the configured VPFI token. VPFI in a
+    ///         holder IS the custody the attribution ledger describes and
+    ///         leaves only through the reward outflows; the sweep is for
+    ///         everything else.
+    error RewardCustodySweepIsVpfi();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r14 P2) — the VPFI recovery
+    ///         from a predecessor was pointed at the CURRENTLY bound holder.
+    ///         What the bound holder holds IS the custody; only a retired
+    ///         predecessor (proven empty when its pointer was retired) can
+    ///         carry unattributed VPFI to bring back.
+    /// @param holder The address offered, which is the bound holder.
+    error RewardCustodyRecoverTargetsBoundHolder(address holder);
+    /// @notice #1566 slice 4 PR A — the foreign-token sweep needs a treasury
+    ///         to deliver to and none is configured.
+    error RewardCustodyTreasuryUnset();
+    /// @notice #1566 slice 4 PR B — an attribution row cannot cover the
+    ///         debit asked of it. Enforced, never floored: a payout or
+    ///         transport a row cannot back is refused whole rather than paid
+    ///         from another row's custody (the "no row goes negative"
+    ///         invariant).
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The debit asked for.
+    /// @param available What the row holds.
+    error RewardCustodyRowShort(uint8 row, uint256 requested, uint256 available);
+    /// @notice #1566 slice 4 PR B — the activation ceremony has already run
+    ///         on this chain (or a bootstrap writer was called after it).
+    error RewardCustodyAlreadyActivated();
+    /// @notice #1566 slice 4 PR B — the operation needs the holder custody to
+    ///         be activated on this chain and it is not.
+    error RewardCustodyNotActivated();
+    /// @notice #1566 slice 4 PR B — activation was attempted on an
+    ///         `Unconfigured` deployment, which has no delivered ledger to
+    ///         bind to and keeps the Diamond-custody column forever.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyActivationRequiresConfiguredRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — activation requires the one-shot paid-side
+    ///         rebase to have run (a fresh deploy consumes it at deploy; a
+    ///         live chain's refresh runs it), so the baseline it verifies is
+    ///         the one the rebase installed.
+    error RewardCustodyActivationRequiresRebase();
+    /// @notice #1566 slice 4 PR B (Codex #2186 r4, r5) — activation, or a
+    ///         bootstrap write, was attempted on a deployment whose ROUTING
+    ///         (every facet with the selectors it serves) is not the one a
+    ///         COMPLETE cut recorded under this tree's custody protocol
+    ///         version: the custody facet was cut alone, a partial cut — of a
+    ///         facet or of a single selector — ran after the record, or the
+    ///         record is from an older tree. The reward paths that must read
+    ///         the holder may still be stale or unrouted, so custody is not
+    ///         switched. Run the complete refresh.
+    /// @param stampedVersion  The recorded version (zero: never recorded).
+    /// @param requiredVersion This tree's `LibRewardCustody.CUTOVER_VERSION`.
+    /// @param stampedRouting  The recorded routing hash.
+    /// @param currentRouting  The routing hash now.
+    error RewardCustodyActivationRequiresCutover(
+        uint32 stampedVersion, uint32 requiredVersion, bytes32 stampedRouting, bytes32 currentRouting
+    );
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing packet arrived
+    ///         under an ingress stamp already recorded: the transport
+    ///         delivered the same message twice, or two sources collided on
+    ///         one id. The second landing is refused whole.
+    error IngressPacketReplayed(bytes32 packetHash);
+    /// @notice #1566 closure 2 cutover PR 1 (Codex #2198 r1) — a delivery or
+    ///         a compensation arrived for a receipt that has already been
+    ///         delivered: a distinct transport message, past the stamp
+    ///         guard, naming a reservation the remitter already dispatched
+    ///         once. A faulty or compromised remitter; refused whole.
+    /// @param receiptKey `keccak256(remitter, remitId)`.
+    error IngressReceiptAlreadyDelivered(bytes32 receiptKey);
+    /// @notice #1566 closure 2 cutover PR 1 — an R4 return asked the
+    ///         holder's `Unclassified` row for more than the stranded record
+    ///         holds there.
+    /// @param receiptKey `keccak256(remitter, remitId)`.
+    /// @param requested  The amount asked from the row.
+    /// @param held       What the record holds in the row.
+    error RewardCustodyUnclassifiedHeldShort(bytes32 receiptKey, uint256 requested, uint256 held);
+    // ─── #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch ────
+    /// @notice An entry id was already applied; an operator retry is refused
+    ///         rather than consuming a later packet's balance.
+    error ReconciliationEntryReplayed(bytes32 entryId);
+    /// @notice No packet was recorded under this stamp.
+    error ReconciliationPacketUnknown(bytes32 packetHash);
+    /// @notice The packet's receipt still carries a live stranded-recovery
+    ///         record: its value is reserved for the R4 return and is not
+    ///         classifiable.
+    error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
+    ///         rule: an entry's fresh side would exceed its authenticated
+    ///         fresh figure (a packet's transport-attested remainder split;
+    ///         the envelope's replacement-funded fresh). Fresh is the
+    ///         privileged direction; without evidence, value classifies
+    ///         recycled or stays.
+    error ReconciliationFreshUnevidenced(bytes32 key, uint256 cumulativeFresh, uint256 authenticated);
+    /// @notice The entry asks for more than the packet still holds in the row.
+    error ReconciliationExceedsPacketRemainder(bytes32 packetHash, uint256 requested, uint256 remainder);
+    /// @notice A row figure cannot cover the exit.
+    /// @param figure 0 the row's uncounted figure, 1 its returned figure,
+    ///        2 the global uncounted aggregate.
+    error ReconciliationFigureShort(uint8 figure, uint256 requested, uint256 available);
+    /// @notice No log entry at this index.
+    error ReconciliationEntryUnknown(uint256 index);
+    /// @notice A reclassification asks for more than the entry's credit on
+    ///         the source side.
+    error ReconciliationExceedsCredit(uint256 index, uint256 requested, uint256 credit);
+    /// @notice The part of a fresh credit the standing deficit absorbed into
+    ///         restitution at credit is not a correction's to move:
+    ///         restitution custody moves only through its own dispositions.
+    error ReconciliationRestitutionNotMovable(uint256 index, uint256 requested, uint256 movable);
+    /// @notice The received side cannot give back what the correction moves.
+    error ReconciliationReceivedShort(uint256 requested, uint256 received);
+    /// @notice The paid side cannot inherit the debit the correction moves.
+    error ReconciliationPaidShort(uint256 requested, uint256 paid);
+    /// @notice The recycled consumption cannot give back the debit the
+    ///         correction moves.
+    error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
+    /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
+    error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice Spent recycled credit moves to fresh only as far as
+    ///         CONSUMPTION (attributed first in queue order) or an inherited
+    ///         debit covers it; credit that left by surplus repatriation has
+    ///         no fresh-side ledger to inherit it.
+    error ReconciliationSpentRecycledNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the mirror
+    ///         bound: only spent fresh credit the fresh ledger charged as
+    ///         `paid` may move to the recycled side as an inherited debit;
+    ///         what a demotion unwound was never paid and has no debit to
+    ///         inherit.
+    error ReconciliationSpentFreshNotInheritable(uint256 index, uint256 requested, uint256 inheritable);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5) — a queue's
+    ///         segments and its totals disagree (a walk ran past the last
+    ///         segment, or an entry's segments could not give what its
+    ///         figures said they held): a defect, refused rather than
+    ///         dropping units. `side`: 0 fresh, 1 recycled, 2 absorbed.
+    error ReconciliationQueueInconsistent(uint8 side);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — a correction
+    ///         asked while the side's pending takes are not yet written into
+    ///         the records; advance the queue first (anyone may).
+    error ReconciliationQueueBehind(uint8 side);
+    /// @notice A queue side that does not exist (0 fresh, 1 recycled).
+    error ReconciliationUnknownSide(uint8 side);
+    /// @notice The fresh queue is per era, and only the pre-backfill era
+    ///         exists until the transport epochs land: a view asked about any
+    ///         other era refuses rather than pairing an empty era-specific
+    ///         queue with the global custody figures (Codex #2206 r9).
+    error ReconciliationUnknownEra(uint64 era);
+    // ─── #1566 transport epochs PR 3a — the day list, the attested split ────
+    /// @notice No packet is recorded under this stamp.
+    error IngressPacketUnknown(bytes32 packetHash);
+    /// @notice The packet's day-list commitment is already written — it is
+    ///         recorded once, with the record, by the ingress itself.
+    error IngressPacketDayListStamped(bytes32 packetHash);
+    /// @notice The receipt predates packet stamping, so there is no packet to
+    ///         attest a split for.
+    error IngressReceiptHasNoPacket(uint256 remitId);
+    /// @notice The packet's own wire carried its split; an attestation has
+    ///         nothing to add and is refused rather than silently ignored.
+    error IngressPacketAlreadyTyped(bytes32 packetHash);
+    /// @notice The packet's split is already attested. The first attestation
+    ///         is the source's record; a differing second one is a faulty
+    ///         source, not a correction.
+    error IngressPacketAlreadyAttested(bytes32 packetHash);
+    /// @notice A split attestation carrying neither a fresh nor a recycled
+    ///         figure — nothing to scale, and nothing it could authenticate.
+    error SplitAttestationEmpty(uint256 remitId);
+    /// @notice No reservation was ever issued under this id.
+    error RemitReservationUnknown(uint256 remitId);
+    /// @notice This reservation's own wire carried its split, so the mirror
+    ///         typed its packet at ingress and an attestation has nothing to
+    ///         add. Refused on the canonical side rather than after the
+    ///         caller has paid a transport fee for a message the destination
+    ///         must reject.
+    error RemitSplitAlreadyOnWire(uint256 remitId);
+    /// @notice A split attestation arrived from a chain that is not this
+    ///         deployment's canonical (Base) chain. Messenger authentication
+    ///         proves a message came from a configured peer, never that the
+    ///         peer is the right one for this kind: an extra or stale peer
+    ///         would otherwise be able to decide a packet's fresh/recycled
+    ///         split once the attested caps become usable.
+    error SplitAttestationNotFromBase(uint32 sourceChainId, uint32 baseChainId);
+    /// @notice This reservation moved no value, so it dispatched no packet and
+    ///         wrote no receipt on the destination — there is nothing for an
+    ///         attestation to name.
+    error RemitReservationCarriesNoSplit(uint256 remitId);
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
+    ///         fresh credit a correction may move with its tokens is bounded
+    ///         by the live row net of the outstanding fresh commitments, the
+    ///         fresh twin of the uncommitted-bucket bound: what an armed day
+    ///         reserved stays in the row for its claims.
+    error ReconciliationExceedsUncommittedLive(uint256 requested, uint256 uncommitted);
+    /// @notice The envelope under this snapshot id was already imported.
+    error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
+    /// @notice The stated dispositions do not resolve the envelope exactly.
+    error LegacyEnvelopeMismatch(bytes32 snapshotId, uint256 stated, uint256 netTotal);
+    /// @notice The envelope nets to nothing: there is no pre-stamp inventory
+    ///         to import.
+    error LegacyEnvelopeEmpty(bytes32 snapshotId);
+    /// @notice #1566 slice 4 PR B — a canonical chain must have armed
+    ///         per-receipt recovery attribution before activation: arming
+    ///         retires the legacy pooled recovery position, and a recovery
+    ///         row funded before that retirement would be left over-backed.
+    error RewardCustodyActivationRequiresRecoveryArming();
+    /// @notice #1566 slice 4 PR B — the pause epoch the operator established
+    ///         the activation figures under is no longer the live one.
+    /// @param stated The epoch stated by the caller.
+    /// @param live   The current transition count.
+    error RewardCustodyActivationStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice #1566 slice 4 PR B — a reconcilable ledger figure is not backed
+    ///         by its holder row at activation: the ceremony must fund it
+    ///         (custody-only), relocate it (historical inventory) or write it
+    ///         down before custody reads switch to the holder.
+    /// @param row      The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param required The ledger figure the row must equal.
+    /// @param held     What the row holds.
+    error RewardCustodyRowUnbacked(uint8 row, uint256 required, uint256 held);
+    /// @notice #1566 slice 4 PR B — the canonical chain's paid-side baseline
+    ///         (`received == paid`, installed by the rebase) does not hold at
+    ///         activation.
+    error RewardCustodyBaselineNotVerified(uint256 received, uint256 paid);
+    /// @notice #1566 slice 4 PR B — the holder's balance cannot be read at
+    ///         activation, so the rows cannot be verified against it.
+    error RewardCustodyBalanceUnreadable();
+    /// @notice #1566 slice 4 PR B — the rows attribute more than the holder
+    ///         holds.
+    error RewardCustodyUnderHeld(uint256 held, uint256 attributed);
+    /// @notice #1566 slice 4 PR B — `fundRewardPool` requires an ACTIVE role
+    ///         (`Canonical` or `Mirror`): funding a `Detached` chain would
+    ///         credit headroom a zero bound cannot consume and strand the
+    ///         allocation across the next transition.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyFundingRequiresActiveRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — the funding would push the received
+    ///         counter above the interaction pool's lifetime cap; nothing
+    ///         above it can ever be paid, so it could only strand.
+    error RewardCustodyFundingExceedsCap(uint256 resulting, uint256 cap);
+    /// @notice #1566 slice 4 PR B — a bootstrap writer was pointed at a row
+    ///         it does not serve (the live-fresh row cannot be relocated from
+    ///         the Diamond: an imported `received − paid` is history, not
+    ///         money; the pending-surplus, intent, unclassified and
+    ///         restitution rows have no bootstrap figure).
+    /// @param row The {LibVaipakam.RewardCustodyRow} ordinal.
+    error RewardCustodyBootstrapRowNotAllowed(uint8 row);
+    /// @notice #1566 slice 4 PR B — a bootstrap writer was called on a
+    ///         deployment whose role cannot activate in this slice
+    ///         (`Unconfigured` never; `Detached` until PR C): a credit there
+    ///         would move funds into the holder, arm the freeze, and leave
+    ///         the allocation reachable by nothing.
+    /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
+    error RewardCustodyBootstrapRequiresActiveRole(uint8 role);
+    /// @notice #1566 slice 4 PR B — a bootstrap credit would take a row above
+    ///         the ledger figure it backs.
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The credit asked for.
+    /// @param room      `figure − row`, what the row may still receive.
+    error RewardCustodyBootstrapExceedsLedger(uint8 row, uint256 requested, uint256 room);
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap writer was
+    ///         called before the paid-side rebase ran. The rows are backed
+    ///         against ledger figures the rebase finalises — `received −
+    ///         paid` most directly, since the rebase only ever RAISES
+    ///         `paid` — and a credit made before it can be left above the
+    ///         figure the rebase leaves, which activation refuses.
+    error RewardCustodyBootstrapRequiresRebase();
+    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap release
+    ///         asked for more than the row holds ABOVE its ledger figure.
+    ///         The release reconciles a row a moved figure left over-backed;
+    ///         it never takes a row below its figure.
+    /// @param row       The {LibVaipakam.RewardCustodyRow} ordinal.
+    /// @param requested The release asked for.
+    /// @param excess    `row − figure`, what the row may give back.
+    error RewardCustodyBootstrapReleaseExceedsExcess(uint8 row, uint256 requested, uint256 excess);
+    /// @notice #1566 slice 4 PR B — a holder-sourced payout named a token
+    ///         other than the configured VPFI; the holder's rows describe
+    ///         that token only.
+    error RewardCustodyPayoutTokenMismatch(address expected, address given);
+    /// @notice #1566 slice 4 PR B — a custody entry point that only the
+    ///         Diamond itself may reach (a cross-facet self-call from a
+    ///         reward path) was called from outside.
+    error RewardCustodyOnlyDiamondInternal(address caller);
+    /// @notice #1566 slice 4 PR B — a cross-facet custody call failed without
+    ///         revert data (the entry point is not routed, or the Diamond's
+    ///         fallback refused it).
+    error RewardCustodyCallFailed();
+    /// @notice #1566 slice 4 PR B — activation was attempted on a `Detached`
+    ///         deployment. Its value-bearing receive ingresses do not yet
+    ///         refuse by role (the intended-era gates land with slice 4 PR
+    ///         C's era registry), so a delayed packet could relocate custody
+    ///         into rows a zero bound can never spend while the freeze
+    ///         blocks re-attachment; activation waits for that slice.
+    error RewardCustodyActivationDetachedNotSupported();
+    /// @notice #1566 slice 4 PR B — a restitution correction claims more of
+    ///         the paid side than the ledger holds.
+    error RewardCustodyRestitutionCorrectionExceedsPaid(uint256 requested, uint256 paid);
+    /// @notice #1566 slice 4 PR B — the VPFI token cannot be rotated while
+    ///         the custody holder's rows describe the current token or the
+    ///         holder still holds it: every row is denominated in the
+    ///         configured token, so a rotation would relabel live custody.
+    ///         Drain the rows and the holder (the token-rotation runbook)
+    ///         first.
+    error RewardCustodyTokenRotationBlocked(uint256 attributed, uint256 heldInOldToken);
+    /// @notice #1566 slice 4 PR B — an overage release exceeds the recorded
+    ///         overage position.
+    error RewardCustodyOverageExceedsRecorded(uint256 requested, uint256 recorded);
+    /// @notice #1566 slice 4 PR B — an EFFECTIVE reward-role change was
+    ///         refused: holder allocations exist (or custody is activated)
+    ///         and the era registry that could carry them across a
+    ///         transition lands with slice 4 PR C, whose backfill clears the
+    ///         freeze.
+    /// @param current   The resolved {LibVaipakam.RewardRole} ordinal now.
+    /// @param requested The role the write would have resolved to.
+    error RewardRoleChangeFrozen(uint8 current, uint8 requested);
+    /// @notice #1566 slice 4 PR B — a mirror's authenticated base chain was
+    ///         being rebound directly to a different one. Design §5c: a
+    ///         source change passes through `Detached` (the old residual
+    ///         retires; delayed packets from the old source are not
+    ///         attributed to the new one) — never a direct rebinding.
+    error RewardBaseChainRebindRequiresDetach(uint32 current, uint32 requested);
+    /// @notice #1566 slice 4 PR B — a mirror's base reward deployment (its
+    ///         funding identity) was being rebound directly to a different
+    ///         one while the mirror role stands. Same rule as the base chain:
+    ///         detach first.
+    error RewardBaseDeploymentRebindRequiresDetach(address current, address requested);
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that
@@ -1113,4 +1569,18 @@ interface IVaipakamErrors {
     ///         simply not for sale: this one says the CHAIN is not set up,
     ///         which is an operator condition rather than a governance one.
     error PerkVpfiTokenNotSet();
+
+    // ─── #1566 closure 2 — the delivered-headroom chokepoints ───────────────
+
+    /// @notice A FRESH reward outflow exceeds the delivered headroom still
+    ///         unspent on this chain. Raised at the chokepoint BEFORE the
+    ///         transfer (the claim's delivery, the reward-absorption credit),
+    ///         so the whole operation rolls back.
+    error DeliveredFreshBoundExceeded(uint256 fresh, uint256 remaining);
+
+    /// @notice A non-reward inflow was credited to the recycle bucket without
+    ///         the VPFI having verifiably ARRIVED: the Diamond's balance rose
+    ///         by less than the amount between the caller's snapshot and the
+    ///         credit. The tag is derived from the operation, never chosen.
+    error RecycleInflowUnverified(uint8 source, uint256 expected, uint256 delta);
 }

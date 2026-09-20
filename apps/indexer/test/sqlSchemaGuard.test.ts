@@ -104,7 +104,42 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // its compile-time `LIMIT ${SWEEP_LIMIT}` constant; the statement's
     // shape runs against the real migrated schema in
     // test/calendarNotifications.test.ts.
-    expect(skipped.length).toBeLessThanOrEqual(12);
+    // Raised 12 → 14 for #2101 (#2190 r6): the stub heal and the loan
+    // repair now build their `SET` clause from ONE shared column list
+    // (`mutableLoanColumnsFromDetail`), which is the fix for review
+    // extending the repair's hand-picked field set three rounds running.
+    // Sharing the list is what makes the SQL dynamic — the two cannot both
+    // be had — so this is the guard's own "consciously raise the pin with a
+    // test covering the dynamic shape" route, not an escape. Both shapes
+    // execute against the REAL migrated schema:
+    // `closedLoanSideTables.test.ts` drives `reconcileAfterScan` end to
+    // end, and `loanStatusProjection`'s heal lane runs in the scan suites.
+    // A column named wrongly in the builder fails those, loudly.
+    //
+    // Raised 14 → 15 for #2213 r22 (`4015173433`): the quarantine table's
+    // availability probe MOVED INTO this Worker from `@vaipakam/lib`, where
+    // this extractor could not see it. The statement itself is unchanged and
+    // as old as the probe — it interpolates `${QUARANTINE_TABLE}`, the single
+    // constant naming the table, into a `sqlite_master` lookup. So this raise
+    // records a statement entering the guard's SCOPE rather than a new
+    // dynamic statement being written, which is exactly what the pin is for:
+    // it noticed, and it should have. The shape runs against the real
+    // migrated schema in `calendarNotifications.test.ts` and
+    // `loanQuarantine.test.ts`.
+    // Raised 15 → 16 for #2231 r14 (`4037027829`): the terminal quarantine
+    // sweep's DELETE now names the exact ids its bounded roster returned,
+    // `WHERE loan_id IN (?, ?, …)`, with one placeholder per id. It repeated
+    // the roster's two-table `EXISTS` before, which meant a SECOND unbounded
+    // walk of every held row on each sweep — the bound applied to what came
+    // back, never to the work. Binding the ids is what makes the statement
+    // dynamic; the values are still bound, never interpolated.
+    //
+    // The guard's own "raise the pin with a test covering the dynamic shape"
+    // route, and the covering test is unusually direct: `loanQuarantine.test`
+    // runs the sweep against the REAL migrated schema and asserts exactly
+    // which rows go and which remain, so a mis-built `IN` list fails loudly
+    // rather than silently clearing too much.
+    expect(skipped.length).toBeLessThanOrEqual(16);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

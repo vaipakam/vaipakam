@@ -23,7 +23,7 @@ import {
 } from '../lib/flows';
 import { increaseTime } from '../lib/anvil';
 import { accountFor } from '../lib/wallets';
-import { pub, walletFor, DIAMOND, DIAMOND_ABI_VIEM, forkChain } from '../lib/chain';
+import { confirm, pub, walletFor, DIAMOND, DIAMOND_ABI_VIEM, forkChain } from '../lib/chain';
 
 const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
   'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
@@ -73,7 +73,45 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
     account: accountFor('lender'),
     chain: forkChain,
   });
-  await pub.waitForTransactionReceipt({ hash: listHash });
+  await confirm(listHash, 'createLoanSaleOffer (lender lists the position)');
+
+  // CONFIRM THE SETUP FROM CHAIN STATE, not from the surface under test
+  // (#2183). The `confirm` above rules out a revert; this rules out the
+  // rest — that the listing actually placed the hold the borrower page
+  // is about to be asserted on.
+  //
+  // Both halves earn their place. Without them this spec's only evidence
+  // that the listing exists is the hold card rendering, so ANY failure
+  // upstream arrives 60s later as "element(s) not found" on line 86 —
+  // three steps from the cause, in a message that describes the UI and
+  // says nothing about the listing never having been placed. That is the
+  // whole of #2183: a setup failure wearing a product failure's clothes.
+  //
+  // `EarlyWithdrawalSale` is `LockReason` 2 (`None`=0, `PrecloseOffset`=1,
+  // `EarlyWithdrawalSale`=2, `PrepayCollateralListing`=3). Asserting the
+  // exact reason rather than "not None" matters: a position locked for
+  // the OFFSET route would also be non-zero and would render a different
+  // card, so a loose check would pass on the wrong precondition.
+  const loan = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getLoanDetails',
+    args: [loanId],
+  })) as { lenderTokenId: bigint };
+  const lock = await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'positionLock',
+    args: [loan.lenderTokenId],
+  });
+  expect(
+    Number(lock),
+    `the lender position (token ${loan.lenderTokenId}) should be locked for ` +
+      `EarlyWithdrawalSale after createLoanSaleOffer — if this fails the ` +
+      `listing did not take effect and every borrower-page assertion below ` +
+      `would be testing a state that was never reached`,
+  ).toBe(2);
+
   const saleOfferId = await newestOfferIdFor(accountFor('lender').address);
 
   // Borrower page: the hold notice renders in its LIVE shape (no

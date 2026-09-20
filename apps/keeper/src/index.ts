@@ -101,7 +101,11 @@
  * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; ten are scheduled below.)
  */
 
-import { getChainConfigs, resolveEnv, type WorkerEnv } from './env';
+import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
+import {
+  hasD1Binding,
+  maintenanceSkipNotice,
+} from '@vaipakam/lib/d1Maintenance';
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
 
 /**
@@ -146,6 +150,20 @@ export default {
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // #2239 — decline the whole tick when this build has no D1 binding.
+    //
+    // Every pass below reads or writes the database, so without this the tick
+    // would launch a dozen `waitUntil` continuations that each discover the
+    // refusal separately and each log a failure. One line, at the one place
+    // that can see the whole tick, is what an operator can actually read —
+    // and declining before `resolveEnv` also means a maintenance build stops
+    // fetching secrets it has no use for.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      return;
+    }
+
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; every scheduled pass gets the plain resolved env.
     const resolved = await resolveEnv(env);

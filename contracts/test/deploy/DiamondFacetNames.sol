@@ -69,7 +69,7 @@ abstract contract DiamondFacetNames {
     ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
     ///      of EIP-170 headroom — far less than one cross-facet call, the
     ///      same condition as #1780 at 30 and #1835 at 164).
-    function cutFacetNames() internal pure returns (string[77] memory) {
+    function cutFacetNames() internal pure returns (string[80] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -154,6 +154,12 @@ abstract contract DiamondFacetNames {
             "RewardRemittanceLensFacet",
             "RewardCompensationDispatchFacet",
             "RewardCommitmentFacet",
+            // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.
+            "RewardCustodyFacet",
+            // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
+            "RewardReconciliationFacet",
+            // #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet.
+            "RewardIngressFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

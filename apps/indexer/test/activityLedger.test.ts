@@ -38,11 +38,33 @@ function fakeDb(opts?: {
   const executed: Recorded[] = [];
   let insertOrdinal = 0;
   const db = {
+    /**
+     * `batch()` — added when the consumed-offer creator lookup became
+     * chunked (#2234). Each chunk is a separate statement inside one batch,
+     * so a stub without this would fail rather than exercise the code.
+     *
+     * It answers each statement with the subset of `selectResults` whose
+     * `offer_id` is actually BOUND in that statement. A stub returning the
+     * whole set per chunk would let a chunker that dropped ids from a
+     * statement still look correct, which is the defect the chunking is
+     * here to make impossible.
+     */
+    async batch(stmts: Array<{ __sql: string; __binds: unknown[] }>) {
+      return stmts.map((st) => {
+        executed.push({ sql: st.__sql, binds: st.__binds });
+        const rows = (opts?.selectResults ?? []).filter((r) =>
+          st.__binds.some((b) => b === r.offer_id),
+        );
+        return { results: rows, meta: { changes: rows.length } };
+      });
+    },
     prepare(sql: string) {
       return {
         bind(...binds: unknown[]) {
           statements.push({ sql, binds });
           return {
+            __sql: sql,
+            __binds: binds,
             async run() {
               executed.push({ sql, binds });
               if (/INSERT[\s\S]*INTO\s+activity_events/i.test(sql)) {
@@ -250,5 +272,43 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     const select = executed.find((s) => /FROM offers/i.test(s.sql));
     expect(select?.binds).toEqual([CHAIN_ID, 9]);
     expect((select?.sql.match(/\?/g) ?? []).length).toBe(select?.binds.length);
+  });
+
+  it('splits the creator lookup so no statement exceeds D1 bind cap', async () => {
+    // The set of consumed offers is as large as the batch the scan decoded —
+    // nothing in this file caps it — and D1 refuses a statement carrying more
+    // than 100 bound parameters (#2234). Before the split, a busy range threw
+    // INSIDE the batch that writes the activity rows, taking the whole batch
+    // with it.
+    //
+    // The sqlite/stub layer has no bind limit, so this asserts the SHAPE: how
+    // many statements, and how wide each is. It would pass just as well
+    // against an unchunked lookup if it only checked the answer.
+    const ids = Array.from({ length: 250 }, (_, i) => i + 1);
+    const logs = ids.map((id, i) =>
+      makeLog('OfferConsumedBySale', { offerId: BigInt(id), executor: '0xEXEC' }, i + 1),
+    );
+    const { executed, db } = fakeDb({
+      selectResults: ids.map((id) => ({ offer_id: id, creator: `0xcreator${id}` })),
+    });
+
+    await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
+
+    const selects = executed.filter((s) => /FROM offers/i.test(s.sql));
+    expect(selects.length).toBeGreaterThan(1);
+    for (const st of selects) {
+      expect(st.binds.length).toBeLessThanOrEqual(100);
+      // Placeholders and binds agree per statement — a chunk that built its
+      // list from one slice and bound another is the failure this catches.
+      expect((st.sql.match(/\?/g) ?? []).length).toBe(st.binds.length);
+    }
+    // Every id looked up exactly once, across the statements.
+    const boundIds = selects.flatMap((st) => st.binds.slice(1));
+    expect(boundIds).toEqual(ids);
+
+    // ...and every row still got its creator, so the split did not lose a tail.
+    const inserts = activityInserts(executed);
+    expect(inserts).toHaveLength(250);
+    expect(String(inserts[249].binds[8])).toContain('"creator":"0xcreator250"');
   });
 });

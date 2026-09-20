@@ -1,4 +1,13 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
+
+/**
+ * This Worker's deployed name, used as the label on a D1 refusal so an
+ * operator reading the log knows which deployment refused (#2239). Kept in
+ * step with `wrangler.jsonc`'s `name` by hand — a wrong label costs a moment
+ * of confusion in a log line, which is why it is not worth a build step.
+ */
+export const WORKER_NAME = 'vaipakam-keeper';
 
 /**
  * Typed env for the apps/keeper Worker.
@@ -57,8 +66,6 @@ export type SecretBinding = { get(): Promise<string> };
  * string, not because their values are public — see the module comment.
  */
 interface BaseEnv {
-  DB: D1Database;
-
   // Public Telegram bot handle (the @-name from BotFather). A plain
   // var; without it the handshake link returns a null bot_url.
   TG_BOT_USERNAME?: string;
@@ -148,6 +155,21 @@ interface BaseEnv {
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv extends BaseEnv {
+  /**
+   * The D1 binding AS DELIVERED — possibly absent, and typed that way (#2239).
+   *
+   * A maintenance deployment omits `d1_databases` so that no code in the
+   * isolate can obtain a database handle while a binding is being moved. That
+   * is a real state, so the raw env tells the truth about it, and the compiler
+   * then refuses `env.DB.prepare(...)` on a raw env. Every path has to go
+   * through `resolveD1Binding` and gets the refusing stub instead of a
+   * `Cannot read properties of undefined` — which is the whole point: the
+   * chokepoint is enforced by the type checker rather than by remembering.
+   *
+   * `Env.DB` below is non-optional, so nothing downstream of the seam changes.
+   */
+  DB?: D1Database;
+
   // Per-chain RPC URLs — HF reads + liquidation submission.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
@@ -178,6 +200,15 @@ export interface WorkerEnv extends BaseEnv {
  * `undefined` and the dependent pass skips it this tick.
  */
 export interface Env extends BaseEnv {
+  /**
+   * The RESOLVED D1 handle — always present, because the seam substitutes a
+   * refusing stub when the binding is absent (#2239). Downstream code reads
+   * `env.DB` exactly as it always has; on a maintenance build the operations
+   * throw a named refusal rather than returning data from a database that is
+   * being moved away.
+   */
+  DB: D1Database;
+
   // Per-chain RPC URLs — HF reads + liquidation submission. Each
   // missing URL skips that chain this tick.
   RPC_BASE?: string;
@@ -268,8 +299,14 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.KEEPER_PRIVATE_KEY),
   ]);
   return {
-    // Non-secret config — passed straight through.
-    DB: raw.DB,
+    // Passed straight through — these need no `.get()` resolution. That is
+    // NOT the same as "non-secret", which this label claimed until #2223:
+    // KEEPER_ENABLED and the two REWARD_*_ENABLED flags below are
+    // `secret_text` bindings, delivered as strings like any other. See the
+    // module comment, which already drew this distinction.
+    // `DB` goes through the maintenance seam: the real binding untouched on
+    // every ordinary deploy, a refusing stub when it is absent (#2239).
+    DB: resolveD1Binding(raw.DB, WORKER_NAME),
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,

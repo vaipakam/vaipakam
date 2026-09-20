@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -229,7 +230,9 @@ contract RewardClaimFacet is
             LibInteractionRewards.EntrySplit memory userSplit,
             LibInteractionRewards.EntrySplit memory forfeitSplit,
             bool walkAdvanced
-        ) = LibInteractionRewards.claimForUserEntries(msg.sender, freshBudget);
+        ) = LibInteractionRewards.claimForUserEntries(
+            msg.sender, freshBudget, windowReward // #1566 closure 2 — the window reserves delivered headroom too
+        );
         uint256 entryReward = userSplit.total;
         uint256 treasuryDelta = forfeitSplit.total;
         uint256 paidRecycled = userSplit.recycled;
@@ -311,7 +314,7 @@ contract RewardClaimFacet is
         // stated ONCE on {LibVpfiRecycle.backingPosition}. Deliberately not
         // restated here: inlining the arithmetic instead of calling the
         // definition is what let the prose drift in the first place.
-        (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+        uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
 
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
         // only. The recycled components are bucket-backed (sized by the
@@ -416,11 +419,15 @@ contract RewardClaimFacet is
             userSplit.armedFresh + forfeitSplit.armedFresh
         );
         if (paidRecycled > 0) {
-            LibVpfiRecycle.consume(paidRecycled);
+            LibVpfiRecycle.consume(paidRecycled, false, 0);
         }
 
         if (paid > 0) {
-            _deliverReward(vpfi, paid, deliverTo, today);
+            // #1566 closure 2 — the FRESH component travels with the
+            // delivery so the chokepoint can bound and charge it before the
+            // transfer; `paid` itself includes the recycled share the bucket
+            // backs and must never be the operand.
+            _deliverReward(vpfi, paid, freshPending, deliverTo, today);
         }
         if (treasuryDelta > 0) {
             // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split:
@@ -430,7 +437,11 @@ contract RewardClaimFacet is
             // ZERO new credit (crediting it would inflate Ā on every
             // forfeit while absorbing nothing).
             if (freshTreasury > 0) {
-                LibVpfiRecycle.credit(
+                // #1566 closure 2 — reward absorption goes through the
+                // bounding operation: rejected if it exceeds the remaining
+                // delivered headroom, charged to the paid ledger, credited —
+                // one call. The generic credit no longer exists.
+                LibVpfiRecycle.absorbRewardFresh(
                     LibVpfiRecycle.RecycleSource.ForfeitedReward,
                     0,
                     freshTreasury
@@ -474,14 +485,57 @@ contract RewardClaimFacet is
     function _deliverReward(
         address vpfi,
         uint256 amount,
+        uint256 fresh,
         LibVaipakam.RewardDelivery deliverTo,
         uint256 claimDayId
     ) private {
+        // #1566 closure 2 — THE claim-side chokepoint (exactly one caller):
+        // bound the fresh component against the remaining delivered headroom
+        // and charge the paid ledger, before either delivery route runs. A
+        // legacy (pre-`D*`) slice reaches here without ever consulting the
+        // bound in the walk, which is precisely the over-draw this closes.
+        LibInteractionRewards.chargeDeliveredFresh(
+            LibVaipakam.storageSlot(), fresh
+        );
         bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
             || (
                 deliverTo == LibVaipakam.RewardDelivery.Default
                     && msg.sender.code.length == 0
             );
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 slice 4 PR B — on an activated deployment the payout is ONE
+        // atomic two-row debit of the holder (design §5d): the fresh
+        // component leaves the live-fresh row and the recycled component
+        // (`amount − fresh`; the bucket's ledger-side counterpart is
+        // {LibVpfiRecycle.consume}, which moves no tokens) leaves the
+        // recycled row, and the tokens are released from the holder to the
+        // resolved destination, measured at both ends. The vault leg runs
+        // the debit, the release, the tracked-balance record and the tier
+        // rollup inside the same revert-isolated self-call the Diamond-funded
+        // route uses, so a failure after the token movement rolls the
+        // holder release back before the wallet fallback pays — exactly one
+        // destination is ever paid.
+        if (LibRewardCustody.active(s)) {
+            uint256 recycled = amount - fresh;
+            if (toVault) {
+                // slither-disable-next-line low-level-calls
+                (bool okHolder, ) = address(this).call(
+                    abi.encodeWithSignature(
+                        "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)",
+                        msg.sender,
+                        vpfi,
+                        fresh,
+                        recycled
+                    )
+                );
+                if (okHolder) {
+                    emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
+                    return;
+                }
+            }
+            LibRewardCustody.callPayoutToWallet(msg.sender, fresh, recycled);
+            return;
+        }
         if (toVault) {
             // slither-disable-next-line low-level-calls
             (bool ok, ) = address(this).call(

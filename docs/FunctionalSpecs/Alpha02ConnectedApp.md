@@ -1,9 +1,11 @@
 # Connected App Functional Specification
 
 This document states the intended behaviour of the Vaipakam connected app —
-`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07; the
-marketing site's links are still held on the legacy host by a separate
-decision — see #1854). It is the app-specific functional
+`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07, and the
+marketing site's links resolve here since #1959 ported the last two
+destinations and flipped the cutover switch; the `/recover` guide links
+alone stay on the legacy host, held by same-origin recovery state rather
+than by any missing route). It is the app-specific functional
 spec distilled from the release notes through 2026-08-12. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
@@ -37,6 +39,118 @@ reveal denser market and management tools without leaving the same product.
   by a display failure.
 - The global support control remains reachable without covering primary mobile
   action buttons.
+
+## Public Transparency Surfaces
+
+Two surfaces exist to be read by people who have not connected anything,
+including people who never will.
+
+- An analytics view reports the deployment's loan and offer counts, and a
+  protocol console reports the current value of the governance-tunable
+  parameters the public indexer publishes — a bounded subset, not the
+  whole catalogue. Both are read-only. Neither offers any control that changes
+  protocol state; parameter changes are a governance action elsewhere.
+- Both render fully without a wallet, and both are reachable by direct
+  link from outside the app. They resolve their chain the same way every
+  other read does when no wallet is connected, so arriving cold shows
+  real figures rather than an empty page.
+- Connecting a wallet must never take either away. Whatever the terms
+  prompt withholds, it does not withhold these: withholding a page
+  anyone could read without a wallet, because a wallet is present, is a
+  contradiction rather than a restriction.
+- Each carries its own page title and description. The analytics view is
+  indexable; the console is indexable **only while it is public**. A
+  deployment may withhold the console, in which case the page renders
+  only its withheld-state message, and it is then excluded from the
+  index and from the sitemap alike — indexing a surface a deployment has
+  decided not to publish would advertise it anyway, and the description
+  would promise current values the page is not showing.
+- Figures are reported with their age. A reader is told how current the
+  data is beside the data itself, and an unknown age is never presented
+  as a fresh one.
+- A counter the source did not report is distinguished from a counter
+  that is genuinely zero, and neither is inferred from the other. Where
+  nothing has been indexed at all, that is stated instead of reporting
+  zero for everything — an unread source is a fact about the source, not
+  about the protocol.
+- A loan whose lending asset the indexer has not recorded is counted in the
+  active total and excluded from every typed subtotal, whichever placeholder
+  the row carries. Publishing such a row under a type it was merely defaulted
+  to would be worse than the gap it hides, because the subtotals would then
+  reconcile and the unclassified remainder — the surface's own signal that
+  something is unknown — would read zero.
+- A counter that arrives but cannot be a count of anything — negative,
+  fractional, or not a finite number — is withheld rather than published,
+  and is distinguished from one that was never reported. Both withhold
+  the figure; only one of them says the source sent something impossible,
+  and a reader auditing the source is owed that difference. The same rule
+  decides whether a figure may be shown and whether it may be used in a
+  subtotal, so the view cannot withhold a derived figure while printing
+  the invalid input it came from.
+- Where the console knows its values are superseded, it points the reader at the
+  chain itself for what is in force — not at documentation that derives from the
+  same superseded source. A reference that would answer from the same snapshot,
+  or fall back to starting defaults, gives a confident wrong answer exactly when
+  the console has established that the values moved; the documentation is still
+  the right place to learn what a setting means and where it began.
+- The console's values refresh while it is open. A reader who leaves it
+  open is shown parameters as they currently stand, not the snapshot the
+  page loaded with; reporting the snapshot's age correctly is not a
+  substitute for refreshing it, since a parameter superseded minutes ago
+  sits well inside any age the page would call current.
+- The analytics view names the protocol's contract address for the chain
+  being read and offers a way to open it on a public explorer, so a
+  reader can go to the primary source rather than accept the page's
+  reading of it.
+- Any total the analytics view reports is the sum of the categories it
+  shows beside it. Every state counted toward a total is either named or
+  gathered into a stated remainder, so a reader can add up the parts and
+  arrive at the whole. A total that exceeds its visible parts is a defect
+  on a page whose purpose is that its figures can be checked rather than
+  taken on trust — the reader is left with a discrepancy and no account
+  of it.
+- Where a figure counts one kind of thing and the product offers another
+  kind alongside it, the view says which it is counting. Offers that
+  exist only as a signed instruction — fillable, visible in the offer
+  book, but never written to the chain — are a different population from
+  offers the protocol holds, and an unqualified count of the second
+  understates what a reader can see elsewhere in the same product.
+  Naming the scope is preferred over merging the two, because the
+  populations have different lifetimes and a merged figure cannot be
+  reconciled against the chain.
+- A state's label describes the state, not the page's knowledge of it. A
+  loan whose settlement is part-way through and awaiting a further step
+  is a settlement state holding real collateral; labelling it as though
+  its details were still being fetched invites a reader to dismiss real
+  exposure as a gap in the reporting.
+- The protocol console reports each parameter against its own name, and
+  never by inferring which value belongs to which name from ordering.
+- The console states that it shows a subset rather than implying it is
+  complete. Settings that exist but are not published — lifecycle and
+  automation switches, the grace schedule, sanctions-oracle
+  configuration and several risk controls among them — are absent, and
+  a reader is pointed at the full parameter reference rather than left
+  to infer that what is shown is all there is. An incomplete view that
+  asserts completeness is worse than an incomplete view, because it
+  stops the reader looking further.
+- An operator may hide the live parameter values on a deployment. In
+  that state the console says so plainly, and does not direct the reader
+  to any resource that the same setting has also withheld.
+- A published snapshot that carries no parameter values is not the same as no
+  snapshot, and the console does not collapse the two. The snapshot still
+  states when it was read and that the deployment is publishing, and the
+  console reports that the values themselves did not arrive. Discarding the
+  whole reading because one part of it was empty would tell the reader the
+  console has heard nothing from a source that in fact answered — an unread
+  source and a source that answered without values are different facts about
+  the deployment, and only the first is a reason to stop asking.
+- Retaining those facts and not showing them is the same failure with an extra
+  step. Where a surface tells the reader that its provenance — which source,
+  which block, how long ago — is still accurate, that provenance is on the
+  page. A statement that something is disclosed below, followed by nothing
+  below, is worse than saying nothing: it spends the reader's trust on a
+  disclosure that never happens, and it is the surface's own copy that
+  disproves it.
 
 ## Wallet and Network Behaviour
 
@@ -89,6 +203,897 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- Indexed lifecycle status must not drift from the chain's indefinitely.
+  A loan's ending is learned from the event announcing it, and an
+  announcement the platform does not see is missed for good — resuming
+  ingestion restores the reading position, not the records already behind
+  it. The platform does not assert WHY an announcement goes unseen: the
+  reading survives being stopped, being refused, and falling a long way
+  behind, so naming those as the cause would claim something it has not
+  established. So the index re-examines what it believes
+  to be running against the chain on a continuing rotation, and corrects
+  a record the chain says has ended. It keeps re-examining even while the
+  totals agree, because one missed ending and one missed beginning leave
+  the totals equal with both records wrong.
+- That correction only ever moves a record from running to ended, and
+  only on the chain's word. A source that is behind reports the loan
+  still running, which matches the record and changes nothing, so being
+  out of date can cause a correction to be missed but never invented.
+  **That direction is necessary and not sufficient, and the platform must
+  not rest on it alone.** The correction cannot be undone by the same
+  mechanism — a record it has ended is no longer one the check looks at —
+  so a reading that is WRONG rather than merely old is permanent. The
+  chain state a correction relies on must therefore be read at a point the
+  chain treats as settled, never at whatever the source last saw and never
+  at a point derived from how far the index itself has read. Without that,
+  a reorganisation or a momentarily non-canonical answer can report an
+  ending that then disappears, leaving an open loan recorded as closed with
+  nothing that would ever revisit it. A
+  record that already shows an ending is left to the event path, which
+  can tell a forced sale from an ordinary default where the chain's own
+  status cannot — a record corrected from the chain may therefore name
+  the ending less precisely than the event would have.
+- When no settled point can be read, the correction does not run at all,
+  and says which chain it is not running on. Guessing one — stepping back a
+  fixed distance from the newest block — answers the question with the
+  wrong kind of answer, and the whole reason for the rule above is that
+  being wrong here cannot be undone. Not running is the honest outcome;
+  running quietly on a guess is not, and neither is declining quietly,
+  because a check that silently skips itself reports perfect health while
+  records stay wrong. What the platform reports is the reason its source
+  gave, never a cause inferred from the failure: a source that supports the
+  question and merely timed out is indistinguishable at that moment from
+  one that cannot answer it, and an operator sent to replace a working
+  source has been told something false. A chain in that state keeps
+  whatever records it already had — nothing is corrected, nothing is
+  damaged — until the settled read succeeds.
+- Whenever the live set was not checked against the chain on a turn, the
+  reminders derived from that set wait for a turn that checked. Due-date
+  and grace reminders are read off the records the platform holds, they are
+  sent once, and they are never taken back — and a record wrongly showing a
+  position as open is exactly what the check exists to find. So a turn that
+  refuses to check, or cannot, must not also be the turn that reminds
+  someone about a position that may already have ended. This holds for every
+  reason a check does not run, not only an unreadable settled point: a turn
+  whose own reading has run ahead of the settled point, and one that has not
+  yet caught up to it, are equally turns that established nothing. Waiting
+  costs nothing a reminder needs — its window is hours to days — and the
+  platform already waits on the same surface when the grace schedule the
+  reminders depend on has not been read.
+- The same rule applies record by record, not only turn by turn. A turn that
+  checked may still have records it could not settle — one the chain has
+  never heard of, one whose state could not be read, one whose correction
+  failed to write, one in a state this build does not recognise — and each
+  of those is still recorded as open. Those records are left out of that
+  turn's reminders by name, while every record the turn did settle is
+  reminded about as usual. The alternative, withholding the whole chain's
+  reminders because one record could not be read, would punish every other
+  holder for it — and would do so indefinitely if that record stays
+  unreadable.
+- A record left out for that reason stays left out until a later turn settles
+  it, not merely for the turn that noticed. Each turn examines a handful of
+  records, so a rule applied only to the current turn's findings leaves the
+  same record reminded about on every other turn — the platform would be
+  treating *what this turn looked at* as if it were *what is currently
+  unconfirmed*, which are different questions. The stricter-looking variant
+  of that mistake fails identically: holding back every record on a turn
+  whose findings were dirty still reminds on the next turn, because that
+  turn's findings are clean for having looked elsewhere.
+- What the platform remembers about such a record is which way it could not
+  be confirmed and when it was first noticed, and it says so out loud once
+  that has lasted. The four ways need different responses, and the age is the
+  difference between a source having a bad moment and a position nobody has
+  resolved — so neither is flattened away, and the first-noticed time is
+  never refreshed by a later sighting of the same problem.
+- A record is released as soon as a turn settles it, by any route: corrected,
+  found genuinely running, or ended by someone else. It is ALSO released by a
+  standing sweep over held records whose loan is no longer running, so a
+  release missed at close-out — for any reason, including one nobody
+  anticipated — is picked up later rather than leaving the record held for
+  good. The sweep runs on every turn and clears a limited number each time,
+  so "picked up later" can mean several turns where many are waiting; it is
+  not a promise that one turn catches them all. A loan that has ended can generate no reminders, so holding its record
+  withholds nothing and only buries the records that do need a person. Holding a record back
+  forever on the strength of one unreadable moment is the same defect facing
+  the other way, and it is the failure this rule is most likely to produce if
+  it is written carelessly.
+- **A lookup that covers many records at once must not fail BECAUSE there are
+  many.** The platform decides who an inbox row is for, and who a sold-offer
+  row belongs to, by asking its own store about every record in the batch it
+  is working on. How many that is depends on how busy the network was and on
+  how far behind the platform had fallen — so it is largest exactly when a
+  catch-up is running. A question the store refuses because it names too many
+  records at once is not a slow answer, it is no answer: the work it belonged
+  to fails whole, and it fails identically next time, because the backlog that
+  made the question too large is still there. So such a question is split into
+  as many as it takes and the answers combined, and the splitting is one shared
+  rule rather than a number each caller remembers — a limit that has to be
+  recalled at five call sites is a limit two of them will not know about.
+- **A held record is NEVER released on an inference that the position has
+  changed.** A record is released when the position it names is settled, or
+  found to have ended — facts the platform establishes. It is not released on
+  a judgement that "the identifier must belong to something else now", because
+  every basis for that judgement available to the platform has proved unsound:
+  a recorded start time may be the platform's own clock substituted when the
+  network could not be read; a recorded place in the network's sequence goes
+  stale, restarts on a test-network reset, and can be left behind by a
+  reorganisation the platform never revisits. Acting on any of them would
+  release a record — and resume reminders — on the strength of a read that
+  failed.
+- **Holding a record is NOT free, and the platform says so rather than
+  inferring its way out.** A held record withholds reminders from whatever
+  position currently bears that identifier, so where an identifier has come
+  round again — after a network redeployment or a reset — a legitimate
+  position goes without reminders. The report a person reads therefore names,
+  for every long-held record it DESCRIBES, what its identifier points at now:
+  no stored position at all, or a stored position in a given state that began
+  at a given point — **labelled as stored and unverified**, because that record
+  may itself be stale or left behind by a reorganisation, which is the same
+  unsoundness that stopped the platform acting on it. A person can see from
+  that whether the record is still about the position it was made for, and
+  clear it if not.
+
+  Records past the described page are named but not described, and the report
+  says so in those terms: being named is not being examined, and nothing above
+  such an identifier says what it points at now. That is the check the
+  described records got and these did not — see the bounded-report point
+  below, which this one does not override.
+  Clearing is a deliberate act, and names the exact record that was read, so
+  that a re-observation arriving between the reading and the clearing is not
+  silently discarded.
+- **Held records are named, not merely counted — up to a stated limit, and
+  the limit is never silent.** Where more are held than the report describes
+  in full, the remainder are still listed by identifier, because a record left
+  out entirely would be withholding reminders with nothing anywhere saying
+  which position it concerned, and this report is the only surface that
+  discloses that at all. The report says plainly that those identifiers are
+  named but **not** described, that the descriptions are of the longest-held
+  records and do not take turns, and that resolving one of those is what
+  brings the next into view. It does not promise detail that a later run
+  would supply, because no later run would. Past the listing limit it names
+  no more, says exactly how many it is not naming, and gives the enquiry that
+  lists them — see the bounded-report point below, which this one does not
+  override.
+- **A described record's removal is written out in full, to be run exactly as
+  printed.** Nothing is left for a person to assemble. Printing the *pieces*
+  of a removal and describing how to combine them was tried three times and
+  failed three different ways, each only noticed by a reader; the platform now
+  emits a finished instruction, and it is checked by being executed rather
+  than by being read.
+
+  Records named but not described do not carry one in the message — there is
+  no room for hundreds of finished instructions in one line — so the report
+  gives them an enquiry that RETURNS each one's instruction, already written.
+  Not the values to build one from: the assembly is the thing that kept going
+  wrong, and an enquiry handing back parts would have preserved it in the one
+  place hardest to check. The store builds the text, so the quoting is done by
+  the same engine that will parse it. Naming a record while leaving it
+  unactionable would, in practice, push a person toward the unguarded removal
+  this report spends a paragraph warning against, and because the described
+  page does not rotate it would push them there indefinitely.
+
+  That value is a token **together with** the time of the sighting, and it
+  takes both because neither covers the other's case. An ordinary write
+  rotates the token, which is what separates two sightings inside the same
+  second — a recorded time cannot. A write made while the store is still on
+  the older shape CANNOT rotate it, and those are caught by the time moving
+  instead. Saying simply that the token changes on every sighting would
+  describe protection the fallback path does not provide. Either gap lets a
+  removal delete a finding recorded after the person read the report — resuming reminders for a position nothing has
+  settled, the exact harm this memory exists to prevent. A guard that can
+  silently fail is worse than none, because its value is that it can be
+  trusted without checking.
+
+  One gap is left open and is written down rather than implied: a sighting by
+  the older write shape landing in the same second as the one the person is
+  holding moves neither half. That needs a deployment window or a failed
+  question to the store, AND two sightings inside one second. Closing it would
+  mean forcing the recorded time forward on a collision, which corrupts the
+  one thing telling a person how long ago a record was actually made.
+
+  A record written before that value existed carries an empty one, and the
+  report prints it in a form that can be pasted as it stands rather than a
+  word standing in for it. A record the platform never re-examines — the very
+  case this report is for — would otherwise be named and permanently
+  unremovable by the safe route.
+- **An upgrade never costs a run its memory.** A deployment can publish new
+  platform code before the store it reads has been updated to match, so for a
+  short window the code runs against the older shape. Recording a withheld
+  position is written to succeed against BOTH shapes, and the report is
+  written to be readable against both, because a run that cannot record a
+  withheld position leaves the next run free to remind on it — the exact
+  failure this memory exists to prevent, arriving during its own upgrade. The
+  platform asks the store which shape it has rather than assuming, and keeps
+  asking until the newer one appears. Where the sweep that releases records
+  must read the store to find them, what it REMOVES is bounded together with
+  what it reads, so one run clears up to a stated number and the rest wait for
+  later runs — the sweep runs on every run. That number is smaller than the
+  report's, and for a harder reason: the store refuses a single instruction
+  carrying more than a fixed count of supplied values, and an instruction that
+  exceeds it fails the SAME way on every run, releasing nothing while
+  appearing to work. The removal also re-checks, at the moment of removing,
+  the fact that licensed it — between finding a record and removing it, the
+  position under that identifier can have been replaced by a live one, which
+  is precisely the reuse this memory is about. The reading itself still grows with
+  how much is held, and that is stated rather than claimed away: no index can
+  bound a question that spans two records and is not stored anywhere.
+
+  While the older shape is in use, the report names withheld positions on the
+  same terms as ever — up to its stated limit, with an exact count of any
+  beyond it — because a deployment is exactly when a suppression most needs to
+  be visible. What it withholds there is the removal procedure, and it says
+  why: every such command names something the older shape does not have, so
+  printing one would hand a person an instruction that cannot run and invite
+  them to improvise the unguarded removal the report warns against. The
+  enquiry that would fetch instructions for the records past the limit is
+  withheld for the same reason.
+
+  It does **not** promise how long that lasts. In an ordinary rollout it is
+  minutes, and the report says so — but asking the store establishes only that
+  the newer shape is ABSENT, never when it will arrive, and an update that
+  failed or was skipped leaves this indefinitely. So the report tells a person
+  what to do with a second sighting: if the same message appears on a later
+  run, the update did not land and wants looking at, because these
+  suppressions cannot be cleared safely until it does.
+- **The report is bounded, and says so where the bound bites — and says
+  exactly what is NOT bounded.** Reporting takes the same small number of
+  enquiries every run, returns no more than a stated number of records to the
+  platform, and lists no more than a stated number of identifiers however many
+  are held. One thing is deliberately *not* fixed: establishing **how many**
+  are held requires the database to consider every record that qualifies, so
+  that part grows with the size of the fault. It is kept because the
+  alternative is telling a person "more than 200" when the true figure might
+  be three thousand — and the magnitude is the most actionable thing the
+  report carries. The growth is confined to a counting pass the database can
+  satisfy from its index rather than from the records themselves, and the
+  page the person actually reads is a bounded walk of that same index rather
+  than a sort of everything held.
+
+  Stating this precisely matters more than stating it strongly. Earlier
+  drafts of this point claimed fixed work outright, and each time the claim
+  outran the implementation it was the *claim* that had to be chased — first
+  the message length, then the volume returned, then the work the database
+  does. A specification that promises more than the system delivers turns
+  every review into a search for the next unbounded layer. The run holding
+  the most records is the one least able to afford extra work, and the one
+  whose failure would leave the network's reading position unrecorded and its
+  view frozen; a report whose OUTPUT grew with the fault would fail on the
+  only network that needed it. Where more are held than it will name, it
+  states **how many** — an exact figure, not "at least", and taken in the same
+  instant as the records it describes, so the two cannot disagree about a
+  removal that happened between them — and gives the enquiry that lists the
+  rest, returning for each that record's removal instruction already written,
+  rather than the identifier alone or the values to build one from. A listing that simply stopped would
+  be the silent truncation everything here is written to avoid.
+- **Every route by which the PLATFORM releases a LONG-HELD record announces
+  it, and there is only one way to write such a release of a single record.** The qualifier is not
+  hedging: a record released before it was ever reported is deliberately NOT
+  announced, because that is the ordinary case this memory is built around — a
+  reading failed, the record was held for a turn, the next turn settled it —
+  and a line for each would bury the ones that need a person. What must never
+  be silent is the release of a record a person has been reading about.
+
+  The platform releases records from more than one place — a periodic sweep, a
+  run that settles the position, and the close-out that ends it — and
+  disclosure was added to those one at a time as each was noticed, which is
+  precisely how one of them stayed silent. A release the platform performs BY
+  ITSELF, of a single record, is now expressible only through one shared form
+  that always carries back what it removed, so no route has to remember to ask
+  for that, and a new route cannot be added without deciding what it
+  discloses.
+
+  A removal a PERSON runs is outside that rule, and deliberately so. The
+  report writes those out for them, one per record, and they are the subject
+  of their own points above — guarded against a sighting arriving in between,
+  reporting whether they matched, withheld entirely where they could not run.
+  Routing them through a form built to announce what the platform did by
+  itself would be announcing a person's action back to the person who took
+  it. The rule is about routes that act unwatched; that is exactly why it
+  exists.
+
+  The periodic sweep is the exception, and naming it is the point. It removes
+  a batch in one instruction, so it cannot use a per-record form and a check
+  that demanded it would be wrong rather than strict. It carries its own
+  disclosure instead, and it is the only such place: one instruction, and a
+  check that refuses any OTHER single-record removal the platform executes by
+  hand — the report's own instructions for a person are outside it, as above.
+  An
+  invariant with a stated exception is worth more than one that reads as
+  absolute and is not.
+
+  This is deliberately stated as a strong default rather than a guarantee. A
+  route that obtained the shared form and then discarded what it returned
+  would still be silent; nothing in the platform can prevent that, because
+  these releases exist to be committed together with unrelated work and so
+  cannot own their own execution. What closes the gap in practice is that the
+  omission is now a deliberate act rather than an oversight, and that a check
+  refuses any platform-executed release written by hand. Saying "by
+  construction" here would
+  promise more than the mechanism delivers, and a guarantee a reader trusts
+  without checking is worse than one they check.
+- **What a release announces depends on what licensed it, and there are four
+  different licences.** A run that read the network for an identifier and got
+  an answer has the soundest evidence the platform holds, and says so. A
+  repair is a network read too, but of a position whose ending was never
+  announced — so it says the ending was FOUND, rather than claiming one
+  arrived.
+
+  A repair only says that when its own write is the one that recorded the
+  ending. Where it finds another writer got there first, it says less: on
+  that path the other writer may well have been the announcement arriving,
+  which is the very race the check exists to detect, so claiming no
+  announcement came would deny the likeliest explanation. It reports a
+  network read and nothing about announcements.
+
+  A close-out did see the ending announced, and establishes that the position
+  *currently* bearing the identifier ended, not that the record being released
+  was ever about that position. Each names its own basis; none borrows
+  another's. Sharing a mechanism does not license sharing a claim, and one
+  announcement wired to every route said the strongest of them on all of
+  them.
+- **One automatic release remains an identity assumption, and is stated as
+  one — by the release itself.** A record is released when a stored position
+  bearing its identifier is no longer running. Where an identifier has been
+  reused, that establishes the replacement ended, not the position the record
+  was about — so the original unresolved finding is erased. The platform does
+  not have a verifiable identity for a position and so cannot tell the two
+  apart; this is recorded as a known limit rather than presented as a settled
+  outcome. **The disclosure is made where the assumption is exercised**: the
+  release names the CANDIDATES it read immediately before removing — a roster
+  bounded by a stated limit — together with a count of what went, where the
+  store reports one. Not a list of what it removed: the removal re-checks its
+  condition, so fewer can go than were listed, and the platform then knows
+  only how many, never which, and not why. Where the store reports no count, that is said:
+  the number that qualified a moment earlier is given as exactly that, and
+  explicitly not as a count of what went, because any of them may have been
+  cleared or become live in between. The removal also re-checks its condition,
+  so fewer records can go than were listed, and where that happens the
+  difference is stated rather than left for a reader to notice. Leaving this to the held-record report would disclose
+  nothing in the very case that matters, since a release can empty the report
+  it would have appeared in.
+- **A record is also released, correctly, the moment a run examines its
+  identifier and the network answers — and that release is announced when the
+  record was long-held.** This is a second path on which a reused identifier
+  clears a record, and it is deliberately not prevented: the network's own
+  answer about that identifier is the only sound evidence the platform has,
+  and every basis it declines to act on is a stored value standing in for
+  exactly this. Blocking it would withhold reminders indefinitely from a live,
+  settled position on the strength of a finding about a position that no
+  longer exists — the mirror-image fault this memory was built to avoid.
+  What it must not be is invisible: where the record had been held long enough
+  to appear in the report a person reads, its release is stated, along with
+  the fact that if the identifier had come round, the answer concerns the
+  position bearing it now and the earlier unresolved finding is gone with it.
+  A record released before it was ever reported is not announced, for the same
+  reason it was never reported: the ordinary case is a reading that failed
+  once and succeeded on the next run, and announcing those would bury the
+  records that need a person.
+- The payment-due reminder for a loan paying interest on a schedule is
+  confirmed against the chain before it is sent, rather than against the
+  memory above — and the confirmation covers the PERIOD as well as the loan.
+  A borrower who has just paid leaves the loan open and the platform's own
+  record pointing at the period they settled, so every other condition passes
+  and the reminder would arrive moments after the payment. The chain's own
+  record of when the last period was settled decides it: if the period the
+  reminder is about is not the period the chain is on, nothing is sent and the
+  record is left for a later run, by which time the platform's own records
+  have caught up.
+- No reminder is sent on a network where settlement is currently switched off.
+  Governance can disable periodic interest platform-wide, which stops new
+  positions taking a cadence and makes the settlement itself refuse — but
+  positions already open keep the cadence they were opened with, so they go on
+  looking due. A reminder then instructs someone to make a payment the platform
+  would reject, which is worse than silence and worst during the emergency that
+  prompted the switch. A run reads that setting before it speaks, sends nothing
+  on a network where it is off, and marks nothing — so reminders resume by
+  themselves when it is turned back on. A run that cannot READ the setting also
+  sends nothing: not knowing whether a payment can be made is not permission to
+  demand one.
+- A disagreement about WHICH period is current withholds the reminder in
+  either direction, but the two directions are reported apart. The chain being
+  further along means the borrower has paid and the platform's records are
+  catching up, and nothing needs doing. The platform's own record being
+  further along — a payment recorded and then undone by the chain
+  reorganising, or a damaged record — does not catch up, because the
+  correction pass does not revisit that field, so that position's reminders
+  stay withheld until a person fixes the record. Reporting the second as the
+  first would tell the reader to wait for something that never arrives.
+- Confirmation is only accepted from a source that has first proved it is the
+  network it is configured to be. A source pointed at a different network —
+  by a swapped setting, say — answers every question confidently and about
+  the wrong chain, and could certify a loan that has nothing to do with the
+  one being reminded about. A run asks once, and stops if the answer is wrong
+  or if the source cannot say at all.
+- Confirmation is only accepted from a view of the chain that is at least as
+  current as the platform's own records. A source lagging behind what the
+  platform has already read still reports an ended loan as running, so it
+  would confirm precisely the reminder the check exists to withhold; a run
+  that finds itself in that position sends nothing and says so, rather than
+  accepting an endorsement worth less than no check at all. A run that cannot
+  establish how current its source is — because the comparison itself failed —
+  also sends nothing: an unanswered question is not an answer, and treating it
+  as one would turn a momentary database failure into permission to send. Every loan in one
+  run is also checked against a single point in the chain's history, so a
+  source that serves part of the answer from further back fails outright
+  instead of quietly mixing two moments. It is the other message a person cannot un-receive, it is sent
+  from a different part of the platform on a different schedule, and a rule
+  held in one part does not reach the other. Confirmation means the chain
+  still has that loan and still has it in the one state the interest payment
+  can actually be made from — not merely that it has not ended, since a state
+  that cannot be paid from would invite an action the platform would then
+  refuse.
+- That confirmation is true at the moment it is made, and the platform does
+  not claim more. A loan that ends between the confirmation and the message
+  going out is still messaged. What the confirmation removes is a record that
+  has been wrong for hours or days; what remains is the few seconds in which
+  no off-chain check could have known, on a reminder about a payment still
+  days away.
+- A single run sends a bounded number of these reminders, takes the nearest
+  deadlines first, and does not always begin with the same network. Every run
+  has a fixed allowance of outbound requests — covering every request it makes,
+  its own queries to the chain included — so an unbounded one would stop
+  partway through and take every network after it down with it, on every run,
+  for as long as the load lasted. A run does not begin work on a network it
+  cannot afford to both query and send for — including the cost of confirming
+  that network's identity when that has not already been done, so a network it
+  refuses spends nothing at all and the ones behind it keep what it would
+  otherwise have wasted. The order is what makes the bound safe: a
+  reminder deferred by it is nearer the front next time and arrives well
+  before the deadline it concerns, where an arbitrary order would reach the
+  same records every run and the ones behind them never.
+- The bound is on OUTBOUND REQUESTS — every request the run issues, never on
+  records examined or records handled. "Every request" includes the run's own
+  reads and writes of the platform's records, not only its queries to the
+  chain and the messages it sends: those leave the run just as the others do,
+  and a bound that ignored them would let a run that believed it was rationing
+  its messages exceed the real limit while sending almost none.
+- The run holds back the request it needs to SAVE ITS PLACE, and refuses to
+  begin a record it could only finish by spending it. A run that used its
+  last request on a reminder and then could not record where it got to would
+  stay inside its allowance and re-read the same prefix on every later run,
+  which is the starvation the remembered position exists to prevent — so the
+  two requirements are held together rather than traded off.
+- **The place it saves is a DEADLINE, not a position in a list.** The run
+  resumes at the first record whose deadline is at or after the one it
+  recorded. This is what stops the saved place drifting: the list of records
+  awaiting a reminder is rebuilt each run, and the ones reminded last time are
+  no longer in it, so a remembered *position* points further along than it did
+  — past exactly as many of the nearest remaining deadlines as were handled.
+  A deadline does not move when other records are handled or leave. Where the
+  recorded place cannot be read at all, the run begins at the nearest
+  deadline.
+- **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
+  surface that describes a run beginning at the nearest deadline — because the
+  place was missing, unreadable, malformed, or deliberately cleared during a
+  restore — means exactly this and nothing more: *for that run*, beginning at
+  the front repeats work already done rather than stepping over anything,
+  which is the direction the failure must take. It is **not** a guarantee that
+  no reminder is missed. A run that always restarts at the same place makes no
+  progress through the list, so records further down are not reached and can
+  pass their deadlines; and a single restarted run whose front fills the whole
+  allowance leaves the tail for a later one that may arrive too late. The run
+  therefore announces each time that the place could not be read, rather than
+  falling back quietly on the strength of one run being safe.
+
+  This is written here once because it was written in five places and was
+  wrong in all of them, in four consecutive reviews: the per-run property was
+  stated as an absolute, corrected where it was flagged, and re-derived in the
+  next surface. Anything needing it points here instead of restating it.
+- **What "nearest first" does and does not promise, stated exactly.** Within
+  one pass through the list, records are taken nearest deadline first. Across
+  passes, the saved place means the run continues rather than restarting, so
+  every record gets its turn within one pass of the list rather than
+  competing forever with the nearest ones. It does NOT promise preemption: a
+  record that becomes known *after* the run has already passed its deadline in
+  the order waits for the next pass rather than jumping the queue. That
+  matters only where a pass takes longer than the notice period itself — a
+  backlog deep enough that the list cannot be worked through in the days the
+  reminder window covers — and in that state the service is under-provisioned
+  in a way no ordering can conceal. The honest statement is that this is
+  bounded by how long a pass takes, not that it cannot happen.
+- **The same allowance governs the runs that keep the records current, and
+  those runs COUNT what they spend rather than estimating it.** The service
+  that follows each network and writes down what happened draws on the same
+  fixed allowance, covering its reads of the network and its reads and writes
+  of the platform's own records alike. Exceeding it does not slow that run
+  down; it ends the run before it can record how far it read, so the next run
+  begins at the same place and does the same thing — a network that has
+  stopped advancing while still appearing to run normally. Because that
+  failure is silent, the figure may not be an estimate: a run measures what it
+  actually issued and reports it, and a run that passes the limit says so and
+  names which run it was, so a stalled network is announced rather than
+  inferred later from records that stopped changing.
+- **A statement prepared but never sent costs nothing, and statements sent
+  together cost one departure but not one allowance.** This is stated because
+  getting it wrong in either direction produces a confident figure that is
+  still incorrect — counting work that never left the run, or counting one
+  departure many times and refusing work that would in fact have fitted.
+- **There are TWO allowances, and a run is held to both.** One bounds the
+  requests a run may send; the other bounds the database statements it may
+  submit. A batch of statements sent together is a single request but many
+  statements, so the two allowances legitimately disagree about it, and a
+  single figure would have to be wrong about one of them. Both are counted,
+  both are reported, and a run that has passed either says so — a report that
+  answered for requests alone would read as comfortable on a run about to be
+  stopped for its statement count.
+- **No part of a run may be exempt from the count by having been overlooked.**
+  Whether a request is counted follows from the means it travels by, not from
+  a list of the places that make requests. A list has to be revised whenever a
+  new place is added and gives no sign when it has not been, which is how the
+  figure came to be wrong repeatedly while appearing settled; a request made
+  by a part of the system that knows nothing about the allowance is still
+  counted against it.
+- **The count is the whole run's, and an automatic retry is a request.** The
+  limit applies to a scheduled run, and a run does several things at once —
+  following the network, catching records up, retrying a listing that failed
+  to publish, tidying old rows. Counting each of those separately would report
+  several comfortable figures for a run that had already been stopped, so they
+  share one count. For the same reason, a read that fails and is retried costs
+  what the attempts cost: an attempt that reaches the network is a request
+  whether or not the caller asked for it, and the attempts a failing provider
+  causes are exactly the ones that decide whether a run survives.
+- **These runs do not chase an address that has moved.** A request answered
+  with "this has moved elsewhere" is not followed: reaching the new address
+  would be a further request, and a count that charged only for the first
+  would be short by however many moves the run was sent on. The alternative —
+  following, and counting each move — requires the platform to reproduce the
+  web's own forwarding rules exactly, and a second set of rules that must
+  match the first is a promise to keep matching it. So the run is told plainly
+  where it was being sent and stops there. The peers these runs talk to are a
+  configured address for each network, a marketplace, and the platform's own
+  services; none of them should be moving, and when one does the answer is to
+  correct the configured address rather than to have the platform quietly
+  follow a provider somewhere new.
+- **The run is counted to its own end, not to the end of its main job.** Where
+  a run does further work after the part that reads the network — announcing
+  what changed to anyone listening, for instance — that work issues requests
+  too, and they come out of the same allowance. A figure reported when the
+  main job finished would be short by them, and a run finishing at its limit
+  could then issue a further request with nothing having said so.
+- **Every run reports what it spent, including the ones that end early or
+  fail, and a run that passes the limit says so at the moment it happens.**
+  The ordinary figure is the one that makes the limits re-settable from
+  evidence, so reporting it only on the busiest path leaves the common case
+  unmeasured. And the announcement cannot wait for the end of the run: the
+  platform ends a run AT the request that passes the limit, so anything said
+  afterwards is said by something that may no longer be running.
+- Anything that occupies a record slot without issuing a request cannot
+  consume the allowance — a record the chain declines to confirm is the case
+  that arises, since nothing is worth asking about a loan the chain has never
+  heard of. A record whose recipients have switched these reminders off DOES
+  cost the run the lookups that established it, because there is no way to
+  know someone opted out without asking; what it never costs is the messages.
+  Were the bound on records instead, a record that sends nothing would hold
+  the whole run's allowance while never being marked as handled, so the same
+  few would sit at the front of the order on every run and the people behind
+  them would never be reached. A run therefore continues past records it
+  cannot send for, up to a stated limit of its own, reaches the ones behind
+  them in the same run, and — because its remembered place advances past them
+  — does not pay for the same prefix on the next run either.
+- A run establishes how far the platform's own records have been brought up to
+  date before trusting them against the network's head. If that position
+  cannot be READ, or if there is NO stored position for the network at all,
+  the run sends nothing — an absent position is only harmless where it
+  explains itself, and on a network with stored positions it means they are
+  there without the bookkeeping that says how current they are. The two are
+  reported distinctly even though they stop the run alike: a failed read
+  clears on its own, a position that is gone needs somebody.
+- Where the deployment's own configuration prevents a channel from working at
+  all, a run says so rather than silently not using it. "Cannot work" includes
+  the libraries the deployment is built from disagreeing with each other about
+  how to sign, not only a setting being absent or invalid — the disclosure
+  names each possible cause, because the remedy differs and they are not
+  distinguishable from the symptom. A channel established as unable to send is
+  never charged against the run's request allowance and never counted as an
+  attempt of unknown fate, because no request was made. A subscriber who has
+  asked for a channel the deployment cannot sign for can never be reached on
+  it, and a run that marks such records as handled while delivering nothing is
+  the hardest failure for an operator to notice. The count is reported once per
+  network per run, naming the setting — not once per record, which would train
+  a real misconfiguration into background noise. This covers a credential that
+  is present and unusable as well as one that is missing, and the platform
+  decides which by what the sending step actually did rather than by
+  inspecting the setting.
+- A message the delivery service ANSWERED and refused is counted apart from
+  one whose fate is unknown, and apart again from one it DEFERRED — rate
+  limiting, or the service being briefly unwell. A deferral did not deliver
+  and needs nobody; a refusal needs a person. Counting a deferral as a refusal
+  sends that person to repair a configuration that is fine. They need opposite responses — a refusal is a
+  credential or destination to fix and will keep failing until someone does,
+  where an unknown attempt may be a passing incident — so flattening them
+  leaves a reader unable to tell which is happening. Where a channel cannot
+  distinguish the two, the platform says so rather than implying that channel
+  never refuses.
+- Whether a record is marked as finished is ONE rule about the record, not a
+  verdict reached separately for each party. Marking it means "never revisit
+  this period", which is justified exactly when no later run could do better
+  for anybody. Three questions decide it:
+  - **Was anybody actually reached?** Then returning would tell them about the
+    same payment twice. The mark is per record, so one confirmed delivery
+    settles it.
+  - **Is anything uncertain?** A message that was issued and never answered
+    for may have arrived. Returning risks the same duplicate, so an unknown
+    blocks the retry exactly as a delivery does — the platform does not know,
+    and a duplicate reminder is the worse of the two ways to be wrong.
+  - **Is anybody owed another attempt?** Three things earn one, and the test
+    they share is that each is a state which can CHANGE and then make
+    delivery possible: a service that said "not now"; a subscriber who
+    switched the reminder off and may switch it back on before the deadline;
+    and a subscriber who asked for a channel this deployment cannot currently
+    use, which an operator may repair. A refusal does not qualify — it will
+    fail identically until a person acts on that credential. Having no
+    channel at all, and having no subscription, do not either: nothing about
+    those changes on its own.
+
+  The record is left unmarked when somebody is owed, nobody was reached and
+  nothing is uncertain; otherwise it is marked.
+- The third of those is worth its own statement, because it is the one that
+  looks like a settled outcome and is not. A subscriber who asked for a
+  channel this deployment cannot currently use is OWED another attempt, not
+  written off: an operator may repair the setting, or the dependency, inside
+  the notification window, and a record marked as handled is never revisited
+  — so marking it is the same "handled while delivering nothing" failure the
+  disclosure above exists to make visible, arriving one step later. It stays
+  unmarked until a usable channel
+  either succeeds or leaves the outcome uncertain.
+- A refusal does not earn another attempt, but it does not block one either.
+  So a record where one party is owed an attempt and the other's channel was
+  refused comes back, and the refused channel is tried again beside the party
+  who is owed — there is no way to reach one without the other. The cost is a
+  futile attempt each time that record comes round, which on a deployment
+  whose credential has been rotated is every record with a party who has
+  switched reminders off. What bounds it is the remembered scan position,
+  which advances past an unmarked record exactly as it does past a marked
+  one: the futile attempt costs once per trip round the window, not once per
+  run.
+- **Being owed another attempt is not cancelled by the other party having
+  nothing to offer.** A borrower whose reminder the service deferred stays
+  owed one even when their lender turns out to have no usable channel at all;
+  the lender's absence is not a reason to spend the borrower's retry. Only a
+  real delivery or a real uncertainty may end it, because only those two can
+  result in somebody being told twice. **This changes a previously stated
+  behaviour**: a record where one party had no usable channel and the other
+  had switched reminders off used to be marked, on the reasoning that the
+  first party was settled. That is true of them and says nothing about the
+  second, who may re-enable before the deadline — and since nothing was sent
+  to anybody, there was no duplicate to protect against.
+- Where a run reports how many subscribers a configuration problem affects, it
+  counts distinct subscribers and not how many records they appear on. One
+  wallet that is a counterparty on many positions is one affected subscriber;
+  reporting it as many turns a single stale subscription into what reads like
+  a deployment-wide outage, and those call for different responses.
+- No reminder is sent on a network that is globally halted, which is a
+  separate setting from the periodic-interest one and is checked first by the
+  settlement route itself — and the platform asks it first too, so that when
+  both are closed the reader is told about the halt rather than the milder
+  state, and a failed read of the other setting cannot hide it. A network can therefore have periodic interest
+  enabled and still refuse every payment. The halt also closes ordinary
+  repayment, so someone told to pay has no route at all — which makes this the
+  more serious of the two to get wrong. As with the other setting, a run that
+  cannot read it sends nothing.
+- Agreeing on a payment date is not agreeing on a payment schedule. Two
+  different schedules produce the same date whenever the last payments differ
+  by exactly the gap between them, so a run that checked only the date could
+  send a reminder describing a schedule the position does not have. The
+  schedule the platform read the position with must match the chain's, as part
+  of what makes the reminder allowed at all.
+- Every question a run asks the chain is asked about the SAME moment in that
+  chain's history — whether settlement is currently possible as much as whether
+  each position is still running. A setting read at "now" while the positions
+  are read at a fixed moment can describe a state the positions were never read
+  at, either because it changed in between or because two machines behind one
+  address answered from different heights, and the result is the very reminder
+  these rules exist to withhold. A run therefore settles on one moment before
+  it reads anything, and accepts an extra question on a network with nothing
+  due as the price of every answer describing one moment.
+- A run that COMPLETES also reports, whenever anything happened that someone
+  would want to know about — records nobody could be told about, attempts
+  confirmed to nobody, unconfirmed channels, records the chain declined,
+  records waiting on the platform's own to catch up, records it could not read.
+  A run that reaches nobody never stops early, because reaching nobody costs
+  nothing, so reporting only on an early stop is silent in exactly the case
+  that most needs a person. A run where everything went right stays silent.
+- A run will not begin a record it might not be able to finish, even when some
+  allowance remains. Stopping between one party's message and the other's
+  would mark the reminder as delivered with one side never told, and that
+  side's reminder is then lost rather than delayed. Leaving a little allowance
+  unused is the cheaper error.
+- A run does not always begin at the front of the order. Not spending the
+  bound is not the same as making progress: a record that sends nothing is
+  also never marked as handled, so it keeps its place at the front and is
+  examined again on every run. If enough such records sit ahead of a record
+  that WOULD send, starting at the front every time hides it for good. So a
+  run REMEMBERS where it stopped and the next one continues from there,
+  wrapping to the front when it reaches the end. Where it resumes is
+  remembered rather than derived from the time of day — deliberately, because
+  anything schedule-derived can fall into step with another schedule and then
+  never move: the platform's other rotations, or the interval between runs
+  itself. Which network a run begins with is remembered
+  for the same reason and in the same way. Where neither can be remembered,
+  the run says so — starting from the front every time restores the unfairness
+  the memory exists to remove, and would otherwise do it silently. What is
+  remembered advances on the work actually done, which nothing else can align
+  with. When the window fits in one run, which is the ordinary case, the
+  nearest deadline is examined first as before.
+- **What is remembered is the DEADLINE it stopped at, not a position in the
+  list** — stated here as well as above because this bullet used to say the
+  opposite, and a specification that describes one behaviour in two
+  incompatible ways invites the defect back. It said the remembered place was
+  approximate, on the reasoning that the list it indexed into changes between
+  runs, and that resuming *near* where it stopped was all forward progress
+  required. Forward progress was not all that was required: the list is
+  rebuilt each run and the records handled last run are gone from it, so an
+  index resumed past exactly as many of the nearest remaining deadlines as
+  were handled — running the nearest-first rule backwards, which is the one
+  guarantee this part of the platform makes. A deadline is not approximate and
+  does not move when other records are handled or leave.
+- A run that stops early says which limit stopped it, where in the window it
+  resumed, and separates what it found — examined, reminded, reached nobody,
+  had nobody to tell, declined by the chain, and unreadable — so the categories
+  account for every record examined rather than leaving some of them
+  unexplained between two totals. A run interrupted part-way still reports what
+  its completed work did: the records it already messaged about are stamped
+  permanently, so discarding those counts would hide real deliveries behind an
+  error about a later step. Those need different remedies — a run reporting
+  many declines is reporting records the platform holds wrongly, not load — so
+  they are never flattened into one "deferred" count. "Reminded" means a message the
+  delivery service CONFIRMED it accepted — not one the platform tried to send.
+  A message refused by the service, or one whose fate is unknown because the
+  attempt itself failed, is counted separately and never as a reminder; a
+  recipient the platform has on file but cannot reach at all is counted as
+  handled. Failed messages are counted **per channel and independently of
+  whether the person was reached another way**: someone told over one channel
+  while the other failed is both a reminder and a broken channel, and
+  reporting only the first would hide an outage of one channel for as long as
+  the other kept working. So the count can never claim people were told on a run that
+  reached nobody, which is the number someone reads while investigating
+  silence.
+- The bound and the count deliberately disagree about a failed attempt, and
+  that is the correct disagreement. A request that may have gone out has to be
+  charged, because the limit exists to keep the platform inside what it is
+  allowed to send; the same request must not be reported as a delivery,
+  because nothing confirms it arrived. What never leaves at all — no signer
+  configured, a channel the platform cannot use — is neither charged nor
+  counted, and that case matters most because it fails every message of its
+  kind rather than one.
+- A corrected record carries the loan's amounts as well as its state,
+  taken from the same reading and therefore describing the same moment.
+  The events that move principal and collateral — a part repayment, a
+  liquidation sale, a collateral release or top-up, an offsetting match,
+  a written-off shortfall — can be missed exactly as an ending can, and a
+  record stale enough to have missed an ending is not to be trusted on the
+  amounts. Preferring the chain's figures gives nothing up: an ending does
+  not erase what was outstanding, so where the chain holds a smaller
+  figure that is an economic event the index missed, not a lost record.
+- A record corrected to ended also drops everything the platform was still
+  offering to act on for that loan — a collateral sale listing, a committed
+  swap the borrower could otherwise still be shown a cancel action for. Each
+  would fail at the contract, which is no reason to keep offering it. What a
+  close clears is one list, and it is the same list whether the close was
+  learned from its announcement or from this correction; a surface added to
+  it is covered by both without either being changed.
+- Ending a listing, or ending a commitment, is not ending the loan. A
+  borrower who withdraws a collateral sale keeps any swap commitment they
+  made, and the reverse. The platform never disposes of a position the user
+  still holds as a side effect of tidying a different one.
+- A corrected record carries NO ending time. The platform cannot determine
+  when the loan ended, and the field is published and used to order and cap
+  the list of positions with something to claim — so recording the moment
+  of discovery there would present a months-old ending as fresh and push
+  genuinely recent ones out of a bounded list. Empty is what is true.
+- **A position whose ending has no known time ranks as unknown, not as
+  recent.** Leaving the time empty is only half of that promise: a surface
+  that then falls back to when the platform last WROTE the record makes the
+  same false claim by another route, since a correction writes the record
+  the moment it makes it. Wherever positions are ordered by how recently
+  they ended, the ones with no known ending time come after all the ones
+  that have one. They are not hidden — where nothing else competes they are
+  all that is listed — but an unknown may never displace something known to
+  be recent from a limited list.
+- A record the chain has no loan for is not a running loan. Asking about an
+  unknown position returns an empty answer whose state is indistinguishable
+  from "running", so the platform tests that the position exists at all
+  before believing it, and reports the ones it cannot substantiate instead
+  of counting them as open forever.
+- A lifecycle state the platform does not recognise is reported, never
+  passed over. Refusing to guess at an unfamiliar state is right; doing so
+  silently is how a newly introduced ENDING would leave records published
+  as open while every check reported health.
+- The correction and that clearing are ONE write: both happen or neither
+  does. A correction that landed alone would take the record out of the set
+  the rotation examines, so nothing would ever return to finish it — and a
+  service interrupted between the two leaves no failure to report. There is
+  no partial state to recover from because there is no window in which one
+  can exist.
+- The correction runs on every tick the index is up to date with the
+  chain, INCLUDING on a chain producing no new blocks. A check that only
+  ran where new blocks had arrived would never run on a quiet chain, which
+  is precisely where an old missed ending sits undisturbed.
+- It runs before any surface that tells a person something. Reminder and
+  inbox messages are derived from the records as they stand and are never
+  withdrawn once sent, so a position corrected after they were composed
+  would have produced a payment reminder for a loan that had already
+  ended. A correction is also announced to anyone watching that position,
+  like any other change, wherever the deployment's ingest arrangement carries
+  live announcements at all; where it does not, a corrected screen waits for
+  its own next refresh, and the platform says which arrangement is in use
+  rather than implying the announcement is universal — a record put right
+  silently would leave every
+  open screen showing the old one.
+- Every holder of a corrected position the platform can establish receives
+  the ending in their inbox — and where it can establish neither, which is
+  the ordinary outcome once both parties have claimed, nobody is written to
+  and nothing is retried. Without this message an establishable holder
+  receives nothing at all for that position, since the message surface is
+  built from announcements and this ending never had one. Such a message states when the platform FOUND OUT, never when the
+  loan ended — the check cannot determine that — and is marked as derived
+  from a correction rather than attributed to an announcement nobody saw. A
+  bookkeeping position that no person holds produces no message.
+- Where the chain establishes that a loan is finished but not how — one
+  state is reached by repayment, by default and by forced sale alike — the
+  message states only that it ended. It never names a cause the platform
+  did not establish, and it is never withheld merely because the cause is
+  unknown: an ending nobody is told about is a worse silence than one told
+  without its cause.
+- The recipients of such a message are established from the chain, never
+  from the platform's own record of who holds the position. The gap that
+  lost the ending could equally have lost a transfer of the position, so
+  that record is stale for the same reason. Where a holder cannot be
+  established, that side receives no message rather than one addressed to a
+  guess — and the holder the platform does establish is recorded, so the
+  surfaces asking who holds a position NOW stop naming the wrong one. The
+  parties a loan began with are published separately and a correction does
+  not revise them, so a position that has changed hands may still show its
+  original names where that half is read; the platform must not present the
+  narrower repair as the wider one.
+- Asking who holds a position has two answers the platform will act on: it
+  has an answer naming a holder, or it has no answer. **An answer is acted
+  on; a non-answer changes nothing.** The platform does not read a
+  failure to answer as meaning the position was given up, even though that
+  is one of the things it can mean — the two are indistinguishable from
+  here, and treating an unreachable answer as an empty one would erase a
+  record that is still somebody's.
+- The cost of that asymmetry is **stated, not implied**: where a holder
+  cannot be read, that side is never told its position ended, and no later
+  attempt is made. The record is still corrected, because a position wrongly
+  published as running is the harm the whole check exists to end. Waiting
+  instead — holding the correction until the holder can be established — is
+  not available, since the unanswerable case and the legitimately-empty case
+  are the same answer, so waiting for one would leave the other's record
+  wrong permanently.
+- **A position that finished the ordinary way therefore reaches nobody**, and
+  the platform states this rather than promising a message it does not send.
+  The undifferentiated finished state is reached by both parties taking what
+  is theirs, which destroys the holdings the question of ownership is asked
+  about — so for the commonest case there is no holder to establish. The
+  record is corrected regardless. Relaxing the rule to use the last name the
+  platform stored is not the remedy, since avoiding exactly that is why
+  ownership is asked of the chain; the remedy is a record of who HELD a
+  position that no longer exists, which is a separate capability.
+- Such a message is SHOWN as a correction, not merely recorded as one. Its
+  headline states the outcome, and a line beneath it says the platform
+  found this by checking and cannot tell when it happened. A surface that
+  rendered the outcome alone would present a discovery about something
+  months old as news of the moment — which is the same unstated unknown the
+  message's own date is careful to avoid.
+- How fast the correction works through the records depends on the
+  deployment's ingest configuration, and the platform states this rather
+  than implying a single pace. Where the chain reading has its own capacity
+  the correction examines several records a turn; where it shares capacity
+  with the other scheduled work it examines one. Every record is still
+  reached either way — but only while the shared arrangement is within the
+  capacity it is allowed. Beyond that the rotation is best-effort, because
+  work can be cut short before the turn advances and the same records can be
+  missed repeatedly; the platform states that rather than presenting an
+  assurance the arrangement cannot keep. The pace is never raised at the cost
+  of the chain reading itself, because a reading that starts being refused drops the
+  announcements the correction exists to recover from — and where the
+  scheduled work already asks for more capacity than is available, the
+  platform says so rather than presenting the smaller share as sufficient.
+- A position the platform publishes as open must be one it can still
+  substantiate as open. Where it cannot, the surfaces that count and the
+  surfaces that list must not answer the same question differently
+  without saying so.
 - Activity history may depend on indexed history, but current positions must not
   disappear merely because ingestion is delayed.
 - The Activity feed's "is this event mine" filter covers the wallet's WHOLE
@@ -258,6 +1263,359 @@ Thin-market honesty rules apply.
 - Past-due loan pages show the grace window and the consequence of inaction.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists.
+
+### Forced close-out of an overdue loan
+
+- A lender holding an active position whose repayment window and grace period
+  have both elapsed is offered a way to close the loan out from the position
+  page. The capability exists in the protocol for any caller; the product's
+  obligation is to make it reachable by the party who is owed.
+- Whether the grace period has elapsed is decided by the protocol, not by the
+  app. The grace schedule is configurable, so an app that recomputed it from the
+  loan's own dates would be correct only until a deployment changed it, and
+  would then be wrong about the one fact this surface exists to state. The app
+  may show the grace window to explain a wait; it must never use its own
+  arithmetic to decide whether the action is permitted.
+- The card states what it decided and as of when. Beside its wording it
+  carries, in a form a machine can read, the state it resolved and the block
+  at which every fact behind that state was evaluated — one block for all of
+  them, because they are read together. Every resolved state names its block;
+  a decision the app cannot date is not stated, and shows as still checking
+  instead. The block is omitted, never stated as zero, only beside that
+  still-checking state — while the facts are unread, or when the app has set
+  the state aside as unknown for a reason of its own rather than resolved it
+  from those facts. A reviewer, or an automated check, can therefore ask the
+  protocol the same questions at the same block and compare the answers to
+  what the card says, instead of inferring the state from prose.
+- Two settlement routes are distinguished, because they are not equally
+  available. Where closing out transfers the collateral as-is — collateral
+  without a reliable market price, or collateral whose value has collapsed far
+  enough that selling it is moot — the app offers the action directly. An
+  overdue NFT rental is offered directly too, but it is NOT that route and must
+  not be described as one: ending a rental removes the renter's access, leaves
+  the lender's own asset exactly where it is, and makes the rent paid up front
+  claimable less fees. Nothing belonging to the borrower moves, and no
+  valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
+  the app states that the position is closable and that the sale must be routed
+  by whoever submits it, and offers no button it cannot honour. Presenting an
+  action that is certain to be refused is worse than presenting none: the user
+  pays a network fee for the refusal.
+- A third route is available where the protocol can settle the overdue
+  position against an opposing one instead of selling anything. The app
+  can perform that close-out directly, and says so — it is distinguished
+  from the in-kind route in what the lender receives, since this one
+  repays the asset that was lent rather than handing over collateral.
+  Whether such an opposing position exists is asked of the protocol, not
+  inferred. An unanswered question resolves to the surface's
+  outcome-neutral state — the one that says a check is still running —
+  and NOT to whichever description seems more cautious. There is no
+  cautious description here: every other route names what the lender
+  receives, so choosing one of them on an unread answer is a claim, and
+  the wrong one whenever the protocol settles the position against an
+  opposing one instead.
+- Where that opposing position exists, the surface must not describe the
+  consequence of losing it as a single outcome. Another party may settle
+  against the same position first, and what happens then is decided by the
+  route the protocol reaches next — which may hand over the collateral as it
+  stands, end a rental, or refuse the close-out for the cost of the network
+  fee alone. Telling a lender the only downside is a wasted fee, on a
+  transaction that can instead complete and return a materially different
+  asset, is a false statement about what they recover. The surface states the
+  route it would actually fall to, and where it cannot read enough to know,
+  says that rather than choosing the likeliest.
+- That fallback is the surface's own routing decision asked again with the
+  opposing position absent — never a second, hand-written account of the order
+  the protocol tries things in. One description of that order is a
+  requirement, not a convenience: two will diverge, and the divergence surfaces
+  as a confident sentence about somebody's money that no longer matches what
+  the protocol does.
+- The confirmation shown before the lender signs is part of this surface and
+  carries the same obligation. It must describe the route being confirmed
+  rather than the commonest one: an overdue rental sells nothing, transfers
+  nothing belonging to the renter, and leaves no shortfall for the lender to
+  absorb, so a confirmation written around collateral sale economics misstates
+  every one of its own lines for that route.
+- The in-kind route also covers collateral that is itself a non-fungible asset
+  held against an ordinary loan. That is a supported shape and a distinct one
+  from a rental: the leg being lent and the leg securing it are separate
+  questions, and a surface that answers only the first will ask an
+  inapplicable question about the second and wait indefinitely for an answer
+  that cannot arrive.
+- Nothing on this surface states an amount. The settlement path is chosen while
+  the transaction executes, so no figure is knowable in advance, and a predicted
+  one would be invented.
+- The asset returned is not assumed to be the collateral. The protocol may
+  instead settle the position against an opposing one and return what was lent,
+  in the asset it was lent in, and the surface says so rather than naming one of
+  the possible outcomes as though it were the only one.
+- Closing out is not stated as certainly final. It ordinarily ends the loan, but
+  a settlement that covers only part of the position, or a sale that cannot be
+  carried out, leaves the loan open and closable again later.
+- Nothing on this surface implies the lender is the only party who may act. Any
+  caller may close out an overdue loan, and a lender returning to find the
+  position already closed is to read that as the normal course rather than as a
+  loss.
+- Nor is the party who submits assumed to be the party who is paid. What a
+  close-out recovers goes to whoever holds the lender's position for that loan
+  at the moment it executes, so a holder who has since transferred or sold the
+  position is told plainly that it is no longer theirs.
+- Closing out is not presented as payment. It ends the loan; what the lender is
+  owed becomes claimable afterwards through the ordinary claim route — with one
+  stated exception. Where the protocol settles the position against an opposing
+  one, it pays whoever submitted the transaction an incentive directly to that
+  wallet, deducted from the settled amount rather than added to it. A surface
+  that says nothing reaches the wallet by itself is wrong twice over on that
+  route: about the payment, and about the amount left to claim. Both are
+  disclosed.
+- A surface must not describe an amount as depending on a valuation the route
+  does not perform. An overdue rental makes an already-paid, fixed sum
+  claimable; a settlement against an opposing position returns the lent asset
+  priced when the transaction runs. Neither is a question of what collateral is
+  worth, and neither may borrow that sentence.
+- A close-out confirmation must not state a loss that cannot occur. A rental
+  becomes closable only once its term and the grace period after it have both
+  expired, and the full term was paid at origination — so there is no remaining
+  term to forgo. Where a route genuinely risks nothing, the surface says so
+  rather than filling the space, and states what is actually at stake instead:
+  until the close-out runs, the renter retains access they are no longer
+  entitled to.
+- What a surface says immediately after a close-out is submitted must not
+  assert an outcome the transaction has not yet reported. A settlement covering
+  only part of the position leaves the remainder running with nothing claimable
+  yet, so the post-submit message describes the result as still being decided
+  and directs the lender to the refreshed position, never to a claim that may
+  not exist.
+- A surface that has lost track of a submitted transaction says so, and keeps
+  the action withheld while it does not know. Elapsed time is not evidence that
+  a transaction failed: one that has not confirmed may still confirm, and
+  offering the action again on the strength of a timer invites a second
+  close-out behind a live first one. So the surface states that it cannot
+  account for the transaction, that this does not mean it failed, why the
+  action is withheld, and that the wallet is where the answer is.
+- Withholding an action indefinitely over a question the platform cannot answer
+  requires an answer from someone who can. Because a record of the submitted
+  transaction now survives leaving the page and returning, no ordinary action
+  by the lender clears a transaction that has genuinely vanished — so the
+  surface offers them a way to state that their wallet no longer shows it,
+  which ends the wait. It is framed as the lender's statement about their own
+  wallet rather than as a control that checks anything, and it says what it
+  costs to be wrong, because presenting it as a check would claim a capability
+  the platform does not have.
+- A record that a close-out was submitted belongs to the position and the
+  network it was sent on, not to the page that sent it. Reloading, navigating
+  away and returning, or having the same position open more than once must not
+  produce a surface that offers the action again over a transaction already on
+  its way; and equally, learning that the record has been cleared elsewhere
+  must stop the wait rather than leave it running against a record that no
+  longer exists.
+- A conditional sentence whose condition cannot arise on the route being shown
+  does not belong on it. The swap-to-repay cancellation note is the case in
+  point: that facility covers ordinary-asset loans only, so an overdue rental
+  can never carry such an order — and the sentence, while never false, puts a
+  borrower repaying a loan on a surface whose position has a renter paying
+  rent. Unreachable conditions are shown only where they are reachable.
+- Where a surface shows subtotals beneath a total, and the source may count
+  something in the total that it cannot yet place in any subtotal, the surface
+  states the difference. A reader who can subtract and find an unexplained gap
+  is worse served than one shown the gap and told what it is. The rule holds
+  even when the omission is the source behaving correctly — an admitted
+  undercount is still an admission the surface must carry.
+- The same rule binds in the opposite direction, and more strongly. Where the
+  subtotals add up to MORE than the total they sit beneath, the figures
+  contradict each other, and the surface says so rather than presenting the
+  smaller discrepancy of nothing at all. Rounding a contradiction away asserts
+  by omission that the numbers reconcile, which is a claim the surface cannot
+  support and a reader can disprove with arithmetic. What it states is the
+  disagreement itself: that the fault lies in the counting rather than in any
+  position, that nothing is at risk because of it, and that the correct split
+  is not known. Both the total and the breakdown remain on screen exactly as
+  reported, so the discrepancy can be seen rather than taken on trust.
+- Where one freshness figure is stated over data drawn from more than one
+  request, it is the figure of the LAGGING request. Quoting the more advanced
+  of two reads presents one dataset's coverage as though it covered both.
+- The order in which a surface reports obstacles follows the order the protocol
+  applies them. A loan still inside its repayment window is refused for being
+  early before any infrastructure condition is consulted, so a surface that
+  reports an infrastructure pause first tells a lender their close-out is
+  merely delayed about a position the borrower may have most of the term left
+  to save. Where two gates would each block, the one the protocol reaches first
+  is the one the reader is told about.
+- A route the protocol may only partly complete is not described as completing.
+  Settling against an opposing position moves the smaller of the two, so where
+  that position is smaller than this loan only part settles and the remainder
+  stays open — which the surface says before the lender acts, not only
+  afterwards.
+- Where a single freshness figure covers more than one request, EVERY request
+  it covers must carry its own position marker. A response that arrives without
+  one is not a weaker claim to be outvoted by its sibling; it is the absence of
+  a claim, and it disqualifies the combined statement rather than borrowing the
+  other's.
+- A disclosure about cancelling something belonging to the counterparty is
+  suppressed only on facts that cannot change for the life of the position.
+  Predicting it from a live measurement that may have moved since the position
+  opened withholds a warning that is still true.
+- Where the protocol re-decides a route at execution time, every surface that
+  names an outcome discloses that it may be re-decided — in BOTH directions.
+  The opposing-position check runs when the transaction executes, not when the
+  page was read, so a position described as returning collateral may instead
+  repay what was lent, exactly as one described as settling against an opposing
+  position may lose it. Disclosing one direction of a symmetric race and not
+  the other leaves the undisclosed half reading as a promise.
+- Operator instructions name a file the tooling actually reads. Telling an
+  operator to configure a value in a template that nothing loads produces a
+  deployment that is misconfigured while its operator believes otherwise, which
+  is worse than no instruction at all.
+- Where a settlement may be partial, no sentence on the surface may describe
+  its result as terminal — including sentences about what SOMEONE ELSE's
+  close-out does, and sentences about when the proceeds can be collected. A
+  partial settlement leaves the position open and smaller, and holds the
+  settled portion until the remainder closes, so "it will show as closed" and
+  "it becomes claimable once this settles" are both wrong for it.
+- Withholding an action for safety must not withhold the explanation with it.
+  Where a check that guards the close-out is unanswered — pending, failed, or
+  undecodable — the surface stays visible in its unresolved state and says a
+  check is running. Removing it entirely leaves the lender with neither the
+  action nor a reason, for as long as the underlying failure lasts, which is
+  indistinguishable from the capability not existing.
+- The surface appears before it can be used — while checks are still running,
+  and while the borrower still has time — and says which of those applies. A
+  capability shown only at the moment it becomes actionable cannot be
+  anticipated, planned around, or asked about.
+- An unresolved check is never reported as "not available". The two are opposite
+  claims: one describes the app's knowledge, the other the protocol's answer.
+- That rule binds hardest on the read that decides whether the surface belongs
+  on the page at all. A loan whose status has not been read yet is not a loan
+  the protocol has said is closed, so the surface appears in its unresolved
+  state rather than being removed. Removing it is the strongest possible
+  statement — it tells the lender the capability does not apply to this
+  position — made on the one reading that has not happened, and a lender who
+  never sees the surface has nothing to wait on and no reason to return.
+- Sequencer health is judged before collateral is classified. While the sequencer
+  is unavailable the protocol reports every asset as unpriceable, so a surface
+  that classified collateral first would describe the wrong settlement route and
+  offer an action the protocol refuses for an unrelated reason.
+- Conditions the protocol checks before it will close a loan out are reported as
+  states of this surface, not discovered when the action is attempted. Two are
+  distinguished because they mean different things to the reader: a
+  protocol-wide pause, which is temporary and affects everyone; and a loan
+  opened without both parties recording the risk acknowledgement the protocol
+  requires before it will hand over collateral that has no market price, which
+  is permanent for that loan and refuses every caller equally. The second is
+  stated as such — not as a limitation of this app, and not as something waiting
+  will resolve.
+- The protocol is asked one final time immediately before the action is sent.
+  Several facts behind the decision can change while the user is reading the
+  confirmation, and each turns a correct action into a certain refusal. Asking
+  the protocol whether the action would succeed is preferred over the app
+  re-deriving that answer from its own copy of the rules.
+- Forced close-out is not offered while a completed sale of the lender's position
+  is awaiting its final step, nor while the app has not yet established
+  whether one is — an unanswered question about a pending sale withholds
+  the action rather than permitting it, because the protocol does not
+  check this itself and nothing downstream would catch the mistake. The
+  check is repeated against live state immediately before the action is
+  sent, since a sale can be accepted inside the window a cached answer
+  covers. The buyer's funds have already moved and that
+  completion requires the loan to remain open, so closing it out here would end
+  the loan and strand the recovery permanently.
+- Forced close-out remains available to a lender who has not accepted pending
+  changes to the Terms. Withholding it would place paperwork between a lender and
+  collateral owed to them by a counterparty already in breach.
+- It likewise remains available to a lender whose wallet is flagged by sanctions
+  screening. Screening withholds the ability to open new exposure; closing out a
+  loan that has already defaulted is a wind-down, which the protocol keeps open
+  to every caller so that a position cannot be made unclosable by the status of
+  the party who is owed. Surfaces that create exposure are withheld from a
+  flagged wallet; this one is not, and the distinction is deliberate rather than
+  an oversight in the gating.
+- The surface claims a loan is overdue only where the protocol has said so.
+  States reached before that question is answered — a protocol-wide pause, checks
+  still running — describe what is being waited on instead, since those are
+  reachable by a loan that is nowhere near its due date. An unavailable sequencer
+  is NOT one of them: the protocol settles the repayment window before it
+  considers sequencer health, so a loan withheld for an outage has already been
+  confirmed overdue and is described as such.
+- A close-out this app has broadcast is watched continuously until its outcome is
+  known, and the record of it survives leaving the page. Watching that stops and
+  restarts can no longer recognise a replaced or cancelled transaction, because
+  recognising one requires the original to still be in flight — so the wait is
+  never given a deadline. Elapsed time changes only what the surface SAYS: past a
+  few minutes it stops describing an ordinary pause and states that it can no
+  longer account for the transaction, while continuing to watch.
+- The action stays withheld for as long as the surface has not reconciled the
+  transaction, and the device-local record backing that is kept for exactly as
+  long as the withholding lasts — including after a success, whose figures the
+  surface has not yet caught up with. After a successful close-out the surface
+  waits for the refresh it asked for to COMPLETE, rather than judging by
+  timestamps whether the figures look new enough; a device whose clock moves is
+  then unable to make a refreshed reading look stale, or a stale one look
+  refreshed.
+- The refresh it waits for must be one that could have seen the close-out. A
+  read already in flight when the outcome arrived was sent against the position
+  as it stood BEFORE settlement, so letting it satisfy the wait releases the
+  action over figures that predate the transaction — the exact staleness the
+  wait exists to prevent, arriving faster than the wait can notice. Reads
+  outstanding at that moment are therefore abandoned rather than counted, and
+  the surface waits on reads it started afterwards.
+- The wait is also scoped to the reads whose answers the lender is about to act
+  on. A read the surface has stopped consuming, or one the refresh would not
+  re-issue, can never report anything and would hold the action open forever if
+  the wait included it. Waiting on more than is needed is not the safer error
+  here: it is indistinguishable, to the reader, from the surface having lost
+  the transaction.
+- Reads left out of that wait are DISCARDED, not just left alone. A read the
+  surface has stopped consuming still holds its last answer, and the states
+  that stop it consuming one are reversible: a close-out that leaves the loan
+  awaiting a further step suspends these checks, and a borrower curing that
+  state resumes them. Resuming them against answers taken before the close-out
+  would put a route, and an action, back on screen on facts the close-out
+  already invalidated — with the wait long since satisfied, because there was
+  nothing left in it to wait for. So a reading that will not be refreshed is
+  dropped rather than kept: the check resumes from nothing, says it is running,
+  and asserts no route until it has an answer of its own.
+- Dropping a reading has to reach whatever is displaying it. Discarding it
+  somewhere the surface no longer consults, while the part of the app that
+  renders it still holds its own copy, leaves the stale figure on screen and
+  makes its disappearance depend on something unrelated happening to redraw the
+  page. The discard tells the reader of that value, directly, that there is no
+  longer a value — which is what makes the surface fall back to saying a check
+  is running.
+- Where a transaction is never resolved, the lender's own statement that their
+  wallet no longer shows it is the only route back to the action. Because it is
+  the only one, when the surface offers it must not depend on the device's clock
+  being correct: a clock corrected backwards after the transaction was sent, or a
+  record written while the clock was wrong, cannot be allowed to withhold that
+  route. Elapsed time is measured so that no clock fault can delay it
+  indefinitely.
+- Where the browser refuses to keep that record, the surface says so and names
+  the consequence: this page still withholds the action, a reload will not.
+- When the protocol establishes that a close-out did NOT execute, the surface
+  says which of the three things happened — the call was rejected, the wallet
+  cancelled it, or another transaction from that wallet took its place — rather
+  than returning silently to its ordinary state. All three leave the position
+  untouched and the action available again, so the surface offers it; what
+  differs is the cause, and the cause is what tells the lender whether to expect
+  the same result next time. A screen that looks untouched after a funds-moving
+  attempt makes the reader reconstruct the outcome for themselves.
+- Learning from another browser tab that a close-out has been disposed of does
+  not, by itself, release this tab's withholding. The other tab knows about its
+  own transaction and nothing about whether this tab's figures have caught up;
+  after a partial settlement the position remains open and legitimately
+  actionable, so the protocol would accept a second close-out while this tab
+  still described the first one's expected outcome. Only this tab's own refresh
+  can end its withholding.
+- Before a close-out is sent, the surface re-reads that record so a confirmation
+  open in a second tab does not send a duplicate. It does not claim this is a
+  lock — two tabs acting in the same instant is a race the browser offers no way
+  to settle — and it says what it did rather than implying the position closed.
+- Erasing this browser's data does not reach a transaction already sent. The
+  erasure states that: what is removed is this app's note of it, the transaction
+  continues, and the app will no longer be following it.
+- Where the protocol has no path that could produce an outcome, the surface does
+  not warn about that outcome. A rental cannot be settled against an opposing
+  position — the protocol's search requires the rented asset to carry a market
+  price and its settlement moves fungible assets only — so a rental close-out is
+  described as ending the rental, with no competing-settlement caveat.
 
 ## Claims
 
@@ -628,6 +1986,28 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- A number standing on its own follows the chosen language the same way a
+  number inside a sentence does. Figures printed as their own cell — a
+  parameter's value, a counter on a public page — are formatted for the
+  language the reader picked, not for the one the device happens to be
+  configured in. The two disagree often enough to matter: a reader who has
+  chosen a language whose digit grouping and decimal mark differ from their
+  operating system's sees the surrounding page in one convention and the
+  figures in another, and has no way to tell which of the two the page meant.
+- Every figure in a line, not the first one. Where a sentence carries a value
+  and then restates it in the underlying unit — a percentage beside the raw
+  basis points, an interval in hours beside the same interval in seconds —
+  both are figures the reader is being shown, and formatting one while leaving
+  the other reproduces the mismatch inside a single line instead of across the
+  page. The rule is about the reader's ability to tell which convention is in
+  force, and one raw figure is enough to remove it.
+- Formatting a figure may never change it. Where a value carries more
+  precision than the formatting path can represent — a threshold taken from a
+  full-width integer, shown to the digit so it can be checked against the
+  chain — the surface formats it without a lossy conversion, or shows it
+  unformatted. Losing the reader's separators is a cosmetic failure; losing a
+  digit of the number they came to verify defeats the purpose of publishing
+  it, and does so invisibly.
 - Where signing-critical text cannot be translated, the reader is not
   simply left with a language they may not read. A declaration the user
   must affirm they have understood is shown in their own language
@@ -676,6 +2056,12 @@ Thin-market honesty rules apply.
   activity, settings, faucet) are never indexed. The exclusion is
   visible both to browsers and to crawlers that do not run
   JavaScript.
+- A per-item lookup reached from an indexable entry point is not itself
+  indexed. The NFT verifier's own page is listed; the individual token
+  pages beneath it are an unbounded space of thin lookups, have never
+  been listed in the sitemap, and are excluded — in the response as well
+  as in the page, so the exclusion does not depend on the crawler running
+  the app.
 - A crawl policy file and a sitemap of the indexable pages ship with
   every build.
 - The public data service's root address should answer with a
@@ -690,6 +2076,24 @@ Thin-market honesty rules apply.
   pages and response headers: a crawler that does not execute
   JavaScript sees the same indexable / noindex decision that a browser
   sees after the app loads.
+- **A compatibility address is never indexed.** Addresses kept working
+  for bookmarks from a retired deployment — including the forms that
+  carried a language in the address itself — answer by sending the
+  visitor to the current address, which is the one that belongs in a
+  search index. A crawler that does not run the app never follows that
+  hand-off, so the exclusion has to be stated in the response rather
+  than left to the page. Two failures are prevented by the same rule: a
+  per-user address becoming indexable merely because it was reached by
+  an older spelling, and a public page being listed twice under two
+  addresses.
+- **Every address the app asks to have indexed is a single top-level
+  page.** That is a deliberate property rather than an accident of the
+  current route set: it is what allows the compatibility exclusion above
+  to be expressed as one rule instead of one per language, which in turn
+  keeps the response-header policy inside the limit its host imposes.
+  Publishing a nested public page would break that, so it is a decision
+  to be taken knowingly and with the exclusion rule revisited alongside
+  it — not a change that should be able to pass unremarked.
 
 ## Privacy and Legal Posture
 
@@ -1037,6 +2441,16 @@ Thin-market honesty rules apply.
   so refusing them would leave the slow route open and the instant one shut.
   Publishing a standing offer of one's own is a different thing and is not
   covered, even when the intent behind it is to leave.
+- **The protection follows the destination, not the spelling of the address
+  used to reach it.** A retired deployment's addresses remain in circulation as
+  bookmarks and links, including forms that carried a language in the address
+  itself. Such an address is answered by sending the visitor to the current one
+  — but that answer is itself something the gate can withhold, so an address
+  that leads to a protected destination is treated as protected. Otherwise a
+  user holding unaccepted terms meets the prompt on the way to repaying or
+  claiming, purely because of which link they followed. Normalising the address
+  this way never widens the protection: an old address leading to a surface that
+  creates new exposure is withheld exactly as its current form is.
 - **An acceptance is honoured in every open tab, not only the one that paid.**
   The chain permits a second acceptance and would charge for it while changing
   nothing but a timestamp — so the moment one tab's acceptance is confirmed,

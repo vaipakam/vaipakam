@@ -427,11 +427,15 @@ For every finding:
   gate still applies to every finding (accept-and-fix / refute with
   evidence / defer to a follow-up issue), and per `CLAUDE.md` a P3-only
   round counts as converged, with P3s fixed or deferred at the agent's
-  judgment. A coding PR iterates until a round returns zero P1/P2; escalate
-  to the owner rather than continuing past **ten** rounds after the last
-  substantive surface change — the backstop `CLAUDE.md` sets (an earlier
-  revision here said twelve, from a stale agent note). Docs-only PRs
-  merge after two rounds, converged or not.
+  judgment. A coding PR iterates until a round returns zero P1/P2.
+  **The round caps, the escalation point and the merge gate are stated
+  once — in `CLAUDE.md`'s "Codex PR-review policy" section — and are
+  deliberately not repeated here.** This bullet carried its own copy of
+  them until 2026-09-13 and that copy drifted twice: first to "twelve
+  rounds" from a stale agent note, then to "docs-only PRs merge after two
+  rounds" once the 2026-09-13 directive moved the docs cap to ten. Two
+  copies of one rule is the failure, not the particular numbers, so the
+  numbers now live in one place and this handbook points at it.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's
@@ -1110,6 +1114,62 @@ New Issues land on `@vaipakam-labs` automatically via
 secret). Multi-repo support via this workaround — GitHub Projects'
 own auto-add is one-repo-per-UI-rule.
 
+**That add has no automatic retry.** Projects v2 is GraphQL-only, so it draws
+on the PAT owner's 5,000-point GraphQL bucket — the one every tool
+authenticating as that account shares — and when the bucket is empty at the
+instant an issue opens, the add fails and nothing re-runs it for that event —
+17 of the 60 runs preceding 2026-09-02, and #2054, the issue that reported
+this, was itself one of them. The workflow does fire again if the issue is
+later **reopened** or **transferred** (its other two triggers), so either of
+those re-attempts the add as a side effect; nothing else does. Two things
+stand underneath it:
+
+- **The six-hourly sweep** — `.github/workflows/project-board-reconcile.yml`
+  ("Add un-boarded open issues") compares open and recently-closed issues
+  against the board and adds whatever is missing, whatever the reason it went
+  missing; closed cards it recovers are moved to Done. Its look-back reaches
+  to the last SUCCESSFUL sweep, so an outage widens the next sweep rather
+  than expiring an unrecovered card. Dispatch it by hand with
+  `closed_lookback_days` to backfill after a rename or a long gap.
+- **The sweep's own listing retries once on a recognised rate limit.** The
+  board listing is metered against the same bucket, and every measured
+  failure of it refilled 6–12.5 minutes later (#2129, #2134). The step hands
+  the failed request's trace to `.github/scripts/gh-trace-ratelimit-wait.sh`;
+  if that recognises a rate limit it waits the number of seconds the parser
+  returns (plus a 5 s margin, the total capped at `RETRY_WAIT_CAP_SECONDS`,
+  15 min) and tries exactly once more. **What counts as a limit, how the wait
+  is derived and bounded, and which misses are accepted by name, is defined
+  once — in the `THE ONE SHAPE` comment block inside that script's `analyse`
+  function, pinned by its self-test — and nowhere else**; this handbook does
+  not restate the rule, because three review rounds showed every restatement
+  drifting from it. Three things the reader does need: the wait comes from
+  the request trace and never from `/rate_limit`, which does not report the
+  bucket the request was metered against; the wait is never a guess — it is
+  the reset the failed response itself named, bounded to a day at most, and
+  the reason string says when that bound applied; and a secondary limit
+  (`Retry-After` / an abuse-detection body) is a named miss — it is NOT
+  retried, its headers are shown in the diagnostic, and the next sweep is
+  the retry. Anything the parser does not recognise is not retried, whatever
+  it was; a second limit after the wait is not retried either. In both cases
+  the run fails with the request's status, headers and message in the log,
+  and the next sweep tries again.
+
+When it is the **listing** that failed, a red sweep means one of three things,
+and the log's diagnostic group says which: the retry failed too (the group
+says whether that second failure was itself a recognised limit or something
+else — it reports the second response and infers no cause), the wait
+exceeded the cap, or **no limit was recognised** — which covers a
+refusal that is not a limit (bad credentials, an unreadable project) AND a
+trace the parser could not read a response from. In that case the group
+carries a line from the parser's own verdict saying so — "whether this was a
+rate limit is UNKNOWN, not 'no'" — whether or not the evidence filter beneath
+it recognised any line (it may still print a stray message, and a
+partially-readable trace is exactly where the two disagree); treat that one
+as unknown, not as "not a limit". The sweep can also go
+red before the listing (the run-history lookup for the closed-issue watermark)
+or after it (a truncated listing, an add or a Done-move that did not land);
+those print their own `::error::` line and no diagnostic group.
+
 ---
 
 ## 9. Tooling reference
@@ -1192,7 +1252,7 @@ correlation is recorded.
 
 Combined effect of the #74 arc:
 
-- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Slither static analysis` + `D1 name consistency (unconditional)` + signed commits + thread resolution + linear history + no-delete + no-force-push**. (**Owed, #1924 r22**: `keeper deploy guard (--keep-vars, tree-wide)` should join this list. It runs unconditionally on every PR today but is not yet in the live ruleset, so its failure does not block merge until an operator adds it — the same unconditional-by-design rationale as `D1 name consistency`.) (`Build docs` is NOT among them — see §7.1. It is informational: it runs on contracts-scoped PRs only, gated on `detect-changes.outputs.contracts` and a successful `contracts-fast`, and it never blocks merge. Owner decision 2026-08-03: leave it non-blocking.)
+- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Slither static analysis` + `D1 name consistency (unconditional)` + signed commits + thread resolution + linear history + no-delete + no-force-push**. (The debt once owed here for `keeper deploy guard (--keep-vars, tree-wide)` is **discharged by deletion**: that job and the tree-wide scanner behind it are retired, so there is nothing to add to the ruleset and a name that no longer exists must not be wired into one. `worker keep_vars (unconditional)` — which asserts the declaration the scanner was defending — is now the whole defence and is *still* owed a ruleset entry, per the note at the top of `ci.yml`; it is meanwhile run inside `apps/keeper`'s `typecheck`, which the required `workspaces` job invokes.) (`Build docs` is NOT among them — see §7.1. It is informational: it runs on contracts-scoped PRs only, gated on `detect-changes.outputs.contracts` and a successful `contracts-fast`, and it never blocks merge. Owner decision 2026-08-03: leave it non-blocking.)
 - Path-filter (`detect-changes`) skips downstream jobs when scope doesn't apply — docs-only PRs merge in `<1 min`.
 - Contracts PRs run the deploy-sanity suite + positive-flow scenarios under the `cifast` foundry profile (~5 min cold) — production-bytecode-identical, but the full 2,012-test regression is operator-local + `mainnet-gate.yml`.
 - Mainnet cutover paths gated on `mainnet-gate.yml` (full regression as hard gate on `release/**` + `v*`).

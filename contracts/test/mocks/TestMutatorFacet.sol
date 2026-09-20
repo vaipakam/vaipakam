@@ -2,12 +2,14 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../../src/libraries/LibRewardCustody.sol";
 import {LibConsolidation} from "../../src/libraries/LibConsolidation.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
@@ -991,7 +993,21 @@ contract TestMutatorFacet {
     ///         credited series directly (bypasses the backing check — the
     ///         stamp tests exercise finalization math, not custody).
     function setRecycleBucketRaw(uint256 amount) external {
-        LibVaipakam.storageSlot().recycleBucket = amount;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 slice 4 PR B — on an ACTIVATED deployment the bucket is an
+        // attribution over the holder's recycled row, so a raw bucket write
+        // keeps the custody consistent too: the difference is relocated
+        // from the Diamond's balance into the row, or released from the row
+        // back to the Diamond, measured either way.
+        if (LibRewardCustody.active(s)) {
+            uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled];
+            if (amount > row) {
+                LibRewardCustody.relocateToHolder(s, LibVaipakam.RewardCustodyRow.Recycled, amount - row);
+            } else if (amount < row) {
+                LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Recycled, address(this), row - amount);
+            }
+        }
+        s.recycleBucket = amount;
     }
 
     /// @notice #1504 test-only — drive a REAL {LibVpfiRecycle.credit},
@@ -1004,7 +1020,54 @@ contract TestMutatorFacet {
         uint256 refId,
         uint256 amount
     ) external {
-        LibVpfiRecycle.credit(source, refId, amount);
+        // #1566 closure 2 — the generic tagged credit no longer exists, and a
+        // test-only door into the bucket would be exactly the bypass the
+        // closure removes. This mutator therefore DISPATCHES to the real
+        // doors: reward classes go through the bounding reward operation
+        // (charged against the delivered headroom like any forfeit or
+        // expiry), and each proven non-reward inflow goes through its own
+        // delta-checked operation — the tokens already sit on the Diamond in
+        // these fixtures, so the pre-transfer snapshot is the balance less
+        // the amount. Any other class has no door and reverts here, which is
+        // the point.
+        if (
+            source == LibVpfiRecycle.RecycleSource.ForfeitedReward
+                || source == LibVpfiRecycle.RecycleSource.ExpiredReward
+        ) {
+            LibVpfiRecycle.absorbRewardFresh(source, refId, amount);
+            return;
+        }
+        uint256 before = IERC20(LibVaipakam.storageSlot().vpfiToken).balanceOf(address(this)) - amount;
+        if (source == LibVpfiRecycle.RecycleSource.NotificationFee) {
+            LibVpfiRecycle.creditNotificationFee(refId, amount, before);
+        } else if (source == LibVpfiRecycle.RecycleSource.FullTariff) {
+            LibVpfiRecycle.creditFullTariff(refId, amount, before);
+        } else if (source == LibVpfiRecycle.RecycleSource.SpendGatedPerk) {
+            LibVpfiRecycle.creditSpendGatedPerk(refId, amount, before);
+        } else {
+            revert("creditRecycleRaw: no door exists for this source (#1566 closure 2)");
+        }
+    }
+
+    /// @notice #1566 closure 2 test-only — drive one of the three delta-checked
+    ///         non-reward inflow operations with a CALLER-SUPPLIED pre-transfer
+    ///         snapshot, so a test can prove the delta check refuses a credit
+    ///         whose tokens never arrived. Any other source reverts: no door.
+    function creditInflowRawWithBefore(
+        LibVpfiRecycle.RecycleSource source,
+        uint256 refId,
+        uint256 amount,
+        uint256 balanceBefore
+    ) external {
+        if (source == LibVpfiRecycle.RecycleSource.NotificationFee) {
+            LibVpfiRecycle.creditNotificationFee(refId, amount, balanceBefore);
+        } else if (source == LibVpfiRecycle.RecycleSource.FullTariff) {
+            LibVpfiRecycle.creditFullTariff(refId, amount, balanceBefore);
+        } else if (source == LibVpfiRecycle.RecycleSource.SpendGatedPerk) {
+            LibVpfiRecycle.creditSpendGatedPerk(refId, amount, balanceBefore);
+        } else {
+            revert("creditInflowRawWithBefore: not an inflow class (#1566 closure 2)");
+        }
     }
 
     /// @notice Governor PR-3b test-only — see {setRecycleBucketRaw}.
@@ -1054,8 +1117,24 @@ contract TestMutatorFacet {
     ///         value moving between the two terms of the derived floor
     ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
     ///         move would not exercise the thing that matters.
-    function consumeRecycleRaw(uint256 amount) external {
-        LibVpfiRecycle.consume(amount);
+    function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, 0);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) test-only — the
+    ///         HOT form of {LibVpfiRecycle.consume}: the claim path's, whose
+    ///         walk of the classified queue is bounded and leaves the rest
+    ///         pending.
+    function consumeRecycleRawBounded(uint256 amount) external {
+        LibVpfiRecycle.consume(amount, false, 0);
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r7) test-only — the
+    ///         REMIT form of {LibVpfiRecycle.consume}: the take's writes are
+    ///         noted on the reservation `remitId`, as a remittance's are, so
+    ///         {restoreReleasedRemitRaw} reverses exactly them.
+    function consumeRecycleRawAsRemit(uint256 amount, uint256 remitId) external returns (uint256 classifiedTake) {
+        return LibVpfiRecycle.consume(amount, true, remitId);
     }
 
     /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
@@ -1435,10 +1514,63 @@ contract TestMutatorFacet {
     ///         primitive through the Diamond (its production caller,
     ///         `executeRepatriation`, ships with the transport slice).
     function debitRepatriationSurplusRaw(uint256 amount) external {
+        // #1566 slice 4 PR B — the primitive now moves the tokens itself;
+        // naming the Diamond as the destination keeps this a ledger-only
+        // exercise (a self-transfer on the Diamond path; a measured release
+        // holder → Diamond on an activated one).
         LibVpfiRecycle.debitRepatriationSurplus(
             LibVaipakam.storageSlot(),
-            amount
+            amount,
+            address(this)
         );
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the three role inputs
+    ///         directly, so the resolver and the freeze can be tested on
+    ///         states the frozen setters refuse to produce. The production
+    ///         setters are the only role mutators; this bypasses their
+    ///         residual retirement and their freeze on purpose.
+    function setRewardRoleRaw(uint32 baseChainId, bool canonical, bool configured) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.baseChainId = baseChainId;
+        s.isCanonicalRewardChain = canonical;
+        s.rewardRoleConfigured = configured;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the Base recovery position
+    ///         and the overage quarantine directly, so the bootstrap writers
+    ///         and the overage disposition can be exercised without driving a
+    ///         full stranded-return round trip.
+    function setRecoveryPositionWithOverageRaw(uint256 recovered, uint256 redispatched, uint256 overage) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardBudgetRecovered = recovered;
+        s.rewardBudgetRedispatched = redispatched;
+        s.strandedReturnOverage = overage;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — set the role freeze raw, so a
+    ///         suite whose setUp activated the custody can still drive the
+    ///         PRODUCTION role setters (with their residual retirement) in
+    ///         the tests that are about transitions. The freeze itself is
+    ///         pinned in RewardCustodyCutoverTest.
+    function setRewardRoleChangesFrozenRaw(bool frozen) external {
+        LibVaipakam.storageSlot().rewardRoleChangesFrozen = frozen;
+    }
+
+    /// @notice #1566 slice 4 PR B test-only — read the freeze flag raw.
+    function getRewardRoleChangesFrozenRaw() external view returns (bool) {
+        return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
+    }
+
+    /// @notice #1566 slice 4 PR B (Codex #2186 r4) test-only — write the
+    ///         complete-cut record raw, so the VERSION half of the activation
+    ///         gate can be straddled (the routing half is straddled by real
+    ///         cuts). Production writes it only through
+    ///         {RewardCustodyFacet.stampRewardCustodyCutover}.
+    function setRewardCustodyCutoverRaw(uint32 version, bytes32 routing) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardCustodyCutoverVersion = version;
+        s.rewardCustodyCutoverRouting = routing;
     }
 
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited
@@ -2081,7 +2213,8 @@ contract TestMutatorFacet {
             receivedAt: uint64(block.timestamp),
             amount: amount,
             remitter: remitter,
-            classification: 0
+            classification: 0,
+            packetHash: bytes32(0)
         });
     }
 
@@ -2288,5 +2421,54 @@ contract TestMutatorFacet {
                 revert(add(ret, 0x20), mload(ret))
             }
         }
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — a landed packet's
+    ///         AUTHENTICATED fresh figure, which in production only the
+    ///         transport-carried attestation of the source chain's recorded
+    ///         split writes (the transport epochs' change). Written raw here
+    ///         so the evidence-bound fresh path is exercised.
+    function setPacketFreshAuthenticatedRaw(bytes32 packetHash, uint256 amount) external {
+        LibVaipakam.storageSlot().ingressPackets[packetHash].freshAuthenticated = amount;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 test-only — drive the REAL
+    ///         released-remit restore: the reversed payout the
+    ///         reconciliation nets out of inheritable consumption, the
+    ///         inheritance a correction had made of it undone (r9).
+    function restoreReleasedRemitRaw(uint256 recycledFull, uint256 recycledSent, uint256 remitId) external {
+        LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, remitId);
+    }
+
+    /// @notice #1566 transport epochs PR 3a test-only — a reservation as an
+    ///         OLDER WIRE dispatched it: one whose payload carried no
+    ///         fresh/recycled split. Production sets `splitOnWire` on every
+    ///         reservation it creates (every payload it builds is d5), so the
+    ///         attestable set is exactly the rows that predate that field —
+    ///         and a test needs a way to stand in one of them.
+    function setRemitSplitOnWireRaw(uint256 remitId, bool onWire) external {
+        LibVaipakam.storageSlot().remitReservations[remitId].splitOnWire = onWire;
+    }
+
+    /// @notice #1566 transport epochs PR 3a test-only — a reservation's
+    ///         recorded split, so a row that moved no value (the close-only
+    ///         shape, born terminal) can be stood in without driving a whole
+    ///         zero-total finalization.
+    function setRemitReservationSplitRaw(uint256 remitId, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.RemitReservation storage r = LibVaipakam.storageSlot().remitReservations[remitId];
+        r.fresh = fresh;
+        r.recycled = recycled;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r9) test-only — a
+    ///         RELEASED reservation row as the one-time stranded seed scans
+    ///         it (status 3, its recycled share), the nonce raised to cover
+    ///         it, so the ceremony can run over a raw-driven release.
+    function setRemitReservationReleasedRaw(uint256 remitId, uint256 recycled) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.status = 3;
+        r.recycled = recycled;
+        if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
     }
 }

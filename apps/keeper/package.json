@@ -8,13 +8,12 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --keep-vars",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-keep-vars.mjs && node scripts/check-deploy-invocations.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-keep-vars.mjs",
     "test": "vitest run",
-    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs",
     "bench:cpu": "tsx bench/passCpu.ts"
   },
   "dependencies": {
-    "@pushprotocol/restapi": "^0.0.1",
+    "@pushprotocol/restapi": "^1.7.32",
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "ethers": "^6.13.0",

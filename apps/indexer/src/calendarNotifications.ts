@@ -159,14 +159,14 @@ export function graceCaseSql(buckets: GraceBucketJson[] | null): string {
  *  so a transient overflow self-heals on later ticks. */
 const SWEEP_LIMIT = 2000;
 
-/** The log_index stamped on cron rows — a sentinel ABOVE any real
- *  per-block log index (Codex #1298 r2): the feed and the client's
- *  read-state cursor order by (block, logIndex, id), and a real log in
- *  the same head block can carry logIndex > 0 — a cron row at 0 would
- *  sort OLDER than an already-seen event row and never raise the
- *  badge. Blocks hold nowhere near a million logs, so the sentinel
- *  keeps head-stamped cron rows strictly newest within their block. */
-export const CRON_LOG_INDEX = 1_000_000;
+/** The log_index stamped on cron rows. Re-exported under its original
+ *  name; the DEFINITION and the reasoning moved to `notifications.ts` as
+ *  `DERIVED_LOG_INDEX` when the #2101 repair reintroduced the same defect
+ *  it was written to prevent — a rule each new derived-row writer has to
+ *  rediscover is one that will be missed again (#2190 r5). */
+export { DERIVED_LOG_INDEX as CRON_LOG_INDEX } from './notifications';
+import { DERIVED_LOG_INDEX } from './notifications';
+import { createQuarantineAvailability, quarantineExclusionSql } from './loanQuarantine';
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -252,7 +252,7 @@ export function planCalendarRows(
           loanId: loan.loan_id,
           eventKind: null, // cron-derived — no source event
           blockNumber: headBlock,
-          logIndex: CRON_LOG_INDEX, // above any real log in this block
+          logIndex: DERIVED_LOG_INDEX, // above any real log in this block
           createdAt: nowSec,
           dedupKey,
         });
@@ -289,7 +289,24 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * that index's definition — SQLite matches partial/expression indexes
  * structurally.
  */
-export function calendarWindowSql(graceCase: string): string {
+/**
+ * Has migration 0049 been applied to THIS database yet?
+ *
+ * The rule and the probe both live in `@vaipakam/lib` because the calendar
+ * sweep is not the only lane that must respect the quarantine — the agent's
+ * periodic-interest pre-notify sends payment-due messages off the same stored
+ * status, in a different Worker (#2213 r2 `4011776403`). One rule, two
+ * callers; see `loanQuarantine.ts` for why a probe rather than a caught
+ * error, and why only a TRUE is cached.
+ */
+let quarantineTableExists = createQuarantineAvailability();
+
+/** Test seam: the probe caches across calls, which would leak between cases. */
+export function _resetQuarantineTableProbe(): void {
+  quarantineTableExists = createQuarantineAvailability();
+}
+
+export function calendarWindowSql(graceCase: string, withQuarantine = true): string {
   // The already-notified suppression legs (Codex #1298 r5, reworked r6)
   // drop loans whose CURRENT-stage rows all exist, so a saturated window
   // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
@@ -326,6 +343,20 @@ export function calendarWindowSql(graceCase: string): string {
           WHERE loans.chain_id = ?
             AND status = 'active'
             AND is_stub = 0 AND is_sale_vehicle = 0
+            -- QUARANTINED ROWS ARE NOT REMINDED ABOUT (#2212). A row the
+            -- reconciliation pass could not settle is stored as active and
+            -- may not be: an orphan the chain has never heard of, a row it
+            -- could not read, one whose repair write failed, one in a state
+            -- this build cannot project. Reminders fire once and are never
+            -- retracted, so "prepare to repay" must not be derived from a
+            -- row nobody has confirmed.
+            --
+            -- In SQL rather than as a post-select filter, and BEFORE the
+            -- LIMIT: a quarantined row occupying a LIMIT slot would starve
+            -- an emitting row behind it in the maturity order, which is the
+            -- starvation the ORDER BY and the past-grace leg already exist
+            -- to prevent.
+            ${withQuarantine ? `AND ${quarantineExclusionSql('loans')}` : ''}
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
             AND (${maturity} + ${graceCase}) > ?
@@ -360,6 +391,24 @@ export async function sweepCalendarNotifications(
   chainId: number,
   nowSec: number,
   headBlock: number,
+  /**
+   * Loans this tick's reconciliation could NOT establish — left out of the
+   * sweep entirely (#2211 r3 `4011279296`).
+   *
+   * A row the chain has never heard of, one whose status could not be read,
+   * one whose repair write failed, one carrying a status this build cannot
+   * project: each is still sitting at `status = 'active'`, and each is
+   * exactly what a missed terminal leaves behind. Reminding about one means
+   * telling a holder to repay a loan that may already have ended — once,
+   * unretractably.
+   *
+   * Per row rather than per tick on purpose. Deferring the whole sweep
+   * because one row could not be read would withhold every OTHER loan's
+   * reminder on that chain, and a persistently unreadable row would withhold
+   * them indefinitely. The rows the pass DID establish are established, and
+   * their holders should hear about them.
+   */
+  excludeLoanIds: ReadonlySet<number> = new Set(),
 ): Promise<CalendarSweepResult> {
   try {
     // The effective grace schedule — snapshotted governance buckets
@@ -419,8 +468,53 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
+    // One probe for this sweep, and the scope is opened explicitly (#2213 r28
+    // `4016565774`). This lane asks once either way; the call is here so both
+    // lanes draw the boundary the same way rather than one relying on asking
+    // only once by accident.
+    quarantineTableExists.beginPass();
+    const availability = await quarantineTableExists(db);
+    if (availability === 'unknown') {
+      // DEFER THE WHOLE SWEEP (#2213 r13 `4013570995`). This is the one place
+      // where "could not ask" must not be read as "not there": the sweep is
+      // about to mint reminders that are never retracted, and dropping the
+      // exclusion on a database whose table DOES exist would send them for
+      // precisely the loans being held back — while announcing that the
+      // migration was missing, sending an operator to a remedy that is not the
+      // problem. One tick of silence on one chain is the cheaper error, and
+      // the sweep already defers itself for the same kind of reason when
+      // reconciliation has not established the live set.
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: DEFERRED — could not
+         establish whether loan_reconcile_quarantine exists, so whether any
+         loan is being held back is unknown. No reminders are minted this
+         tick; nothing is stamped, and the next tick asks again.`.replace(
+          /\s+/g,
+          ' ',
+        ),
+      );
+      return EMPTY_SWEEP;
+    }
+    const withQuarantine = availability === 'present';
+    if (!withQuarantine) {
+      // LOUD, because the consequence is the opposite of the usual one: rows
+      // the reconciliation pass could not settle are reminded about this tick
+      // exactly as they were before #2212. That is the prior behaviour rather
+      // than a new harm — and far better than suppressing every reminder on
+      // every chain — but it is not what this build believes it is doing.
+      //
+      // This branch is now reached ONLY on a definite absence — the probe
+      // answered and the table was not there, which is the deploy window
+      // #2214 describes. An unanswerable probe returns above.
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: loan_reconcile_quarantine ` +
+          `is missing (migration 0049 not applied to this database). Reminders ` +
+          `are NOT being withheld for unsettled loans this tick. Apply the ` +
+          `migration; no redeploy is needed.`,
+      );
+    }
     const res = await db
-      .prepare(calendarWindowSql(graceCaseSql(graceBuckets)))
+      .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
       .bind(
         chainId,
         nowSec - maxGraceSeconds(graceBuckets),
@@ -446,7 +540,24 @@ export async function sweepCalendarNotifications(
       );
     }
     if (loans.length === 0) return EMPTY_SWEEP;
-    const rows = planCalendarRows(chainId, loans, nowSec, headBlock, graceBuckets);
+    // Withheld AFTER the window select, which is deliberate: these rows are
+    // a handful at most, and excluding them in SQL would mean threading a
+    // variable-length bind list through `calendarWindowSql` for a filter
+    // that changes nothing about which rows the window finds.
+    const eligible = excludeLoanIds.size === 0
+      ? loans
+      : loans.filter((l) => !excludeLoanIds.has(l.loan_id));
+    if (eligible.length !== loans.length) {
+      const held = loans.filter((l) => excludeLoanIds.has(l.loan_id)).map((l) => l.loan_id);
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: withholding reminders for ` +
+          `loan(s) ${held.join(', ')} — this tick could not establish their ` +
+          `state against the chain, and a reminder is never retracted. Every ` +
+          `other loan in the window is unaffected.`,
+      );
+    }
+    if (eligible.length === 0) return EMPTY_SWEEP;
+    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets);
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);
     if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new

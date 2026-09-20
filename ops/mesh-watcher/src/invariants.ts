@@ -132,6 +132,22 @@ export interface LocalLedger {
    *  mirrors. */
   outstandingRecycled: bigint;
   /**
+   * #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the two REATTRIBUTION
+   * cumulatives of the reconciliation epoch: credit a reclassification
+   * moved INTO the bucket or its payout figure (`reattributedIn`, a
+   * CLAIMED term — it is not absorption, the reported cumulative nets it
+   * out exactly as it nets relocated custody) and OUT of them
+   * (`reattributedOut`, a DESTINATION — the tokens or the consumption now
+   * sit on the fresh side). OPTIONAL for the same reason as
+   * `repatriatedOut` below: the view lives on a newer facet, and a chain
+   * not yet refreshed with it answers every other read and reverts this
+   * one. `undefined` means UNKNOWN — the composition bound and the
+   * derivation re-statement SKIP, reported as a coverage gap — never zero:
+   * after any real correction a zero substitute would page a false
+   * CRITICAL in one direction or the other.
+   */
+  reattribution?: { reattributedIn: bigint; reattributedOut: bigint };
+  /**
    * #1568 C2 — `recycleRepatriatedOutCumulative`: lifetime VPFI this
    * chain's bucket has repatriated to Base. A DESTINATION term in the
    * bucket composition and part of the reported-cumulative floor.
@@ -157,6 +173,19 @@ export interface LocalLedger {
     strandedRecoveryReserved: bigint;
     // #1434 P2-w5 — the Base recovery-position earmark (zero on mirrors).
     recoveryPositionReserved: bigint;
+    /**
+     * #1566 slice 4 PR B — from the VERSIONED snapshot, the only one read
+     * (Codex #2186 r3): whether reward custody moved onto the holder, and
+     * the holder's balance (known or not) and attributed total. On an
+     * activated chain the bucket and the recovery position are the
+     * HOLDER's, so the legacy relation is replaced by
+     * `holderBalance >= holderAttributed` plus
+     * `vpfiBalance >= strandedRecoveryReserved`, both EXACT.
+     */
+    custodyActivated: boolean;
+    holderBalanceKnown: boolean;
+    holderBalance: bigint;
+    holderAttributed: bigint;
   };
   outstandingFresh: bigint;
   armedFromDay: bigint;
@@ -938,6 +967,72 @@ export function checkHardInvariants(
   // snapshot could not be read (pre-P2-w2 lens or transport failure).
   for (const local of obs.allLocals.values()) {
     if (!local.backing) continue;
+    // #1566 slice 4 PR B — an ACTIVATED chain: the holder must back every
+    // attributed row, and the Diamond's own balance must still cover the
+    // one Diamond-side reservation left (quarantined compensation awaiting
+    // its return that PREDATES the activation — since #1566 closure 2
+    // cutover PR 1 a quarantine that lands, or a demotion that unwinds,
+    // on an activated chain is holder custody, and the snapshot's
+    // reservation field is the Diamond-side part only, netted on chain)
+    // its return). The legacy relation below would page a false CRITICAL
+    // here whenever healthy holder rows exceed the unrelated Diamond
+    // balance, so it is not applied.
+    //
+    // Both relations are EXACT — no tolerance (Codex #2186 r3 P2).
+    // `BUCKET_COVERAGE_TOLERANCE_WEI` exists for one dust case: `consume`
+    // flooring the BUCKET for bounded cap-trim rounding. The holder's rows
+    // and the holder's balance move together, measured at both ends in the
+    // same frame, so a shortfall of one wei is a real loss and would make a
+    // fully allocated payout revert; and on an activated chain the bucket
+    // is the holder's, so nothing on the Diamond side rounds either.
+    // Sharing the knob would let an operator raising it for a noisy chain's
+    // bucket coverage silently widen an unrelated custody blind spot.
+    if (local.backing.custodyActivated) {
+      const b = local.backing;
+      if (!b.holderBalanceKnown) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-balance-unreadable',
+          identity: [local.chainId, b.holderAttributed],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder balance cannot be read',
+          detail:
+            `reward custody is ACTIVATED on this chain but the holder's VPFI balance could not be read (unbound holder, unset or non-conforming token) — the rows attribute ${fmt(b.holderAttributed)} and nothing substantiates it\n` +
+            `  attributed  = ${fmt(b.holderAttributed)}`,
+        }));
+      } else if (b.holderBalance < b.holderAttributed) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'holder-below-attributed',
+          identity: [local.chainId, b.holderBalance, b.holderAttributed],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Reward custody holder no longer covers its attributed rows',
+          detail:
+            `holderBalance < attributed rows (exact — no tolerance: rows and balance are measured together, so any shortfall is a real loss) — tokens the custody ledger attributes to live funding, recycled runway, recovery, overage or restitution have left the holder\n` +
+            `  holder      = ${fmt(b.holderBalance)}\n` +
+            `  attributed  = ${fmt(b.holderAttributed)}\n` +
+            `  shortfall   = ${fmt(b.holderAttributed - b.holderBalance)}`,
+        }));
+      }
+      if (b.vpfiBalance < b.strandedRecoveryReserved) {
+        out.push(makeFinding({
+          code: 'recovery-reservation-backing',
+          variant: 'balance-below-reservation',
+          identity: [local.chainId, b.vpfiBalance, b.strandedRecoveryReserved],
+          severity: 'critical',
+          chainId: local.chainId,
+          title: 'Balance no longer covers the arrival reservation',
+          detail:
+            `balance < strandedRecoveryReserved (the arrival reservation) on an activated chain (exact — the bucket, the only rounding source, is the holder's here) — quarantined compensation awaiting its return has been spent from the Diamond's own balance\n` +
+            `  balance     = ${fmt(b.vpfiBalance)}\n` +
+            `  reserved    = ${fmt(b.strandedRecoveryReserved)}\n` +
+            `  shortfall   = ${fmt(b.strandedRecoveryReserved - b.vpfiBalance)}`,
+        }));
+      }
+      continue;
+    }
     const spoken =
       local.bucket +
       local.backing.strandedRecoveryReserved +
@@ -978,13 +1073,20 @@ export function checkHardInvariants(
   // Every recycled credit lands in the bucket exactly once, so the two
   // lifetime cumulatives can never exceed where the tokens actually went:
   //
-  //     creditedRaw + relocated
+  //     creditedRaw + relocated + reattributedIn
   //       <= bucket + paidOut + releasedRemitStranded + repatriatedOut
+  //          + reattributedOut
   //
   // `credit` and `creditCustodyRelocated` each add to one term on each
   // side; `consume` moves bucket → paidOut; `releaseCommitment` moves
   // neither; `restoreReleasedRemit` moves paidOut → releasedRemitStranded;
-  // `debitRepatriationSurplus` (#1568 C2) moves bucket → repatriatedOut.
+  // `debitRepatriationSurplus` (#1568 C2) moves bucket → repatriatedOut;
+  // a reclassification (#1566 closure 2 cutover PR 2, Codex #2206 r9)
+  // moves credit between the bucket (or its payout figure) and the fresh
+  // side, counted on the reattribution term of the side it left or
+  // joined. The on-chain seed ceremony reads the same two sides from
+  // `LibVpfiRecycle.compositionSides`; this is the independent
+  // restatement.
   //
   // Why it is the only check that sees this class: `reportedCumulative`
   // is built by the SAME helper that builds the outbound day-close report,
@@ -1014,16 +1116,24 @@ export function checkHardInvariants(
     // persistence); a readable view on a repatriation-free chain
     // reads a genuine zero and is still checked.
     if (local.repatriatedOut === undefined) continue;
-    const claimed = local.composition.creditedRaw + local.custodyRelocated;
+    // Same rule for the reattribution pair (Codex #2206 r9): UNKNOWN skips,
+    // a readable zero pair on a chain that never corrected is still checked.
+    if (local.reattribution === undefined) continue;
+    const claimed =
+      local.composition.creditedRaw +
+      local.custodyRelocated +
+      local.reattribution.reattributedIn;
     // Repatriated-out is a DESTINATION: `debitRepatriationSurplus` moves
     // bucket → the repatriated cumulative, exactly as `consume` moves
-    // bucket → paidOut.
+    // bucket → paidOut. Reattributed-out likewise: a correction moved that
+    // credit (with its tokens, or as consumption) to the fresh side.
     const repatOut = local.repatriatedOut;
     const destinations =
       local.bucket +
       local.paidOutRecycled +
       local.composition.releasedRemitStranded +
-      repatOut;
+      repatOut +
+      local.reattribution.reattributedOut;
     // ── REVERSE bound (#1448 r3) ──────────────────────────────────
     //
     // The forward bound alone is defeated by the very regression this
@@ -1063,6 +1173,8 @@ export function checkHardInvariants(
           local.paidOutRecycled,
           local.composition.releasedRemitStranded,
           repatOut,
+          local.reattribution.reattributedIn,
+          local.reattribution.reattributedOut,
         ],
         severity: unseeded ? 'advisory' : 'critical',
         chainId: local.chainId,
@@ -1072,9 +1184,10 @@ export function checkHardInvariants(
         detail:
           (unseeded
             ? `no recycled credit has ever run on this chain, so its bucket has no counter behind it — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
-            : `bucket + paidOut + stranded + repatriated > creditedRaw + relocated — VPFI is in the bucket that no cumulative claims\n`) +
+            : `bucket + paidOut + stranded + repatriated + reattributedOut > creditedRaw + relocated + reattributedIn — VPFI is in the bucket that no cumulative claims\n`) +
           `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
           `  relocated     = ${fmt(local.custodyRelocated)}\n` +
+          `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n` +
           `  claimed       = ${fmt(claimed)}\n` +
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
@@ -1101,14 +1214,17 @@ export function checkHardInvariants(
         local.paidOutRecycled,
         local.composition.releasedRemitStranded,
         repatOut,
+        local.reattribution.reattributedIn,
+        local.reattribution.reattributedOut,
       ],
       severity: 'critical',
       chainId: local.chainId,
       title: 'Recycled cumulatives claim more credit than the bucket received',
       detail:
-        `creditedRaw + relocated > bucket + paidOut + releasedRemitStranded + repatriated — a counter advanced without tokens landing in the bucket\n` +
+        `creditedRaw + relocated + reattributedIn > bucket + paidOut + releasedRemitStranded + repatriated + reattributedOut — a counter advanced without tokens landing in the bucket\n` +
         `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n` +
+        `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n` +
         `  claimed       = ${fmt(claimed)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
@@ -1125,10 +1241,13 @@ export function checkHardInvariants(
   // #1446, second half — re-derive the PUBLISHED figure from the raw
   // slots and disagree with the chain if it does not match:
   //
-  //     reported == max(creditedRaw, bucket + paidOut - relocated)
+  //     reported == max(creditedRaw,
+  //                     bucket + paidOut + repatriatedOut + reattributedOut
+  //                       - relocated - reattributedIn)
   //
   // i.e. the stored counter, floored by the pre-upgrade derivation with
-  // the relocation netted out. The composition bound above catches a
+  // the relocation — and, since #1566 closure 2 cutover PR 2 (Codex #2206
+  // r9), the reattribution pair — netted out. The composition bound above catches a
   // counter advancing wrongly; this catches the DERIVATION dropping the
   // subtraction, which matters on a Diamond refreshed over live pre-#1222
   // state where the floor is the branch that binds.
@@ -1147,16 +1266,23 @@ export function checkHardInvariants(
     // repatriation). UNKNOWN includes a missing selector (r5); a
     // readable zero is still checked.
     if (local.repatriatedOut === undefined) continue;
+    if (local.reattribution === undefined) continue;
     // Repatriated-out value stays IN the floor: it was absorbed here
     // exactly once before leaving for Base, so a floor that dropped with
     // the bucket on a healthy repatriation would fall below an earlier
     // report (`LibVpfiRecycle.creditedCumulative` carries the same term;
     // this restatement must move with it or the first repatriation pages
-    // a false mismatch).
+    // a false mismatch). A reattribution is not absorption either: what a
+    // correction moved into the bucket is netted OUT like relocated
+    // custody, and what it moved out stays IN like a repatriation (Codex
+    // #2206 r1 on-chain, r9 here).
     const gross =
-      local.bucket + local.paidOutRecycled + local.repatriatedOut;
-    const floorTerm =
-      gross > local.custodyRelocated ? gross - local.custodyRelocated : 0n;
+      local.bucket +
+      local.paidOutRecycled +
+      local.repatriatedOut +
+      local.reattribution.reattributedOut;
+    const netted = local.custodyRelocated + local.reattribution.reattributedIn;
+    const floorTerm = gross > netted ? gross - netted : 0n;
     const raw = local.composition.creditedRaw;
     const expected = raw >= floorTerm ? raw : floorTerm;
     if (local.reportedCumulative === expected) continue;
@@ -1171,12 +1297,14 @@ export function checkHardInvariants(
       detail:
         `the chain publishes a lifetime absorption figure this Worker cannot re-derive from the raw slots at the same block\n` +
         `  reported      = ${fmt(local.reportedCumulative)}\n` +
-        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut + repatriated - relocated)\n` +
+        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut + repatriated + reattributedOut - relocated - reattributedIn)\n` +
         `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
         `  repatriated   = ${fmt(local.repatriatedOut)}\n` +
-        `  relocated     = ${fmt(local.custodyRelocated)}\n\n` +
+        `  reattributedOut = ${fmt(local.reattribution.reattributedOut)}\n` +
+        `  relocated     = ${fmt(local.custodyRelocated)}\n` +
+        `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n\n` +
         `Either the derivation changed on-chain without this Worker being updated in the same change, or the relocated-custody exclusion has regressed. The figure is what mirrors report to Base and what sizes their funding, so treat a mismatch as load-bearing either way.`,
     }));
   }

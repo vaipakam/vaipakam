@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
@@ -116,6 +117,20 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address previous = s.vpfiToken;
         if (previous == newToken) return; // No-op: skip SSTORE + event on idempotent writes.
+        // #1566 slice 4 PR B (Codex #2186 r1 P1) — every reward custody row
+        // is denominated in THIS token, so a rotation while any row is
+        // funded, or while the holder still holds the old token, would
+        // relabel live custody as the new token and leave the old token
+        // behind as a "foreign" asset. The token-rotation runbook drains
+        // both first; this is the check that makes the runbook a rule.
+        if (previous != address(0) && s.rewardCustodyHolder != address(0)) {
+            uint256 attributed = LibRewardCustody.attributedTotal(s);
+            (bool known, uint256 heldOld) = LibRewardCustody.tryBalance(previous, s.rewardCustodyHolder);
+            if (!known) revert IVaipakamErrors.RewardCustodyBalanceUnreadable();
+            if (attributed != 0 || heldOld != 0) {
+                revert IVaipakamErrors.RewardCustodyTokenRotationBlocked(attributed, heldOld);
+            }
+        }
         s.vpfiToken = newToken;
 
         emit VPFITokenSet(previous, newToken);

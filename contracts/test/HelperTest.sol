@@ -81,6 +81,9 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -95,7 +98,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](202); // exact count — the guard below requires n == length (#1566 §7 added setBorrowerLifRebateRaw + setIntentCommitRaw)
+        // exact count — the guard below requires n == length.
+        // 215 = 200 at the merge base + 13 from main (#1566 closure 2's
+        // creditInflowRawWithBefore, slice 4 PR B +5, cutover PR 2 +5) + 2 from
+        // this branch (#1566 §7's setBorrowerLifRebateRaw + setIntentCommitRaw).
+        // The length is the one hand-numbered value the cursor pattern cannot
+        // protect, so it is the one thing a merge must re-derive: take BOTH
+        // sides' additions over the base, never one side's total.
+        selectors = new bytes4[](215);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -116,6 +126,7 @@ contract HelperTest {
         // #1504 — drive a REAL LibVpfiRecycle.credit so a test can observe
         // the live routing decision rather than seeding either side.
         selectors[n++] = TestMutatorFacet.creditRecycleRaw.selector;
+        selectors[n++] = TestMutatorFacet.creditInflowRawWithBefore.selector;
         // #1448 r6 — pre-seed-fold relocated-custody shape.
         selectors[n++] =
             TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
@@ -146,6 +157,20 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1566 closure 2 cutover PR 2 — the evidence writer + the restore driver.
+        selectors[n++] = TestMutatorFacet.setPacketFreshAuthenticatedRaw.selector;
+        selectors[n++] = TestMutatorFacet.restoreReleasedRemitRaw.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRawAsRemit.selector;
+        selectors[n++] = TestMutatorFacet.setRemitReservationReleasedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRemitSplitOnWireRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRemitReservationSplitRaw.selector;
+        // #1566 slice 4 PR B — raw role inputs + the freeze flag.
+        selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
+        selectors[n++] = TestMutatorFacet.getRewardRoleChangesFrozenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRecoveryPositionWithOverageRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardRoleChangesFrozenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardCustodyCutoverRaw.selector;
         // #1618 r6 — selector-registry pointer for the live lane bound.
         selectors[n++] =
             TestMutatorFacet.setCrossChainMessengerRaw.selector;
@@ -666,7 +691,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](48);
+        selectors = new bytes4[](49);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -722,6 +747,7 @@ contract HelperTest {
         selectors[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
         selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
         return selectors;
     }
 
@@ -861,7 +887,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -901,6 +927,7 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[29] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[30] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
         return selectors;
     }
 
@@ -2269,19 +2296,18 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
-        selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
-        selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
-        selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
-        selectors[3] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
-        selectors[4] = RewardRemittanceFacet.quoteRewardBudget.selector;
-        selectors[5] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
-        selectors[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
-        selectors[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
-        selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors = new bytes4[](10);
+        selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
+        selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        selectors[3] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
+        selectors[4] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        selectors[5] = RewardRemittanceFacet.sendRemitAck.selector;
+        selectors[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        // #1566 transport epochs PR 3a — the canonical split attestation send.
+        selectors[9] = RewardRemittanceFacet.attestRemitSplit.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2334,6 +2360,108 @@ contract HelperTest {
             RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
+    /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side
+    /// rebase. Mirrors `DeployDiamond._getRewardCustodySelectors`.
+    function getRewardCustodyFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](41);
+        selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
+        selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
+        selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
+        selectors[3] = RewardCustodyFacet.rewardCustodyHolder.selector;
+        selectors[4] = RewardCustodyFacet.armedFreshPaidRebased.selector;
+        selectors[5] = RewardCustodyFacet.rewardCustodyRow.selector;
+        selectors[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
+        selectors[7] = RewardCustodyFacet.armedFreshLedger.selector;
+        selectors[8] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
+        selectors[9] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
+        selectors[10] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
+        selectors[11] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
+        selectors[12] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
+        selectors[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
+        selectors[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
+        selectors[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
+        // #1566 slice 4 PR B — activation, funding, bootstrap, overage, ledger.
+        selectors[16] = RewardCustodyFacet.activateRewardCustody.selector;
+        selectors[17] = RewardCustodyFacet.fundRewardPool.selector;
+        selectors[18] = RewardCustodyFacet.fundRewardCustodyRow.selector;
+        selectors[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
+        selectors[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
+        selectors[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
+        selectors[22] = RewardCustodyFacet.rewardRoleChangesFrozen.selector;
+        selectors[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
+        // #1566 slice 4 PR B — the Diamond-internal custody entry points.
+        selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
+        selectors[25] = RewardCustodyFacet.custodyMove.selector;
+        selectors[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
+        selectors[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
+        selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
+        selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        selectors[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
+        selectors[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        selectors[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        selectors[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
+        // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
+        selectors[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
+        selectors[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        selectors[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
+        // #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress attribution's
+        // Diamond-internal entry points (the quarantine one took slot 27).
+        selectors[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
+        selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
+        selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
+        selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+    }
+
+    /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
+    /// (mirrors `DeployDiamond._getRewardReconciliationSelectors`).
+    function getRewardReconciliationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](18);
+        selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
+        selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
+        selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
+        selectors[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
+        selectors[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
+        selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        selectors[8] = RewardReconciliationFacet.getFreshQueueState.selector;
+        selectors[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
+        selectors[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        selectors[12] = RewardReconciliationFacet.getEntryRecords.selector;
+        selectors[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
+        selectors[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        selectors[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        selectors[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        selectors[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
+    }
+
+    /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
+    /// remittance facet (mirrors `DeployDiamond._getRewardIngressSelectors`).
+    function getRewardIngressFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
+        selectors[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
+        selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
+        // #1566 transport epochs PR 3a — the split attestation ingress.
+        selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+    }
+
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
     /// `DeployDiamond._getRewardRemittanceLensSelectors` (SelectorCoverageTest
     /// asserts the match).
@@ -2342,7 +2470,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](38);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2375,6 +2503,10 @@ contract HelperTest {
             .selector;
         selectors[25] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1566 closure 2 cutover PR 1 — the ingress-stamped packet record and
+        // the UNCLASSIFIED attribution's figures.
+        selectors[35] = RewardRemittanceLensFacet.getIngressPacket.selector;
+        selectors[36] = RewardRemittanceLensFacet.getUnclassifiedPosition.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
         selectors[27] =
@@ -2393,6 +2525,8 @@ contract HelperTest {
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
         selectors[33] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
+        // #1566 transport epochs PR 3a — the split attestation fee quote.
+        selectors[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -2512,7 +2646,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](33);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -2549,6 +2683,7 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
         return selectors;
     }
 

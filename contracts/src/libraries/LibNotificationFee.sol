@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
@@ -138,6 +139,10 @@ library LibNotificationFee {
         //    insufficient VPFI; those reverts surface to the watcher,
         //    which logs them and skips the on-chain `markNotifBilled`
         //    write — the billed flag stays false until they top up VPFI.
+        //    #1566 closure 2 — snapshot the Diamond's balance first: the
+        //    bucket credit in step 3 is a delta-checked OPERATION that
+        //    verifies the balance actually rose by the tariff.
+        uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             payer,
             vpfi,
@@ -157,12 +162,9 @@ library LibNotificationFee {
         // 3. Credit the recycle bucket now that the tariff sits on the
         //    Diamond — the first live non-forfeit absorption class
         //    (governor §4.1 Layer 0). refId = loanId for per-loan
-        //    observability on the `VpfiRecycled` feed.
-        LibVpfiRecycle.credit(
-            LibVpfiRecycle.RecycleSource.NotificationFee,
-            loanId,
-            vpfiAmount
-        );
+        //    observability on the `VpfiRecycled` feed. The tag is the
+        //    operation's own — there is no generic tagged credit any more.
+        LibVpfiRecycle.creditNotificationFee(loanId, vpfiAmount, balanceBefore);
 
         if (isLenderSide) {
             loan.lenderNotifBilled = true;

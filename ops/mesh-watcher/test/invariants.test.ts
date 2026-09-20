@@ -48,6 +48,7 @@ import {
   keeperDrawUnavailableGap,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
+  reattributionUnavailableGap,
   backingSnapshotUnavailableGap,
 } from '../src/mesh';
 import {
@@ -76,6 +77,13 @@ import { AlertStore, type StoreOp } from '../src/store';
 
 const E = 1_000_000_000_000_000_000n; // 1 VPFI
 const TOLERANCE = 1_000_000_000_000_000n; // 1e15 wei — the shipped default
+/** The versioned snapshot's custody fields for a chain that is not activated. */
+const NOT_ACTIVATED = {
+  custodyActivated: false,
+  holderBalanceKnown: false,
+  holderBalance: 0n,
+  holderAttributed: 0n,
+} as const;
 
 const CANONICAL = 84532;
 const MIRROR = 42161;
@@ -155,10 +163,15 @@ function mirrorLocal(): LocalLedger {
     // #1568 C2 — current deployment, view present, nothing repatriated
     // (undefined would skip composition + derivation suite-wide).
     repatriatedOut: 0n,
+    // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+    // facet present, nothing reattributed (undefined would skip the same
+    // two checks suite-wide — the same anti-vacuity rule).
+    reattribution: { reattributedIn: 0n, reattributedOut: 0n },
     // #1434 P2-w2 — backing snapshot present with a healthy float and no
     // quarantine (undefined would skip the recovery-reservation check
     // suite-wide — the same anti-vacuity rule as repatriatedOut above).
     backing: {
+      ...NOT_ACTIVATED,
       vpfiBalance: 400n * E,
       strandedRecoveryReserved: 0n,
       recoveryPositionReserved: 0n,
@@ -193,8 +206,10 @@ function canonicalLocal(): LocalLedger {
       isCanonicalRewardChain: true,
     },
     repatriatedOut: 0n,
+    reattribution: { reattributedIn: 0n, reattributedOut: 0n },
     // #1434 P2-w2 — as on the mirror fixture: present, healthy, empty.
     backing: {
+      ...NOT_ACTIVATED,
       vpfiBalance: 1_000n * E,
       strandedRecoveryReserved: 0n,
       recoveryPositionReserved: 0n,
@@ -250,6 +265,13 @@ type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
     vpfiBalance: bigint;
     strandedRecoveryReserved: bigint;
     recoveryPositionReserved?: bigint;
+    // #1566 slice 4 PR B — the versioned snapshot's holder-side fields;
+    // omitted = a chain whose custody is NOT activated (the legacy
+    // relation), the shape every pre-slice-4 fixture describes.
+    custodyActivated?: boolean;
+    holderBalanceKnown?: boolean;
+    holderBalance?: bigint;
+    holderAttributed?: bigint;
   } | null;
 };
 
@@ -275,6 +297,7 @@ function coherent(
     l.backing = undefined;
   } else if (backingOverride !== undefined) {
     l.backing = {
+      ...NOT_ACTIVATED,
       ...backingOverride,
       recoveryPositionReserved:
         backingOverride.recoveryPositionReserved ?? 0n,
@@ -283,6 +306,7 @@ function coherent(
     const reserved = base.backing?.strandedRecoveryReserved ?? 0n;
     const recovery = base.backing?.recoveryPositionReserved ?? 0n;
     l.backing = {
+      ...NOT_ACTIVATED,
       vpfiBalance: l.bucket + reserved + recovery + 200n * E,
       strandedRecoveryReserved: reserved,
       recoveryPositionReserved: recovery,
@@ -310,9 +334,17 @@ function coherent(
     // reverse bound (#1448 r3). The repatriated-out term (#1568 C2) is a
     // destination for the same reason paidOut is — a fixture that models a
     // repatriation without it would trip the over-credit bound.
-    const destinations = comp.creditedRaw + l.custodyRelocated;
+    // The reattribution pair (Codex #2206 r9) likewise: what a correction
+    // moved INTO the bucket is claimed, what it moved OUT is a destination.
+    const destinations =
+      comp.creditedRaw +
+      l.custodyRelocated +
+      (l.reattribution?.reattributedIn ?? 0n);
     const already =
-      l.bucket + comp.releasedRemitStranded + (l.repatriatedOut ?? 0n);
+      l.bucket +
+      comp.releasedRemitStranded +
+      (l.repatriatedOut ?? 0n) +
+      (l.reattribution?.reattributedOut ?? 0n);
     l.paidOutRecycled = destinations > already ? destinations - already : 0n;
   }
   return { ...l, composition: comp };
@@ -884,6 +916,98 @@ describe('checkHardInvariants — bucket coverage', () => {
 
 // ── #1446 ──────────────────────────────────────────────────────────────
 describe('checkHardInvariants — bucket composition', () => {
+  it('baseline fixtures carry a LIVE reattribution pair, so the check runs suite-wide', () => {
+    // Anti-vacuity pin (the repatriatedOut precedent, Codex #2206 r9): if a
+    // refactor made the baseline pair undefined, every composition and
+    // derivation test would silently become a skip-path test.
+    expect(mirrorLocal().reattribution).toBeDefined();
+    expect(canonicalLocal().reattribution).toBeDefined();
+  });
+
+  it('accepts a correction that moved credit OUT of the bucket, to the fresh side (#1566 closure 2 cutover PR 2)', () => {
+    // A reclassification lifted 40 of unspent recycled credit to fresh
+    // WITH its tokens: the bucket fell to 160 (still covering the 150
+    // outstanding, so coverage stays out of the picture) and the
+    // reattributed-out cumulative records where it went. No cumulative
+    // claims less, so the healthy identity needs the destination term —
+    // which is exactly what this Worker lacked before Codex #2206 r9: the
+    // same figures without it read as a counter that advanced without
+    // tokens landing.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 40n * E },
+        },
+      }),
+    ).toEqual([]);
+    // Control: the pre-r9 reading of the same chain.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('accepts a correction that moved credit INTO the bucket (#1566 closure 2 cutover PR 2)', () => {
+    // The other direction: 50 of unspent fresh credit corrected to
+    // recycled, with its tokens — the bucket rose to 250 and the
+    // reattributed-in cumulative claims it, absorption unchanged (the
+    // reported figure nets it out like relocated custody). Without the
+    // claimed term the bucket holds 50 no cumulative claims (the REVERSE
+    // composition bound) AND the floor re-derivation comes out 50 high.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 250n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 50n * E, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 250n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition', 'reported-derivation']);
+  });
+
+  it('skips composition and derivation while the reattribution pair is UNKNOWN, never substituting zero', () => {
+    // The chain corrected (bucket 160, 40 moved out) but the reconciliation
+    // facet could not be read this tick. Zero-substitution would page
+    // over-credited on healthy state; the two consuming checks skip, and
+    // the read failure is reported as its own coverage gap.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: undefined,
+        },
+      }),
+    ).toEqual([]);
+    // Control: the pair readable and genuinely zero on the same figures is
+    // a real over-credit and still pages.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          paidOutRecycled: 800n * E,
+          reattribution: { reattributedIn: 0n, reattributedOut: 0n },
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
   it('fires when a relocated-custody credit also advanced absorption', () => {
     // The exact regression #1446 exists for. A 30-VPFI relocation arrives:
     // the bucket correctly grows to 230, but the absorption cumulative ALSO
@@ -1933,6 +2057,7 @@ describe('assertAbiShape', () => {
     expect(WATCHED_VIEWS).toContain('getChainRecycledLedger');
     expect(WATCHED_VIEWS).toContain('getRecycleCustodyPosition');
     expect(WATCHED_VIEWS).toContain('getGovernorCommitState');
+    expect(WATCHED_VIEWS).toContain('getReconciliationTotals');
   });
 
   it('catches a dropped output — the field-shift failure mode', () => {
@@ -2748,6 +2873,127 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
     expect(hits[0]?.detail).toContain('spoken for');
   });
 
+  // #1566 slice 4 PR B — on an ACTIVATED chain the bucket and the recovery
+  // position are the holder's, so the legacy relation is replaced.
+  it('activated custody: healthy holder rows above the Diamond balance do NOT fire the legacy relation', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        // Legacy relation would fire: 100 < bucket + 50 + 300.
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        recoveryPositionReserved: 300n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 900n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('activated custody: a holder below its attributed rows fires CRITICAL', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 850n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    const hits = findings.filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('attributed');
+  });
+
+  // Codex #2186 r3 P2 — the holder relation is EXACT: a one-wei shortfall
+  // (far inside the bucket tolerance) fires, equality is healthy, and the
+  // Diamond-side reservation on an activated chain is exact too.
+  it('activated custody: one wei short of the attributed rows fires — no tolerance on custody', () => {
+    const activated = {
+      vpfiBalance: 100n * E,
+      strandedRecoveryReserved: 50n * E,
+      custodyActivated: true,
+      holderBalanceKnown: true,
+      holderAttributed: 900n * E,
+    };
+    const short = coherent(mirrorLocal(), {
+      backingOverride: { ...activated, holderBalance: 900n * E - 1n },
+    });
+    const hits = checkHardInvariants(obsWith(short), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('exact');
+    expect(hits[0]?.detail).not.toContain('tolerance   =');
+
+    const equal = coherent(mirrorLocal(), {
+      backingOverride: { ...activated, holderBalance: 900n * E },
+    });
+    expect(
+      checkHardInvariants(obsWith(equal), TOLERANCE).filter(
+        (f) => f.code === 'recovery-reservation-backing',
+      ),
+    ).toHaveLength(0);
+
+    const reservedShort = coherent(mirrorLocal(), {
+      backingOverride: {
+        ...activated,
+        vpfiBalance: 50n * E - 1n,
+        holderBalance: 900n * E,
+      },
+    });
+    const r = checkHardInvariants(obsWith(reservedShort), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0]?.detail).toContain('arrival reservation');
+    expect(r[0]?.detail).toContain('exact');
+  });
+
+  it('activated custody: an unreadable holder balance fires, and a spent arrival reservation fires separately', () => {
+    const unreadable = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 100n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: false,
+        holderBalance: 0n,
+        holderAttributed: 10n * E,
+      },
+    });
+    const a = checkHardInvariants(obsWith(unreadable), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(a).toHaveLength(1);
+    expect(a[0]?.detail).toContain('could not be read');
+
+    const spent = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 40n * E,
+        strandedRecoveryReserved: 50n * E,
+        custodyActivated: true,
+        holderBalanceKnown: true,
+        holderBalance: 900n * E,
+        holderAttributed: 900n * E,
+      },
+    });
+    const b = checkHardInvariants(obsWith(spent), TOLERANCE).filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(b).toHaveLength(1);
+    expect(b[0]?.detail).toContain('arrival reservation');
+  });
+
   it('a healthy reservation does not fire', () => {
     const local = coherent(mirrorLocal(), {
       backingOverride: {
@@ -2823,6 +3069,24 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
   const REVERT = () => new Error('execution reverted');
   /** An error of no classifiable kind — a transient transport failure. */
   const TRANSIENT = () => new Error('boom');
+
+  // #1566 slice 4 PR B (Codex #2186 r3) — a missing V2 is a coverage gap
+  // that names the cut to fix; the legacy tuple never stands in for it,
+  // because the flag that could establish non-activation lives on the same
+  // facet and is missing with it.
+  it('backingSnapshotUnavailableGap: a missing V2 names the custody facet and rules the legacy tuple out', () => {
+    const gap = backingSnapshotUnavailableGap(97, REVERT());
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.source).toBe('own-ledger-backing');
+    expect(gap.detail).toContain('getRecycleBackingSnapshotV2');
+    expect(gap.detail).toContain('RewardCustodyFacet');
+    expect(gap.detail).toContain('cannot stand in');
+    expect(gap.detail).toContain('activation state');
+    expect(gap.detail).toContain('did NOT run');
+    const transient = backingSnapshotUnavailableGap(97, TRANSIENT());
+    expect(transient.detail).toContain('transport');
+    expect(transient.detail).not.toContain('Cut the RewardCustodyFacet');
+  });
 
   it('isMissingSelector separates a revert from a transport failure', () => {
     // GAP-WORDING discrimination only (r5): a revert means the selector
@@ -2900,6 +3164,24 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
 });
 
 // ── #1448 r3 ────────────────────────────────────────────────────────────
+describe('reattributionUnavailableGap (#1566 closure 2 cutover PR 2, Codex #2206 r9)', () => {
+  it('is its own source, so it cannot collide with the other gaps', () => {
+    const gap = reattributionUnavailableGap(42161, new Error('boom'));
+    expect(gap.chainId).toBe(42161);
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.source).toBe('own-ledger-reattribution');
+  });
+
+  it('names exactly which checks did not run', () => {
+    const gap = reattributionUnavailableGap(10, new Error('boom'));
+    expect(gap.detail).toContain('UNKNOWN');
+    expect(gap.detail).toContain('bucket composition');
+    expect(gap.detail).toContain('re-derivation');
+    expect(gap.detail).toContain('did NOT run');
+    expect(gap.detail).toContain('transient');
+  });
+});
+
 describe('compositionUnavailableGap', () => {
   it('is its own reason and source, so it cannot collide with a dead chain', () => {
     // A whole-chain read failure is `no-rpc`/`own-ledger`. Reusing either

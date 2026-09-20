@@ -82,9 +82,49 @@ export function isDetailPath(path) {
  * @param {'lender'|'borrower'} role
  * @returns {string[]}
  */
-export function visitProblems(v, role) {
+/**
+ * Every problem this visit found, each tagged with WHETHER AN UNKNOWN
+ * PAGE CHAIN COULD EXPLAIN IT (round 78 P2).
+ *
+ * `observed` — something was READ: a crash, an uncaught error, a control
+ * that did not reach its anchor, a row in the wrong order. A page built
+ * against another network does not produce any of these.
+ *
+ * `absence` — something expected was NOT THERE. A wrong or unknown chain
+ * explains every one of them just as well as a regression does, which is
+ * why the drive's exit ordering puts a blocker ahead of them.
+ *
+ * ONE DECISION SITE, TWO VIEWS. `visitProblems` returns the strings and
+ * every existing caller is unchanged; `visitProblemKinds` returns the
+ * tags. Computing the tags anywhere else would be the shape #1861
+ * already caught here — two places deciding overlapping things, one
+ * quietly erasing the other.
+ *
+ * @returns {Array<{why: string, kind: 'observed' | 'absence',
+ *                   blockable: boolean}>}
+ */
+function visitProblemList(v, role) {
   const problems = [];
-  if (v.nav) problems.push(`nav: ${v.nav}`);
+  // TWO QUESTIONS, TWO FIELDS, and each stated at the site rather than
+  // inferred later (self-review after round 79).
+  //
+  // `kind` answers "could an unknown CHAIN explain this". `blockable`
+  // answers "could a blocked REQUEST explain this" — the question the
+  // promotion above the infrastructure gates turns on. They are not the
+  // same: a mis-ordered row is neither, while a hooks-order crash is
+  // read directly and yet is a plausible consequence of this drive's own
+  // allowlist refusing something.
+  //
+  // I first wrote that promotion as a REGEX OVER THE `why` STRING, thirty
+  // lines below the paragraph in the drive that says the verdict must
+  // state its own kind "rather than this filter guessing from the `why`
+  // string" and that every arm must tag itself "instead of inheriting
+  // whichever default happened to be there". Both halves, immediately
+  // under the rule.
+  const read = (why) => problems.push({ why, kind: 'observed', blockable: false });
+  const observed = (why) => problems.push({ why, kind: 'observed', blockable: true });
+  const absence = (why) => problems.push({ why, kind: 'absence', blockable: true });
+  if (v.nav) observed(`nav: ${v.nav}`);
   // A 404/500 does not throw and does not fire `pageerror`: page.goto
   // resolves and the status is merely recorded. Unchecked, a route that
   // never loaded counted toward "routes clean" (#1529 review).
@@ -92,25 +132,55 @@ export function visitProblems(v, role) {
     !v.nav &&
     (v.http === null || v.http === undefined || v.http < 200 || v.http >= 300)
   ) {
-    problems.push(`navigation returned ${v.http ?? 'no response'}`);
+    observed(`navigation returned ${v.http ?? 'no response'}`);
   }
-  if (v.hooks) problems.push('HOOKS-ORDER CRASH');
-  if (v.pageErrors?.length) problems.push(`${v.pageErrors.length} uncaught error(s)`);
+  if (v.hooks) observed('HOOKS-ORDER CRASH');
+  if (v.pageErrors?.length) observed(`${v.pageErrors.length} uncaught error(s)`);
 
   // A position DETAIL page for an eligible loan must show the chooser
   // AND both newly-exposed paths. Printing handover/offset without
   // failing on them let the drive pass while missing one of the two
   // #1505 surfaces it claims to validate (#1529 review).
-  if (!isDetailPath(v.path) || v.nav || preRaced(v)) return problems;
+  if (!isDetailPath(v.path) || v.nav) return problems;
+
+  // THE FORCED-CLOSE CARD IS JUDGED BEFORE EVERY CHOOSER-SPECIFIC
+  // SUPPRESSION (#2069), and the placement is the whole point.
+  //
+  // It is a DIFFERENT card that happens to render on the same page, so
+  // nothing about the chooser may decide its verdict. Two suppressions
+  // sit below this line and each would have swallowed it:
+  //
+  //   - `preRaced(v)` is built from THREE chooser facts
+  //     (`advancedBlocked`, `advancedPreRaced`, `cardAbsentAtScrape`).
+  //     None of them is evidence about the forced-close card — and the
+  //     divergence is real rather than theoretical, since the lender
+  //     card is correctly suppressed for a sanctions-flagged holder
+  //     while the forced-close card deliberately stays available to
+  //     one (a wind-down is Tier-2; see the retail-deploy policy). A
+  //     positively observed amount would have been discarded.
+  //   - the `!v.chooser` return below, which would report one finding
+  //     where the run had seen two — the aggregation mistake this file
+  //     already carries two comments about.
+  //
+  // Its verdict is computed by its own module and only surfaced here.
+  if (v.forcedCloseVerdict?.verdict === 'fail') {
+    // The card's verdict already states which kind it is, at each
+    // return site, so this reads the tag rather than deciding again.
+    (v.forcedCloseVerdict.failKind === 'observed' ? read : absence)(
+      `forced-close card: ${v.forcedCloseVerdict.why}`,
+    );
+  }
+
+  if (preRaced(v)) return problems;
 
   if (!v.chooser) {
-    problems.push(`${role} chooser MISSING on an eligible loan`);
+    absence(`${role} chooser MISSING on an eligible loan`);
     return problems;
   }
 
   if (role !== 'lender') {
-    if (!v.handover) problems.push('handover path MISSING from the chooser');
-    if (!v.offset) problems.push('offset path MISSING from the chooser');
+    if (!v.handover) absence('handover path MISSING from the chooser');
+    if (!v.offset) absence('offset path MISSING from the chooser');
     return problems;
   }
 
@@ -119,13 +189,15 @@ export function visitProblems(v, role) {
   // than vanishing, precisely because a missing row reads as "no such
   // option". A row absent altogether is therefore a regression even on
   // a loan where that exit is shut.
-  if (!v.lenderBlurb) problems.push('lender card title without its own blurb');
-  if (!v.waitRow) problems.push('wait row MISSING from the lender card');
-  if (!v.sellNowRow) problems.push('sell-now row MISSING from the lender card');
-  if (!v.listRow) problems.push('listing row MISSING from the lender card');
+  if (!v.lenderBlurb) absence('lender card title without its own blurb');
+  if (!v.waitRow) absence('wait row MISSING from the lender card');
+  if (!v.sellNowRow) absence('sell-now row MISSING from the lender card');
+  if (!v.listRow) absence('listing row MISSING from the lender card');
   // `null` = not enough rows rendered to have an order; the missing row
   // is already reported above and must not be double-counted.
-  if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
+  // `null`, never `false`, when a row it needs is absent — so a blocked
+  // read can only erase this defect, never manufacture one.
+  if (v.waitFirst === false) read('wait row is NOT first on the lender card');
 
   // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every arm
   // below infers failure from a PATTERN of fields — a dead entry in
@@ -139,8 +211,26 @@ export function visitProblems(v, role) {
   // return has to remember to match is a rule that keeps being
   // forgotten. Anything that observes a defect sets this, and this
   // function honours it without needing to recognise the shape.
+  // ROUND 94 P2 — `read`, not `observed`: a blocked REQUEST cannot make
+  // these two states true at once.
+  //
+  // Both producers report a contradiction inside ONE render. A card whose
+  // own attributes say `ready` and `jumpable` while it renders no switch
+  // to reach the row; a Basic-mode switch standing beside jump buttons
+  // that exist only in Advanced. Neither is an absence: in the first the
+  // attributes assert the state the missing control contradicts, and in
+  // the second both things are present at the same time. A refused
+  // request can remove a surface; it cannot make a component assert
+  // readiness it does not have, nor render two mutually exclusive modes
+  // together.
+  //
+  // Tagged `blockable: true`, they dropped out of the promotion above the
+  // infrastructure gates — so a run that also hit any failed request, any
+  // WebSocket traffic or an unknown page chain exited 2 over the blocker
+  // and never printed a defect it had read directly. That is round 38's
+  // swallow, in the one arm it had not been applied to.
   if (v.advancedFailed) {
-    problems.push(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
+    read(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
   }
 
   // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed the
@@ -166,7 +256,10 @@ export function visitProblems(v, role) {
     // the first and printed only the expected id, which on a swapped
     // binding — both anchors present — sends a reader looking for a
     // missing element that exists.
-    problems.push(
+    // The entry exists only because its jump BUTTON rendered, and button
+    // and target section come from one component, so missing data removes
+    // the entry rather than leaving a live button pointing at nothing.
+    read(
       'a lender jump button did not reach its own anchor: ' +
         deadAnchors.map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`).join(', '),
     );
@@ -185,10 +278,20 @@ export function visitProblems(v, role) {
     // sentence above is not true of it — reporting it that way sent a
     // reader looking for a button that was never rendered. It states
     // its own finding instead (Codex #1853 r16).
-    problems.push(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
+    absence(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
   }
 
   return problems;
+}
+
+/** The problem strings, unchanged for every existing caller. */
+export function visitProblems(v, role) {
+  return visitProblemList(v, role).map((p) => p.why);
+}
+
+/** The same problems, with the tag the exit ordering needs. */
+export function visitProblemKinds(v, role) {
+  return visitProblemList(v, role);
 }
 
 /**

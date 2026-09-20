@@ -3,6 +3,7 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -108,7 +109,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            LibRewardCustody.TransportSource.Live,
+            0
         );
     }
 
@@ -144,22 +150,25 @@ contract RewardCompensationDispatchFacet is
             dayId,
             lenderAmount18,
             borrowerAmount18,
-            true,
+            LibRewardCustody.TransportSource.Recovery,
             sourceRemitId
         );
     }
 
     /// @dev ONE implementation of the manual dispatch — the external
-    ///      wrappers differ only in the funding source flag.
+    ///      wrappers differ only in the NAMED custody source (#1566 slice 4
+    ///      PR B: the source rides through to the shared tail, which debits
+    ///      that custody, so no dispatch can send from an unnamed one).
     function _remitManualBudget(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery,
+        LibRewardCustody.TransportSource source,
         uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bool fromRecovery = source == LibRewardCustody.TransportSource.Recovery;
         // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
         // wire: payout is `localInterest × Δ` per side and Base does not
         // hold the mirror's day interest, so a single scalar would leave
@@ -311,6 +320,12 @@ contract RewardCompensationDispatchFacet is
             r.sentAt = uint64(block.timestamp);
             r.total = amount;
             r.fresh = amount;
+            // #1566 transport epochs PR 3a — a compensation is dispatched
+            // fresh-only and the mirror's ingress records its packet TYPED
+            // (`freshShare == amount`), so a split attestation for it has
+            // nothing to add and the canonical side refuses one before a fee
+            // is paid (Codex #2224 r2).
+            LibRewardCustody.markReservationSplitOnWire(r);
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;
@@ -339,7 +354,8 @@ contract RewardCompensationDispatchFacet is
             dayId,
             remitId,
             lenderAmount18,
-            borrowerAmount18
+            borrowerAmount18,
+            source
         );
 
         emit ManualRewardBudgetRemitted(dstChainId, dayId, amount, remitId);
@@ -380,7 +396,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            LibRewardCustody.TransportSource.Live,
+            0
         );
     }
 
@@ -410,7 +431,7 @@ contract RewardCompensationDispatchFacet is
             dayId,
             lenderAmount18,
             borrowerAmount18,
-            true,
+            LibRewardCustody.TransportSource.Recovery,
             sourceRemitId
         );
     }
@@ -421,10 +442,11 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery,
+        LibRewardCustody.TransportSource source,
         uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bool fromRecovery = source == LibRewardCustody.TransportSource.Recovery;
         uint256 amount = lenderAmount18 + borrowerAmount18;
         if (amount == 0) revert NothingToRemit();
         {
@@ -526,6 +548,12 @@ contract RewardCompensationDispatchFacet is
             r.sentAt = uint64(block.timestamp);
             r.total = amount;
             r.fresh = amount;
+            // #1566 transport epochs PR 3a — a compensation is dispatched
+            // fresh-only and the mirror's ingress records its packet TYPED
+            // (`freshShare == amount`), so a split attestation for it has
+            // nothing to add and the canonical side refuses one before a fee
+            // is paid (Codex #2224 r2).
+            LibRewardCustody.markReservationSplitOnWire(r);
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;
@@ -544,7 +572,8 @@ contract RewardCompensationDispatchFacet is
             dayId,
             remitId,
             lenderAmount18,
-            borrowerAmount18
+            borrowerAmount18,
+            source
         );
 
         emit SupplementalRewardBudgetRemitted(
@@ -596,6 +625,13 @@ contract RewardCompensationDispatchFacet is
      *         permissionlessly re-presentable; the return settles VALUE
      *         and the R6 gate (§5.1's return-settlement arm), each exactly
      *         once.
+     * @param transportMessageId The transport's message id (#1566 closure 2
+     *         cutover PR 1): the return is recorded under its ingress stamp,
+     *         and a return for a receipt that PREDATES recovery attribution
+     *         lands in the holder's `Unclassified` row on an activated
+     *         deployment instead of resting in the shared balance. Not
+     *         `whenNotPaused` — a receive ingress stays executable under
+     *         the migration pause (design §5c).
      */
     function onStrandedReturnReceived(
         address remitter,
@@ -605,8 +641,9 @@ contract RewardCompensationDispatchFacet is
         address token,
         uint256 declaredAmount,
         uint256 actualReceived,
-        uint256 remainingAfter
-    ) external nonReentrant whenNotPaused onlyCanonical {
+        uint256 remainingAfter,
+        bytes32 transportMessageId
+    ) external nonReentrant onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         {
             address receiver = s.repatriationReceiver;
@@ -711,12 +748,48 @@ contract RewardCompensationDispatchFacet is
         // position standing AT that instant; this is the other half of the
         // same rule, stopping it from being refilled afterwards.
         //
-        // The tokens are not lost: they stay as ordinary unearmarked
-        // balance, which is exactly what the CHARGED dispatch path spends.
-        if (!_receiptPredatesAttribution(s, remitId)) {
+        // The tokens are not lost: on a deployment whose custody is not
+        // activated they stay as ordinary unearmarked balance, which is
+        // exactly what the CHARGED dispatch path spends; on an activated
+        // one they are protected into the holder's `Unclassified` row
+        // (closure 2 cutover PR 1, below).
+        bool attributable = !_receiptPredatesAttribution(s, remitId);
+        if (attributable) {
             s.rewardBudgetRecovered += credited;
         }
         if (overage != 0) s.strandedReturnOverage += overage;
+        // #1566 closure 2 cutover PR 1 — the packet under its ingress stamp,
+        // recorded ON EVERY DEPLOYMENT, activated or not (Codex #2198 r1):
+        // the second PR's reconciliation reads the record and the replay
+        // guard is the record's, so a return landing before the activation
+        // is stamped like any other. Only the holder relocations below are
+        // activation-gated.
+        bytes32 h = LibRewardCustody.callRecordIngressPacket(
+            sourceChainId,
+            transportMessageId,
+            LibRewardCustody.PACKET_KIND_STRANDED_RETURN,
+            actualReceived,
+            0,
+            0,
+            remitter,
+            remitId
+        );
+        // #1566 slice 4 PR B — the recovery custody switch (design §5d): on
+        // an activated deployment the entitlement-bounded portion is
+        // relocated from this balance into the holder's RECOVERY row and
+        // any excess into the protected OVERAGE row, measured. #1566
+        // closure 2 cutover PR 1 — a pre-attribution receipt's credit
+        // belongs to no position: protected into `Unclassified` at ingress
+        // under the packet's stamp rather than resting in this balance
+        // (design §5c).
+        if (LibRewardCustody.active(s)) {
+            if (attributable) {
+                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, credited);
+            } else {
+                LibRewardCustody.callUnclassifiedReturn(h, credited);
+            }
+            LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Overage, overage);
+        }
         // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
         // headroom: the mirror's one-shot record retired at the declared
         // amount, so the gap can never re-arrive. Recorded per receipt
@@ -877,7 +950,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 remitId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        LibRewardCustody.TransportSource source
     ) private returns (bytes32 messageId) {
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
@@ -898,14 +972,22 @@ contract RewardCompensationDispatchFacet is
             uint256(c.lapseWindowSeconds),
             uint256(c.dispatchCutoffGap)
         );
+        // #1566 slice 4 PR B — a compensation is fresh-only: a `Live` draw
+        // leaves the live-fresh row (bounded and charged against the
+        // delivered ledger in the tail); a `Recovery` draw leaves the
+        // recovery row, uncharged.
         messageId = LibRewardRemitDispatch.dispatchRemitTail(
             s,
             vpfi,
             messenger,
             dstChainId,
             payload,
-            lenderAmount18 + borrowerAmount18,
-            remitId
+            remitId,
+            LibRewardCustody.TransportDraw({
+                source: source,
+                fresh: lenderAmount18 + borrowerAmount18,
+                recycled: 0
+            })
         );
     }
     /// @notice #1222 M3 — a PENDING reservation was operator-RELEASED.
@@ -1022,7 +1104,7 @@ contract RewardCompensationDispatchFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
         LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
+        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );
@@ -1480,9 +1562,15 @@ contract RewardCompensationDispatchFacet is
         bool localStranding
     ) private {
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
-        uint256 earmarks = s.recycleBucket + recycledInflow
-            + (s.rewardBudgetRecovered - s.rewardBudgetRedispatched)
-            + s.strandedReturnOverage + freshInflow;
+        // #1566 slice 4 PR B — on an activated deployment the standing
+        // earmarks are holder custody, not this balance; what must be here
+        // is the inflow itself, which is then relocated (measured) below.
+        bool holderCustody = LibRewardCustody.active(s);
+        uint256 earmarks = holderCustody
+            ? freshInflow + recycledInflow
+            : s.recycleBucket + recycledInflow
+                + (s.rewardBudgetRecovered - s.rewardBudgetRedispatched)
+                + s.strandedReturnOverage + freshInflow;
         if (bal < earmarks) {
             revert CeremonyInflowNotBacked(refId, bal, earmarks);
         }
@@ -1494,6 +1582,27 @@ contract RewardCompensationDispatchFacet is
         // credit no fresh position at all since r6.)
         if (!_receiptPredatesAttribution(s, refId)) {
             s.rewardBudgetRecovered += freshInflow;
+            if (holderCustody) {
+                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
+            }
+        } else if (freshInflow != 0) {
+            // #1566 closure 2 cutover PR 1 — a ceremony inflow for a receipt
+            // that predates attribution is the same untyped custody as a
+            // pre-attribution return: recorded under a ceremony-kind packet
+            // ON EVERY DEPLOYMENT (no transport packet — the per-source
+            // sequence keys it; Codex #2198 r1) and, on an activated one,
+            // protected into `Unclassified` under it.
+            bytes32 h = LibRewardCustody.callRecordIngressPacket(
+                0,
+                bytes32(0),
+                LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW,
+                freshInflow,
+                freshInflow,
+                0,
+                address(this),
+                refId
+            );
+            if (holderCustody) LibRewardCustody.callUnclassifiedReturn(h, freshInflow);
         }
         if (recycledInflow != 0) {
             LibVpfiRecycle.creditCustodyRelocated(
@@ -1903,9 +2012,15 @@ contract RewardCompensationDispatchFacet is
         // the derived floor can manufacture the very value that is missing out
         // of `bucket + paidOut`, which is exactly how a short counter slipped
         // through the one-sided check.
-        uint256 destinations = bucket + s.paidOutRecycled + accum;
-        uint256 claimed = s.recycleCreditedCumulative
-            + s.recycleCustodyRelocatedCumulative;
+        //
+        // The identity's ONE implementation (Codex #2206 r9): the stranded
+        // total was assigned above, so both sides read the seeded figure,
+        // and the repatriated-out destination (#1568 C2) and the two
+        // reattribution terms of a reclassification (#1566 closure 2
+        // cutover PR 2) are in it — a correction landing before the
+        // ceremony completes, a legitimate action on an upgraded Diamond,
+        // no longer reads as a divergence and blocks the backfill for good.
+        (uint256 claimed, uint256 destinations) = LibVpfiRecycle.compositionSides(s);
         if (claimed > destinations) revert SeedDoesNotReconcile();
         if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
             revert SeedDoesNotReconcile();

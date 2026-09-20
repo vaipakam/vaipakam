@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
@@ -1166,6 +1166,22 @@ contract RewardReporterFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1566 slice 4 PR B (design §5c/§5d) — a MIRROR's funding identity
+        // is never rebound directly to a different retained source: the
+        // change must pass through `Detached`. Judged against the last
+        // NONZERO era, never the live config, so disarm-then-rearm cannot
+        // smuggle a rebinding past it (the same yardstick the rotation
+        // detection below uses). Permanent, not only during the freeze.
+        if (
+            baseDeployment != address(0)
+                && s.rewardEraLastNonzero != address(0)
+                && baseDeployment != s.rewardEraLastNonzero
+                && LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Mirror
+        ) {
+            revert IVaipakamErrors.RewardBaseDeploymentRebindRequiresDetach(
+                s.rewardEraLastNonzero, baseDeployment
+            );
+        }
         if (baseDeployment != address(0)) {
             // #1632 r2 — rotation detection against the last NONZERO era
             // (never the live config, so disarm/re-arm cannot smuggle a
@@ -1277,6 +1293,26 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        // #1566 slice 4 PR B (design §5c/§5d) — a mirror's authenticated
+        // source is never rebound DIRECTLY to a different one: the old
+        // residual must retire and delayed packets from the old source must
+        // not be attributed to the new one, which only a pass through
+        // `Detached` guarantees. Permanent, not only during the freeze. A
+        // CANONICAL chain's base chain id is not a funding source (it
+        // receives no remittances), so its rewrite is not a rebinding.
+        if (wasMirror && old != 0 && chainId != 0 && chainId != old) {
+            revert IVaipakamErrors.RewardBaseChainRebindRequiresDetach(old, chainId);
+        }
+        // The role freeze: refuse an EFFECTIVE role change while holder
+        // allocations exist or custody is activated (see
+        // {_requireRoleChangeAllowed}). Computed on the would-be role BEFORE
+        // the write, so a refused call leaves nothing half-written.
+        _requireRoleChangeAllowed(
+            s,
+            s.isCanonicalRewardChain
+                ? LibVaipakam.RewardRole.Canonical
+                : chainId != 0 ? LibVaipakam.RewardRole.Mirror : LibVaipakam.RewardRole.Detached
+        );
         s.baseChainId = chainId;
         // #1566 closure 3 — stamp the role as CONFIGURED. This is what makes
         // `setBaseChainId(0)` resolve to `Detached` (fail-closed) rather than
@@ -1305,11 +1341,34 @@ contract RewardReporterFacet is
         );
     }
 
+    /// @dev #1566 slice 4 PR B — the role freeze (design §5d, "role and
+    ///      SOURCE changes freeze here"): from the first holder attribution
+    ///      or the activation until slice 4 PR C's backfill clears
+    ///      `rewardRoleChangesFrozen`, every EFFECTIVE role change is refused
+    ///      with the two roles named. Why: between the two PRs the residual
+    ///      retirement below can only level `paid` to `received`; it cannot
+    ///      re-key a holder allocation, so a transition would orphan funded
+    ///      custody or re-expose a stale residual after reattachment. One
+    ///      helper on the RESOLVED role, so a third role input inherits it.
+    function _requireRoleChangeAllowed(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardRole next
+    ) private view {
+        if (!s.rewardRoleChangesFrozen) return;
+        LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
+        if (next != current) revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
+    }
+
     /// @dev Retire the delivered-fresh residual (`received - paid`) whenever
     ///      the EFFECTIVE mirror role — `LibVaipakam.isMirrorRewardChain`,
     ///      not any single knob — changed across a config write. Levelling
     ///      `paid` up to `received` errs safe: the chain resumes with no
     ///      delivered headroom and earns it back from the next remittance.
+    ///      #1566 closure 2 — RETAINED on purpose: this is an administrative
+    ///      state transition, not an outflow, so it does not move to the
+    ///      chokepoints that now charge the paid ledger by what leaves. Delete
+    ///      it and an old delivered residual becomes reusable after a role
+    ///      transition and re-attachment.
     ///      Shared by every setter that feeds the role predicate, so the
     ///      check IS the operation and a new role input inherits it.
     function _retireDeliveredResidualOnRoleChange(
@@ -1332,6 +1391,19 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        // #1566 slice 4 PR B — the role freeze, on the would-be role (a
+        // false→false write on a never-configured deployment resolves
+        // `Unconfigured` again and is not a change).
+        _requireRoleChangeAllowed(
+            s,
+            on
+                ? LibVaipakam.RewardRole.Canonical
+                : s.baseChainId != 0
+                    ? LibVaipakam.RewardRole.Mirror
+                    : (s.rewardRoleConfigured || old)
+                        ? LibVaipakam.RewardRole.Detached
+                        : LibVaipakam.RewardRole.Unconfigured
+        );
         s.isCanonicalRewardChain = on;
         // #1566 closure 3 — see the twin stamp in {setBaseChainId}. Demoting a
         // canonical chain that has no `baseChainId` lands on the same two
@@ -1438,16 +1510,46 @@ contract RewardReporterFacet is
      *
      *         Fresh deploys need no seed — both counters start at zero — so
      *         this is only for chains carrying pre-P1-b history.
-     * @param  amount Armed fresh already paid out before this upgrade.
+     *
+     *         #1566 closure 2 — the counter this seeds now means fresh reward
+     *         value paid out of delivered funding WHATEVER the day's vintage
+     *         (charged at the claim's delivery and at the reward-absorption
+     *         credit), so a seed must cover legacy payouts too. This one-shot
+     *         writer is retained as the paid-side starting point; the
+     *         migration-capable writers the design specifies for a chain
+     *         mid-flight (received-side import, `paid = max(existing,
+     *         reconciled)`) arrive with the second closure-2 PR.
+     * @param  amount     Fresh reward value already paid out of delivered
+     *                    funding before this upgrade, any vintage.
+     * @param  pauseEpoch The pause epoch — the pause library's transition
+     *                    count — at which the caller established `amount`
+     *                    under the MANUAL pause (#1566 slice 4 PR A, Codex
+     *                    #2158 r29 P1). The seed is as irreversible as the
+     *                    rebase and is bound to its pause the same way: it
+     *                    requires the manual pause and refuses a stated epoch
+     *                    that is no longer the live one, so a figure a payout
+     *                    may have overtaken can never be sealed.
      */
-    function seedArmedFreshPaid(uint256 amount)
+    function seedArmedFreshPaid(uint256 amount, uint64 pauseEpoch)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
+        LibPausable.requireManuallyPaused();
+        uint64 liveEpoch = LibPausable.pauseTransitions();
+        if (pauseEpoch != liveEpoch) {
+            revert IVaipakamErrors.ArmedFreshSeedStalePauseEpoch(pauseEpoch, liveEpoch);
+        }
+        // #1566 slice 4 PR A (Codex #2158 r13 P1) — bounded to the pool cap,
+        // as the rebase is: this is the one writer that could install an
+        // impossible paid figure ahead of it.
+        uint256 resulting = s.rewardBudgetArmedFreshPaid + amount;
+        if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert IVaipakamErrors.ArmedFreshSeedExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        }
         s.armedFreshPaidSeeded = true;
-        s.rewardBudgetArmedFreshPaid += amount;
+        s.rewardBudgetArmedFreshPaid = resulting;
         emit ArmedFreshPaidSeeded(amount);
     }
 

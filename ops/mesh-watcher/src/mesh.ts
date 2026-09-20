@@ -10,9 +10,10 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import {
-  INTERACTION_REWARDS_LENS_ABI,
   REPATRIATION_ABI,
+  REWARD_RECONCILIATION_ABI,
   REWARD_AGGREGATOR_ABI,
+  REWARD_CUSTODY_ABI,
 } from './abi';
 import {
   isCoverageGap,
@@ -277,7 +278,33 @@ export function repatPositionUnavailableGap(
 }
 
 /**
- * Build the gap for an unreadable backing snapshot (#1434 P2-w2).
+ * Build the gap for an unreadable reconciliation-totals view (#1566 closure
+ * 2 cutover PR 2, Codex #2206 r9) — the two reattribution cumulatives.
+ *
+ * Exported for direct testing, like {@link compositionUnavailableGap}.
+ */
+export function reattributionUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getReconciliationTotals');
+  const missing = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-reattribution',
+    detail:
+      `getReconciliationTotals() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition and the reported-cumulative re-derivation for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
+      (missing
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a deployment predating the reconciliation epoch, or a partial facet refresh that dropped the RewardReconciliationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
+/**
+ * Build the gap for an unreadable backing snapshot (#1434 P2-w2; since
+ * #1566 slice 4 PR B the VERSIONED snapshot is the only one read).
  *
  * Exported for direct testing, like {@link compositionUnavailableGap}.
  */
@@ -285,17 +312,17 @@ export function backingSnapshotUnavailableGap(
   chainId: number,
   err: unknown,
 ): CoverageGap {
-  const failure = classify(err, 'getRecycleBackingSnapshot');
-  const preP2 = isMissingSelector(err);
+  const failure = classify(err, 'getRecycleBackingSnapshotV2');
+  const missing = isMissingSelector(err);
   return {
     chainId,
     reason: 'view-unavailable',
     source: 'own-ledger-backing',
     detail:
-      `getRecycleBackingSnapshot() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The balance / arrival-reservation tuple is UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, and substituting the reservation as zero would silently stop alarming on spent recovery backing).\n\n` +
-      (preP2
-        ? `The 8-output snapshot does not exist in this Diamond's CURRENT CUT — either a pre-P2-w5 lens facet, or a partial refresh; selector/shape absence cannot distinguish the two. Refresh the InteractionRewardsLensFacet to close this gap.`
+      `getRecycleBackingSnapshotV2() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The balance / arrival-reservation tuple AND the custody activation state are UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, substituting the reservation as zero would silently stop alarming on spent recovery backing, and assuming non-activation would apply the Diamond-only relation to custody that may be on the holder).\n\n` +
+      (missing
+        ? `The versioned snapshot does not exist in this Diamond's CURRENT CUT — either a pre-slice-4 deployment, or a partial refresh that dropped the RewardCustodyFacet while its storage (possibly an ACTIVATED custody) persists; selector absence cannot distinguish the two. The legacy lens tuple cannot stand in: it carries no activation state, and the flag that does lives on the same facet as the versioned snapshot, so an activated chain that has lost the facet is indistinguishable from one that never had it. Cut the RewardCustodyFacet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
   };
 }
@@ -415,35 +442,79 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
   }
 
+  // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the two reattribution
+  // cumulatives, separately for the same newer-facet reason and at the same
+  // pinned block, with the same UNKNOWN-vs-zero rule as the repatriated-out
+  // term: a chain refreshed without the reconciliation facet reverts this
+  // read alone, and the checks that consume the pair skip rather than
+  // substitute a zero that would page after any real correction.
+  let reattribution:
+    | { reattributedIn: bigint; reattributedOut: bigint }
+    | undefined;
+  try {
+    const totals = await readView<readonly [bigint, bigint, bigint]>(
+      target.client,
+      target.diamond,
+      'getReconciliationTotals',
+      [],
+      blockNumber,
+      REWARD_RECONCILIATION_ABI,
+    );
+    reattribution = { reattributedIn: totals[1], reattributedOut: totals[2] };
+  } catch (err) {
+    reattribution = undefined;
+    viewGaps.push(reattributionUnavailableGap(target.chainId, err));
+  }
+
   // #1434 P2-w2 — the backing snapshot (balance + arrival reservation),
   // separately for the same newer-facet reason, at the same pinned block.
-  // The lens view predates P2-w2 but its OUTPUT SHAPE widened (6 → 7
-  // returns), so an old lens decodes short and the read fails — which is
-  // the correct UNKNOWN, not a value.
+  //
+  // #1566 slice 4 PR B — the VERSIONED snapshot, and ONLY it (Codex #2186
+  // r3 P1): on a chain whose reward custody moved onto the holder, the
+  // bucket and the recovery position are the holder's and the relation to
+  // alarm on changes (`checkHardInvariants` branches on `custodyActivated`).
+  // The legacy lens tuple carries no activation state, and the flag that
+  // does lives on the SAME facet as V2 — so a Diamond that cannot answer V2
+  // cannot establish non-activation either, and "the custody facet was
+  // never installed" is indistinguishable from "it was removed after
+  // activation" (a partial refresh; the storage flag persists). The backing
+  // stays UNKNOWN there, reported as a coverage gap that names the cut to
+  // fix — the same rule the repatriation and composition views follow. An
+  // earlier revision read the legacy tuple when the activation probe was
+  // itself missing, which is exactly the conflation.
   let backing:
     | {
         vpfiBalance: bigint;
         strandedRecoveryReserved: bigint;
         recoveryPositionReserved: bigint;
+        custodyActivated: boolean;
+        holderBalanceKnown: boolean;
+        holderBalance: bigint;
+        holderAttributed: bigint;
       }
     | undefined;
   try {
     const snap = await readView<
       readonly [
         bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+        boolean, boolean, bigint, bigint,
       ]
     >(
       target.client,
       target.diamond,
-      'getRecycleBackingSnapshot',
+      'getRecycleBackingSnapshotV2',
       [],
       blockNumber,
-      INTERACTION_REWARDS_LENS_ABI,
+      REWARD_CUSTODY_ABI,
     );
     backing = {
       vpfiBalance: snap[0],
       strandedRecoveryReserved: snap[6],
       recoveryPositionReserved: snap[7],
+      custodyActivated: snap[8],
+      holderBalanceKnown: snap[9],
+      holderBalance: snap[10],
+      holderAttributed: snap[11],
     };
   } catch (err) {
     backing = undefined;
@@ -466,6 +537,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     paidOutRecycled: governor[3],
     composition,
     repatriatedOut,
+    reattribution,
     backing,
     observedAt: block.timestamp,
     },

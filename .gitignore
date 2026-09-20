@@ -109,6 +109,7 @@ apps/www/public/llms-full.txt
 # Same pattern for apps/app (apps/app/scripts/generate-seo.mjs).
 apps/app/public/sitemap.xml
 apps/app/public/robots.txt
+apps/app/public/_headers
 
 # ops/{subgraph,tenderly,lz-watcher} per-chain generated artifacts.
 #

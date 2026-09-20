@@ -39,7 +39,7 @@ import {
 ///      level so the refresh script can import the same value the
 ///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
 ///      returns — one definition, no literal to drift.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 3;
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 4;
 
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
@@ -50,7 +50,8 @@ interface IRewardBudgetIngress {
         uint256 remitId,
         address remitter,
         uint256 recycledShare,
-        uint256 freshShare
+        uint256 freshShare,
+        bytes32 transportMessageId
     ) external;
 }
 
@@ -72,7 +73,8 @@ interface ICompensationBudgetIngress {
         uint64 finalizedAt,
         uint32 lapseScheduleVersion,
         uint64 lapseWindowSeconds,
-        uint64 dispatchCutoffGap
+        uint64 dispatchCutoffGap,
+        bytes32 transportMessageId
     ) external;
 }
 
@@ -210,7 +212,10 @@ contract RewardRemittanceReceiver is
         // immutable message data), which is what the ingress binds to.
         address /* sourceSender */,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        // #1566 closure 2 cutover PR 1 — passed through to the Diamond
+        // ingress, which records the packet under its ingress stamp.
+        bytes32 transportMessageId
     ) external override whenNotPaused nonReentrant {
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
@@ -269,7 +274,7 @@ contract RewardRemittanceReceiver is
         // delivered-vs-declared and fee-on-transfer rules can never diverge
         // between wire generations.
         if (head == RemitWire.REMIT_WIRE_TAG_P2) {
-            _handleCompensation(sourceChainId, payload, tokens);
+            _handleCompensation(sourceChainId, payload, tokens, transportMessageId);
             return;
         }
         if (head == RemitWire.REMIT_WIRE_TAG_D5) {
@@ -348,7 +353,8 @@ contract RewardRemittanceReceiver is
             remitId,
             remitter,
             recycledShare,
-            freshShare
+            freshShare,
+            transportMessageId
         );
 
         emit RewardBudgetForwarded(
@@ -380,7 +386,8 @@ contract RewardRemittanceReceiver is
     function _handleCompensation(
         uint256 sourceChainId,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
     ) private {
         (
             ,
@@ -437,7 +444,8 @@ contract RewardRemittanceReceiver is
             SafeCast.toUint64(finalizedAt),
             SafeCast.toUint32(lapseScheduleVersion),
             SafeCast.toUint64(lapseWindowSeconds),
-            SafeCast.toUint64(dispatchCutoffGap)
+            SafeCast.toUint64(dispatchCutoffGap),
+            transportMessageId
         );
 
         emit CompensationBudgetForwarded(

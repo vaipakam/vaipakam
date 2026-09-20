@@ -67,15 +67,20 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 > `defi`, `alpha02`, `alpha` and `alpha01` all answer 200 — so deleting
 > `apps/defi`, `apps/alpha` and `apps/alpha01` from the tree did not
 > retire anything in Cloudflare. Their retirement remains an operator
-> action, and `defi.vaipakam.com` in particular CANNOT be retired while
-> it is the only host serving `/analytics` and `/protocol-console`
-> (#1959).
+> action. The `defi.vaipakam.com` blocker recorded here — that it was
+> the only host serving `/analytics` and `/protocol-console` — is
+> **CLEARED**: #1959 ported both to `apps/app` and flipped `APP_TARGET`,
+> so every tool link resolves to `app.vaipakam.com`. What still holds
+> that host open is the `/recover` guide links, whose pending-recovery
+> marker lives in same-origin browser storage and so cannot survive an
+> origin change or a redirect; they move once the in-flight attempts
+> there have drained.
 
 | Worker | Domain | Lane | Cron | D1 binding |
 |---|---|---|---|---|
 | `vaipakam-www` | `vaipakam.com` (apex, canonical) ✅ + `www.vaipakam.com` → 301 to apex ✅ | Marketing static site (renamed from `vaipakam-labs` at the labs → www cutover). **`labs.vaipakam.com` is retired, not redirected** — verified 2026-08-27: no Workers binding and NO DNS record, so nothing resolves and no redirect rule can fire. This row previously said it served a 301 Bulk Redirect to www; a redirect needs a proxied DNS record, and there is none | none | none |
 | `vaipakam-app` | `app.vaipakam.com` ✅ live (200), verified 2026-09-07 | THE connected app (`apps/app`), successor to `vaipakam-defi` per #1854. Binding verified by ASSET HASH, not status code: the host served the exact `/assets/index-*.js` a `pnpm run deploy` had just published. A status code cannot prove it — this host and `defi.vaipakam.com` both return an identical 200 SPA shell on *every* path, including ones that do not exist. Note `apps/app/wrangler.jsonc` declares no `routes`, so unlike `vaipakam-indexer` this binding is managed out of band and is not recreated by `wrangler deploy` | none | none |
-| `vaipakam-defi` | `defi.vaipakam.com` ✅ live (200), verified 2026-08-27 — was "cert provisioning" at the May snapshot | dApp frontend — **source deleted in #1854**; the Worker still serves and cannot be rebuilt, and cannot be retired while it is the only host for `/analytics` and `/protocol-console` (#1959) | none | none |
+| `vaipakam-defi` | `defi.vaipakam.com` ✅ live (200), verified 2026-08-27 — was "cert provisioning" at the May snapshot | dApp frontend — **source deleted in #1854**; the Worker still serves and cannot be rebuilt. No longer the only host for `/analytics` and `/protocol-console` — #1959 ported both to `apps/app` — so it is retirable as a link target; retiring it OUTRIGHT waits on the `/recover` links, which are held by same-origin storage rather than by any missing route | none | none |
 | `vaipakam-agent` | `agent.vaipakam.com` ✅ live, verified 2026-08-27 — was "cert provisioning" at the May snapshot | D1 → users (REST, Telegram, Push, frames). Origin-gated: see the binding table below before reading a 403 as an outage | every minute | yes |
 | `vaipakam-indexer` | `indexer.vaipakam.com` ✅ live (200), verified 2026-08-27 — this row said "no public domain — cron only", which was true at the May snapshot and stopped being true when the route was added | Chain → D1, plus the public read-API | every minute | yes |
 | `vaipakam-keeper` | (no public domain — cron only) | Chain writes | **NONE — `"crons": []`, #1896** (was `* * * * *`; the "5-min HF + 00:05 UTC daily oracle" this row used to claim was already wrong) | yes |

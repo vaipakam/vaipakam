@@ -274,6 +274,122 @@
   },
   {
     "type": "function",
+    "name": "getIngressPacket",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.IngressPacket",
+        "components": [
+          {
+            "name": "sourceChainId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "arrivedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "remitter",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "remitId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "actualReceived",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshShare",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledShare",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "unclassified",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "protectedCumulative",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "disposed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAuthenticated",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dayListHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dayCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledAttested",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "attested",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getLegacyManualReservations",
     "inputs": [
       {
@@ -346,6 +462,11 @@
             "name": "classification",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "packetHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -623,6 +744,21 @@
             "name": "conflictClawed",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "classifiedTake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedTakes",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "splitOnWire",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -777,6 +913,16 @@
             "name": "reason",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "held",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "packetHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -830,6 +976,29 @@
   },
   {
     "type": "function",
+    "name": "getUnclassifiedPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "uncountedHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "returnedHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservedHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "quoteRemitAckFee",
     "inputs": [
       {
@@ -841,6 +1010,25 @@
         "name": "remitter",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteSplitAttestationFee",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -880,6 +1068,11 @@
   },
   {
     "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReceivedRemitNotFound",
     "inputs": [
       {
@@ -904,6 +1097,44 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationCarriesNoSplit",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationUnknown",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitSplitAlreadyOnWire",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardMessengerNotSet",
+    "inputs": []
   },
   {
     "type": "error",

@@ -6,7 +6,7 @@
  * get calendar rows despite having no oracle).
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CRON_LOG_INDEX,
   calendarWindowSql,
@@ -16,6 +16,7 @@ import {
   maxGraceSeconds,
   planCalendarRows,
   sweepCalendarNotifications,
+  _resetQuarantineTableProbe,
   type CalendarLoanRow,
   type GraceBucketJson,
 } from '../src/calendarNotifications';
@@ -275,6 +276,188 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     // Next cron tick, same window → INSERT OR IGNORE no-op.
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5);
     expect(rowsInDb(h)).toHaveLength(1);
+  });
+
+  it('withholds a reminder for a loan this tick could not establish (#2211 r3)', async () => {
+    // THE GHOST CASE. An orphaned row — one the chain has never heard of —
+    // is still sitting at `status = 'active'`, so the window selects it and
+    // would mint an unretractable "prepare to repay" for a loan that does
+    // not exist. The reconciliation pass names those ids; the sweep leaves
+    // them out.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 11, NOW + 6 * DAY - 30 * DAY, 30); // the ghost
+    seedLoan(h, 12, NOW + 6 * DAY - 30 * DAY, 30); // a healthy neighbour
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set([11]));
+    const rows = rowsInDb(h);
+    // PER ROW, not per tick: the neighbour's reminder is not collateral
+    // damage of the ghost's. Deferring the whole sweep would withhold every
+    // loan on the chain because one row could not be read, indefinitely if
+    // that row stays unreadable.
+    expect(rows.map((r) => r.loan_id)).toEqual([12]);
+  });
+
+  it('withholds a QUARANTINED loan on a tick that never examined it (#2212)', async () => {
+    // THE CASE THE PER-PASS EXCLUSION COULD NOT COVER. The rotation looks at
+    // one or three rows a turn, so on almost every tick the ghost is not in
+    // the pass's report at all — the in-memory exclusion is empty for its id
+    // and the unretractable reminder is minted. The table is what remembers.
+    //
+    // Note the sweep is called with NO exclusion set: this is purely the
+    // stored mark doing the work.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 21, NOW + 6 * DAY - 30 * DAY, 30); // quarantined ghost
+    seedLoan(h, 22, NOW + 6 * DAY - 30 * DAY, 30); // healthy neighbour
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'orphan', ?, ?)`,
+      )
+      .run(CHAIN, 21, NOW - 100, NOW - 100);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    // Per row, still: the neighbour is not collateral damage.
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([22]);
+  });
+
+  it('reminds again once the quarantine is released', async () => {
+    // The release path seen from the surface that cares. A row held back on
+    // one bad read must not be held back forever — the reminder is late, not
+    // lost.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 23, NOW + 6 * DAY - 30 * DAY, 30);
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'unread', ?, ?)`,
+      )
+      .run(CHAIN, 23, NOW - 100, NOW - 100);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h)).toHaveLength(0);
+    h.db.prepare('DELETE FROM loan_reconcile_quarantine WHERE loan_id = ?').run(23);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([23]);
+  });
+
+  it('still reminds when migration 0049 has NOT been applied yet (#2213 r1)', async () => {
+    // THE DEPLOY WINDOW. `deploy-chain.sh` and `deploy-testnet.sh` push the
+    // Worker BEFORE applying D1 migrations, so this build runs against a
+    // database with no quarantine table — guaranteed, not hypothetical, and
+    // open indefinitely if the migration then fails.
+    //
+    // Referencing the table unconditionally fails the window query, and the
+    // sweep's fail-open catch turns that into EVERY reminder on EVERY chain
+    // suppressed — a far larger outage than the one the quarantine prevents.
+    // The right degradation is the prior behaviour: remind, and say so.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS.filter((m) => !m.includes('loan_reconcile_quarantine')));
+    seedGraceConfig(h);
+    seedLoan(h, 31, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([31]);
+    // NOT silently: this build is not doing what it believes it is doing.
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('migration 0049');
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
+  });
+
+  it('DEFERS when it cannot tell whether the memory exists (#2213 r13)', async () => {
+    // The third answer. "Could not ask" used to be reported as "not there",
+    // which dropped the exclusion on a database where the table DOES exist —
+    // minting unretractable reminders for precisely the loans being held
+    // back, while telling an operator to apply a migration that was already
+    // applied. One tick of silence is the cheaper error.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 51, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    // The probe's own query fails; every other query still works, which is
+    // what a transient failure looks like.
+    const realPrepare = h.d1.prepare.bind(h.d1);
+    const d1 = {
+      ...h.d1,
+      prepare: (sql: string) =>
+        sql.includes('sqlite_master')
+          ? {
+              bind: () => ({ first: async () => { throw new Error('D1_ERROR: probe'); } }),
+              first: async () => {
+                throw new Error('D1_ERROR: probe');
+              },
+            }
+          : realPrepare(sql),
+    };
+    const out = await sweepCalendarNotifications(d1 as never, CHAIN, NOW, HEAD);
+    // Nothing minted, and the loan is untouched rather than reminded about.
+    expect(rowsInDb(h)).toEqual([]);
+    expect(out.inserted).toBe(0);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('DEFERRED');
+    // And NOT the misleading remedy.
+    expect(said).not.toContain('migration 0049');
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
+  });
+
+  it('starts withholding the moment the migration lands, with no redeploy (#2213 r1)', async () => {
+    // The probe caches only a TRUE. Caching a false would be the quieter
+    // half of the same bug: the table appears, and this isolate goes on
+    // reminding about unsettled loans until it happens to recycle — which on
+    // a Worker can be hours, and nothing would say so.
+    //
+    // Deliberately no reset between the halves: this is ONE isolate seeing
+    // the schema change underneath it, which is exactly the deploy sequence.
+    _resetQuarantineTableProbe();
+    const h = createSqliteD1(ALL_MIGRATIONS.filter((m) => !m.includes('loan_reconcile_quarantine')));
+    seedGraceConfig(h);
+    seedLoan(h, 41, NOW + 6 * DAY - 30 * DAY, 30);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([41]);
+
+    // The migration lands, and the loan is quarantined.
+    const migration = ALL_MIGRATIONS.find((m) => m.includes('loan_reconcile_quarantine'));
+    for (const stmt of (migration ?? '').split(';')) {
+      // SKIP COMMENT-ONLY CHUNKS. Splitting on `;` leaves whatever follows the
+      // last statement as a chunk of its own, so a migration that ENDS in a
+      // comment hands this loop a non-empty string with no SQL in it — which
+      // `prepare` accepts and then fails on, with an error naming the
+      // statement rather than the parse (#2213 r24). Stripping line comments
+      // before the emptiness test makes the splitter judge SQL rather than
+      // characters.
+      const sql = stmt
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('--'))
+        .join('\n');
+      if (sql.trim()) h.db.prepare(sql).run();
+    }
+    h.db
+      .prepare(
+        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'orphan', ?, ?)`,
+      )
+      .run(CHAIN, 42, NOW - 100, NOW - 100);
+    seedLoan(h, 42, NOW + 6 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    // 41 already had its reminder; 42 is withheld — so no NEW row for 42.
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([41]);
+    warn.mockRestore();
+    _resetQuarantineTableProbe();
+  });
+
+  it('sweeps normally when nothing is withheld, including an empty exclusion', async () => {
+    // The default path must be untouched — this parameter is optional and
+    // most callers pass nothing.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 13, NOW + 6 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set());
+    expect(rowsInDb(h).map((r) => r.loan_id)).toEqual([13]);
   });
 
   it('skips terminal loans, vehicles, and stubs', async () => {

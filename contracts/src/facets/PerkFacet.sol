@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -218,6 +219,9 @@ contract PerkFacet is
         // 1. Pull the spend into Diamond custody. Reverts if the buyer has no
         //    vault or too little VPFI — the same failure surface the
         //    notification tariff presents, and for the same reason.
+        //    #1566 closure 2 — snapshot first: the bucket credit in step 3
+        //    is a delta-checked operation that verifies the balance rose.
+        uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             vpfi,
@@ -234,12 +238,9 @@ contract PerkFacet is
             s.protocolTrackedVaultBalance[msg.sender][vpfi]
         );
 
-        // 3. Credit the bucket now the tokens are on the Diamond.
-        LibVpfiRecycle.credit(
-            LibVpfiRecycle.RecycleSource.SpendGatedPerk,
-            perkId,
-            spend
-        );
+        // 3. Credit the bucket now the tokens are on the Diamond, through the
+        //    perk's own delta-checked operation.
+        LibVpfiRecycle.creditSpendGatedPerk(perkId, spend, balanceBefore);
         s.perkSpendCumulative += spend;
         // Records the sale, which FREEZES this perk's mode from here on.
         s.perkUnitsSold[perkId] += units;

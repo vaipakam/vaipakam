@@ -556,4 +556,29 @@ contract MeshBusMessenger is IRewardMessenger {
     }
 
     receive() external payable {}
+
+    // #1566 transport epochs PR 3a — the split attestation surface (unused by
+    // the mesh bus, which carries reports and broadcasts; present so this mock
+    // still satisfies the interface).
+    function sendSplitAttestation(
+        uint32,
+        address,
+        uint256,
+        uint256,
+        uint256,
+        address payable
+    ) external payable override returns (bytes32) {
+        revert("MeshBus: split attestation unsupported");
+    }
+
+    function quoteSendSplitAttestation(
+        uint32,
+        address,
+        uint256,
+        uint256,
+        uint256
+    ) external pure override returns (uint256) {
+        return 0;
+    }
+
 }

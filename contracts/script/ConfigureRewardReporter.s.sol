@@ -278,6 +278,10 @@ contract ConfigureRewardReporter is Script {
         }
 
         console.log("Reward reporter configuration applied.");
+        // #1566 slice 4 PR B — a configured role is the precondition of the
+        // custody activation ceremony, which is NOT run here: it needs the
+        // manual pause and the operator's per-row answers.
+        console.log("Next (#1566 slice 4 PR B): once the holder is bound, run the reward custody activation ceremony under the manual pause -- script/ActivateRewardCustody.s.sol (run()/stage() then record()); until it runs, a Canonical chain's reward claims and remittances are refused (delivered bound = received - paid = 0).");
     }
 
     /// @dev #1636 r3 — parse "chainId:0xaddr,chainId:0xaddr" and register

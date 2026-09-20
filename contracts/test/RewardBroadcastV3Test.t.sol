@@ -14,6 +14,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {
@@ -69,6 +70,20 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
     function _rep() internal view returns (RewardReporterFacet) {
         return RewardReporterFacet(address(diamond));
     }
+
+    /// @dev #1566 slice 4 PR B — a mirror's funding identity is never rebound
+    ///      DIRECTLY to a different era (design §5c: the old residual must
+    ///      retire and delayed packets from the old source must not be
+    ///      attributed to the new one), so an era rotation passes through
+    ///      `Detached`: detach, rotate, re-attach. These suites hold no
+    ///      custody attribution, so the role freeze is not armed and the
+    ///      transition is allowed.
+    function _rotateEra(address newEra) internal {
+        _rep().setBaseChainId(0);
+        _rep().setBaseRewardDeployment(newEra);
+        _rep().setBaseChainId(CHAIN_BASE);
+    }
+
 
     /// #1569 — the keeper earmark is read through the same register view
     /// the LOCAL register uses, so both allocation paths are observed
@@ -743,7 +758,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         _configureMirror(CHAIN_ARB);
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
 
-        _rep().setBaseRewardDeployment(address(0x0DD));
+        _rotateEra(address(0x0DD));
         RewardBroadcastV3 memory stale = _v3Packet(CHAIN_ARB);
         stale.baseDeployment = address(0x0DD);
         vm.expectRevert(
@@ -818,7 +833,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV2(day4);
 
         // A DIFFERENT nonzero era: rotation — legacy fresh applies retire.
-        _rep().setBaseRewardDeployment(address(0xE2));
+        _rotateEra(address(0xE2));
         RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
         day5.dayId = 5;
         vm.expectRevert(
@@ -848,7 +863,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // era-1 figures
         assertEq(_rep().getDayClockEra(3), ERA_BASE, "provenance = era 1");
 
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.baseDeployment = address(0xE2); // passes the configured-era gate
@@ -877,7 +892,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(_rep().getDayClockEra(3), address(0), "no provenance");
 
         _rep().setBaseRewardDeployment(ERA_BASE); // first arming
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         RewardBroadcastV3 memory b3 = _v3Packet(CHAIN_ARB);
         b3.baseDeployment = address(0xE2);
@@ -1157,7 +1172,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
 
         // Base rotates. Everything the old era says is now unauthenticated.
-        _rep().setBaseRewardDeployment(address(0xE2));
+        _rotateEra(address(0xE2));
 
         // The retired era replays that same day carrying an arming day. The
         // replay is still ACCEPTED — idempotency after rotation is the
@@ -1430,6 +1445,9 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
     function _remit() internal view returns (RewardRemittanceFacet) {
         return RewardRemittanceFacet(address(diamond));
     }
+    function _ingress() internal view returns (RewardIngressFacet) {
+        return RewardIngressFacet(address(diamond));
+    }
 
     function _rlens() internal view returns (RewardRemittanceLensFacet) {
         return RewardRemittanceLensFacet(address(diamond));
@@ -1480,7 +1498,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         uint32 scheduleVersion,
         uint64 lapseWindowSeconds
     ) internal {
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             lenderShare + borrowerShare,
             dayId,
@@ -1493,7 +1511,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             scheduleVersion,
             lapseWindowSeconds,
             uint64(24 hours)
-        );
+        , bytes32(0));
     }
 
     // ── Quarantine case 1: day applied + era known, NOT zeroed ─────────────
@@ -1613,16 +1631,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(dc.lenderPool18, 3e18, "pools credited pending the era");
     }
 
+    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for:
+    /// a compensation credit counts its authenticated fresh amount at INGRESS,
+    /// whatever the day's vintage (the chain is unarmed here), and confirmation
+    /// promotes NOTHING — it clears the provisional flag and leaves the ledger
+    /// exactly where the credit put it. Before closure 2 the credit landed in
+    /// `uncounted` (day unarmed) and the #1634 r3 reclassification moved it
+    /// into `received` at confirmation; that promotion is gone because there
+    /// is nothing left to promote.
     function testProvisionalConfirmedInPlace() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);
-        // Credited while the chain was UNARMED (no broadcast yet), so
-        // nothing counted toward the armed-fresh ledger at credit time.
         assertEq(
             _rlens().getDayCompensation(3).armedFreshCounted,
-            0,
-            "unarmed at credit - uncounted"
+            5e18,
+            "counted in full at credit - vintage-blind"
         );
+        (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted0, 5e18, "ledger credited at ingress");
+        assertEq(uncounted0, 0, "nothing parked");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true; // genuinely zeroed, matching era
@@ -1633,14 +1660,10 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
         assertEq(_rlens().getStrandedRecoveryReserved(), 0, "no quarantine");
-        // #1634 r3 — the confirming broadcast ALSO installed D* (the core
-        // runs before the hook), so the credit reclassifies against it:
-        // the delivered-fresh bound must see this day's backing.
-        assertEq(
-            dc.armedFreshCounted,
-            5e18,
-            "reclassified against the now-installed arming day"
-        );
+        assertEq(dc.armedFreshCounted, 5e18, "confirmation changes nothing");
+        (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted1, counted0, "confirmation promotes nothing");
+        assertEq(uncounted1, uncounted0, "and demotes nothing");
     }
 
     /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
@@ -1676,7 +1699,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
     /// reserves the CREDITED amount wholesale, never the pool sum.
     function testDemotionReservesFullCreditedAmount() public {
         _configureCompMirror();
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             5e18, // credited amount
             3,
@@ -1689,7 +1712,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             uint32(1),
             uint64(7 days),
             uint64(24 hours)
-        );
+        , bytes32(0));
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
@@ -1703,14 +1726,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
+    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for:
+    /// the demotion branch ALONE reverses exactly the original provisional
+    /// credit — `received` falls by what the credit added, and that amount
+    /// moves to `uncounted` beside the recovery reservation. Proven against
+    /// the credit it starts from, not by composing confirm-then-demote, which
+    /// the production state machine cannot do.
     function testProvisionalDemoted_EraMismatch() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+        (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted0, 5e18, "credited in full at ingress");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
 
+        (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted1, 0, "demotion removed exactly what the credit added");
+        assertEq(uncounted1, uncounted0 + 5e18, "...and parked it as uncounted");
         LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertFalse(dc.compensated, "provisional state deleted");
         LibVaipakam.StrandedRecovery memory sr =
@@ -1741,7 +1775,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
                 CompensationSharesExceedDelivery.selector, 3e18, 3e18, 5e18
             )
         );
-        _remit().onCompensationBudgetReceived(
+        _ingress().onCompensationBudgetReceived(
             address(vpfiToken),
             5e18,
             3,
@@ -1754,7 +1788,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             uint32(1),
             uint64(7 days),
             uint64(24 hours)
-        );
+        , bytes32(0));
     }
 
     function testHookIsSelfGated() public {
@@ -1764,7 +1798,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
                 CompensationHookNotSelf.selector, address(this)
             )
         );
-        _remit().onCompensationDayBroadcastArrived(3, ERA_BASE, true);
+        _ingress().onCompensationDayBroadcastArrived(3, ERA_BASE, true);
     }
 
     function testIngressIsReceiverGated() public {
@@ -1807,7 +1841,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         vm.chainId(CHAIN_ARB);
         _mut().setBroadcastV2AppliedRaw(3, true);
         _rep().setBaseRewardDeployment(ERA_BASE);
-        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+        _rotateEra(address(0xE2)); // rotation
 
         _deliverComp(3, address(0xE2), 3e18, 2e18);
 

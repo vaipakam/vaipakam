@@ -57,15 +57,19 @@ contract MockCrossChainRecipient is ICrossChainMessageRecipient {
 
     // ─── ICrossChainMessageRecipient ────────────────────────────────────────
 
+    bytes32 public lastTransportMessageId;
+
     function onCrossChainMessage(
         uint256 sourceChainId,
         address sourceSender,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
     ) external override {
         lastSourceChainId = sourceChainId;
         lastSourceSender = sourceSender;
         lastPayload = payload;
+        lastTransportMessageId = transportMessageId;
         ++receivedCount;
         if (tokens.length > 0) {
             lastTokenIn = tokens[0].token;

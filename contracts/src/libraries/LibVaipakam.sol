@@ -898,6 +898,52 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #1566 slice 4 (design §5b / §5d) — the attribution rows of the
+     *         delivered reward custody. The `RewardCustodyHolder` keeps no
+     *         ledger; these rows, in {Storage.rewardCustodyRows}, say what
+     *         each part of its balance IS, and only the Diamond credits or
+     *         debits them. Two invariants hold across every writer: the sum
+     *         of the rows never exceeds the holder's balance, and no row
+     *         goes negative.
+     *
+     *         Append-only, like every enum a mapping is keyed on: a
+     *         reordering would relabel live balances.
+     *
+     *         - `LiveFresh`      — delivered, counted, not yet paid: the
+     *           backing the delivered-fresh bound spends.
+     *         - `Recycled`       — value relocated from elsewhere in the
+     *           system; already bounded by the recycled ledger.
+     *         - `Recovery`       — stranded returns awaiting redispatch,
+     *           entitlement-bounded. The `…FromRecovery` dispatches draw
+     *           ONLY here.
+     *         - `Overage`        — arrived above what any entitlement can
+     *           claim.
+     *         - `PendingSurplus` — a `Detached` era's terminal remainder,
+     *           awaiting an active era. Distinct from `Recovery` on purpose:
+     *           a recovery dispatch must never be able to draw a surplus.
+     *         - `Intent`         — held against a stated, not yet executed
+     *           intent.
+     *         - `Unclassified`   — arrived without a composition the ledger
+     *           can attribute; visible, never spendable as fresh.
+     *         - `Restitution`    — the deficit-covering portion of an
+     *           ingress on a chain whose paid side exceeds its received
+     *           side (the §5c deficit split).
+     *
+     *         Retired-ERA rows (one per era) are a separate, era-keyed
+     *         mapping that lands with the era registry (slice 4 PR C).
+     */
+    enum RewardCustodyRow {
+        LiveFresh,
+        Recycled,
+        Recovery,
+        Overage,
+        PendingSurplus,
+        Intent,
+        Unclassified,
+        Restitution
+    }
+
+    /**
      * @notice Enum for offer types.
      * @dev Lender offers to lend, Borrower requests to borrow.
      */
@@ -6009,6 +6055,16 @@ library LibVaipakam {
         //   VPFI that physically left the bucket and did not come back: it
         //   sits in the transport's custody.
         //
+        //   The WHOLE sent share, a correction notwithstanding (Codex #2206
+        //   r9): consumption a correction had meanwhile inherited to the
+        //   fresh side is UN-INHERITED by the release first — the units
+        //   return to the entry's recycled record, spent and uncharged, and
+        //   the payout figure takes the consumption back through
+        //   `recycleReattributedInCumulative` — so the reversal recorded here
+        //   is the full physical loss and the coverage relation below sees
+        //   all of it. A fresh-side twin of this counter is therefore not
+        //   needed: nothing a release strands is the fresh side's.
+        //
         //   Deliberately the SENT share, never the pre-clamp `recycledFull`
         //   (Codex #1448 r1 P1). A liability-clamped remit sends only part of
         //   its recycled commitment; `consume` debits that part while
@@ -6033,11 +6089,21 @@ library LibVaipakam {
         //
         //   2. BUCKET COMPOSITION — checked in BOTH directions:
         //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
-        //          <= recycleBucket + paidOutRecycled + <this>          (exact)
+        //          + recycleReattributedInCumulative
+        //          <= recycleBucket + paidOutRecycled + <this>
+        //             + recycleRepatriatedOutCumulative
+        //             + recycleReattributedOutCumulative               (exact)
         //      and the reverse, with its own slack:
         //        recycleBucket + paidOutRecycled + <this>
-        //          <= recycleCreditedCumulative
-        //             + recycleCustodyRelocatedCumulative + slack
+        //          + recycleRepatriatedOutCumulative + recycleReattributedOutCumulative
+        //          <= recycleCreditedCumulative + recycleCustodyRelocatedCumulative
+        //             + recycleReattributedInCumulative + slack
+        //      The two sides have ONE implementation,
+        //      {LibVpfiRecycle.compositionSides}, which the seed ceremony's
+        //      postcondition reads; the external checkers restate it from
+        //      the published terms. #1568 C2 added the repatriated-out
+        //      destination; #1566 closure 2 cutover PR 2 the two
+        //      reattribution terms of a reclassification (Codex #2206 r9).
         //
         //      The REVERSE direction is the one that catches an arrival
         //      raising `recycleBucket` WITHOUT advancing
@@ -6290,10 +6356,19 @@ library LibVaipakam {
         ///      differencing these fields by hand — it must SATURATE,
         ///      because the received side below carries an unwind and can
         ///      legitimately fall below the paid side after a released or
-        ///      reclassified delivery. The paid side is written at the three
-        ///      sites that actually spend armed fresh (the claim walk, the
-        ///      expiry batch, the forfeit sweep) rather than derived from
-        ///      these splits, precisely because of the shape described above.
+        ///      reclassified delivery. The paid side is charged at the TWO
+        ///      outflow chokepoints (#1566 closure 2: the claim's delivery and
+        ///      the reward-absorption credit) rather than derived from these
+        ///      splits, precisely because of the shape described above.
+        ///
+        ///      #1566 closure 2 — VINTAGE-BLIND since then, despite the name:
+        ///      Σ of the authenticated FRESH component of every
+        ///      composition-known delivery, whatever days it funds. The
+        ///      armed-attributable test was retired together with the
+        ///      armed-only paid charge, because a ledger whose two sides
+        ///      count different nouns cannot bound the balance both spend.
+        ///      The field keeps its name: renaming a storage field is a
+        ///      layout event the provenance walker gates on.
         uint256 rewardBudgetArmedFreshReceived;
         /// @dev The reconciliation counterpart: Σ of the fresh-looking
         ///      amount of every delivery this chain declined to count above.
@@ -6301,7 +6376,10 @@ library LibVaipakam {
         ///      delivery for a legacy/d2 payload, whose recycled share was
         ///      never transmitted.
         ///
-        ///      Not decorative. Both exclusions are silent by construction:
+        ///      Not decorative. Both sources are silent by construction — an
+        ///      unstated composition (the day-vintage exclusion was retired
+        ///      by #1566 closure 2) and the flooring residue of a
+        ///      composition-known delivery scaled to what actually arrived —
         ///      an uncounted delivery moves real VPFI into this Diamond and
         ///      changes no other figure, so without this counter the only
         ///      symptom would be armed claims deferring for funding the
@@ -7052,9 +7130,21 @@ library LibVaipakam {
         ///      Codex #1556 r1): it counts LIFETIME payouts including
         ///      ordinary-schedule days that no delivery ever funded, so
         ///      charging them against delivered fresh would defer every
-        ///      later day on any chain with prior activity. Only
-        ///      armed-day fresh belongs here, because only armed-day fresh
-        ///      is what a remittance delivers.
+        ///      later day on any chain with prior activity.
+        ///
+        ///      #1566 closure 2 — VINTAGE-BLIND since then, despite the name:
+        ///      Σ of fresh reward value this chain paid out of delivered
+        ///      funding, legacy and armed days alike, charged at the two
+        ///      outflow chokepoints ({LibInteractionRewards.chargeDeliveredFresh}
+        ///      inside the claim's delivery and {LibVpfiRecycle.absorbRewardFresh}
+        ///      for the bucket credits) and REFUSED there before the transfer
+        ///      when the fresh outflow exceeds `received − paid`. The
+        ///      "only armed-day fresh belongs here" rule this note used to
+        ///      state was the closure-2 defect: legacy payouts spent the same
+        ///      backing without being charged. Written only in the `Mirror`
+        ///      role; the canonical column lands with slice 4. The field
+        ///      keeps its name: renaming a storage field is a layout event
+        ///      the provenance walker gates on.
         ///
         ///      The bound `received − paid` MUST be evaluated SATURATING
         ///      in both terms. The received side is NOT monotone: it
@@ -7278,6 +7368,159 @@ library LibVaipakam {
         ///         declared-detached chain that reads Unconfigured. Any other
         ///         upgrade path MUST carry the same step.
         bool rewardRoleConfigured;
+        /// @dev #1566 slice 4 PR A — APPENDED AT THE TAIL (#2092 rule). The
+        ///      dedicated custody address for delivered reward funding
+        ///      (`RewardCustodyHolder`). Bound ONCE by
+        ///      `RewardCustodyFacet.bindRewardCustodyHolder`; changed only by
+        ///      the paused replacement ceremony
+        ///      (`replaceRewardCustodyHolder`), which moves the old holder's
+        ///      whole balance to the successor in the same transaction that
+        ///      flips this pointer. An in-place facet refresh never deploys
+        ///      or rebinds a holder — a refresh that did would leave the
+        ///      attributed balance at the old address while the Diamond read
+        ///      an empty one. Zero until bound; no payout, gate or funding
+        ///      path reads it until slice 4 PR B's role-branched cutover.
+        address rewardCustodyHolder;
+        /// @dev #1566 slice 4 PR A — the custody attribution ledger, keyed by
+        ///      {RewardCustodyRow}. Lives HERE, not in the holder, so the
+        ///      holder is replaceable without copying anything unbounded.
+        ///      Credited only after a delta-checked ingress or a registered
+        ///      attribution transfer, debited only by a reward outflow to a
+        ///      named recipient — both of which arrive with PR B; PR A adds
+        ///      no writer, so every row reads zero on a PR-A Diamond.
+        mapping(RewardCustodyRow => uint256) rewardCustodyRows;
+        /// @dev #1566 slice 4 PR A — one-shot guard for
+        ///      `RewardCustodyFacet.rebaseArmedFreshPaid`, the paid-side
+        ///      importer for a chain carrying history the vintage-blind
+        ///      ledger (#1566 closure 2) now charges. Independent of
+        ///      {armedFreshPaidSeeded} so the rebase is available whether or
+        ///      not the P1-b seeder ran; the rebase sets BOTH guards so the
+        ///      additive seeder can never run after an absolute total has
+        ///      been installed. A fresh deploy consumes it at deploy with a
+        ///      zero total, exactly as the seeder is consumed.
+        bool armedFreshPaidRebased;
+        /// @dev #1566 slice 4 PR A (Codex #2158 r13 P2) — every
+        ///      `RewardCustodyHolder` this Diamond CONSTRUCTED, the first and
+        ///      every successor, registered at construction and never
+        ///      removed. The sweeps consult this registry — not a getter an
+        ///      arbitrary contract could imitate — before calling `release`
+        ///      on an address, so a previous holder stays reachable for
+        ///      recovery while nothing else ever is.
+        mapping(address => bool) rewardCustodyHolderConstructed;
+        /// @dev #1566 slice 4 PR B — whether this deployment's reward custody
+        ///      reads and debits the holder. Set ONCE by the per-chain
+        ///      activation ceremony (`RewardCustodyFacet.activateRewardCustody`
+        ///      — ADMIN, under the manual pause, epoch-pinned) after the
+        ///      recovery, overage and recycled positions have been reconciled
+        ///      into the holder's rows; never by a facet refresh. `false` is
+        ///      today's Diamond-custody behaviour, which an `Unconfigured`
+        ///      deployment keeps forever (it cannot activate). Read through
+        ///      `LibRewardCustody.active` only — that is the design's role
+        ///      branch, in one place.
+        bool rewardCustodyActivated;
+        /// @dev #1566 slice 4 PR B — the role and source freeze (design §5d):
+        ///      armed by the first holder attribution or by the activation,
+        ///      whichever comes first; while set, `setBaseChainId` and
+        ///      `setIsCanonicalRewardChain` refuse every EFFECTIVE role change,
+        ///      because the retained residual retirement can level the
+        ///      delivered counters but cannot re-key a holder allocation, so a
+        ///      transition would orphan funded custody. Cleared by slice 4
+        ///      PR C's era-registry backfill as its last step, and by nothing
+        ///      else.
+        bool rewardRoleChangesFrozen;
+        /// @dev #1566 slice 4 PR B (Codex #2186 r4, r5) — the COMPLETE-cut
+        ///      record: the custody protocol version
+        ///      (`LibRewardCustody.CUTOVER_VERSION`) and the hash of the
+        ///      ROUTING — every facet address with the selectors it serves —
+        ///      as they stood when a complete facet cut (`DeployDiamond`,
+        ///      `RefreshAllFacetsInPlace`) recorded them, under the pause the
+        ///      cut ran under. Activation and every bootstrap write require
+        ///      both to be current, so custody can never be switched onto
+        ///      the holder while a reward path that does not know the holder
+        ///      is still routed. Re-taken by every complete cut; invalidated
+        ///      by any cut in between, of a facet or of a single selector.
+        uint32 rewardCustodyCutoverVersion;
+        bytes32 rewardCustodyCutoverRouting;
+        /// @dev #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress
+        ///      attribution's own figures, so the `Unclassified` row stays
+        ///      auditable the way every other row is (rows equal figures):
+        ///      `rewardCustodyUnclassifiedUncounted` is what the row holds
+        ///      of untyped delivery remainders and quarantined compensation
+        ///      (net of R4 returns); `rewardCustodyUnclassifiedReturned` is
+        ///      what it holds of stranded returns for receipts that predate
+        ///      recovery attribution. Invariant: their sum equals the row.
+        ///      `strandedRecoveryReservedHeld` is the part of
+        ///      `strandedRecoveryReserved` whose tokens are in the holder —
+        ///      the Diamond's backing position subtracts only the rest.
+        uint256 rewardCustodyUnclassifiedUncounted;
+        uint256 rewardCustodyUnclassifiedReturned;
+        uint256 strandedRecoveryReservedHeld;
+        /// @dev #1566 closure 2 cutover PR 1 — every value-bearing reward
+        ///      packet by its ingress stamp, and the per-source fallback
+        ///      counter for a transport that carries no message id.
+        mapping(bytes32 => IngressPacket) ingressPackets;
+        mapping(uint256 => uint256) ingressSequence;
+        /// @dev #1566 closure 2 cutover PR 2 — the legacy reconciliation
+        ///      epoch. The classification log (append-only; the order is the
+        ///      immutable thing), the two queues that distribute spent-ness
+        ///      among the entries, the absorbed records, the recycled
+        ///      consumption record, the
+        ///      per-entry replay guard, the envelopes, and the two
+        ///      reattribution cumulatives that keep the bucket's composition
+        ///      identity stated: `bucket == credited + relocated +
+        ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
+        ///      (+ the released-remit correction), with the derived
+        ///      absorption floor netting the same two terms.
+        ReconciliationEntry[] reconciliationLog;
+        /// @dev The queues (Codex #2206 r2, r4–r6): per side, one RECORD per
+        ///      entry at the entry's own log index (the classification order
+        ///      the design fixes — credit a correction moves re-enters at the
+        ///      entry's own position, never at the tail), a FRONTIER (the
+        ///      first index with anything unspent; every earlier one is
+        ///      exhausted — a correction that frees credit before it moves it
+        ///      back), the unspent total (what the records still hold of the
+        ///      pool: the O(1) figure an outflow's take reads), the spent and
+        ///      charged totals for the record, and an ORDERED backlog of
+        ///      pending takes: a hot outflow's take is recorded in the totals
+        ///      at once and written into the records at the frontier by a
+        ///      walk bounded to `QUEUE_WALK_STEPS` entries, the rest left
+        ///      here in order — so no payout can be wedged by a backlog of
+        ///      exhausted entries (Codex #2206 r6 P1), anyone may advance the
+        ///      queue, and a correction requires it drained. Operator paths
+        ///      (a remit's consumption, a surplus repatriation) complete their
+        ///      walk. The fresh queue is per era (0 until slice 4 PR C) and
+        ///      its backlog also carries the restitution row's RELEASES of the
+        ///      absorbed records in time order (a released part re-enters the
+        ///      entry's own fresh record: free when the paid-correction moved
+        ///      the custody to live, spent when the deficit was paid with it);
+        ///      the recycled queue is global, as the bucket is.
+        mapping(uint256 => SideRecord) freshRecords;
+        mapping(uint256 => SideRecord) recycledRecords;
+        mapping(uint256 => AbsorbedRecord) absorbedRecords;
+        mapping(uint64 => uint256) freshFrontierByEra;
+        mapping(uint64 => uint256) freshUnspentByEra;
+        mapping(uint64 => uint256) freshSpentTotalByEra;
+        mapping(uint64 => uint256) freshPaidTotalByEra;
+        mapping(uint64 => PendingTake[]) freshPendingByEra;
+        mapping(uint64 => uint256) freshPendingHeadByEra;
+        uint256 recycledFrontier;
+        uint256 recycledUnspent;
+        uint256 recycledSpentTotal;
+        uint256 recycledConsumedTotal;
+        PendingTake[] recycledPending;
+        uint256 recycledPendingHead;
+        uint256 absorbedFrontier;
+        uint256 absorbedUnreleased;
+        uint256 absorbedReleasedTotal;
+        /// @dev Codex #2206 r7 — what each side's pending takes still hold
+        ///      unwritten, kept as counters (an outflow adds, the walk
+        ///      subtracts) so the queue views never scan a backlog.
+        mapping(uint64 => uint256) freshPendingAmountByEra;
+        uint256 recycledPendingAmount;
+        mapping(bytes32 => bool) reconciliationEntryUsed;
+        mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
+        uint256 recycleReattributedInCumulative;
+        uint256 recycleReattributedOutCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7343,6 +7586,188 @@ library LibVaipakam {
         uint256 dayId;
         uint64 reservedAt;
         uint8 reason;
+        /// @dev #1566 closure 2 cutover PR 1 — how much of `amount` is HELD
+        ///      in the custody holder's `Unclassified` row (a quarantine
+        ///      landed or a demotion unwound on an ACTIVATED deployment).
+        ///      The R4 return draws `held` from the row and the rest from
+        ///      the Diamond's balance (a quarantine that predates the
+        ///      activation). Appended: a mapped struct grows at its end.
+        uint256 held;
+        /// @dev The ingress stamp of the packet whose value this record
+        ///      holds in the row (first binding wins), so the R4 return
+        ///      steps that packet's `unclassified` figure down — not the
+        ///      receipt's, which may be bound to an earlier packet.
+        bytes32 packetHash;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing reward
+    ///         packet as it LANDED, keyed by its ingress stamp
+    ///         `keccak256(sourceChainId, transportMessageId)` (design §5c:
+    ///         "identity is the ingress stamp … never an operator-supplied
+    ///         tuple"). The reconciliation entries of the cutover's second
+    ///         PR verify against this record; `unclassified` is what the
+    ///         packet still holds in the `Unclassified` row, net of returns
+    ///         and (later) classification.
+    struct IngressPacket {
+        uint32 sourceChainId;
+        /// @dev 1 = budget delivery, 2 = compensation, 3 = stranded return,
+        ///      4 = recovery-ceremony inflow (no transport packet: keyed by
+        ///      its ceremony reference).
+        uint8 kind;
+        uint64 arrivedAt;
+        address remitter;
+        uint256 remitId;
+        /// @dev The destination-observed amount, never the declared total.
+        uint256 actualReceived;
+        uint256 freshShare;
+        uint256 recycledShare;
+        uint256 unclassified;
+        /// @dev #1566 closure 2 cutover PR 2 — the packet's reconciliation
+        ///      figures, appended. `protectedCumulative` is everything the
+        ///      packet ever put into the `Unclassified` row; `classifiedFresh`
+        ///      / `classifiedRecycled` are its classification exits, by
+        ///      component (the total is derived, never kept alone — design
+        ///      §5c); `disposed` its NON-classification exits (the R4 return).
+        ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
+        ///      + disposed == protectedCumulative`. `freshAuthenticated` is
+        ///      the EVIDENCE bounding the packet's fresh side (design §5c: a
+        ///      fresh share requires authenticated source evidence; absent
+        ///      it, value classifies recycled or stays): what the source
+        ///      chain's own recorded split says of the remainder, written
+        ///      by the transport-carried attestation only (landing with the
+        ///      transport epochs) — never by an administrator. Zero until
+        ///      then. `classifiedFresh` never exceeds it (Codex #2206 r3).
+        uint256 protectedCumulative;
+        uint256 classifiedFresh;
+        uint256 classifiedRecycled;
+        uint256 disposed;
+        uint256 freshAuthenticated;
+        /// @dev #1566 transport epochs PR 3a, appended.
+        ///
+        ///      `dayListHash` / `dayCount` — the flat commitment to the
+        ///      payload's `dayIds` (keccak of the ABI-encoded list, and its
+        ///      length), recorded by the mirror ingress in the SAME
+        ///      transaction as the record, for every arrival on a wire older
+        ///      than d6. It is what the transport epochs' compact admission
+        ///      (3b) materializes a re-supplied list against, so a packet that
+        ///      landed before that ledger existed still carries authenticated
+        ///      membership and no membership is ever taken from an event.
+        ///
+        ///      `freshAttested` / `recycledAttested` / `attested` — the
+        ///      canonical chain's RECORDED split of a d2 remittance this
+        ///      deployment received untyped, carried by the SPLIT ATTESTATION
+        ///      and scaled to `actualReceived` by the same proportional
+        ///      flooring the d5 receiver applies (§5c: the authenticated
+        ///      component caps are denominated in the destination-observed
+        ///      basis). Written ONCE and IMMUTABLE: the evidence bounding a
+        ///      classification is DERIVED from them at use time
+        ///      ({LibRewardCustody.authenticatedFresh}), never snapshotted
+        ///      into `freshAuthenticated` by an earlier step — the attestation
+        ///      is permissionless and can land after the batch it describes
+        ///      has been parked, and a snapshot taken before it would leave
+        ///      that packet's fresh remainder permanently unusable (Codex
+        ///      #2217 r3).
+        bytes32 dayListHash;
+        uint256 dayCount;
+        uint256 freshAttested;
+        uint256 recycledAttested;
+        bool attested;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
+    ///         reconciliation epoch's classification log: what a
+    ///         classification (or the bootstrap envelope's import) put on
+    ///         each side, as CURRENTLY attributed.
+    /// @dev    `key` is the packet's ingress stamp, or the envelope's
+    ///         snapshot id (`envelope` says which, so a correction knows
+    ///         whether a packet's component counters follow it and whose
+    ///         evidence bounds its fresh side).
+    ///         The ORDER of the log is the immutable thing (design §5c):
+    ///         spent-ness is distributed among the entries FIFO by that
+    ///         order. Per side, the entry's credit splits into what is
+    ///         QUEUED (backed by the side's pool and consumed by its
+    ///         outflows in order), what is INHERITED (spent by a debit a
+    ///         correction moved in from the other side — spent without any
+    ///         outflow of this side, unwound by the reverse move; Codex
+    ///         #2206 r1) and, on the fresh side, what the standing deficit
+    ///         ABSORBED into restitution at credit (Codex #2206 r2: not
+    ///         live backing, so neither queued nor a correction's to move
+    ///         for as long as the restitution row holds it; what the row
+    ///         has released of the absorbed records re-enters the queue,
+    ///         FIFO — Codex #2206 r3, r4).
+    ///         `era` keys the fresh queue; 0 until slice 4 PR C's registry.
+    ///         Its per-side figures — unspent, spent, what of the spent the
+    ///         other side may inherit, what the deficit absorbed and the
+    ///         restitution row still holds — are read from its own RECORDS
+    ///         (`freshRecords` / `recycledRecords` / `absorbedRecords`, by
+    ///         index), never inferred (Codex #2206 r5, r6).
+    struct ReconciliationEntry {
+        bytes32 key;
+        bool envelope;
+        uint64 era;
+        uint64 landedAt;
+        uint256 freshCredit;
+        uint256 recycledCredit;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r5, r6) — an entry's
+    ///         RECORD on one side of a reconciliation queue, at the entry's own
+    ///         position (its log index — the immutable classification order):
+    ///         `amount` of its credit on that side, of which `spent` has been
+    ///         taken by the pool's outflows and `charged` of that by the side's
+    ///         own charge (fresh `paid`; recycled consumption) — the part the
+    ///         other side may inherit as a debit. An inherited debit arrives
+    ///         spent and charged; credit a correction moves unspent arrives
+    ///         free — both at the entry's own position, so the order the
+    ///         design fixes is kept and a frontier may move back to it.
+    struct SideRecord {
+        uint128 amount;
+        uint128 spent;
+        uint128 charged;
+    }
+
+    /// @notice An entry's absorbed record: fresh credit the standing deficit
+    ///         absorbed into restitution at credit, of which `released` has
+    ///         left the restitution row — each released part re-entering the
+    ///         entry's own fresh record.
+    struct AbsorbedRecord {
+        uint128 amount;
+        uint128 released;
+    }
+
+    /// @notice A pending take of a queue (Codex #2206 r6): what an outflow
+    ///         recorded but a bounded walk has not yet written into the
+    ///         records at the frontier — `kind` bits: 1 = charged (paid /
+    ///         consumption), 2 = a restitution release, 4 = released to live.
+    ///         Hot outflows walk a bounded number of entries and leave the
+    ///         rest here, in order; anyone may advance the queue, and a
+    ///         correction requires it drained.
+    struct PendingTake {
+        uint128 amount;
+        uint8 kind;
+    }
+
+    /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
+    ///         pre-stamp inventory as one bounded aggregate, its netting
+    ///         figures all read on chain at the import, and the disposition
+    ///         of every unit of it (relocated as recycled — the inventory
+    ///         has no evidence source, so its fresh share is exactly what
+    ///         is replacement-funded; replacement-funded as fresh or
+    ///         recycled; or written down). Its log entry (`entryIndex`) is
+    ///         what the snapshot-keyed error path reclassifies, its fresh
+    ///         side bounded by `replacedFresh`.
+    struct LegacyEnvelope {
+        uint64 importedAt;
+        uint256 rawUncounted;
+        uint256 holderUncounted;
+        uint256 diamondReserved;
+        uint256 returnedCumulative;
+        uint256 netTotal;
+        uint256 relocatedRecycled;
+        uint256 replacedFresh;
+        uint256 replacedRecycled;
+        uint256 writtenDown;
+        uint256 entryIndex;
     }
 
     /// @notice #1434 P2-w2 — one zeroed day's compensation state on a
@@ -7596,6 +8021,44 @@ library LibVaipakam {
         // move UNRELATED receipts' recovery credit into the overage
         // quarantine off the global position balance.
         bool conflictClawed;
+        // #1566 closure 2 cutover PR 2 (Codex #2206 r5–r7) — what this
+        // remit's consumption took of the CLASSIFIED recycled queue, and
+        // EXACTLY which records it wrote and by how much (`entryIndex << 128
+        // | amount`, in walk order), so a release reverses exactly its own
+        // consumption on exactly those records — never another take's units
+        // in a record the walk passed, never a backlog drained ahead of it
+        // (Codex #2206 r7). Cleared by the release.
+        uint256 classifiedTake;
+        uint256[] classifiedTakes;
+        /// @dev #1566 transport epochs PR 3a — whether this reservation's own
+        ///      wire carried its fresh/recycled split (the d5 shape, the
+        ///      compensation shape, and every shape after them). The mirror
+        ///      types such a packet at ingress, so a split ATTESTATION for it
+        ///      has nothing to add and is refused there; recording the wire
+        ///      here lets the canonical side refuse it before the caller pays
+        ///      a transport fee (Codex #2224 r1).
+        ///
+        ///      APPENDED AFTER EVERY EXISTING MEMBER, and that placement is
+        ///      load-bearing (Codex #2224 r2): an earlier revision put it
+        ///      among the bools, which shifts the packed byte offsets of
+        ///      `quarantineAcked` and `conflictClawed` for every reservation
+        ///      already in storage — an old quarantine stamp would be read as
+        ///      this flag, an old conflict stamp as the quarantine stamp, and
+        ///      the evidence behind stranded-return eligibility and
+        ///      classification-conflict handling would be corrupted by the
+        ///      upgrade itself. A new member goes at the END of a struct,
+        ///      never among it.
+        ///
+        ///      It reads FALSE for every reservation dispatched before it
+        ///      existed. The canonical side can therefore prove the wire only
+        ///      for rows it dispatched from here on; for older rows the
+        ///      destination stays the authority and a caller may still pay for
+        ///      a message the mirror refuses. That residual is accepted rather
+        ///      than papered over with an operator-set watermark: the platform
+        ///      is pre-live, so there are no older rows in practice, and a
+        ///      watermark that guessed wrong would refuse a legitimate
+        ///      attestation for good — a worse failure than a wasted fee.
+        bool splitOnWire;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -7625,6 +8088,12 @@ library LibVaipakam {
         //   return, never its own delivery ack. Updated by the confirm /
         //   demote hook when a provisional credit settles.
         uint8 classification;
+        /// @dev #1566 closure 2 cutover PR 1 — the ingress stamp of the
+        ///      packet that created this receipt (a receipt is delivered
+        ///      once: a second packet under it is refused at the record), so
+        ///      a later demotion or R4 return can find the packet's record.
+        ///      Zero for a receipt that predates the stamp. Appended.
+        bytes32 packetHash;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

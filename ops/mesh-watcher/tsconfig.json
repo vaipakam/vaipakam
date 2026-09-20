@@ -22,5 +22,16 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  // SRC ONLY here; `tsconfig.test.json` covers `test/**` (#2235 r1 P2).
+  //
+  // The split exists so Node's types stay OUT of the Worker's program. The
+  // store tests drive the real SQL through `node:sqlite`, which needs
+  // `@types/node`; putting that in this `types` array would also make
+  // `process`, `Buffer` and Node's timer signatures visible to `src/`, where
+  // they are not all what the Workers runtime provides — a type surface that
+  // says "this compiles" about code that would not run.
+  //
+  // Both configs are typechecked in CI, so tests stay covered rather than
+  // being dropped from the program the way a src-only config alone would.
+  "include": ["src/**/*.ts"]
 }

@@ -2,6 +2,8 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
@@ -18,16 +20,6 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *         the mutating facet's private helpers stay behind.
  */
 contract RewardRemittanceLensFacet {
-    /// @dev The receipt key derivation — MUST stay byte-identical to
-    ///      {RewardRemittanceFacet._receiptKey} (receipts are written
-    ///      there and read here through the same mapping).
-    function _receiptKey(
-        address remitter,
-        uint256 remitId
-    ) private pure returns (bytes32) {
-        return keccak256(abi.encode(remitter, remitId));
-    }
-
     /// @notice #1434 P2-w2 — a day's compensation state (pools payable at
     ///         w3's repricing; `provisional` = awaiting its V3 broadcast).
     function getDayCompensation(uint256 dayId)
@@ -51,7 +43,7 @@ contract RewardRemittanceLensFacet {
         uint256 remitId
     ) external view returns (LibVaipakam.StrandedRecovery memory) {
         return LibVaipakam.storageSlot().strandedRecoveries[
-            _receiptKey(remitter, remitId)
+            LibRewardCustody.remitReceiptKey(remitter, remitId)
         ];
     }
 
@@ -248,7 +240,7 @@ contract RewardRemittanceLensFacet {
         uint256 remitId
     ) external view returns (LibVaipakam.ReceivedRemit memory) {
         return LibVaipakam.storageSlot().receivedRemits[
-            _receiptKey(remitter, remitId)
+            LibRewardCustody.remitReceiptKey(remitter, remitId)
         ];
     }
 
@@ -315,7 +307,13 @@ contract RewardRemittanceLensFacet {
      *         On the canonical chain, and on an `Unconfigured` one, the
      *         bound does not apply and `remaining` reads
      *         `type(uint256).max`.
-     * @return paid      Armed fresh this chain has paid out.
+     * @return paid      Fresh reward value this chain has paid out of its
+     *                   delivered funding, whatever the day's vintage
+     *                   (#1566 closure 2 — charged at the claim's delivery
+     *                   and at the reward-absorption credit, never per day
+     *                   inside the walk). The field keeps its historical
+     *                   "Armed" name; renaming a storage field is a layout
+     *                   event the provenance walker gates on.
      * @return remaining Delivered-less-paid allowance still spendable.
      */
     function getDeliveredFreshBound()
@@ -355,12 +353,24 @@ contract RewardRemittanceLensFacet {
      *         remits, so both figures stay zero there regardless of how much
      *         it may legitimately pay. Base's own bound is
      *         {LibInteractionRewards.poolRemaining}.
-     * @return counted   Σ fresh component of deliveries that were both
-     *                   composition-known and armed-attributable.
-     * @return uncounted Σ fresh-looking amount of every delivery that failed
-     *                   either test. Non-zero means this chain's counted
-     *                   funding UNDERSTATES what Base sent — the safe
-     *                   direction, but one an operator must see.
+     * @return counted   Σ authenticated fresh component of every
+     *                   composition-known delivery, whatever days it funds
+     *                   (#1566 closure 2 retired the armed-attributable
+     *                   test; the paid side is vintage-blind, so the
+     *                   received side is too).
+     * @return uncounted Σ fresh-looking value this chain did not count: an
+     *                   old-wire packet whose composition was NOT stated
+     *                   lands here whole, and a composition-KNOWN delivery
+     *                   contributes its scaling residue — the receiver
+     *                   scales the fresh and recycled shares to what actually
+     *                   arrived with flooring, so on a fee-on-transfer or
+     *                   rounded delivery their sum sits below the amount and
+     *                   the difference is booked here rather than invented
+     *                   as fresh (Codex #2151 r1 P2). Non-zero means this
+     *                   chain's counted funding UNDERSTATES what Base sent —
+     *                   the safe direction, but one an operator must read
+     *                   with both sources in mind; the cutover epoch of the
+     *                   second closure-2 PR reconciles the old-wire part.
      */
     function getDeliveredFreshPosition()
         external
@@ -528,13 +538,30 @@ contract RewardRemittanceLensFacet {
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.ReceivedRemit storage rec =
-            s.receivedRemits[_receiptKey(remitter, remitId)];
+            s.receivedRemits[LibRewardCustody.remitReceiptKey(remitter, remitId)];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
         if (rec.srcChainId != s.baseChainId) {
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
             remitId, rec.amount, rec.remitter
+        );
+    }
+
+    /// @notice #1566 transport epochs PR 3a — quote the native transport fee
+    ///         for {RewardRemittanceFacet.attestRemitSplit} on `remitId`: this
+    ///         reservation's recorded split, toward the mirror it was sent to.
+    /// @dev    Refuses exactly what the send refuses, by calling the same
+    ///         rule rather than restating it (Codex #2224 r6) — including the
+    ///         canonical-role gate, which matters because a demoted
+    ///         deployment KEEPS its historical reservations and would
+    ///         otherwise price an operation it can no longer perform.
+    function quoteSplitAttestationFee(uint256 remitId) external view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (address messenger, LibVaipakam.RemitReservation storage r) =
+            LibRewardCustody.requireAttestable(s, remitId);
+        fee = IRewardMessenger(messenger).quoteSendSplitAttestation(
+            r.dstChainId, address(this), remitId, r.fresh, r.recycled
         );
     }
 
@@ -547,5 +574,40 @@ contract RewardRemittanceLensFacet {
         uint256 remitId
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().strandedReturnShortfall[remitId];
+    }
+
+    /// @notice #1566 closure 2 cutover PR 1 — a value-bearing reward packet
+    ///         as it LANDED, by its ingress stamp
+    ///         `keccak256(sourceChainId, transportMessageId)` (or the
+    ///         per-source sequence a transport without an id fell back to).
+    ///         `unclassified` is what the packet still holds in the holder's
+    ///         `Unclassified` row. An unknown stamp reads as all zeros
+    ///         (`arrivedAt == 0`).
+    function getIngressPacket(
+        bytes32 packetHash
+    ) external view returns (LibVaipakam.IngressPacket memory) {
+        return LibVaipakam.storageSlot().ingressPackets[packetHash];
+    }
+
+    /// @notice #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress
+    ///         attribution's figures, the way every custody row is
+    ///         auditable: `uncountedHeld + returnedHeld` equals the holder's
+    ///         `Unclassified` row, and `reservedHeld` is the part of the
+    ///         stranded-recovery reservation whose tokens are in the holder
+    ///         (the Diamond's backing position subtracts only the rest).
+    /// @return uncountedHeld Untyped delivery remainders and quarantined
+    ///         compensation held in the row, net of R4 returns.
+    /// @return returnedHeld  Stranded returns for receipts that predate
+    ///         recovery attribution, held in the row.
+    /// @return reservedHeld  The held part of `strandedRecoveryReserved`.
+    function getUnclassifiedPosition()
+        external
+        view
+        returns (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uncountedHeld = s.rewardCustodyUnclassifiedUncounted;
+        returnedHeld = s.rewardCustodyUnclassifiedReturned;
+        reservedHeld = s.strandedRecoveryReservedHeld;
     }
 }

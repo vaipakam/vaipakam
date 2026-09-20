@@ -11,6 +11,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - GitHub repo for this project is: https://github.com/vaipakam/vaipakam.
 - Always look for a better approach and let the user know about it to decide
 
+### Clean architecture and fund transparency outrank effort (user directive 2026-09-09)
+
+**Verbatim intent: always go for the architecturally clean approach and the
+most transparent way on funds and operation details — do things accordingly
+and appropriately EVEN IF IT TAKES MORE EFFORT AND TIME.**
+
+This is a standing tie-breaker, not a preference. When a cheaper option and a
+cleaner one both satisfy the request, the cleaner one is the requirement.
+
+- **Structure over speed.** Take the layered, modular placement even when it
+  costs an extra module, an extra seam, or another review round. Where the
+  clean version is genuinely outside the change at hand, say so and open an
+  issue — never ship the shortcut silently.
+- **Funds and lifecycle state get stated, never implied.** Any surface
+  touching principal, interest, fees, collateral, claims, or a position's
+  status must say what it knows, say what it does not know, and never render
+  a figure or an outcome it cannot substantiate. An unstated unknown is a
+  defect. This is why the forced-close card names no amount, why the protocol
+  console reports an undeterminable age as unknown rather than as an age, and
+  why a settlement route the app cannot drive says so instead of offering a
+  button that would fail.
+- **Operational posture is disclosed.** Where a deployment's own config
+  changes what a user sees or may do, the surface says the config exists.
+  Hiding a capability behind a flag without telling the reader is the failure
+  this rule prevents.
+- **Docs vs code divergence resolves toward intent.** `docs/FunctionalSpecs/`
+  states what the platform is MEANT to do; when it and the code disagree, the
+  code is the candidate bug. Resolving a divergence by rewriting the spec to
+  match the implementation requires an explicit recorded human decision —
+  see `_CodeVsDocsAudit.md`.
+- **Prefer the honest expensive answer to the cheap confident one.** Copy
+  admitting an intrinsic race, an unknown timestamp, or an unroutable
+  settlement is better product than copy implying a certainty the system does
+  not have.
+
+The same principle is recorded for all agents in
+[`AGENTS.md`](AGENTS.md) under "Standing principle".
+
 ## Build & Test Commands
 
 All commands must be run from the `contracts/` directory:
@@ -561,8 +599,16 @@ artifacts and stay in their respective env / config:
   `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
-  `KEEPER_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
-  `ZEROEX_API_KEY`, `ONEINCH_API_KEY`.
+  `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+  `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
+  `ONEINCH_API_KEY`. All three arming flags are `secret_text`, not
+  entries in `wrangler.jsonc`'s `vars` — the two `REWARD_*` ones are
+  **absent** on the live Worker, which leaves THREE scheduled passes
+  dark — `rewardBudgetRemit` and `remitAck` both gate on
+  `REWARD_REMIT_ENABLED`, `commitmentReport` on
+  `REWARD_COMMIT_ENABLED` — and are
+  provisioned the same way when armed. Their `*_LOOKBACK_DAYS` /
+  `*_LANE_CAP` knobs are plain vars, not secrets.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
   `TG_BOT_TOKEN`) — see "Two Telegram bots" below.
@@ -581,11 +627,65 @@ Do NOT go back to requiring `--keep-vars` per call site: that predicate is
 unbounded (package scripts, manifest aliases, Makefile variables, sourced
 helpers, shell functions and aliases, matrix expressions, reusable-workflow
 inputs, Windows shims, `eval`, marketplace actions), and #1995 spent 242 review
-findings demonstrating it. The flag is still correct where it appears and the
-tree-wide scanner
-(`apps/keeper/scripts/check-deploy-invocations.mjs`) is kept as defence in
-depth — it now reads `keep_vars` too, so it stays quiet while the declaration
-holds and resumes full command-level scrutiny for any Worker that loses it.
+findings demonstrating it. The flag is still correct where it appears.
+
+**The tree-wide scanner that enforced it is RETIRED** —
+`apps/keeper/scripts/check-deploy-invocations.mjs` and its fixtures are
+deleted, and so is the `keeper deploy guard (--keep-vars, tree-wide)` CI job.
+#1995 kept it as defence in depth on top of the declaration; what that bought
+was seventeen open issues (#2104, #2106, #2108, #2110, #2112–#2119,
+#2121–#2124, #2126), each a different parsing edge of the same unbounded
+predicate and five of them false reports on a correct tree, with no issue
+naming a real file in this repo.
+`apps/keeper/scripts/check-keep-vars.mjs` — structural, unconditional in CI —
+is now the whole implemented defence, and it asserts the declaration on
+**EVERY wrangler config in the tracked tree**, at any depth and in any
+directory, whatever Worker it names and whether or not that Worker has vars
+today. `apps/app` and `apps/www` therefore declare it too.
+
+That unconditionality is itself a #1995-pattern fix, and the second one in this
+PR. A first attempt scoped the rule — configs whose `name` matched a
+var-carrying Worker and which carried a `compatibility_date`, under `apps/` or
+`ops/` — and review returned **six P1s in one round**, each a different way a
+deploy reaches a protected Worker through an excluded config: `--name`
+overrides the stored name, `--compatibility-date` supplies the missing date,
+`--env staging` merges an `env.staging.name`, `--config` reaches any path, a
+sixth Worker is in no list. Answering those needs wrangler's CLI-and-config
+merge semantics — the same unbounded inference, moved from shell text into
+JSON. **Do not reintroduce a scoping predicate here.** A config is identified
+by wrangler's own filename convention (`wrangler*.json`/`.jsonc`/`.toml`),
+which is a test on a string. A named environment is NOT separately
+required to declare it — `keep_vars` is top-level-only, wrangler rejects it
+inside an `env.<name>` block, and the top-level value is what a `--env` deploy
+reads (an intermediate revision required it there and was wrong). A **Pages**
+config is exempt, keyed on `pages_build_output_dir`: wrangler refuses
+`keep_vars` outright for Pages, so requiring it would leave no version of the
+file that satisfies both. A TOML config is refused with an instruction rather
+than parsed. Directories are skipped by exact path where the name is ambiguous
+(`contracts/lib` is vendored, `packages/lib` is ours) and by basename only for
+unambiguously generated ones. A config is ALSO identified by **content** — a
+top-level string `compatibility_date`, the field wrangler requires of a Worker
+and that no manifest, tsconfig, lockfile or ABI in this tree carries. That
+second identification closes the **outside-the-`wrangler*`-convention** gap
+(owner decision 2026-09-20): `--config` accepts any path, so a deployable
+config checked in as `configs/agent-staging.jsonc` is reachable, and the
+retired scanner did cover it. Anything either test finds goes through the one
+requirement pass, and the remedy is the same — declare the key. **Do not key
+content discovery on `name`, or on `name` + `main`**: that is what reddened the
+committed tree on `ops/mesh-watcher/package.json`, and the whole reason this
+works is that the discriminator is a field no manifest has.
+
+Two residues are stated in the script's header rather than implied. A config
+**generated or rewritten at deploy time** — a genuine reduction against the
+scanner, which fell back to judging the command when it could not read the
+selected file, and the one gap still open. And a non-conventionally-named
+config that is **TOML**, or that also **omits `compatibility_date`** and takes
+the date from `--compatibility-date`. The TOML one is a deliberate trade: the
+JSON test is a shape test on a parsed object, while TOML would need either the
+grammar this check refuses to carry or a raw substring that reports a file
+merely mentioning the field in a comment — buying one narrow case with a new
+false-report class. **Do not rebuild the command scanner**; if the generated-
+config gap has to close, it needs an owner decision first.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.
@@ -673,7 +773,7 @@ message, manually re-executable once unpaused, so nothing is lost.
 **Chain scope (Phase 1)**: Ethereum, Base, Polygon, Arbitrum, Optimism.
 BNB Chain is **testnet-tier only** (a cross-chain mirror / rehearsal
 network), NOT a Phase-1 mainnet target — the FunctionalSpecs
-(`ProjectDetailsREADME.md`, `TokenomicsTechSpec.md` §~227) are the source
+(`ProjectDetailsREADME.md`, `TokenomicsTechSpec.md` §10) are the source
 of truth for the mainnet set. zk-rollup chains and Solana are out of scope.
 
 Full detail in
@@ -856,9 +956,25 @@ were right.
 - The diamond holds the custody VPFI until terminal; no intermediate
   transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
 
-Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
-§5.2b and the Phase 5 section of
-[`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).
+Full detail — **current** — in
+[`docs/FunctionalSpecs/TokenomicsTechSpec.md`](docs/FunctionalSpecs/TokenomicsTechSpec.md)
+§6a–§6b.
+
+The Phase 5 section of
+[`docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md)
+is **HISTORY, not current behaviour**, and was cited here as "full detail"
+until #2140 — which is how a reader could have rebuilt retired funds
+handling from it. It is the record of the peg-custody path and is worth
+reading only for how GRANDFATHERED loans settle. It states three things in
+the present tense that the scope banner above retires: the **full LIF
+charged up front in VPFI** (#1352 moved the charge to the lending asset and
+the rate to 0.2%), a **time-weighted average over the loan's own window**
+(T-087 Sub 1.B removed loan-window averaging — the weighting is in the TIER),
+and a refinance **starting a fresh window "with its own snapshot"** (nothing
+writes those anchors; see the DEAD list above). A release note is a dated
+changelog and is never re-edited, so it cannot be corrected in place — the
+label is the fix, and the same caution applies to every other release note
+this document points at.
 
 ## VPFI rewards/recycling copy rules — release-gate checklist (RL-6)
 
@@ -966,7 +1082,7 @@ Rules:
 ## Executing forge
 
 - When ever running forge build, forge script or forge test, run them in high priority
-- [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
+- Prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, and low priority causes 2–3× slowdowns under parallel desktop load. (This line used to link a `feedback_forge_high_priority.md` that is not in the repository — the rule is the whole content, so it is stated here instead.)
 
 ### Live testnet review is part of definition-of-done (user directive 2026-07-05)
 
@@ -1226,24 +1342,84 @@ Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
 ONLY when its trigger words appear in the PR description or a PR
 comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
-- **Docs-only PRs**: **merge after 2 Codex review rounds** (user
-  directive 2026-08-07, verbatim "merge after 2 rounds as these are
-  docs only PR, we can go for full convergence on codex findings for
-  PR with code" — superseding the 2026-07-10 "up to 5 rounds"
-  directive, which had itself superseded an earlier 2-round wording).
-  Run round 1 → triage/fix every finding → round 2 → triage/fix →
-  merge, regardless of whether round 2 was clean; merge earlier if a
-  round converges (zero P1/P2). The cap bounds ROUNDS, not diligence —
-  every finding still gets the accept-fix / refute / defer triage
-  gate. Skipping entirely remains OK for trivial mechanical edits —
-  say so in the thread.
-- **Coding PRs**: keep triggering rounds until findings **converge**,
-  allowing up to 10 rounds after the last SURFACE CHANGE in the code
-  as a hard backstop. Only a substantive code change resets the
-  count; replies, thread resolutions, and comment-only / docs-only
-  tweaks do NOT (amended 2026-07-05, superseding the earlier
-  "after the last diff push" wording). Re-trigger after every fix
-  push.
+> **Round caps — user directive 2026-09-13, verbatim:** "if the PR is docs
+> only don't go beyond 10 rounds, merge them after 10 rounds if there are
+> no P1 findings; if its code related, then don't go beyond 30 rounds,
+> take a step back and see if you can fix the issue at the root rather
+> than patching them in every path." These caps are written INTO the two
+> bullets below rather than beside them; **10** replaces the 2026-08-07
+> two-round docs rule outright. The **30** it names as the coding loop's
+> outer bound is SUPERSEDED — see the next paragraph.
+>
+> **Round 15 — the MANDATORY root scout — user directive 2026-09-20,
+> verbatim:** "if the PR codex finding rounds go beyond 15 rounds, then
+> recheck (scout) the code if the issues could be arrested in the root
+> rather than patching them up in every path." — followed the same
+> morning, when a separate 30-round stop had been kept alongside it, by:
+> **"replace 28 or 30 with 15."**
+>
+> **15 is the trigger AND the stop — one number.** This supersedes both
+> the 30-round outer bound of 2026-09-11/13 and the 28-round scout
+> trigger of 2026-09-17 (itself lowered from 30 the same day). The
+> history is recorded so an operator who remembers an older number knows
+> which one is live. The earlier shape — a trigger sitting a few rounds
+> inside a later stop — is gone: at round 15 the loop STOPS, the root
+> scout is mandatory, and the PR merges then only if no P1/P2 stands in
+> the latest round. There is no later cap to land a restructured fix
+> against; the scout at 15 is what decides whether the PR merges or is
+> re-cut.
+>
+> What the scout is, precisely: a re-examination of the CODE the findings
+> keep landing on — asking whether one shared rule, one boundary, one
+> deletion removes the whole class — **not** another re-read of the
+> findings, which is what a loop that has reached round 15 has been doing
+> for 15 rounds already.
+>
+> Two things this does NOT license. It is not permission to loop toward
+> 15: the escalate-to-owner signal after **10 rounds since the last
+> surface change** still fires, and fires earlier, so a loop should
+> rarely reach this trigger without the owner already knowing. And the
+> root-fix duty does not WAIT for 15 — the same-seam-three-rounds-running
+> signal below fires whatever the round number, and every recorded
+> precedent (#1995, #2066 at round 6, #2149 at round 13, #2232 at round 1)
+> was caught short of it. Round 15 is the backstop for a loop that slipped
+> past all of them, not the point at which root-cause thinking begins.
+
+- **Docs-only PRs**: loop to convergence, and **never past round 10**;
+  at round 10 merge if **no P1 finding stands** (user directive
+  2026-09-13). Merge earlier the moment a round converges (zero P1/P2) —
+  most docs PRs still end at round 1 or 2. The 2026-08-07 "merge after 2
+  rounds" wording is SUPERSEDED: two rounds is no longer a gate to stop
+  at, and a docs PR with findings keeps looping up to the cap. (That
+  wording had itself superseded a 2026-07-10 "up to 5 rounds" directive;
+  the history is recorded here only so an operator who remembers an older
+  number knows which one is live.) The cap bounds ROUNDS, not diligence —
+  every finding still gets the accept-fix / refute / defer triage gate.
+  Skipping Codex entirely remains OK for trivial mechanical edits — say
+  so in the thread.
+- **Coding PRs**: keep triggering rounds until findings **converge**, and
+  **never past round 15** (user directive 2026-09-20, replacing the 30 of
+  2026-09-13 and the 28 of 2026-09-17). **At round 15 a fresh scout of the
+  code for a root arrest is MANDATORY**, and the PR merges at 15 only if
+  no P1/P2 stands in the latest round — see the banner above for what
+  that scout is and what it does not license. Two earlier
+  signals still fire inside that ceiling: escalate to the owner rather
+  than grinding past 10 rounds after the last SURFACE CHANGE in the code
+  (only a substantive code change resets that count; replies, thread
+  resolutions and comment-only / docs-only tweaks do NOT — amended
+  2026-07-05, superseding the earlier "after the last diff push"
+  wording), and **when successive rounds keep finding the same seam —
+  the same helper, the same class of input — the next step is a ROOT fix**
+  (one shared rule, one tokeniser, one module boundary) rather than
+  another per-path patch. Record the root fix in the PR as such. A loop
+  that has patched the same seam three rounds running is the signal,
+  whatever the round number. The recorded precedents are **#1995** (242
+  findings enumerating one unbounded predicate, replaced by a bounded
+  declaration), **#2066** (a declaration heuristic deleted after six
+  rounds of edges) and **#2149** (thirty findings across rounds 2–13,
+  every one an edge of a speculative branch nothing had ever observed on
+  that path; deleting the branch at round 13 is what reached a clean
+  round 21). Re-trigger after every fix push.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
@@ -1263,10 +1439,16 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   independent adversarial self-review BEFORE Codex round 1 so the
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
-- Merge gate: **coding PRs** only after a converged round AND green CI;
-  **docs-only PRs** after the 2-round cap above (converged or not) AND
-  green CI. All review conversations must be resolved before merge
-  (repo rule) in both cases.
+- Merge gate: **coding PRs** only after a converged round AND green CI,
+  never past round 15, and at round 15 only after the root scout the
+  2026-09-20 directive requires, with no P1/P2 standing; **docs-only PRs** after a
+  converged round, or at the round-10
+  cap with no P1 standing, AND green CI. All review
+  conversations must be resolved before merge (repo rule) in both cases —
+  and on a repo whose ruleset sets `required_review_thread_resolution`,
+  that is not just convention: unresolved threads hold the PR at
+  `mergeable_state: blocked` with every check green and no indication
+  why, which cost real time on #2223.
 
 ## Release notes — per-PR fragments
 

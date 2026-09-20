@@ -27,7 +27,8 @@
 import type { Abi, AbiFunction } from 'viem';
 import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
 import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
-import interactionRewardsLensAbi from '../../../packages/contracts/src/abis/InteractionRewardsLensFacet.json';
+import rewardCustodyAbi from '../../../packages/contracts/src/abis/RewardCustodyFacet.json';
+import rewardReconciliationAbi from '../../../packages/contracts/src/abis/RewardReconciliationFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
@@ -39,12 +40,29 @@ export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
  *  actually missing. */
 export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
 
-/** The compiled `InteractionRewardsLensFacet` ABI (#1434 P2-w2) — the
- *  backing snapshot the arrival-reservation check reads (balance, bucket,
- *  and the stranded-recovery reservation in one pinned-block tuple). Own
+/** #1566 slice 4 PR B — the custody facet, for the VERSIONED backing snapshot
+ *  (`getRecycleBackingSnapshotV2`): the legacy eight fields (#1434 P2-w2 —
+ *  balance, bucket, and the stranded-recovery reservation in one
+ *  pinned-block tuple) plus the activation flag and the holder's balance /
+ *  attributed total, which the recovery-reservation check needs once a
+ *  chain's reward custody has moved onto the holder. The ONLY backing
+ *  snapshot this Worker reads (Codex #2186 r3): the legacy lens tuple
+ *  carries no activation state, and the flag that does lives on this same
+ *  facet, so a Diamond that cannot answer V2 cannot establish
+ *  non-activation either — the legacy tuple never stands in. Its own
  *  import for the same attribution reason as the repatriation ABI. */
-export const INTERACTION_REWARDS_LENS_ABI =
-  interactionRewardsLensAbi as unknown as Abi;
+export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
+
+/** #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+ *  facet, for the two REATTRIBUTION cumulatives a reclassification moves
+ *  (`getReconciliationTotals`): credit moved into the bucket or its payout
+ *  figure by a correction (claimed), and out of them (a destination). Both
+ *  are terms of the bucket-composition identity and of the reported
+ *  cumulative's floor, so the composition bound and the derivation
+ *  re-statement need them exactly as they need the repatriated-out term.
+ *  Its own import for the same attribution reason as the repatriation ABI:
+ *  a chain not yet refreshed with the facet reverts this read alone. */
+export const REWARD_RECONCILIATION_ABI = rewardReconciliationAbi as unknown as Abi;
 
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
@@ -59,7 +77,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
   /** Which compiled facet ABI carries the view (default: aggregator). */
-  readonly facet?: 'repatriation' | 'lens';
+  readonly facet?: 'repatriation' | 'custody' | 'reconciliation';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -168,15 +186,38 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     ],
     facet: 'repatriation',
   },
-  // #1434 P2-w2 — the backing snapshot on `InteractionRewardsLensFacet`:
-  // the balance / arrival-reservation tuple the recovery-reservation check
-  // compares. Shape-asserted like every other watched view — the reader's
-  // positional casts of output [6] as `strandedRecoveryReserved` and
-  // [7] as `recoveryPositionReserved` must fail
-  // AT STARTUP on any drift, not silently misread a neighbouring word
-  // (Codex #1634 r1 P2).
+  // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
+  // log's length and the bucket's two reattribution cumulatives: a
+  // correction's credit moved INTO the bucket / its payout figure
+  // (claimed) and OUT of them (a destination). Terms of the composition
+  // identity and of the reported-cumulative floor.
   {
-    name: 'getRecycleBackingSnapshot',
+    name: 'getReconciliationTotals',
+    inputs: [],
+    outputs: [
+      'entries:uint256',
+      'reattributedIn:uint256',
+      'reattributedOut:uint256',
+    ],
+    facet: 'reconciliation',
+  },
+  // #1434 P2-w2 / #1566 slice 4 PR B — the VERSIONED backing snapshot on
+  // the custody facet: the balance / arrival-reservation tuple the
+  // recovery-reservation check compares (the legacy lens's eight fields
+  // unchanged), then the activation flag and the holder's balance (reported
+  // unknown rather than zero when it cannot be read) and attributed total.
+  // On an ACTIVATED chain the bucket and the recovery position are custody
+  // of the holder, so the legacy relation `vpfiBalance >= bucket + reserved
+  // + recovery` no longer holds there by design. Shape-asserted like every
+  // other watched view — the reader's positional casts of output [6] as
+  // `strandedRecoveryReserved`, [7] as `recoveryPositionReserved` and
+  // [8]..[11] as the custody fields must fail AT STARTUP on any drift, not
+  // silently misread a neighbouring word (Codex #1634 r1 P2). The legacy
+  // `getRecycleBackingSnapshot` is deliberately NOT watched (Codex #2186
+  // r3): it cannot say whether custody is activated, and the flag that can
+  // lives on the same facet as V2, so it could never stand in for V2.
+  {
+    name: 'getRecycleBackingSnapshotV2',
     inputs: [],
     outputs: [
       'vpfiBalance:uint256',
@@ -185,13 +226,20 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'outstandingRecycled:uint256',
       'paidOutRecycled:uint256',
       'keeperBudget:uint256',
+      // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE part of the
+      // arrival reservation (a quarantine the holder backs is netted out
+      // on chain), so `vpfiBalance >= this` stays the exact relation.
       'strandedRecoveryReserved:uint256',
       // #1434 P2-w5 — the Base recovery-position earmark (position
       // balance + overage quarantine), the second protocol-ledger
       // subtrahend inside `unearmarked`. Zero on mirrors.
       'recoveryPositionReserved:uint256',
+      'custodyActivated:bool',
+      'holderBalanceKnown:bool',
+      'holderBalance:uint256',
+      'holderAttributed:uint256',
     ],
-    facet: 'lens',
+    facet: 'custody',
   },
 ] as const;
 
@@ -216,7 +264,8 @@ function describe(io: { name?: string; type: string }): string {
 export function assertAbiShape(
   abi: Abi = REWARD_AGGREGATOR_ABI,
   repatAbi: Abi = REPATRIATION_ABI,
-  lensAbi: Abi = INTERACTION_REWARDS_LENS_ABI,
+  custodyAbi: Abi = REWARD_CUSTODY_ABI,
+  reconciliationAbi: Abi = REWARD_RECONCILIATION_ABI,
 ): void {
   const problems: string[] = [];
 
@@ -224,9 +273,11 @@ export function assertAbiShape(
     const source =
       expected.facet === 'repatriation'
         ? repatAbi
-        : expected.facet === 'lens'
-          ? lensAbi
-          : abi;
+        : expected.facet === 'custody'
+          ? custodyAbi
+          : expected.facet === 'reconciliation'
+            ? reconciliationAbi
+            : abi;
     const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,

@@ -44,6 +44,24 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'repayLoan',
   'repayPartial',
   'precloseDirect',
+  // The lender's forced close-out of a borrower who stopped paying.
+  //
+  // By this list's own test — "does refusing it trap the user, or their
+  // money" — this is among the clearest entries here. The lender is
+  // owed, the borrower has not paid, the grace period has expired, and
+  // `triggerDefault` is the ONLY route that moves the collateral to
+  // where they can claim it. Withholding it over unsigned paperwork
+  // would leave a lender's capital sitting in a defaulted position with
+  // no way to reach it, which is the exact trap the list exists to
+  // prevent — and unlike most entries, the counterparty here has
+  // already broken the agreement.
+  //
+  // It opens nothing: the loan is terminalised by the call. That it is
+  // permissionless does not change the classification — a keeper being
+  // ABLE to close it is not the same as the lender being able to, and
+  // on a deployment whose keeper is idle the lender is the only one
+  // with the incentive to act.
+  'triggerDefault',
   // The ATOMIC handoffs (review round 11 P1). Both end the caller's own
   // position in one transaction against a commitment somebody else has
   // already made: `sellLoanViaBuyOffer` pays a lender out into a

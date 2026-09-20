@@ -10,6 +10,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 
 /// @dev The slice of {VaipakamRewardMessenger} the Base-side dispatch
 ///      surfaces drive — the two #1568 C2 instruction kinds.
@@ -579,7 +580,7 @@ contract RepatriationFacet is
         address token,
         uint256 declaredAmount,
         uint256 actualReceived
-    ) external nonReentrant whenNotPaused onlyCanonical {
+    ) external nonReentrant onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address receiver = s.repatriationReceiver;
         if (receiver == address(0) || msg.sender != receiver) {
@@ -811,8 +812,9 @@ contract RepatriationFacet is
 
         // CEI: the one-shot marker precedes every effect and interaction.
         s.repatInstructionState[key] = INSTR_EXECUTED;
-        LibVpfiRecycle.debitRepatriationSurplus(s, amount);
-        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        // #1566 slice 4 PR B — the primitive moves the tokens itself (from
+        // the holder's recycled row on an activated deployment).
+        LibVpfiRecycle.debitRepatriationSurplus(s, amount, sender);
         messageId = IVpfiReturnSender(sender).sendRepatriationReturn{
             value: msg.value
         }(dst, issuingBase, authId, amount, refundAddress);
@@ -913,6 +915,16 @@ contract RepatriationFacet is
         uint256 dst = uint256(s.baseChainId);
         _assertWithinLaneCapacity(s, dst, amount, false);
 
+        // #1566 closure 2 cutover PR 1 — what the holder backs of this
+        // record leaves its `Unclassified` row for the sender, measured
+        // (every figure that described it there steps down with it); the
+        // rest — a quarantine that predates the activation — leaves the
+        // Diamond's balance as before. Taken BEFORE the record is retired,
+        // since the held figure lives on the record.
+        uint256 fromHolder = sr.held < amount ? sr.held : amount;
+        if (fromHolder != 0) {
+            LibRewardCustody.callReleaseUnclassifiedForReturn(key, sender, fromHolder);
+        }
         // CEI: retire the CHUNK and release its earmark before the token
         // movement; any send failure reverts the whole return. The
         // remainder (possibly zero) rides the wire so Base can tell a
@@ -927,7 +939,9 @@ contract RepatriationFacet is
         s.strandedRecoveryReserved =
             reserved > amount ? reserved - amount : 0;
         s.strandedReturnedCumulative += amount;
-        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        if (amount > fromHolder) {
+            IERC20(s.vpfiToken).safeTransfer(sender, amount - fromHolder);
+        }
         messageId = IVpfiReturnSender(sender).sendStrandedReturn{
             value: msg.value
         }(dst, remitter, remitId, dayId, amount, remainingAfter, refundAddress);

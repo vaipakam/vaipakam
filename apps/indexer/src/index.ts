@@ -58,17 +58,33 @@
  * signing Worker reads (#1722). The GET surface stays public-read.
  */
 
+import {
+  hasD1Binding,
+  maintenanceRefusal,
+  maintenanceSkipNotice,
+  resolveD1Binding,
+} from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
   readSecret,
   getChainConfigs,
+  isDoIngestEnabled,
+  earlyRouteEnv,
+  WORKER_NAME,
   type WorkerEnv,
   type Env,
   type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
+import {
+  MAX_SUBREQUESTS_PER_INVOCATION,
+  createBudget,
+  meterEnv,
+  meterFetch,
+  reportSpend,
+} from './subrequestBudget';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   pruneOldCancelledOffers,
@@ -88,15 +104,13 @@ export { ChainIngestDO } from './chainIngestDO';
 import { DO_PATH_CADENCE_MINUTES, shouldRunCronTick } from './cronRouting';
 
 /**
- * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
- * present AND the `CHAIN_INGEST_VIA_DO` rollout flag, so deploying the new DO
- * doesn't re-route ingest until the operator flips it. The cron and the webhook
- * route consult the SAME gate so they're always consistent (a half-enabled
- * state — webhook→DO while the cron still scans inline — would mean two writers).
+ * #757 — is the DO ingest path active? The DEFINITION moved to `env.ts`
+ * (#2202): the cron and the webhook route must consult the same gate as
+ * everything reading the resolved env, and three route modules were deriving
+ * a half of it from the one field they could see. Re-exported under the
+ * local name so this module's call sites read unchanged.
  */
-function doIngestEnabled(env: WorkerEnv): boolean {
-  return env.CHAIN_INGEST_VIA_DO === 'true' && !!env.CHAIN_INGEST_DO;
-}
+const doIngestEnabled = isDoIngestEnabled;
 import {
   handleOffersStats,
   handleOffersActive,
@@ -153,9 +167,71 @@ export default {
     if (!shouldRunCronTick(controller.scheduledTime, doIngestEnabled(env))) {
       return;
     }
+    // #2239 — decline the whole tick when this build has no D1 binding. Every
+    // pass below reads or writes the database, so one line here beats a
+    // separate failure from each `waitUntil` continuation — and declining
+    // before the budget is created keeps a maintenance tick from spending
+    // Secrets Store reads it has no use for.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      // AND NOTHING ELSE — in particular, this tick does NOT reach out to the
+      // ingest Durable Objects to make them drop their inherited sockets.
+      //
+      // It did, for one round (#2252 r10), and removing it again is the root
+      // fix for a seam that produced a correct finding three rounds running.
+      // Each round found a different path by which the wake failed to reach
+      // every socket: the alarm that closes them is not pending on an idle DO
+      // (r9→r10), the cadence gate above skips four ticks in five so the wake
+      // would not run at all on those (r11), and reaching every DO without
+      // resolving any secret means keeping a hand-written list of chain ids
+      // beside the real one (r11). That last cost is the tell: the wake could
+      // only be made complete by ENUMERATING the chains — the same unfinishable
+      // list this whole change exists to stop writing, reproduced one level
+      // down inside it.
+      //
+      // What the wake actually bought was LATENCY, not correctness, because
+      // the client does not depend on the socket closing. `railHealth` demotes
+      // to polling unless BOTH the last cursor-carrying frame and the last
+      // cursor ADVANCE are inside `cadenceSec × 1.5`; an auto-answered `ping`
+      // carries no cursor and nothing advances while ingest is stopped, so a
+      // held-open socket goes unhealthy on its own within that window — 450s
+      // on the 5-minute DO cadence. That bound is client-side, needs nothing
+      // from this Worker, and is MEASURED, unlike the in-flight residual.
+      //
+      // So the honest shape is: a socket inherited by a maintenance build may
+      // keep auto-answering `ping` until the client demotes it, bounded by the
+      // server-reported cadence × 1.5. The alarm still closes sockets on any DO
+      // that has an alarm pending — which is every DO that was mid-catch-up
+      // when the window opened — and that path costs nothing and enumerates
+      // nothing. The remainder is named rather than chased.
+      return;
+    }
+    // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point
+    // because the ceiling it tracks is the INVOCATION's, not any one pass's.
+    // Every pass below draws on this one object, so the figure reported is
+    // the tick's total — which is the number the platform is comparing
+    // against 50. A per-pass budget would give each pass a fresh 50 and
+    // report four comfortable numbers for an invocation that had already
+    // been killed (#2194 is that condition, measured rather than argued).
+    const budget = createBudget(MAX_SUBREQUESTS_PER_INVOCATION, 'cron tick');
+    // Every pass registered below is ALSO collected here, so the tick can
+    // report what it spent once they have all settled (#2227 r1
+    // `4033546280`). Reporting it is the point of measuring it: the passes
+    // run concurrently and share one allowance, so no single pass can say
+    // what the invocation cost, and until something says it out loud the
+    // constants this lane is tuned to stay arguments rather than evidence.
+    const passes: Promise<unknown>[] = [];
+    const runPass = (p: Promise<unknown>): void => {
+      passes.push(p);
+      ctx.waitUntil(p);
+    };
     // T-078 — resolve the Secrets Store RPC bindings once, here at
     // the entry point; both passes get the plain resolved env.
-    const resolved = await resolveEnv(env);
+    //
+    // COUNTED: up to a dozen Secrets Store reads happen here, before any pass
+    // starts, and they come out of the same allowance.
+    const resolved = meterEnv(await resolveEnv(env, budget), budget);
     // #757 — chain ingest. When the per-chain ingest Durable Object is bound,
     // the cron PINGS each chain's DO (target 0 ⇒ "scan to safe head"): every
     // chain is serviced each minute (not one per round-robin tick), and the DO
@@ -171,6 +247,13 @@ export default {
     // as that scan and can exhaust the budget — recreating the dropped-
     // event condition round-robin exists to prevent. The same constraint
     // that shaped the ingest pass shapes this one.
+    //
+    // That census is INCOMPLETE and the conclusion is still right: it
+    // omits `sweepUnpublishedListings` below, whose worst case is 35 (5
+    // rows x 7 subrequests each), so on the legacy inline path this
+    // invocation reaches ~77 against the cap of 50 — see #2194. Per-chain
+    // capture is bounded for a stronger reason than the note gives, not a
+    // weaker one.
     //
     // Per-chain cadence is therefore `len(chains) × tick`, which the
     // surface discloses as its capture time rather than implying live.
@@ -196,7 +279,7 @@ export default {
       const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
       const ordinal = Math.floor(minute / tickMinutes);
       const target = backingChains[Math.abs(ordinal) % backingChains.length];
-      ctx.waitUntil(
+      runPass(
         captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
@@ -209,36 +292,39 @@ export default {
       const ns = env.CHAIN_INGEST_DO;
       for (const chain of getChainConfigs(resolved)) {
         const stub = ns.get(ns.idFromName(String(chain.id)));
-        ctx.waitUntil(
-          stub
-            .fetch('https://chain-ingest-do/trigger', {
-              method: 'POST',
-              body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
-            })
-            .catch((err) => {
-              // eslint-disable-next-line no-console
-              console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
-            }),
+        // A DO ping is an outbound request like any other, so it goes through
+        // the same counted sender rather than a second mechanism that could
+        // drift from it. `meterFetch` takes the sender to wrap precisely so a
+        // non-global one can be counted (#2227 r1's rule 2).
+        const send = meterFetch(budget, stub.fetch.bind(stub));
+        runPass(
+          send('https://chain-ingest-do/trigger', {
+            method: 'POST',
+            body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+          }),
         );
       }
     } else {
       // Each pass is wrapped so a transient D1 / RPC blip on one pass can't
       // wedge the next — ticks fail one-at-a-time rather than tick-wide.
-      ctx.waitUntil(
-        runChainIndexer(resolved).catch((err) => {
+      runPass(
+        runChainIndexer(resolved, budget).catch((err) => {
           // eslint-disable-next-line no-console
           console.error('[indexer] runChainIndexer pass failed:', err);
         }),
       );
     }
-    ctx.waitUntil(
+    runPass(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).
-    ctx.waitUntil(
+    runPass(
       pruneOldWebhookDeliveries(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
@@ -258,11 +344,17 @@ export default {
     // DROP the OpenSea retry safety net the moment an operator enables DO
     // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
     // DO remains a nice-to-have follow-up, no longer a correctness gate.)
-    ctx.waitUntil(
-      sweepUnpublishedListings(resolved).catch((err) => {
+    runPass(
+      sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] sweepUnpublishedListings pass failed:', err);
       }),
+    );
+    // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
+    // rather than `all`: a failed pass still spent what it spent, and the
+    // number is most worth having on the tick that went wrong.
+    ctx.waitUntil(
+      Promise.allSettled(passes).then(() => reportSpend(budget, 'tick exit')),
     );
   },
 
@@ -272,6 +364,41 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(req.url);
+
+    // #2239 — one answer for every route while this build has no D1 binding.
+    //
+    // Blunt ON PURPOSE, and it sits above the early routes deliberately. A
+    // per-route list of which routes touch D1 is the enumeration this whole
+    // mechanism exists to stop, and this Worker is the clearest case for the
+    // blunt rule: its read-API answers FROM the database, so during a binding
+    // move there is nothing truthful for it to serve. A 503 that says so is
+    // better than a 200 carrying rows from a database about to be discarded.
+    //
+    // The WebSocket upgrade below is covered by the same refusal. A socket
+    // accepted now would be fed by an ingest lane that is not running, which
+    // is the "live socket, stale data" state that route's own comment calls
+    // out as the thing to avoid.
+    if (!hasD1Binding(env.DB)) {
+      // CARRY THE NORMAL CORS POLICY (#2252 r3 P1). This branch sits above
+      // every route's preflight, and a 503 with no
+      // `Access-Control-Allow-Origin` is invisible to a browser: the caller
+      // sees an opaque network failure, never the status and never the body
+      // saying nothing read here would be current. This Worker's CORS is open
+      // (T-041), so the header is `*` whatever the route.
+      //
+      // The preflight must SUCCEED for the same reason — a refused `OPTIONS`
+      // means the browser never issues the real request, so there is no 503
+      // for anyone to read. `handleLoansPreflight` is reused rather than a
+      // fourth copy of the policy being written here: it is the most
+      // permissive of this Worker's three preflight shapes, and during a
+      // maintenance window every route answers the same way regardless.
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      const { body, status, headers } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, {
+        status,
+        headers: { ...headers, 'Access-Control-Allow-Origin': '*' },
+      });
+    }
 
     // #757 — inbound chain webhook. Dispatched BEFORE the global `resolveEnv`
     // so an unauthenticated POST never triggers the other Secrets-Store
@@ -336,12 +463,14 @@ export default {
     // the scheduled pass — but awaiting the Secrets Store fan-out below
     // would reintroduce exactly the failure the recut removed: a degraded
     // secrets binding could push the response past the browser's abort and
-    // discard a valid D1 series. It needs D1, the ingest flag and the
-    // deployment artifact; none of those come from Secrets Store.
+    // discard a valid D1 series. It needs D1, the resolved ingest gate and
+    // the deployment artifact; none of those come from Secrets Store.
     if (url.pathname === '/metrics/recycling') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
-        return handleRecyclingSeries(req, env as unknown as Env);
+        // The ONE route that skips `resolveEnv` — see `earlyRouteEnv` for
+        // why it is a named function rather than a cast (#2202 r1).
+        return handleRecyclingSeries(req, earlyRouteEnv(env));
       }
       return new Response('Not found', { status: 404 });
     }
@@ -616,7 +745,11 @@ async function handleChainEventWebhook(
     parsed.providerId ?? `${chainId}:sha256:${await sha256Hex(rawBody)}`;
 
   // 4. Early dedupe — drop a delivery already recorded (no DO work).
-  const seen = await env.DB.prepare(
+  // Through the maintenance seam (#2239): this route is dispatched BEFORE
+  // `resolveEnv`, so it is one of the paths that would otherwise read an
+  // absent binding directly.
+  const db = resolveD1Binding(env.DB, WORKER_NAME);
+  const seen = await db.prepare(
     `SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?`,
   )
     .bind(deliveryId)
@@ -646,7 +779,7 @@ async function handleChainEventWebhook(
   }
 
   // 6. Record the dedupe row ONLY after a durable accept, then ack.
-  await env.DB.prepare(
+  await db.prepare(
     `INSERT OR IGNORE INTO webhook_deliveries (delivery_id, seen_at) VALUES (?, ?)`,
   )
     .bind(deliveryId, Math.floor(Date.now() / 1000))

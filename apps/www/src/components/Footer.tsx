@@ -2,8 +2,9 @@ import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { openConsentBanner } from '../lib/consent';
-import { appUrl, legacyToolUrl } from '../lib/appUrl';
+import { appUrl } from '../lib/appUrl';
 import './Footer.css';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
 const X_URL = 'https://x.com/vaipakam';
@@ -27,13 +28,13 @@ export default function Footer() {
               }}
             />
             <p className="footer-tagline">{t('footer.tagline')}</p>
-            {/* Per-chain Diamond verify links live on `/analytics#transparency`,
-                which `apps/app` does NOT define — the link below therefore
-                uses `legacyToolUrl`, resolving to the deployment that still
-                serves it (#1959) — see
-                the "Smart Contracts" link in the Resources column. The
-                marketing footer is intentionally chain-agnostic so the
-                deployed-network set can change without a labs build. */}
+            {/* Per-chain Diamond verify links live on
+                `/analytics#transparency`, which `apps/app` now defines
+                (#1959), so this goes through `appUrl` and follows the
+                cutover like every other destination — see the "Smart
+                Contracts" link in the Resources column. The marketing
+                footer is intentionally chain-agnostic so the deployed
+                network set can change without a rebuild here. */}
           </div>
 
           <div className="footer-col">
@@ -52,19 +53,32 @@ export default function Footer() {
                 — see Navbar for the rationale. Plain `<a>` with
                 `target="_blank"` so the marketing tab stays open. */}
             <a
-              href={legacyToolUrl('/analytics#transparency')}
+              href={appUrl('analyticsTransparency')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.smartContracts')}
             </a>
-            <a
-              href={legacyToolUrl('/protocol-console')}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {t('footer.protocolConsole', 'Protocol Console')}
-            </a>
+            {/*
+              GATED ON THE SAME FLAG AS THE PAGE (#1959 review round 11).
+              With `VITE_ADMIN_DASHBOARD_PUBLIC=false` the connected app
+              renders only its hidden-state message and this site's own
+              reference page redirects home — so an ungated link here
+              advertised a surface the deployment had deliberately
+              withheld, and the two destinations it offered both refuse.
+              Third place this flag was needed: the sitemap and the page
+              metadata were gated first, and the human-facing links were
+              the ones a person would actually click.
+            */}
+            {isProtocolConsolePublic() && (
+              <a
+                href={appUrl('protocolConsole')}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t('footer.protocolConsole', 'Protocol Console')}
+              </a>
+            )}
             <a
               href={appUrl('nftVerifier')}
               target="_blank"

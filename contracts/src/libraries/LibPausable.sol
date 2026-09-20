@@ -13,7 +13,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 library LibPausable {
     /// @dev ERC-7201 namespaced storage slot.
     ///      keccak256(abi.encode(uint256(keccak256("vaipakam.storage.Pausable")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant PAUSABLE_STORAGE_POSITION =
+    /// @dev `internal` rather than `private` (#1566 slice 4 PR A, Codex #2158
+    ///      r26): the deploy tooling reads this ONE slot — raw, before a
+    ///      refresh has routed any newer getter — to learn the manual flag
+    ///      and the pause epoch, and {decodePausableSlot} is the single
+    ///      decoder of its layout.
+    bytes32 internal constant PAUSABLE_STORAGE_POSITION =
         0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400;
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
@@ -40,6 +45,15 @@ library LibPausable {
         // gated action would have reverted, so it must not count as
         // executable time. Zero ⇒ the pause state has never changed.
         uint64 lastPauseBoundaryAt;
+        // #1566 slice 4 PR A (Codex #2158 r27 P1) — a strictly monotonic count
+        // of pause-state transitions: every `pause()`, every `unpause()` that
+        // clears an active pause, every `autoPause()` that sets a window.
+        // The pause EPOCH a one-shot migration is bound to: an answer
+        // established under the manual pause at epoch N is only consumed
+        // while the epoch is still N, so a lift-and-reapply in between —
+        // even within one block, which a second-resolution timestamp cannot
+        // tell apart — refuses it. Packs into this same slot (bytes 17..24).
+        uint64 pauseTransitions;
     }
 
     /// @custom:event-category informational/admin
@@ -55,6 +69,9 @@ library LibPausable {
 
     error EnforcedPause();
     error ExpectedPause();
+    /// @dev The manual pause was required and only an auto-pause window (or
+    ///      nothing) is active.
+    error ExpectedManualPause();
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
@@ -84,10 +101,55 @@ library LibPausable {
         if (!paused()) revert ExpectedPause();
     }
 
+    /// @dev The manual flag alone — TRUE while `pause()` is in force, whether
+    ///      or not an auto-pause window is active beside it (`pause()` leaves
+    ///      an active window's timestamp intact, so `pausedUntil() == 0` is
+    ///      NOT a valid proxy for this, Codex #2158 r26 P2).
+    function manuallyPaused() internal view returns (bool) {
+        return _storage().paused;
+    }
+
+    /// @dev The pause epoch: the strictly monotonic transition count.
+    function pauseTransitions() internal view returns (uint64) {
+        return _storage().pauseTransitions;
+    }
+
+    /// @dev Decode the raw first slot of {PausableStorage} — the four fields
+    ///      pack into it: `paused` at byte 0, `pausedUntilTimestamp` in the
+    ///      next 8 bytes, `lastPauseBoundaryAt` in the 8 after that, and
+    ///      `pauseTransitions` in the 8 after those. The ONE implementation
+    ///      of that layout for every reader that must see the pause state
+    ///      before a refresh has routed the getters (the deploy scripts via
+    ///      `vm.load`); the orchestrator's shell mirror of it is pinned to
+    ///      this function by test.
+    function decodePausableSlot(bytes32 raw)
+        internal
+        pure
+        returns (bool manual, uint64 pausedUntilTimestamp, uint64 lastBoundaryAt, uint64 transitions)
+    {
+        uint256 word = uint256(raw);
+        manual = uint8(word) != 0;
+        pausedUntilTimestamp = uint64(word >> 8);
+        lastBoundaryAt = uint64(word >> 72);
+        transitions = uint64(word >> 136);
+    }
+
+    /// @dev The MANUAL pause only — an auto-pause window does not qualify.
+    ///      For a ceremony or migration whose safety depends on service NOT
+    ///      resuming until someone decides it should (#1566 slice 4 PR A,
+    ///      Codex #2158 r18 P2): an auto-pause window lapses on its own, so a
+    ///      step run under it alone would be followed by service resuming by
+    ///      no one's decision — the opposite of the fresh Unpauser decision
+    ///      the ceremony's design requires.
+    function requireManuallyPaused() internal view {
+        if (!manuallyPaused()) revert ExpectedManualPause();
+    }
+
     function pause() internal {
         PausableStorage storage ps = _storage();
         ps.paused = true;
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        ++ps.pauseTransitions;
         emit Paused(msg.sender);
     }
 
@@ -107,23 +169,30 @@ library LibPausable {
         ps.pausedUntilTimestamp = 0;
         if (wasPaused) {
             ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+            ++ps.pauseTransitions;
         }
         emit Unpaused(msg.sender);
     }
 
     /// @dev Phase 1 follow-up — auto-pause primitive. Sets a time-
-    ///      bounded pause window. No-op if the protocol is already
-    ///      paused (manual or auto), so a compromised watcher can't
-    ///      chain repeated calls into an indefinite freeze; the most
-    ///      it can do is set the window once, which auto-clears at
-    ///      `now + duration`.
+    ///      bounded pause window. An ACTIVE window is never extended, so a
+    ///      compromised watcher can't chain repeated calls into an
+    ///      indefinite freeze; the most it can do is set the window once,
+    ///      which auto-clears at `now + duration`.
+    ///
+    ///      A watcher firing while the MANUAL pause is in force is NOT a
+    ///      no-op any more (#1566 slice 4 PR A, Codex #2158 post-cap P1): it
+    ///      records its window, counts a transition and emits the event,
+    ///      exactly as it would on a live chain. The manual pause still
+    ///      dominates while it lasts, and `unpause()` still clears both —
+    ///      but the incident leaves a trace, so a scripted restore of
+    ///      service that conditions on the transition count
+    ///      (`AdminFacet.unpauseIfPauseEpoch`) refuses instead of reopening
+    ///      service over an incident it never saw. Quietly returning on an
+    ///      active window rather than reverting keeps a watcher racing an
+    ///      admin's pause out of the watcher's error logs.
     function autoPause(uint256 duration, string memory reason) internal {
         PausableStorage storage ps = _storage();
-        // Already paused (manual or active auto-pause): no-op. Quietly
-        // returning rather than reverting so a watcher firing into a
-        // race-condition with admin's manual pause doesn't surface as
-        // a confusing revert in the watcher's logs.
-        if (ps.paused) return;
         if (ps.pausedUntilTimestamp > block.timestamp) return;
         uint64 until = SafeCast.toUint64(block.timestamp + duration);
         ps.pausedUntilTimestamp = until;
@@ -132,6 +201,7 @@ library LibPausable {
         // an auto-pause; a later observation whose prior sample predates it
         // still discards the interval that straddled the (now-elapsed) window.
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        ++ps.pauseTransitions;
         emit AutoPaused(msg.sender, reason, until);
     }
 

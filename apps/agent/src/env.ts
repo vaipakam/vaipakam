@@ -1,4 +1,13 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
+
+/**
+ * This Worker's deployed name, used as the label on a D1 refusal so an
+ * operator reading the log knows which deployment refused (#2239). Kept in
+ * step with `wrangler.jsonc`'s `name` by hand — a wrong label costs a moment
+ * of confusion in a log line, which is why it is not worth a build step.
+ */
+export const WORKER_NAME = 'vaipakam-agent';
 
 /**
  * Typed env bindings for the apps/agent Worker.
@@ -128,13 +137,14 @@ type RateLimitBinding = {
 
 /**
  * The non-secret bindings + plain config — identical shape in both
- * `WorkerEnv` and `Env` (D1 / R2 / rate-limit bindings and plain
- * `var`s need no resolution). Kept in one place so the docs aren't
- * duplicated across the two env interfaces.
+ * `WorkerEnv` and `Env` (R2 / rate-limit bindings and plain `var`s need no
+ * resolution). Kept in one place so the docs aren't duplicated across the two
+ * env interfaces.
+ *
+ * `DB` is the one binding that is NOT identical in the two, and it is declared
+ * separately on each for a reason — see `WorkerEnv.DB` (#2239).
  */
 interface BaseEnv {
-  DB: D1Database;
-
   // Telegram (public bot handle — used to build the `t.me` deep
   // link; the bot TOKEN is the separate Secrets Store binding).
   TG_BOT_USERNAME?: string;
@@ -258,6 +268,21 @@ interface BaseEnv {
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv extends BaseEnv {
+  /**
+   * The D1 binding AS DELIVERED — possibly absent, and typed that way (#2239).
+   *
+   * A maintenance deployment omits `d1_databases` so that no code in the
+   * isolate can obtain a database handle while a binding is being moved. That
+   * is a real state, so the raw env tells the truth about it, and the compiler
+   * then refuses `env.DB.prepare(...)` on a raw env. Every path has to go
+   * through `resolveD1Binding` and gets the refusing stub instead of a
+   * `Cannot read properties of undefined` — which is the whole point: the
+   * chokepoint is enforced by the type checker rather than by remembering.
+   *
+   * `Env.DB` below is non-optional, so nothing downstream of the seam changes.
+   */
+  DB?: D1Database;
+
   // Per-chain RPC URLs. See the module header — #1651 replaced a
   // buy-watchdog justification that #687-A had made void.
   RPC_BASE?: SecretBinding;
@@ -294,6 +319,15 @@ export interface WorkerEnv extends BaseEnv {
  * is `undefined` and the dependent code path skips it.
  */
 export interface Env extends BaseEnv {
+  /**
+   * The RESOLVED D1 handle — always present, because the seam substitutes a
+   * refusing stub when the binding is absent (#2239). Downstream code reads
+   * `env.DB` exactly as it always has; on a maintenance build the operations
+   * throw a named refusal rather than returning data from a database that is
+   * being moved away.
+   */
+  DB: D1Database;
+
   // Per-chain RPC URLs. Missing-RPC behaviour differs per consumer
   // (`getChainConfigs` drops the chain; `intentFusionPost` skips only
   // its preflight) — read the call sites rather than trusting a
@@ -428,7 +462,11 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
   ]);
   return {
     // Non-secret bindings / config — passed straight through.
-    DB: raw.DB,
+    //
+    // `DB` is the exception: it goes through the maintenance seam, which
+    // returns the real binding untouched on every ordinary deploy and a
+    // refusing stub when the binding is absent (#2239).
+    DB: resolveD1Binding(raw.DB, WORKER_NAME),
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,

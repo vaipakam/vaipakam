@@ -19,6 +19,7 @@ import {
   AlarmClock,
   AlertTriangle,
   Bell,
+  CircleDot,
   CalendarClock,
   CheckCircle2,
   Coins,
@@ -41,6 +42,7 @@ import {
   type SeenCursor,
 } from '../lib/notifSeen';
 import { copy } from '../content/copy';
+import { isReconciledNotification } from '@vaipakam/lib/notificationProvenance';
 
 /** Cap the badge so a first-connect backlog reads "9+", not "237". */
 const BADGE_CAP = 9;
@@ -51,6 +53,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
   loan_repaid: CheckCircle2,
   loan_defaulted: AlertTriangle,
   internal_matched: Repeat,
+  // #2101 — an ending a correction found, with the cause unestablished.
+  // Deliberately NOT the repaid tick or the default warning: both would
+  // assert the cause the kind exists to withhold.
+  loan_ended: CircleDot,
   // Calendar rows (#1213 PR 2) — the indexer's time-derived reminders.
   maturity_7d: CalendarClock,
   maturity_1d: AlarmClock,
@@ -260,6 +266,16 @@ function NotificationRow({
   // secondary line; a static (no-loanId) row shows no sub rather than a
   // misleading tap prompt with nothing to open (Codex #1295 r2).
   const sub = row.loanId != null ? copy.notifications.loanRef(row.loanId) : null;
+  // #2101 — a row the indexer DERIVED by checking its records against the
+  // chain, not one it built from an announcement. The headline stays the
+  // outcome, which is right; this says how it was learned and admits the
+  // one thing the check cannot establish. Storing the provenance and not
+  // rendering it would have left a months-old default reading exactly like
+  // news of the moment (#2190 r5). It is ADDITIVE to the loan reference,
+  // not a replacement for it — the headlines are generic, so a correction
+  // that dropped the reference made two corrections indistinguishable
+  // (#2190 r7 `4008016663`).
+  const correction = isReconciledNotification(row.eventKind);
 
   const body = (
     <>
@@ -269,6 +285,9 @@ function NotificationRow({
       <span className="notif-row-text">
         <span className="notif-row-title">{title}</span>
         {sub ? <span className="notif-row-sub">{sub}</span> : null}
+        {correction ? (
+          <span className="notif-row-sub">{copy.notifications.correctionNote}</span>
+        ) : null}
       </span>
       {unread ? <span className="notif-row-dot" aria-hidden /> : null}
     </>

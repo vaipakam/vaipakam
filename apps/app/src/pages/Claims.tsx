@@ -45,7 +45,7 @@ function RewardsCard() {
   // genuinely absent rewards facet to a quiet zero snapshot instead).
   if (!snapshot && rewards.isError) {
     return (
-      <section className="card" style={{ marginBottom: 16 }}>
+      <section className="card" style={{ marginBottom: 16 }} data-testid="rewards-card">
         <div className="card-title">
           <Sparkles aria-hidden />
           <h2 style={{ margin: 0 }}>{copy.rewards.title}</h2>
@@ -94,7 +94,7 @@ function RewardsCard() {
   }
 
   return (
-    <section className="card" style={{ marginBottom: 16 }}>
+    <section className="card" style={{ marginBottom: 16 }} data-testid="rewards-card">
       <div className="card-title">
         <Sparkles aria-hidden />
         <h2 style={{ margin: 0 }}>{copy.rewards.title}</h2>

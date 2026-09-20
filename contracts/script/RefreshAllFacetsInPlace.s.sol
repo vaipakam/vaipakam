@@ -86,6 +86,11 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver, VPFI_RETURN_RECEIVER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnReceiver.sol";
@@ -101,6 +106,15 @@ import {
     RewardRemittanceReceiver,
     REMIT_RECEIVER_WIRE_GENERATION
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
+// #1566 closure 2 cutover PR 1 — the recipient port gained
+// `transportMessageId`, one interface version across the adapter and every
+// recipient; the adapter and the buyback receiver are upgraded here in the
+// same run as the reward recipients above, by the same generation probe.
+import {CcipMessenger, CCIP_MESSENGER_WIRE_GENERATION} from "../src/crosschain/CcipMessenger.sol";
+import {
+    BuybackRemittanceReceiver,
+    BUYBACK_RECEIVER_WIRE_GENERATION
+} from "../src/crosschain/BuybackRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
@@ -111,7 +125,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///      block so no window exists where historical delivered funding is
 ///      spendable again.
 interface IArmedFreshPaidSeed {
-    function seedArmedFreshPaid(uint256 amount) external;
+    function seedArmedFreshPaid(uint256 amount, uint64 pauseEpoch) external;
 
     function armedFreshPaidSeeded() external view returns (bool);
 }
@@ -212,7 +226,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 77;
+    uint256 public constant EXPECTED_FACETS = 80;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -244,10 +258,177 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         console.log("Diamond: ", diamond);
         console.log("Owner:   ", currentOwner);
 
+        // #1566 slice 4 PR A (Codex #2158 r16 P2, r19 P1) — resolved BEFORE
+        // the first transaction, like the deploy scripts: a dry run (no
+        // `--broadcast`) writes nothing, so the orchestrator can simulate this
+        // refresh on every selected chain before broadcasting on any of them,
+        // and a live broadcast that asked to skip the artifact is refused
+        // here rather than after the cuts. The writes the upgrade probes make
+        // mid-run are covered too: every artifact write goes through ONE
+        // dry-run gate inside `Deployments` itself, so this flag only shapes
+        // the messages below.
+        bool writesArtifact = Deployments.artifactWritesEnabled();
+
         vm.startBroadcast(ownerKey);
+
+        // The pause is the FIRST transaction of the run (Codex #2158 r25 P1),
+        // before the 78 implementation deploys, not after them: under `--slow`
+        // those deploys are minutes of separate transactions, during which an
+        // ordinary payout or absorption through the OLD facets would go
+        // uncharged by the widened ledger and never reach the reconstructed
+        // seed or total the migrations below install — sealing an understated
+        // counter behind a one-shot guard. Pausing first closes that window
+        // inside the run.
+        //
+        // And when a MIGRATION IS DUE — the P1-b seed or the slice-4 rebase
+        // has not run on this Diamond — the pause must already be in force,
+        // manually, and CONTINUOUSLY since the answer was established (Codex
+        // #2158 r26 P1 ×2, r27 P1 ×2): the OPERATOR states the pause epoch
+        // (the pause library's strictly monotonic transition count) at which
+        // they established the seed / total / no-history answer under the
+        // manual pause, as ARMED_FRESH_PAUSE_EPOCH; this run refuses before
+        // its first transaction unless that is still the live epoch. A lift
+        // and re-apply in between — even inside one block, which a timestamp
+        // could not tell apart — moves the count, and a payout in that gap
+        // never reaches the counter the one-shot guard is about to seal; the
+        // answer is therefore bound to the pause it was taken under, never
+        // paired with whatever pause happens to be in force. The rebase
+        // enforces the same epoch ON CHAIN. A no-history declaration is bound
+        // the same way: a payout in the gap would falsify it. The state is
+        // read from the pause library's one slot (`vm.load`), which a
+        // pre-refresh Diamond exposes before any newer getter is routed.
+        // Forge's pre-send simulation re-runs this check immediately before
+        // each broadcast, so it holds at that moment too.
+        uint64 pauseEpoch;
+        bool bootstrapOnly;
+        {
+            bool seeded = _probeBool(diamond, IArmedFreshPaidSeed.armedFreshPaidSeeded.selector);
+            bool rebased = _probeBool(diamond, RewardCustodyFacet.armedFreshPaidRebased.selector);
+            if (!seeded || !rebased) {
+                (bool manual,,, uint64 epochNow) =
+                    LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+                require(
+                    manual,
+                    "RefreshAllFacetsInPlace: a paid-side migration is due but the Diamond is not under "
+                    "the MANUAL pause - pause it (AdminFacet.pause()), establish the seed / total / "
+                    "no-history answer from the paused chain, then run; an auto-pause window does not "
+                    "count and this run will not pause on your behalf over a due migration"
+                );
+                if (epochNow == 0) {
+                    // BOOTSTRAP (Codex #2158 r28 P1): the transition count is
+                    // stamped only by the pause code this very run cuts in. A
+                    // manual pause with a ZERO count was made under the OLD
+                    // code, which never counted — so a lift-and-reapply while
+                    // the implementations deploy, before the new AdminFacet is
+                    // cut, would leave it zero, and an answer bound to "zero"
+                    // proves nothing. This run therefore cuts the facets ONLY,
+                    // leaves the Diamond paused, and DEFERS every paid-side
+                    // migration: once the new code is live, pause again (it
+                    // counts now), establish the answer under that pause,
+                    // state its epoch, and run again — the facets are then
+                    // current and the migrations run under a pinned pause.
+                    bootstrapOnly = true;
+                    console.log(
+                        "BOOTSTRAP: pause transitions are not yet counted on this Diamond (old pause code). "
+                        "Every OTHER step of this refresh still runs - the facet cuts, the retired-selector "
+                        "removal, the proxy-generation upgrades, the reward-role backfill, the "
+                        "notification-tariff migration where due; ONLY the two paid-side migrations "
+                        "(P1-b seed, slice-4 rebase) are deferred to a second run under a pause taken on "
+                        "the new code"
+                    );
+                } else {
+                    uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
+                    require(
+                        epoch != type(uint256).max,
+                        "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch (the "
+                        "pause library's transition count, bytes 17..24 of its storage slot) at which "
+                        "YOU established the seed / total / no-history answer under the manual pause. "
+                        "Refusing to pair an answer with a pause it was not taken under."
+                    );
+                    require(
+                        epoch == uint256(epochNow),
+                        "RefreshAllFacetsInPlace: the stated pause epoch is not the live one - the pause "
+                        "was lifted or re-applied since the answer was established, and a payout in "
+                        "between never reaches the counter this migration seals. Re-establish the "
+                        "answer under the current pause and state its epoch"
+                    );
+                    pauseEpoch = uint64(epoch);
+                    console.log("paid-side migration due: manual pause continuous at the stated epoch", epoch);
+                }
+            }
+        }
+        // Codex #992 — pause the diamond across the batched cuts so no
+        // `whenNotPaused` entry point can be exercised under a partially-
+        // refreshed (mixed old/new facet) configuration between batches, or if
+        // a later batch reverts. Shared libraries are inlined across facets, so
+        // a mixed configuration is exactly the unsafe state this full refresh
+        // exists to avoid. The refresh signer is the diamond owner, which on a
+        // testnet holds PAUSER/UNPAUSER. Restore ONLY if we paused it (an
+        // already-paused diamond is left paused), and only AFTER the post-cut
+        // routing verification passes — a failed verify reverts the script
+        // before the unpause broadcasts, so a bad refresh is left safely frozen.
+        bool wasPaused = AdminFacet(diamond).paused();
+        // The paused migrations below require the MANUAL pause (Codex #2158
+        // r18 P2): an auto-pause window reads as paused here but lapses on
+        // its own, resuming service by no one's decision after an
+        // irreversible migration. `paused() && pausedUntil() == 0` proves the
+        // manual flag; any other paused state gets the flag set as well
+        // (idempotent) and is then LEFT paused for a fresh Unpauser decision
+        // — this script restores service only where it found the Diamond
+        // live.
+        // ALWAYS sent, as the first transaction (Codex #2158 r29 P1): a run
+        // that had to start under the manual pause used to skip it, so an
+        // Unpauser acting after forge's pre-send simulation would have let
+        // the cuts execute live. `pause()` is idempotent on the flag; on the
+        // new pause code it counts one transition, which is why every
+        // migration below passes the operator's epoch PLUS ONE. It protects
+        // the cuts by transaction ORDER only — an unpause between two of the
+        // sequential transactions can still expose a mixed facet set for the
+        // rest of the run; the irreversible steps, by contrast, are gated on
+        // chain (manual pause + epoch) and refuse in that case.
+        // The transition count BEFORE this run's own pause: the run restores
+        // service at the end only if the count then reads exactly one more —
+        // its own pause and nothing else (Codex #2158 post-cap P2). A watcher
+        // auto-pause or a Pauser's incident pause raised while the deploys
+        // and cuts broadcast moves the count further, and an unpause here
+        // would clear an incident it knows nothing about.
+        (,,, uint64 epochBeforeOurPause) =
+            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        AdminFacet(diamond).pause();
 
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
+
+        // #1566 transport epochs PR 3a (Codex #2224 r5) — the MIRROR-SIDE
+        // INGRESS is cut FIRST, before any other item's cut goes out.
+        //
+        // Cuts are built in items[] order and sent in SELECTOR_BUDGET-sized
+        // transactions, so an item near the end of the array lands several
+        // transactions after the first. That is ordinarily harmless, but the
+        // value-bearing receive entries deliberately skip `whenNotPaused` so
+        // in-flight deliveries can still land while the Diamond is paused for
+        // migration (the migration mode) — which means the pause this script
+        // takes as its first transaction does NOT hold arrivals back. A
+        // delivery arriving mid-refresh would therefore execute whatever
+        // implementation those three selectors currently point at, and until
+        // this item's cut lands that is the OLD remittance bytecode, which
+        // records a packet with no day-list commitment for the transport
+        // epochs to materialize against — permanently, since the commitment
+        // is written once, with the record.
+        //
+        // Hoisting closes it: after the first cut transaction every arrival
+        // takes the new ingress, and before it the deployment is wholly
+        // pre-3a, where a packet without a commitment is a historical one by
+        // definition and is handled as such. The facet is safe to install
+        // ahead of the rest — its library code is inlined into its own
+        // bytecode, and the custody entry it calls is unchanged by this PR.
+        //
+        // Pausing the standalone receiver instead was considered and
+        // rejected: `unpause()` there is owner-only while `pause()` is
+        // guardian-or-owner, so a run whose broadcaster is not the owner
+        // could halt the lane and be unable to restart it — trading a
+        // bounded, self-closing window for an unbounded one.
+        _hoistFirst(items, "rewardIngressFacet");
 
         // Split each facet's canonical selector list against the live loupe:
         // routed -> Replace, unrouted -> Add.
@@ -273,19 +454,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log("   replace:", reps.length, "add:", adds.length);
         }
 
-        // Codex #992 — pause the diamond across the batched cuts so no
-        // `whenNotPaused` entry point can be exercised under a partially-
-        // refreshed (mixed old/new facet) configuration between batches, or if
-        // a later batch reverts. Shared libraries are inlined across facets, so
-        // a mixed configuration is exactly the unsafe state this full refresh
-        // exists to avoid. The refresh signer is the diamond owner, which on a
-        // testnet holds PAUSER/UNPAUSER. Restore ONLY if we paused it (an
-        // already-paused diamond is left paused), and only AFTER the post-cut
-        // routing verification passes — a failed verify reverts the script
-        // before the unpause broadcasts, so a bad refresh is left safely frozen.
-        bool wasPaused = AdminFacet(diamond).paused();
-        if (!wasPaused) AdminFacet(diamond).pause();
-
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
         uint256 batchStart;
@@ -302,6 +470,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         if (nCuts > batchStart) {
             _sendBatch(diamond, cuts, batchStart, nCuts);
         }
+
+        // Retired selectors are REMOVED (Codex #2158 r30 P1): a signature
+        // change creates a new selector, and the lists above only Add or
+        // Replace — so the OLD selector would stay routed to the OLD facet
+        // bytecode, the split Diamond by the opposite door (CLAUDE.md: "a
+        // retired selector needs an explicit Remove leg"). Each is removed
+        // only if the loupe still routes it, and the loupe is asked again
+        // afterwards so a removal that did not take is loud.
+        _removeRetired(diamond, loupe);
 
         // Recycling M1 (#1346) — one-time notification-tariff migration.
         // M1 changed the notification fee from a numeraire-denominated value
@@ -412,9 +589,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)"
             )
         );
+        // #1566 closure 2 cutover PR 1 — the ingress gained
+        // `transportMessageId` (the ingress stamp), so the 8-arg selector
+        // retired the same way, and so did the 12-arg compensation ingress.
+        bytes4 oldRemitIngress8 = bytes4(
+            keccak256(
+                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)"
+            )
+        );
+        bytes4 oldCompIngress12 = bytes4(
+            keccak256(
+                "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)"
+            )
+        );
         bool routed6 = loupe.facetAddress(oldRemitIngress6) != address(0);
         bool routed7 = loupe.facetAddress(oldRemitIngress7) != address(0);
-        if (routed6 || routed7) {
+        bool routed8 = loupe.facetAddress(oldRemitIngress8) != address(0);
+        bool routed12 = loupe.facetAddress(oldCompIngress12) != address(0);
+        if (routed6 || routed7 || routed8 || routed12) {
             address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
             (, , , bool isCanonicalReward, ) =
                 RewardReporterFacet(diamond).getRewardReporterConfig();
@@ -456,14 +648,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // already past B2-d5 has no 6-arg selector, and asking the cut to
             // Remove an unrouted one reverts, which would abort the whole
             // refresh over a migration that had already happened.
-            bytes4[] memory rmIngress =
-                new bytes4[]((routed6 ? 1 : 0) + (routed7 ? 1 : 0));
+            bytes4[] memory rmIngress = new bytes4[](
+                (routed6 ? 1 : 0) + (routed7 ? 1 : 0) + (routed8 ? 1 : 0) + (routed12 ? 1 : 0)
+            );
             uint256 k;
-            if (routed6) {
-                rmIngress[k] = oldRemitIngress6;
-                ++k;
-            }
-            if (routed7) rmIngress[k] = oldRemitIngress7;
+            if (routed6) rmIngress[k++] = oldRemitIngress6;
+            if (routed7) rmIngress[k++] = oldRemitIngress7;
+            if (routed8) rmIngress[k++] = oldRemitIngress8;
+            if (routed12) rmIngress[k++] = oldCompIngress12;
             IDiamondCut.FacetCut[] memory rmIngressCut =
                 new IDiamondCut.FacetCut[](1);
             rmIngressCut[0] = IDiamondCut.FacetCut({
@@ -473,8 +665,36 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             });
             IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
             console.log(
-                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a)"
+                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover) and the 12-arg onCompensationBudgetReceived"
             );
+        }
+        // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
+        // ingress gained the same parameter, and the Diamond-releasing
+        // `custodyUncreditFresh` retired with the in-holder unwind. Both are
+        // Removed only where routed (an unrouted Remove reverts the cut).
+        {
+            bytes4 oldStranded8 = bytes4(
+                keccak256("onStrandedReturnReceived(address,uint256,uint256,uint32,address,uint256,uint256,uint256)")
+            );
+            bytes4 oldUncredit = bytes4(keccak256("custodyUncreditFresh(uint256)"));
+            bool routedS8 = loupe.facetAddress(oldStranded8) != address(0);
+            bool routedU = loupe.facetAddress(oldUncredit) != address(0);
+            if (routedS8 || routedU) {
+                bytes4[] memory rmCutover = new bytes4[]((routedS8 ? 1 : 0) + (routedU ? 1 : 0));
+                uint256 j;
+                if (routedS8) rmCutover[j++] = oldStranded8;
+                if (routedU) rmCutover[j++] = oldUncredit;
+                IDiamondCut.FacetCut[] memory rmCutoverCut = new IDiamondCut.FacetCut[](1);
+                rmCutoverCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmCutover
+                });
+                IDiamondCut(diamond).diamondCut(rmCutoverCut, address(0), "");
+                console.log(
+                    "cutover PR 1: removed retired 8-arg onStrandedReturnReceived / custodyUncreditFresh selectors"
+                );
+            }
         }
 
         // ─── #1434 P2-w6 (#1662 r4) — retire the UNATTRIBUTED recovery
@@ -613,6 +833,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address remitReceiverP2 =
                 _readAddrOptional(".rewardRemittanceReceiver");
             if (liveRecvP2 != address(0)) {
+                // #1566 closure 2 cutover PR 2 (Codex #2200 r7) — the LIVE
+                // receiver is probed FIRST, then a distinct artifact address:
+                // a stale record naming a proxy this signer can no longer
+                // upgrade must not abort the run before the live receiver is
+                // reached. Same order as every other probe.
+                _probeUpgradeRemitReceiver(liveRecvP2);
                 if (
                     remitReceiverP2 != address(0)
                         && remitReceiverP2 != liveRecvP2
@@ -635,7 +861,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 remitReceiverP2 != address(0) || isCanonicalRewardP2,
                 "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
             );
-            _probeUpgradeRemitReceiver(remitReceiverP2);
+            // The artifact-only case (no live receiver registered): the live
+            // one, where it exists, was probed first above.
+            if (liveRecvP2 == address(0)) _probeUpgradeRemitReceiver(remitReceiverP2);
         }
 
         // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
@@ -701,6 +929,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             if (rrecvArt != liveReceiver) {
                 _probeUpgradeReturnReceiver(rrecvArt);
             }
+        }
+        {
+            // #1566 closure 2 cutover PR 1 — the adapter and every recipient
+            // are ONE interface version (`transportMessageId` on the
+            // recipient port): the CCIP adapter and the buyback receiver are
+            // upgraded here, in the same run as the reward recipients above,
+            // so no adapter ever calls a recipient with the other shape.
+            // Codex #2198 r1 — LIVE config first, the artifact second, the
+            // same rule as every probe above (see the helper).
+            _probeUpgradeTransportSatellites(diamond);
         }
 
         // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
@@ -854,7 +1092,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // wedging every rerun, paused, on a now-obsolete question. The
         // on-chain flag is authoritative and the facet cut above has already
         // routed its getter.
-        if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
+        if (bootstrapOnly) {
+            console.log("P1-b: DEFERRED - bootstrap run, see above");
+        } else if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
             console.log(
                 "P1-b: armed-fresh paid history already seeded - skipped"
             );
@@ -880,27 +1120,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
             if (seed == type(uint256).max) seed = 0;
 
-            // Codex #1699 r4 P1 — swallow ONLY the replay, never every revert.
-            //
-            // The previous catch-all reported ANY failure as "already
-            // migrated" and then unpaused with an unseeded ledger — an
-            // ADMIN_ROLE loss or an overflow would have looked identical to a
-            // benign rerun. Reusing an existing failure signal is sound, but
-            // it has to discriminate WHICH failure; anything unexpected must
-            // abort while the Diamond is still PAUSED.
-            try IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed) {
-                console.log("P1-b: seeded armed-fresh paid history:", seed);
-            } catch (bytes memory err) {
-                require(
-                    err.length >= 4
-                        && bytes4(err) == ArmedFreshPaidAlreadySeeded.selector,
-                    "P1-b: seed failed for a reason other than a replay - "
-                    "aborting while paused"
-                );
-                console.log(
-                    "P1-b: armed-fresh paid history already seeded - skipped"
-                );
-            }
+            // Codex #1699 r4 P1 / #2158 r25 P1 — no try/catch under
+            // `startBroadcast`: Forge records every external call made in
+            // broadcast mode as a transaction whether or not Solidity caught
+            // its simulated revert, so a call that is EXPECTED to revert
+            // must not be made at all. The replay is excluded by the
+            // `armedFreshPaidSeeded()` read above, and every other failure
+            // must abort while the Diamond is still PAUSED — which a plain
+            // reverting call does.
+            // The seed is bound to the pause epoch like the rebase (Codex
+            // #2158 r29 P1): the operator's epoch, plus this run's own pause
+            // transition above. The contract re-checks it.
+            IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed, pauseEpoch + 1);
+            console.log("P1-b: seeded armed-fresh paid history:", seed);
         }
 
         // ─── #1566 closure 3 (Codex #2070 r6 P1) — reward ROLE backfill ──
@@ -951,10 +1183,132 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
-        if (!wasPaused) AdminFacet(diamond).unpause();
+        // ─── #1566 slice 4 PR A (Codex #2158 r1 P1) — paid-side REBASE ──
+        //
+        // Closure 2 (#2151) widened what the paid side charges to every
+        // vintage, so a pre-existing MIRROR with ordinary-schedule payout or
+        // absorption history reads UNDER-counted after this refresh: the
+        // delivered backing those payouts already consumed shows as
+        // available again. The refresh therefore runs the one-shot rebase
+        // HERE, paused, after the role backfill (the role decides whether
+        // the received side is rewritten) and before service resumes —
+        // the same refuse-to-default posture as the P1-b seed above.
+        //
+        //   ARMED_FRESH_PAID_TOTAL=<wei>   the reconstructed ABSOLUTE total:
+        //       the deduplicated sum of every genuine historical fresh
+        //       outflow (payouts, expiry/forfeit absorptions, the fresh
+        //       portions of non-recovery remittance and compensation
+        //       dispatches; recovery redispatches excluded), with any
+        //       existing counter or retirement watermark as a FLOOR, not a
+        //       term — the call applies `max` itself.
+        //   ARMED_FRESH_REBASE_NO_HISTORY=true   there is nothing to import.
+        //
+        // The facet refuses a nonzero import — or any import over a nonzero
+        // paid OR received counter — on an INACTIVE role (Unconfigured /
+        // Detached), so a detached chain with history on either side keeps
+        // its guard open for the re-attachment ceremony. That named refusal is a DEFERRAL here
+        // whatever total the operator stated (Codex #2158 r2 P1): the
+        // truthful reconstruction is logged and carried to the
+        // re-attachment ceremony, the guard stays open, and the refresh
+        // continues, because nothing spends on a detached chain. Asking the
+        // operator to restate a zero instead would invite a false
+        // no-history declaration that consumes the guard over unrecorded
+        // history. Every other failure aborts while still paused.
+        if (bootstrapOnly) {
+            console.log("slice-4: rebase DEFERRED - bootstrap run, see above");
+        } else if (RewardCustodyFacet(diamond).armedFreshPaidRebased()) {
+            console.log("slice-4: armed-fresh paid side already rebased - skipped");
+        } else {
+            uint256 total = vm.envOr("ARMED_FRESH_PAID_TOTAL", type(uint256).max);
+            bool ackNoHistory = vm.envOr("ARMED_FRESH_REBASE_NO_HISTORY", false);
+            require(
+                total != type(uint256).max || ackNoHistory,
+                "slice-4: set ARMED_FRESH_PAID_TOTAL (the reconstructed absolute "
+                "fresh-paid total, every vintage) or ARMED_FRESH_REBASE_NO_HISTORY=true "
+                "to declare there is none. Refusing to default an irreversible "
+                "accounting migration to zero."
+            );
+            if (total == type(uint256).max) total = 0;
+
+            // The deferral is decided from READS, and the rebase is called
+            // only when it will succeed (Codex #2158 r25 P1): Forge records
+            // every external call made under `startBroadcast` as a
+            // transaction whether or not Solidity caught its simulated
+            // revert, so calling into an expected `RequiresActiveRole`
+            // refusal would put a reverting transaction on the broadcast
+            // list and stop the run after the pause, the cuts and the
+            // earlier migrations had mined. The gate mirrored here is the
+            // facet's own: an inactive role refuses any import over history
+            // on either side or any stated total. Only DETACHED is a
+            // deferral (r22 P2) — nothing spends on a detached chain and the
+            // re-attachment ceremony is where the carried total lands; an
+            // UNCONFIGURED chain with history has no such ceremony ahead of
+            // it and keeps paying under the max bound, so it aborts, paused,
+            // for an explicit disposition. Every other failure of the call
+            // itself aborts while still paused, as a plain revert does.
+            uint8 liveRole = RewardReporterFacet(diamond).getRewardRole();
+            (uint256 receivedBefore, uint256 paidBefore) = RewardCustodyFacet(diamond).armedFreshLedger();
+            bool activeRole = liveRole == _roleFromLabel("canonical") || liveRole == _roleFromLabel("mirror");
+            bool inactiveWithHistory = !activeRole && (total != 0 || paidBefore != 0 || receivedBefore != 0);
+            if (inactiveWithHistory) {
+                require(
+                    liveRole == _roleFromLabel("detached"),
+                    "slice-4: rebase would be refused on an UNCONFIGURED chain that carries history "
+                    "(paid, received, or a stated total) - no re-attachment ceremony can carry "
+                    "the figure and the chain keeps paying under the max bound; aborting while "
+                    "paused for an explicit disposition"
+                );
+                console.log(
+                    "slice-4: DETACHED reward role with history on the paid or received side, "
+                    "or a stated total - rebase DEFERRED (not called), guard left OPEN; carry "
+                    "this total to the re-attachment ceremony:",
+                    total
+                );
+            } else {
+                // The operator's epoch plus this run's own pause transition;
+                // the contract re-checks it (r27 P1).
+                RewardCustodyFacet(diamond).rebaseArmedFreshPaid(total, pauseEpoch + 1);
+                console.log("slice-4: rebased armed-fresh paid side to total:", total);
+            }
+        }
+
+        // #1566 slice 4 PR B (Codex #2186 r4) — record the COMPLETE cut on
+        // chain: the custody protocol version and the routed facet set as
+        // they stand after every cut, removal and migration above, still
+        // under this run's pause. `activateRewardCustody` and the bootstrap
+        // writers refuse on any other set, so a chain refreshed by a curated
+        // partial script — or cut again after this run — cannot switch
+        // custody onto the holder until this complete refresh runs again.
+        // The record is this run's completion attestation bound to the set
+        // it installed; `RefreshScriptFacetParityTest` is what pins that set
+        // to the deploy's.
+        RewardCustodyFacet(diamond).stampRewardCustodyCutover();
+        console.log("slice-4: complete-cut record stamped (custody protocol version + routed facet set)");
+
+        if (!wasPaused) {
+            // The check is ON CHAIN (Codex #2158 post-cap P1): a branch here
+            // runs only while Forge builds the broadcast list, so the
+            // unpause itself carries the count expected after this run's
+            // own pause and REVERTS if anyone moved it in between — the
+            // Diamond then stays paused for a fresh decision, and the run
+            // ends with that revert named rather than an incident cleared.
+            AdminFacet(diamond).unpauseIfPauseEpoch(epochBeforeOurPause + 1);
+        }
+        if (bootstrapOnly) {
+            console.log("");
+            console.log("BOOTSTRAP RUN COMPLETE - facets cut and every other refresh step run (proxy upgrades, role backfill, tariff migration where due); Diamond left PAUSED; ONLY the paid-side seed and rebase were NOT run.");
+            console.log("Next: AdminFacet.pause() once more (it counts now), establish the seed / total / no-history");
+            console.log("      answer under that pause, set ARMED_FRESH_PAUSE_EPOCH to the pause library's transition");
+            console.log("      count, and run refresh() again - the facets are current and the migrations then run.");
+        }
 
         vm.stopBroadcast();
 
+        if (!writesArtifact) {
+            console.log("");
+            console.log("dry run: addresses.json NOT written (no transaction was sent)");
+            return;
+        }
         // Persist the new addresses so the deployments sync picks them up.
         for (uint256 i; i < items.length; ++i) {
             Deployments.writeFacet(items[i].key, items[i].impl);
@@ -1067,6 +1421,30 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address(new RewardBroadcastFacet()),
             _getRewardBroadcastSelectors()
         );
+        // Slot 77: #1566 slice 4 PR A — the custody facet. The refresh cuts
+        // the FACET only; it never deploys or binds a `RewardCustodyHolder`
+        // (design §5d) — that is `DeployRewardCustodyHolder.s.sol`, run once
+        // per live chain, or the paused replacement ceremony.
+        items[77] = Item(
+            "rewardCustodyFacet",
+            address(new RewardCustodyFacet()),
+            _getRewardCustodySelectors()
+        );
+        // Slot 78: #1566 closure 2 cutover PR 2 — the reconciliation facet.
+        // A NEW facet changes the routing hash, so this refresh's complete
+        // cut re-stamps the cutover record below; an activated chain must
+        // take this full refresh, never a curated one.
+        items[78] = Item(
+            "rewardReconciliationFacet",
+            address(new RewardReconciliationFacet()),
+            _getRewardReconciliationSelectors()
+        );
+        // Slot 79: #1566 transport epochs PR 3a — the mirror-side ingress facet,
+        // split out of the remittance facet. Its three selectors are ROUTED
+        // already (to the old remittance bytecode), so the partition cuts them
+        // as Replace toward this facet and the remittance item no longer lists
+        // them: one refresh moves both halves.
+        items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
@@ -1265,10 +1643,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new RewardRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
-                gen,
-                "-> 3) impl:",
+                string.concat(
+                    "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1287,10 +1674,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VaipakamRewardMessenger());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".rewardMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
-                gen,
-                "-> 3) impl:",
+                string.concat(
+                    "P2-w4/w5: upgraded VaipakamRewardMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REWARD_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1311,10 +1707,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnSender());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnSenderImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnSender (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnSend (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_SENDER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
@@ -1332,13 +1737,170 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address newImpl = address(new VpfiReturnReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
             console.log(
-                "P2-w5: upgraded VpfiReturnReceiver (wire gen",
-                gen,
-                "-> 2) impl:",
+                string.concat(
+                    "P2-w5: upgraded VpfiReturnReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(VPFI_RETURN_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
                 newImpl
             );
         }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 — the adapter's generation probe. The
+    ///      CCIP router is a constructor immutable of the implementation, so
+    ///      the new implementation is built with the router the live proxy
+    ///      reports (`getRouter`), never with an operator-typed one.
+    function _probeUpgradeCcipMessenger(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < CCIP_MESSENGER_WIRE_GENERATION) {
+            address router = CcipMessenger(proxy).getRouter();
+            address newImpl = address(new CcipMessenger(router));
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeAddress(".ccipMessengerImpl", newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
+            console.log(
+                string.concat(
+                    "cutover PR 1: upgraded CcipMess (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(CCIP_MESSENGER_WIRE_GENERATION),
+                    ") impl:"
+                ),
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 — the buyback receiver's generation probe.
+    function _probeUpgradeBuybackReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < BUYBACK_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new BuybackRemittanceReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeBuybackRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
+            console.log(
+                string.concat(
+                    "cutover PR 1: upgraded BuybackRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(BUYBACK_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1566 closure 2 cutover PR 1 (Codex #2198 r1) — the buyback
+    ///      receiver and the CCIP adapter, LIVE-config-over-artifact like
+    ///      every probe above (#1660 r9). An artifact-only read skipped a
+    ///      live receiver whose artifact key was missing or stale, and the
+    ///      adapter upgraded just before would then have called it with the
+    ///      five-argument shape — every buyback delivery failing until the
+    ///      artifact was repaired and the refresh rerun.
+    ///
+    ///      The buyback receiver: the Diamond's registered one first, then
+    ///      a distinct artifact address (a dark-but-deployed proxy meets
+    ///      current code). The adapter has no register of its own on the
+    ///      Diamond — the Diamond names its satellites and each satellite
+    ///      names the adapter it trusts (`messenger()`) — so the adapter
+    ///      every LIVE satellite calls through is probed, then the
+    ///      artifact's. Each probe is idempotent on the generation constant,
+    ///      so one adapter named by five satellites is upgraded once and
+    ///      read four times. No adapter anywhere (no live satellite names
+    ///      one, no artifact) is a hard stop: every chain has one, and a
+    ///      refresh that upgraded the recipients without it would leave the
+    ///      adapter calling them with the old shape.
+    function _probeUpgradeTransportSatellites(address diamond) private {
+        address liveBuyback = TreasuryFacet(diamond).getBuybackRemittanceReceiver();
+        address buybackArt = _readAddrOptional(".buybackRemittanceReceiver");
+        _probeUpgradeBuybackReceiver(liveBuyback);
+        if (buybackArt != liveBuyback) _probeUpgradeBuybackReceiver(buybackArt);
+
+        (address liveMsgr, , , , ) =
+            RewardReporterFacet(diamond).getRewardReporterConfig();
+        (, address liveSender, address liveReceiver, ) =
+            RepatriationFacet(diamond).getRepatriationPosition();
+        address[6] memory adapters = [
+            _satelliteMessenger(liveMsgr),
+            _satelliteMessenger(
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver()
+            ),
+            _satelliteMessenger(liveSender),
+            _satelliteMessenger(liveReceiver),
+            _satelliteMessenger(liveBuyback),
+            _readAddrOptional(".ccipMessenger")
+        ];
+        bool any;
+        for (uint256 i = 0; i < adapters.length; ++i) {
+            if (adapters[i] == address(0)) continue;
+            any = true;
+            _probeUpgradeCcipMessenger(adapters[i]);
+        }
+        require(
+            any,
+            "cutover PR 1: refresh needs the CCIP adapter (a live satellite's messenger() or .ccipMessenger)"
+        );
+    }
+
+    /// @dev The adapter a satellite trusts — `messenger()` on every
+    ///      recipient and on the return sender; zero when the satellite is
+    ///      unset or does not answer the selector.
+    function _satelliteMessenger(address satellite) private view returns (address) {
+        if (satellite == address(0)) return address(0);
+        (bool ok, bytes memory ret) =
+            satellite.staticcall(abi.encodeWithSignature("messenger()"));
+        if (!ok || ret.length != 32) return address(0);
+        return abi.decode(ret, (address));
+    }
+
+    /// @dev #1566 transport epochs PR 3a — move one item to the front of the
+    ///      refresh so its cut goes out in the FIRST batch. Order is otherwise
+    ///      irrelevant here (every other consumer of `items` is a set
+    ///      operation: the write-back, the verification sweep, the parity
+    ///      test), which is why a swap is enough and no ordering machinery is
+    ///      needed. Reverts on an unknown key rather than silently leaving the
+    ///      order unchanged — a rename must not quietly reopen the window this
+    ///      exists to close.
+    function _hoistFirst(Item[] memory items, string memory key) internal pure {
+        bytes32 want = keccak256(bytes(key));
+        for (uint256 i; i < items.length; ++i) {
+            if (keccak256(bytes(items[i].key)) == want) {
+                Item memory head = items[0];
+                items[0] = items[i];
+                items[i] = head;
+                return;
+            }
+        }
+        revert("RefreshAllFacetsInPlace: _hoistFirst key not found");
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {
@@ -1373,6 +1935,59 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 reps[ri++] = sels[i];
             }
         }
+    }
+
+    /// @dev Selectors this refresh RETIRES: signatures this upgrade changed on
+    ///      a facet that is live somewhere. `RefreshScriptFacetParityTest`
+    ///      pins that none of them is routed by the current DeployDiamond
+    ///      (removing a live function would strand it) and that the list
+    ///      names the legacy seed.
+    function _retiredSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
+        // only the amount; it now carries the pause epoch too, so the old
+        // selector must not survive routed to bytecode that checks neither
+        // the manual pause, the epoch, nor the cap.
+        s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
+    }
+
+    /// @dev Remove every retired selector the loupe still routes, in one cut,
+    ///      and verify through the loupe that none remains.
+    function _removeRetired(address diamond, IDiamondLoupe loupe) private {
+        bytes4[] memory retired = _retiredSelectors();
+        bytes4[] memory routed = new bytes4[](retired.length);
+        uint256 n;
+        for (uint256 i; i < retired.length; ++i) {
+            if (loupe.facetAddress(retired[i]) != address(0)) routed[n++] = retired[i];
+        }
+        if (n == 0) {
+            console.log("retired selectors: none routed on this Diamond - nothing to remove");
+            return;
+        }
+        bytes4[] memory toRemove = new bytes4[](n);
+        for (uint256 i; i < n; ++i) toRemove[i] = routed[i];
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: toRemove
+        });
+        IDiamondCut(diamond).diamondCut(cut, address(0), "");
+        for (uint256 i; i < n; ++i) {
+            require(
+                loupe.facetAddress(toRemove[i]) == address(0),
+                "RefreshAllFacetsInPlace: a retired selector is still routed after the Remove cut"
+            );
+        }
+        console.log("retired selectors removed (verified unrouted):", n);
+    }
+
+    /// @dev A bool getter probed without reverting the run when it is not
+    ///      routed yet: an unrouted one-shot flag on a pre-upgrade Diamond
+    ///      reads as "not done", which is exactly what it means.
+    function _probeBool(address diamond, bytes4 selector) private view returns (bool) {
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSelector(selector));
+        return ok && ret.length == 32 && abi.decode(ret, (bool));
     }
 
     /// @dev `REWARD_ROLE_EXPECTED` label -> `LibVaipakam.RewardRole` ordinal.

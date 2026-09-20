@@ -79,6 +79,13 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  prenotify_scan_cursor: {
+    class: 'replay-derived',
+    reason:
+      'pre-notify scan watermark — a deadline to resume at (#2219). Nothing ' +
+      'is born here: a cleared row restarts the scan at the nearest deadline, ' +
+      'which re-reads rather than skips',
+  },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   notifications: {
     class: 'replay-derived',
@@ -89,6 +96,13 @@ const CLASSIFICATION = {
     reason: 'keeper band-edge producer state; cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
+  loan_reconcile_quarantine: {
+    class: 'replay-derived',
+    reason:
+      'reconciliation findings about `loans` rows; the pass rebuilds them from the chain, ' +
+      'and a restored entry naming a loan the replay has not recreated would withhold ' +
+      "reminders for a row that no longer exists in that shape (#2212)",
+  },
 
   // decision-needed — every entry here is #1481 scope. Do NOT clear
   // these in §6 and do NOT assume the archive covers them.

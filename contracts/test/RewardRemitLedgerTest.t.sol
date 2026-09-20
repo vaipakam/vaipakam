@@ -2,10 +2,12 @@
 pragma solidity 0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -34,6 +36,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  */
 contract RewardRemitLedgerTest is SetupTest {
     RewardRemittanceFacet internal remit;
+    RewardIngressFacet internal ingress;
     RewardRemittanceLensFacet rlens;
     RewardCompensationDispatchFacet comp;
     MockRewardMessenger internal rewardMessenger; // data path (reports + acks)
@@ -80,6 +83,7 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger = new MockRewardMessenger(address(diamond));
         ccip = new MockCrossChainMessenger();
         remit = RewardRemittanceFacet(address(diamond));
+        ingress = RewardIngressFacet(address(diamond));
         rlens = RewardRemittanceLensFacet(address(diamond));
         comp = RewardCompensationDispatchFacet(address(diamond));
         mutator = TestMutatorFacet(address(diamond));
@@ -88,6 +92,10 @@ contract RewardRemitLedgerTest is SetupTest {
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
         rep.setBaseChainId(CHAIN_BASE);
         rep.setIsCanonicalRewardChain(true);
+        // #1566 slice 4 PR B — a canonical chain dispatches out of the custody
+        // holder, bounded by what was funded: activate and fund the pool. The
+        // freeze this arms is why the mirror fixture below sets the role RAW.
+        activateRewardCustodyForTest(address(vpfiTok), 10_000_000 ether);
         rep.setRewardMessenger(address(rewardMessenger));
         TreasuryFacet(address(diamond)).setCrossChainMessenger(address(ccip));
 
@@ -138,6 +146,134 @@ contract RewardRemitLedgerTest is SetupTest {
     function _remitDay1ToArb() internal returns (uint256 total) {
         (total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 69_000_000 ether);
+    }
+
+    // ─── #1566 transport epochs PR 3a — the split attestation (send) ────────
+
+    /// The attestation carries exactly the reservation's recorded split toward
+    /// the chain it was sent to, under this deployment's own identity as the
+    /// remit wire carries it; the lens quotes it through the messenger; it is
+    /// re-sendable; an unknown reservation refuses on both entries.
+    ///
+    /// The fixture stands the reservation in for one an OLDER WIRE dispatched
+    /// (Codex #2224 r1): every payload this deployment builds carries the
+    /// split, so every reservation it creates is refused — the attestable set
+    /// is exactly the rows that predate that wire, which is what this entry
+    /// exists for.
+    function test_AttestRemitSplit_CarriesTheReservationsRecordedSplit() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        mutator.setRemitSplitOnWireRaw(1, false);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
+        assertGt(r.total, 0, "fixture: a reservation exists");
+        rewardMessenger.setQuoteNative(0.003 ether);
+        assertEq(rlens.quoteSplitAttestationFee(1), 0.003 ether, "quoted through the messenger");
+        bytes32 id = remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+        assertEq(id, rewardMessenger.attestMessageId());
+        assertEq(rewardMessenger.attestSendCount(), 1);
+        assertEq(uint256(rewardMessenger.lastAttestDst()), uint256(CHAIN_ARB), "toward the mirror it went to");
+        assertEq(rewardMessenger.lastAttestRemitter(), address(diamond), "this deployment's own identity");
+        assertEq(rewardMessenger.lastAttestRemitId(), 1);
+        assertEq(rewardMessenger.lastAttestFresh(), r.fresh, "the recorded fresh figure");
+        assertEq(rewardMessenger.lastAttestRecycled(), r.recycled, "the recorded recycled figure");
+        assertEq(rewardMessenger.lastAttestValue(), 0.003 ether);
+        remit.attestRemitSplit(1, payable(address(this))); // re-sendable: the mirror accepts one
+        assertEq(rewardMessenger.attestSendCount(), 2);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationUnknown.selector, 77));
+        remit.attestRemitSplit(77, payable(address(this)));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationUnknown.selector, 77));
+        rlens.quoteSplitAttestationFee(77);
+    }
+
+    /// Codex #2224 r6 — the fee quote refuses exactly what the send refuses,
+    /// because both read ONE rule. A demoted deployment keeps its historical
+    /// reservations, so without the shared role gate the quote would price an
+    /// operation the send already knows it cannot perform.
+    function test_AttestRemitSplit_QuoteRefusesWhateverTheSendRefuses() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        mutator.setRemitSplitOnWireRaw(1, false);
+        rewardMessenger.setQuoteNative(0.003 ether);
+        assertGt(rlens.quoteSplitAttestationFee(1), 0, "priced while canonical");
+
+        // Demote. The production setter is frozen until the era carry-forward
+        // exists, so the raw role writer stands in for the state a demotion
+        // reaches — which is precisely the state this gate is about: the
+        // historical reservations stay in storage after the role leaves.
+        mutator.setRewardRoleRaw(CHAIN_BASE, false, true);
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        rlens.quoteSplitAttestationFee(1);
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+    }
+
+    /// Codex #2224 r2 — EVERY path that creates a reservation marks it as
+    /// dispatched on a wire that carries its split, because every payload
+    /// this deployment builds does. The budget remittance marked its rows
+    /// from round 1; the two manual-compensation dispatches did not, and the
+    /// eligibility rule then admitted an attestation the mirror had to reject
+    /// after the caller had paid for it. This drives all three paths, so a
+    /// fourth block that forgets the marker fails here rather than in
+    /// production. Three blocks cover four public entries: both
+    /// from-recovery entries route through the block their sibling uses.
+    function test_EveryDispatchPathMarksTheReservationsWire() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        assertTrue(rlens.getRemitReservation(1).splitOnWire, "the budget remittance");
+
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 2e18);
+        assertTrue(rlens.getRemitReservation(2).splitOnWire, "the manual compensation dispatch");
+
+        // The third block: the supplemental dispatch, which writes its own
+        // reservation rather than sharing the manual one's. (The two
+        // from-recovery entries route through the blocks their siblings use,
+        // so three blocks cover all four public entries.)
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 2, 4e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 0);
+        assertTrue(rlens.getRemitReservation(3).splitOnWire, "the supplemental dispatch");
+
+        uint256 created = rlens.getRemitReservationNonce();
+        assertEq(created, 3, "fixture: every creating block drove once");
+        for (uint256 id = 1; id <= created; ++id) {
+            assertTrue(
+                rlens.getRemitReservation(id).splitOnWire,
+                "no reservation this deployment creates is attestable"
+            );
+        }
+    }
+
+    /// Codex #2224 r1 — the send refuses, BEFORE any fee is paid, every
+    /// reservation whose attestation could only revert at the destination:
+    /// one whose own wire carried the split (the mirror typed its packet at
+    /// ingress) and one that moved no value (it dispatched no packet and
+    /// wrote no receipt). The fee quote refuses exactly the same set, because
+    /// both read one rule — a caller can never be quoted for a message the
+    /// send would refuse, or vice versa.
+    function test_AttestRemitSplit_RefusesWhatTheMirrorCouldOnlyReject() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        rewardMessenger.setQuoteNative(0.003 ether);
+        uint256 sendsBefore = rewardMessenger.attestSendCount();
+
+        // As dispatched: the d5 wire carried the split.
+        assertTrue(rlens.getRemitReservation(1).splitOnWire, "every payload this deployment builds is d5");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
+        rlens.quoteSplitAttestationFee(1);
+
+        // A row that moved no value: no packet, no receipt to name.
+        mutator.setRemitSplitOnWireRaw(1, false);
+        mutator.setRemitReservationSplitRaw(1, 0, 0);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
+        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
+        rlens.quoteSplitAttestationFee(1);
+
+        assertEq(rewardMessenger.attestSendCount(), sendsBefore, "no message left, so no fee was spent");
     }
 
     function _outstanding()
@@ -1464,20 +1600,35 @@ contract RewardRemitLedgerTest is SetupTest {
 
     /// @dev Reconfigure the SAME diamond as a mirror (matches the d1
     ///      commitment-test convention: one deploy, role flipped).
+    /// @dev #1566 slice 4 PR B — the suite's setUp activates the custody,
+    ///      which arms the role freeze; the tests that flip the role (this
+    ///      fixture, the arming helper and the demotion tests) lift it RAW
+    ///      first and then drive the PRODUCTION setters, so their residual
+    ///      retirement and arming semantics are exercised as before. The
+    ///      freeze itself is pinned in RewardCustodyCutoverTest.
+    function _unfreezeRole() internal {
+        TestMutatorFacet(address(diamond)).setRewardRoleChangesFrozenRaw(false);
+    }
+
     function _configureMirror() internal {
         vm.chainId(CHAIN_ARB);
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
+        _unfreezeRole();
         rep.setIsCanonicalRewardChain(false);
         rep.setBaseChainId(CHAIN_BASE);
+        // A mirror starts with an EMPTY delivered ledger until Base remits;
+        // the setUp's canonical funding (and the retirement the demotion
+        // just applied to it) is not this mirror's history.
+        TestMutatorFacet(address(diamond)).setArmedFreshLedgerRaw(0, 0);
         remit.setRewardRemittanceReceiver(address(this));
     }
 
     function test_MirrorIngress_RecordsReceipt_and_AckIsResendable() public {
         _configureMirror();
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0);
+        , 0, bytes32(0));
         LibVaipakam.ReceivedRemit memory rec =
             rlens.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -1501,9 +1652,9 @@ contract RewardRemitLedgerTest is SetupTest {
 
     function test_MirrorIngress_LegacyDeliveryHasNoReceipt() public {
         _configureMirror();
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0);
+        , 0, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
@@ -1526,10 +1677,15 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      and could finalize an unrelated same-numbered reservation).
     function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
         _configureMirror();
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0);
-        // Owner rotates the canonical deployment.
+        , 0, bytes32(0));
+        // Owner rotates the canonical deployment — through Detached, as
+        // #1566 slice 4 PR B requires of a mirror's source; the freeze is
+        // lifted raw (the stale-receipt rule is what this test pins).
+        _unfreezeRole();
+        RewardReporterFacet(address(diamond)).setBaseChainId(0);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setBaseChainId(999);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1576,12 +1732,12 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      with its own recorded remitter.
     function test_MirrorIngress_DeploymentReceiptsCoexist() public {
         _configureMirror();
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0
-        , 0);
-        remit.onRewardBudgetReceived(
+        , 0, bytes32(0));
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0);
+        , 0, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
@@ -1592,14 +1748,23 @@ contract RewardRemitLedgerTest is SetupTest {
             9e18,
             "new-era receipt co-exists"
         );
-        // Per-key first-write-wins (a delayed duplicate cannot overwrite).
-        remit.onRewardBudgetReceived(
+        // Per-key delivered ONCE (Codex #2198 r1): a delayed duplicate is
+        // refused whole, so it can neither overwrite the receipt nor add
+        // its value to the ledger (it used to be kept silently as
+        // first-write-wins, with the duplicate's value still credited).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.IngressReceiptAlreadyDelivered.selector,
+                keccak256(abi.encode(address(0x2EF), uint256(42)))
+            )
+        );
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0);
+        , 0, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
-            "first-wins per key"
+            "the one receipt per key stands"
         );
         // Each receipt's ack echoes ITS remitter.
         remit.sendRemitAck{value: 0.001 ether}(
@@ -1682,10 +1847,10 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(reportedBefore, 40e18, "precondition: genuine absorption");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0);
+        , 0, bytes32(0));
 
         // Bucket grew by exactly the recycled share — the claim path is backed.
         assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
@@ -1728,10 +1893,10 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRecycleBucketRaw(40e18);
         mutator.setRecycleCreditedCumulativeRaw(40e18);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0);
+        , 0, bytes32(0));
         assertEq(cfg.getRecycleBucket(), 63e18, "backed");
 
         // The mirror's claims now consume the WHOLE recycled payout — the
@@ -1761,10 +1926,10 @@ contract RewardRemitLedgerTest is SetupTest {
                 7e18
             )
         );
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             8e18
-        , 0);
+        , 0, bytes32(0));
     }
 
     /// @dev Backward-decodability: a delayed pre-d5 delivery arrives with a
@@ -1775,9 +1940,9 @@ contract RewardRemitLedgerTest is SetupTest {
         ConfigFacet cfg = ConfigFacet(address(diamond));
         mutator.setRecycleBucketRaw(40e18);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0);
+        , 0, bytes32(0));
 
         assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
         (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
@@ -2006,10 +2171,10 @@ contract RewardRemitLedgerTest is SetupTest {
         _assertDerivation("mirror genesis");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        , 0);
+        , 0, bytes32(0));
         (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
@@ -2599,6 +2764,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertGt(sentA, 0, "fixture: released real backing while canonical");
 
         // The role moves AFTER the history exists.
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
 
         comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
@@ -2615,6 +2781,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// And the gate that replaces the role check actually bites: a Diamond
     /// with no reservation history cannot seed at all, whatever its role.
     function test_Seed_RefusesWithNoReservationHistory() public {
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
         vm.expectRevert(RewardCompensationDispatchFacet.SeedNothingToScan.selector);
         comp.seedReleasedRemitStranded(1);
@@ -2724,10 +2891,12 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      attribution rule reading real arming state.
     function _armFrom(uint256 dayId) internal {
         vm.chainId(CHAIN_BASE);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
         RewardAggregatorFacet(address(diamond))
             .setGovernorCommitArmedFromDay(dayId);
         vm.chainId(CHAIN_ARB);
+        _unfreezeRole();
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
     }
 
@@ -2737,8 +2906,13 @@ contract RewardRemitLedgerTest is SetupTest {
     // bound on a mirror (it is the GLOBAL 69M cap less LOCAL payouts, so every
     // mirror believes it owns the whole pool).
     //
-    // It counts ARMED-ATTRIBUTABLE, COMPOSITION-KNOWN deliveries only, and
-    // records everything else as `uncounted` rather than dropping it. There is
+    // #1566 closure 2 — it counts the authenticated FRESH component of every
+    // COMPOSITION-KNOWN delivery, whatever days it funds (vintage-blind), and
+    // records the rest as `uncounted` rather than dropping it. The
+    // armed-attributable test that used to gate counting is retired: the paid
+    // side now charges legacy and armed outflows alike at the chokepoints, so
+    // a receipt for a pre-`D*` day is matched by the spend it funds on the
+    // SAME ledger — the double-count finding (b) guarded against cannot arise. There is
     // no subtraction here and no baseline: the first shape of this slice
     // netted a lifetime receipt cumulative against a payout snapshot taken at
     // arming, and baselining one side of a subtraction is what made it
@@ -2754,10 +2928,10 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 7e18
-        );
+        , bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 7e18, "armed-day delivery counts in full");
@@ -2778,106 +2952,99 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 0
-        );
+        , bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "unknown composition contributes no fresh");
         assertEq(uncounted, 7e18, "and is recorded, not discarded");
     }
 
-    /// @dev **Finding (b).** Funding delivered for PRE-`D*` days is not armed
-    ///      funding and must not enter. The withdrawn design counted it and
-    ///      then tried to net it out with a payout snapshot taken at arming —
-    ///      which erased the spend while keeping the receipt, so 100 VPFI
-    ///      delivered and spent before arming reported as 100 VPFI of
-    ///      reusable headroom. Never entering removes the whole class.
+    /// @dev **Finding (b), inverted by #1566 closure 2.** Funding delivered
+    ///      for PRE-`D*` days now ENTERS the ledger. The withdrawn design's
+    ///      defect was counting the receipt while erasing the spend (a payout
+    ///      snapshot taken at arming); the vintage rule that replaced it
+    ///      refused the receipt instead, which left the pre-arming SPEND
+    ///      unbounded — the closure-2 defect. With both sides vintage-blind,
+    ///      100 VPFI delivered and spent before arming is 100 received and
+    ///      100 paid: zero reusable headroom, and every legacy claim bounded.
     ///
-    ///      Both legs run in ONE test so the negative cannot pass vacuously:
-    ///      the armed-day delivery proves the fixture counts at all.
-    function test_DeliveredFresh_PreArmingDeliveryIsNotCounted() public {
+    ///      Both legs run in ONE test so the change cannot pass vacuously:
+    ///      the armed-day delivery is counted exactly as before.
+    function test_DeliveredFresh_PreArmingDeliveryIsCounted_VintageBlind() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-
-        // Armed day -> counted.
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 3e18
-        );
+        , bytes32(0));
         (uint256 counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 3e18, "fixture counts armed deliveries");
-
-        // A day before the cutover -> refused, same everything else.
-        remit.onRewardBudgetReceived(
+        assertEq(counted, 3e18, "armed-day delivery counts as before");
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 100e18
-        );
-
+        , bytes32(0));
         uint256 uncounted;
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 3e18, "pre-arming funding did not enter");
-        assertEq(uncounted, 100e18, "it is visible as uncounted");
+        assertEq(counted, 103e18, "pre-arming funding enters the same ledger");
+        assertEq(uncounted, 0, "nothing is parked when the composition is stated");
     }
 
-    /// @dev A batch straddling the cutover is refused WHOLE rather than
-    ///      apportioned. `_planDay` decides armedness per day but the remit
-    ///      carries one summed amount for its whole day set, so nothing that
-    ///      arrives here can split it; guessing a split would over-state on
-    ///      the guess. Documented as a deliberate under-count.
-    function test_DeliveredFresh_BatchStraddlingCutoverIsNotCounted() public {
+    /// @dev A batch straddling the cutover no longer needs apportioning:
+    ///      under the vintage-blind rule (#1566 closure 2) the summed fresh
+    ///      share counts whichever side of `D*` each day sits on, so there is
+    ///      nothing to guess and nothing to refuse whole. The all-armed pair
+    ///      runs beside it so the straddle is shown to be treated identically.
+    function test_DeliveredFresh_BatchStraddlingCutoverIsCounted() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 8e18
-        );
-
+        , bytes32(0));
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "one unarmed day refuses the whole batch");
-        assertEq(uncounted, 8e18, "and the shortfall is visible");
-
-        // The all-armed pair IS counted — so the refusal above is the
-        // straddle, not merely "two days".
-        remit.onRewardBudgetReceived(
+        assertEq(counted, 8e18, "a straddling batch counts its fresh share");
+        assertEq(uncounted, 0, "nothing refused");
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 8e18
-        );
+        , bytes32(0));
         (counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 8e18, "an all-armed batch counts");
+        assertEq(counted, 16e18, "an all-armed batch counts the same way");
     }
 
-    /// @dev An unarmed chain has no armed regime to attribute funding to, and
-    ///      a delivery naming no days cannot be shown to fund armed ones.
-    ///      Both refuse; both stay visible.
-    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCountNothing()
-        public
-    {
+    /// @dev An UNARMED mirror counts too (#1566 closure 2): the ledger is live
+    ///      on any mirror because its paid side charges legacy outflows, so a
+    ///      delivery landing before `D*` is installed — or one naming no days
+    ///      at all — is counted by its authenticated fresh share. Under the
+    ///      retired rule both were refused; refusing them left the legacy
+    ///      claims they fund with a delivered bound of zero AND a paid side
+    ///      that never charged, the inconsistency this closure removes.
+    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCount() public {
         _configureMirror();
-
-        // Unarmed: `governorCommitArmedFromDay` is still 0.
-        remit.onRewardBudgetReceived(
+        // The setUp funded the canonical pool before this fixture switched
+        // the role raw, so the counted figure starts at that baseline.
+        (uint256 baseline, ) = rlens.getDeliveredFreshPosition();
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
             address(0xBA5E), 0, 5e18
-        );
+        , bytes32(0));
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "unarmed chain counts nothing");
-        assertEq(uncounted, 5e18, "recorded");
-
-        // Armed, but the delivery names no days.
+        assertEq(counted - baseline, 5e18, "an unarmed chain counts its fresh share");
+        assertEq(uncounted, 0, "nothing refused");
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 6e18, new uint256[](0), CHAIN_BASE, 43,
             address(0xBA5E), 0, 6e18
-        );
+        , bytes32(0));
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "empty day set counts nothing");
-        assertEq(uncounted, 11e18, "both refusals accumulate");
+        assertEq(counted - baseline, 11e18, "an empty day set changes nothing about counting");
+        assertEq(uncounted, 0, "still nothing refused");
     }
 
     /// @dev Only the FRESH component accrues. The recycled component is
@@ -2892,45 +3059,48 @@ contract RewardRemitLedgerTest is SetupTest {
         // `balance >= bucket + share`, so the tokens must really be here.
         vpfiTok.transfer(address(diamond), 10e18);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 43,
             address(0xBA5E), 4e18, 6e18
-        );
+        , bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
         assertEq(uncounted, 0, "the remainder was fully attributed");
     }
 
-    /// @dev The accounting identity the pair exists to support: across a
-    ///      counted delivery, a refused one, and one carrying recycled
+    /// @dev The accounting identity the pair exists to support: across an
+    ///      armed-day delivery, a pre-arming one and one carrying recycled
     ///      backing, `counted + uncounted` equals the summed NON-RECYCLED
     ///      delivery. Nothing is invented and nothing is lost — which is what
     ///      makes `uncounted` usable for reconciliation rather than a hint.
+    ///      #1566 closure 2 — the pre-arming delivery is COUNTED now, so the
+    ///      identity holds with `uncounted` at zero; an unstated composition
+    ///      is the only thing that lands there (see the finding-(c) test).
     function test_DeliveredFresh_CountedPlusUncountedIsExhaustive() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
         vpfiTok.transfer(address(diamond), 4e18);
 
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 7e18
-        );
-        remit.onRewardBudgetReceived(
+        , bytes32(0));
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(dStar - 2), CHAIN_BASE, 43,
             address(0xBA5E), 0, 5e18
-        );
-        remit.onRewardBudgetReceived(
+        , bytes32(0));
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(dStar), CHAIN_BASE, 44,
             address(0xBA5E), 4e18, 5e18
-        );
+        , bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        // 7 counted + 5 refused + 5 counted = 12 counted, 5 uncounted; the
-        // 4e18 recycled leg belongs to the bucket, not to either counter.
-        assertEq(counted, 12e18, "both armed deliveries counted");
-        assertEq(uncounted, 5e18, "the pre-arming one refused");
+        // 7 + 5 + 5 = 17 counted, 0 uncounted (vintage-blind); the 4e18
+        // recycled leg belongs to the bucket, not to either counter.
+        assertEq(counted, 17e18, "all three fresh shares counted, any vintage");
+        assertEq(uncounted, 0, "nothing refused when every composition is stated");
         assertEq(
             counted + uncounted,
             (7e18) + (5e18) + (9e18 - 4e18),
@@ -2954,10 +3124,10 @@ contract RewardRemitLedgerTest is SetupTest {
                 IVaipakamErrors.FreshShareExceedsDelivery.selector, 7e18, 6e18
             )
         );
-        remit.onRewardBudgetReceived(
+        ingress.onRewardBudgetReceived(
             address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 45,
             address(0xBA5E), 4e18, 7e18
-        );
+        , bytes32(0));
     }
 
     /// @dev Accept ETH refunds from the remit fee path.
@@ -3003,7 +3173,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, uint256 redispatched, uint256 overage) =
             rlens.getRecoveryPosition();
         assertEq(recovered, 3e18, "position credited");
@@ -3076,7 +3246,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         // (terminal return re-opened the day - no release of the Acked
         // reservation needed or possible)
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
@@ -3108,10 +3278,10 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 3e18, "entitlement caps the receipt cumulative");
         assertEq(overage, 3e18, "duplicate quarantined whole");
@@ -3130,7 +3300,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
-        );
+        , bytes32(0));
         _armReturnIngress();
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -3140,7 +3310,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 77, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r1 — only COMPENSATION reservations are a valid entitlement
@@ -3158,7 +3328,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r1 — a short actual is TRANSPORT LOSS: recorded per receipt
@@ -3173,7 +3343,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 2.5e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 2.5e18, "credited at the actual");
         assertEq(overage, 0);
@@ -3203,7 +3373,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngressNoAck();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         // 2e18 of the credit is already re-dispatched (spent).
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 1.5e18, 0.5e18, 1
@@ -3226,7 +3396,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.onStrandedReturnReceived(
             address(diamond), 80, 6, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             0
-        );
+        , bytes32(0));
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18); // replay
         (recovered, redispatched, overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 3e18, "unrelated credit untouched by the replay");
@@ -3258,7 +3428,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngressNoAck();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "re-opened");
         // The contradicting consumed ack lands before any replacement.
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
@@ -3296,7 +3466,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r6 - the wire's classification word offsets by one so the
@@ -3346,7 +3516,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         // The V3 confirm settled the credit CONSUMED; the re-presented
         // ack stamps it and the return is refused outright.
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
@@ -3357,7 +3527,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r5 - the re-opened manual path holds the CUMULATIVE per-side
@@ -3376,7 +3546,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             2e18
-        );
+        , bytes32(0));
         comp.remitSupplementalBudget{value: 0.01 ether}(
             CHAIN_ARB, 1, 1e18, 1e18
         );
@@ -3385,7 +3555,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // unwinds; the supplement's funding is retained).
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0);
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl, 1e18, "supplement funding retained");
@@ -3574,14 +3744,19 @@ contract RewardRemitLedgerTest is SetupTest {
         // Books-only: pin the bucket at the whole balance so the fresh
         // credit has NO unearmarked float behind it - a recovery with no
         // tokens actually home must roll back at the record.
+        // #1566 slice 4 PR B: on this activated deployment the raw bucket
+        // write relocates that whole balance into the holder's recycled row,
+        // so the Diamond holds nothing and the inflow itself — the only
+        // earmark the ceremony asserts here now — is unbacked.
         uint256 bal = vpfiTok.balanceOf(address(diamond));
         mutator.setRecycleBucketRaw(bal);
+        assertEq(vpfiTok.balanceOf(address(diamond)), 0, "the raw bucket moved the balance into the holder");
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CeremonyInflowNotBacked.selector,
                 1,
-                bal,
-                bal + 1e18
+                0,
+                1e18
             )
         );
         comp.recordRecoveryCeremony(1, 1e18, 0);
@@ -3825,7 +4000,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         // Receipt 1 spends its OWN credit in full.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 2e18, 1e18, 1
@@ -3983,7 +4158,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         (uint256 rec, uint256 red, ) = rlens.getRecoveryPosition();
         assertGt(rec - red, 0, "the pool is funded again");
         // ...and receipt 1 still cannot spend a wei of it. (A fresh day,
@@ -4155,6 +4330,74 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.armRecoveryAttribution();
     }
 
+    /// #1566 closure 2 cutover PR 1 — a stranded return for a receipt that
+    /// PREDATES per-receipt attribution belongs to no position: on an
+    /// activated deployment it is protected into the holder's `Unclassified`
+    /// row at ingress (with its own returned figure and a kind-3 packet
+    /// record), instead of resting in the Diamond's balance.
+    function test_Recovery_PreAttributionReturnIsProtectedIntoUnclassified() public {
+        mutator.setRecoveryAttributionRaw(true, 5); // receipts 1..5 predate the arming
+        mutator.setRemitReservationCompRaw(1, CHAIN_ARB, 1, 3e18, 4); // reservation 1, day 4
+        _armReturnIngress();
+        vpfiTok.mint(address(diamond), 3e18); // the receiver forwarded the return here
+        uint256 diamondBefore = vpfiTok.balanceOf(address(diamond));
+        address holder = RewardCustodyFacet(address(diamond)).rewardCustodyHolder();
+        uint256 holderBefore = vpfiTok.balanceOf(holder);
+        (uint256 recBefore, , ) = rlens.getRecoveryPosition();
+        bytes32 id = keccak256("ret-1");
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 4, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0, id
+        );
+        (uint256 recAfter, , ) = rlens.getRecoveryPosition();
+        assertEq(recAfter, recBefore, "no position credited for a pre-attribution receipt");
+        assertEq(rlens.getRecoveredForReceipt(1), 3e18, "the receipt's recovery is on record");
+        assertEq(
+            RewardCustodyFacet(address(diamond)).rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified),
+            3e18,
+            "protected into Unclassified"
+        );
+        (, uint256 returnedHeld, ) = rlens.getUnclassifiedPosition();
+        assertEq(returnedHeld, 3e18, "the row's returned figure");
+        assertEq(vpfiTok.balanceOf(holder) - holderBefore, 3e18, "the tokens are in the holder");
+        assertEq(vpfiTok.balanceOf(address(diamond)), diamondBefore - 3e18, "and left the Diamond");
+        LibVaipakam.IngressPacket memory pkt =
+            rlens.getIngressPacket(keccak256(abi.encode(uint256(CHAIN_ARB), id)));
+        assertEq(pkt.kind, 3, "a stranded-return packet");
+        assertEq(pkt.unclassified, 3e18);
+        assertEq(pkt.actualReceived, 3e18);
+    }
+
+    /// #1566 closure 2 cutover PR 1 — the ceremony twin of the test above: a
+    /// recovery ceremony for a receipt that predates attribution is recorded
+    /// under a ceremony-kind packet (sequence-keyed — no transport carried
+    /// it) and, on an activated deployment, protected into the holder's
+    /// `Unclassified` row under it.
+    function test_Recovery_PreAttributionCeremonyInflowIsProtectedIntoUnclassified() public {
+        _releasedCeremonyFixture(); // remit 1 released, fresh-only, 3e18
+        mutator.setRecoveryAttributionRaw(true, 5); // receipts 1..5 predate the arming
+        vpfiTok.mint(address(diamond), 3e18); // brought home by the operator
+        address holder = RewardCustodyFacet(address(diamond)).rewardCustodyHolder();
+        uint256 holderBefore = vpfiTok.balanceOf(holder);
+        (uint256 recBefore, , ) = rlens.getRecoveryPosition();
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 recAfter, , ) = rlens.getRecoveryPosition();
+        assertEq(recAfter, recBefore, "no position credited for a pre-attribution receipt");
+        assertEq(
+            RewardCustodyFacet(address(diamond)).rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified),
+            3e18,
+            "protected into Unclassified"
+        );
+        (, uint256 returnedHeld, ) = rlens.getUnclassifiedPosition();
+        assertEq(returnedHeld, 3e18, "the row's returned figure");
+        assertEq(vpfiTok.balanceOf(holder) - holderBefore, 3e18, "the tokens are in the holder");
+        LibVaipakam.IngressPacket memory pkt =
+            rlens.getIngressPacket(keccak256(abi.encode(uint256(0), uint256(1), "seq")));
+        assertEq(pkt.kind, 4, "a ceremony-inflow packet, sequence-keyed");
+        assertEq(pkt.unclassified, 3e18);
+        assertEq(pkt.actualReceived, 3e18);
+        assertEq(pkt.remitId, 1);
+    }
+
     /// r8-h1 - the attribution watermark must gate the CLAW as well as
     /// the draw. A legacy receipt's spends were GLOBAL-only, so its
     /// per-receipt counters read zero: without this it would present its
@@ -4172,7 +4415,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         (uint256 recBefore, uint256 redBefore, uint256 ovBefore) =
             rlens.getRecoveryPosition();
         // Receipt 1 is now contradicted. Its legacy credit must NOT be
@@ -4218,7 +4461,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             2e18
-        );
+        , bytes32(0));
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             0,
@@ -4325,6 +4568,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRecoveryAttributionRaw(false, 0);
 
         // Now DEMOTE, and refresh. This is the exact ordering r9 skipped.
+        _unfreezeRole();
         rep.setIsCanonicalRewardChain(false);
         comp.armRecoveryAttribution();
 
@@ -4377,7 +4621,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngressNoAck();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         (uint256 rec1, uint256 red1, ) = rlens.getRecoveryPosition();
         assertEq(
             rec1 - red1,
@@ -4626,7 +4870,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // The whole 3 comes home anyway: only the unresolved 1 may credit.
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         assertEq(
             rlens.getRecoveredForReceipt(1),
             1e18,
@@ -4656,13 +4900,13 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         // The permissionless non-consumed ack lands; the re-executed
         // return now settles.
         rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, , ) = rlens.getRecoveryPosition();
         assertEq(recovered, 3e18);
     }
@@ -4693,7 +4937,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             2e18
-        );
+        , bytes32(0));
         assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
         // A replacement funds the day from the position meanwhile.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
@@ -4704,7 +4948,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // replacement's funding survives.
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl, 0.6e18, "replacement funding survives the late terminal");
         assertEq(fb, 0.4e18, "replacement funding survives the late terminal");
@@ -4732,7 +4976,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r3 - loss closure is ORDER-INDEPENDENT: the configured
@@ -4749,13 +4993,13 @@ contract RewardRemitLedgerTest is SetupTest {
         // reads as loss at that moment.
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         assertEq(rlens.getStrandedReturnShortfall(1), 1e18);
         // The delayed earlier chunk (1e18) lands: the loss shrinks to 0.
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             2e18
-        );
+        , bytes32(0));
         assertEq(
             rlens.getStrandedReturnShortfall(1),
             0,
@@ -4779,7 +5023,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
         assertEq(
             rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened"
         );
@@ -4811,7 +5055,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 9, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
-        );
+        , bytes32(0));
     }
 
     /// #1660 r2 - the TERMINAL chunk closes the receipt's loss evidence at
@@ -4829,7 +5073,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // one-shot record returns exactly that, remainder zero.
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 2e18, "credited at what physically arrived");
         assertEq(overage, 0);
@@ -4853,7 +5097,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
             2e18
-        );
+        , bytes32(0));
         assertEq(
             rlens.getStrandedReturnShortfall(1),
             0,
@@ -4861,7 +5105,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         (uint256 recovered, , ) = rlens.getRecoveryPosition();
         assertEq(recovered, 3e18, "chunks accumulate to the entitlement");
         assertEq(rlens.getStrandedReturnShortfall(1), 0, "nothing lost");
@@ -4887,7 +5131,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
-        );
+        , bytes32(0));
         comp.remitSupplementalBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 1e18, 0.5e18, 90
         );

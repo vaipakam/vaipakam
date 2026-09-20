@@ -83,6 +83,17 @@ contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function deployItemsForTest() external returns (Item[] memory) {
         return _deployItems();
     }
+
+    function retired() external pure returns (bytes4[] memory) {
+        return _retiredSelectors();
+    }
+    /// #1566 transport epochs PR 3a — expose the hoist so the ordering
+    /// guarantee it provides can be asserted rather than trusted.
+    function hoist(Item[] memory items, string memory key) external pure returns (Item[] memory) {
+        _hoistFirst(items, key);
+        return items;
+    }
+
 }
 
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
@@ -111,6 +122,44 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             "cannot catch this (it compares that constant against itself) - "
             "see #1793."
         );
+    }
+
+    /// @notice #1566 transport epochs PR 3a (Codex #2224 r5) — the refresh
+    ///         cuts the MIRROR-SIDE INGRESS first, because the value-bearing
+    ///         receive entries skip the Diamond pause on purpose: a delivery
+    ///         arriving mid-refresh must not execute the old implementation
+    ///         and record a packet with no day-list commitment. The run hoists
+    ///         it; this pins that the hoist finds the key, puts it at the
+    ///         front, and loses nothing.
+    function test_Hoist_PutsTheIngressFacetInTheFirstCut() public {
+        RefreshItemsProbe probe = new RefreshItemsProbe();
+        RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
+        uint256 before = items.length;
+        bytes32 headKey = keccak256(bytes(items[0].key));
+        RefreshAllFacetsInPlace.Item[] memory hoisted = probe.hoist(items, "rewardIngressFacet");
+        assertEq(hoisted.length, before, "nothing added or dropped");
+        assertEq(
+            keccak256(bytes(hoisted[0].key)),
+            keccak256(bytes("rewardIngressFacet")),
+            "the ingress is cut first"
+        );
+        uint256 seenOldHead;
+        uint256 seenIngress;
+        for (uint256 i; i < hoisted.length; ++i) {
+            if (keccak256(bytes(hoisted[i].key)) == headKey) ++seenOldHead;
+            if (keccak256(bytes(hoisted[i].key)) == keccak256(bytes("rewardIngressFacet"))) ++seenIngress;
+        }
+        assertEq(seenOldHead, 1, "the displaced item is still there, exactly once");
+        assertEq(seenIngress, 1, "and the hoisted one is not duplicated");
+    }
+
+    /// @notice A rename must not silently leave the order unchanged and
+    ///         reopen the window the hoist exists to close.
+    function test_Hoist_RevertsOnAnUnknownKey() public {
+        RefreshItemsProbe probe = new RefreshItemsProbe();
+        RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
+        vm.expectRevert(bytes("RefreshAllFacetsInPlace: _hoistFirst key not found"));
+        probe.hoist(items, "rewardIngressFacetRenamed");
     }
 
     /// @notice Every slot `_deployItems()` allocates must actually be FILLED.
@@ -300,5 +349,37 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
                 )
             );
         }
+    }
+
+    /// @notice #1566 slice 4 PR A (Codex #2158 r30 P1) — the refresh REMOVES
+    ///         the selectors this upgrade retired. Two things must hold: no
+    ///         retired selector is one the current deploy routes (removing
+    ///         it would strand a live function), and the list names the
+    ///         legacy one-argument seed, which must not survive routed to
+    ///         bytecode that checks neither the manual pause nor the epoch.
+    function test_RefreshScript_RetiredSelectors_AreNotRoutedByDeploy() public {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
+        DeployDiamond deployScript = new DeployDiamond();
+        address deployer = vm.addr(DEPLOYER_KEY);
+        deployScript.runWith(deployer, TREASURY, DEPLOYER_KEY);
+        address diamond = deployScript.diamond();
+
+        bytes4[] memory retired = new RefreshItemsProbe().retired();
+        assertGt(retired.length, 0, "the retired list is empty - the legacy seed selector must be listed");
+        bool namesLegacySeed;
+        for (uint256 i; i < retired.length; ++i) {
+            assertEq(
+                IDiamondLoupe(diamond).facetAddress(retired[i]),
+                address(0),
+                "a retired selector is routed by the current DeployDiamond - removing it would strand a live function"
+            );
+            if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
+        }
+        assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
+            "the epoch-bound seed is not routed"
+        );
     }
 }

@@ -59,6 +59,14 @@
     "ja:copy.consentParts.prefix": "Japanese puts the verb last; the suffix carries the agreement the English states up front"
   },
   "acceptedAsTranslated": {
+    "copy.analytics.total": {
+      "reason": "\"Total\" is the ordinary Spanish and French noun for a sum, spelled as the English one. The evidence that each bundle was localized rather than skipped is the siblings around it — the same section renders \"Activos\"/\"Actifs\", \"Reembolsados\"/\"Remboursés\", \"Liquidados\"/\"Liquidés\" — so this leaf is settled vocabulary. Recorded here for the same reason as copy.notifications.title: a translation already correct can only leave a shrink-only baseline by being replaced with a worse synonym.",
+      "source": "Total",
+      "locales": [
+        "es",
+        "fr"
+      ]
+    },
     "copy.app.name": {
       "reason": "The product name. A brand is not translated.",
       "source": "Vaipakam",
@@ -250,6 +258,68 @@
         "de": ".",
         "es": ".",
         "fr": "."
+      }
+    },
+    "copy.protocolConsole.bpsValue": {
+      "reason": "Two interpolated values, the percent sign, and \"bps\" — the standard basis-points abbreviation this codebase uses on every fee surface, and a glossary term that stays untranslated. There is no prose here to render in another language, so a value made of the same marks is the correct localization rather than an untouched string. It is NOT invariant: German, Spanish and French insert the space their typography requires before %, and Japanese and Chinese use fullwidth parentheses — real localizations of a string whose only content is punctuation, recorded below so changing one retires the exemption instead of leaving it armed. Arabic, Hindi, Korean and Tamil correctly keep the English marks.",
+      "source": "{{pct}}% ({{bps}} bps)",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "values": {
+        "de": "{{pct}} % ({{bps}} bps)",
+        "es": "{{pct}} % ({{bps}} bps)",
+        "fr": "{{pct}} % ({{bps}} bps)",
+        "ja": "{{pct}}%（{{bps}} bps）",
+        "zh": "{{pct}}%（{{bps}} bps）"
+      }
+    },
+    "copy.protocolConsole.hoursValue": {
+      "reason": "A duration built from placeholders and the SI unit symbols \"h\" and \"s\", which are the same marks in Spanish and French. The locale values are not byte-identical — both insert the non-breaking-style space their typography requires before a unit — but the guard compares words, and a symbol shared with the English cannot be told from an untranslated one. German is deliberately absent: it says \"Std.\". Recorded here rather than in the shrinkable baseline because \"h\" IS the Spanish and French rendering; the only way out of a worklist would be to replace a correct symbol with a wrong one.",
+      "source": "{{h}} h ({{s}}s)",
+      "locales": [
+        "es",
+        "fr"
+      ],
+      "values": {
+        "es": "{{h}} h ({{s}} s)",
+        "fr": "{{h}} h ({{s}} s)"
+      }
+    },
+    "copy.protocolConsole.minutesValue": {
+      "reason": "As hoursValue: placeholders plus the SI unit symbols \"min\" and \"s\". Spanish and French use the identical abbreviation; German capitalizes and abbreviates it as \"Min.\", which the word comparison folds back onto the English \"min\" — a real localization the guard cannot see. All three carry their own spacing, recorded below.",
+      "source": "{{m}} min ({{s}}s)",
+      "locales": [
+        "de",
+        "es",
+        "fr"
+      ],
+      "values": {
+        "de": "{{m}} Min. ({{s}} s)",
+        "es": "{{m}} min ({{s}} s)",
+        "fr": "{{m}} min ({{s}} s)"
+      }
+    },
+    "copy.protocolConsole.secondsValue": {
+      "reason": "One placeholder and the SI symbol for the second. There are no words in this string at all; the three locales differ from the English only in the space their typography puts before a unit symbol.",
+      "source": "{{s}}s",
+      "locales": [
+        "de",
+        "es",
+        "fr"
+      ],
+      "values": {
+        "de": "{{s}} s",
+        "es": "{{s}} s",
+        "fr": "{{s}} s"
       }
     },
     "copy.riskAccess.strict.title": {

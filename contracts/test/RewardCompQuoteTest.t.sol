@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -669,7 +670,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
     ///      ingress (state-unknown ⇒ the provisional branch — the
     ///      deadline-stamp writer `_creditCompensation` runs either way).
     function _credit(uint256 remitId, uint256 l, uint256 b) internal {
-        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+        RewardIngressFacet(address(diamond)).onCompensationBudgetReceived(
             VPFI_DUMMY,
             l + b,
             DAY,
@@ -682,7 +683,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
             1,
             uint64(60 days),
             uint64(1 days)
-        );
+        , bytes32(0));
     }
 
     function _armIngress() internal {

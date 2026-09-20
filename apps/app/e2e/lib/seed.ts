@@ -6,7 +6,7 @@
  * this just guarantees preconditions without coupling tests together.
  */
 import { parseEther, parseUnits } from 'viem';
-import { ERC20_MIN_ABI, MOCKS, WETH, forkChain, pub, walletFor } from './chain';
+import { confirm, ERC20_MIN_ABI, MOCKS, WETH, forkChain, walletFor } from './chain';
 import { accountFor, ROLES } from './wallets';
 
 export async function seedRoleAssets(): Promise<void> {
@@ -22,7 +22,7 @@ export async function seedRoleAssets(): Promise<void> {
       account,
       chain: forkChain,
     });
-    await pub.waitForTransactionReceipt({ hash: h1 });
+    await confirm(h1, 'deposit (WETH seeding)');
     // 100,000 tLIQ each (collateral side; faucet token mint is open).
     const h2 = await wallet.writeContract({
       address: MOCKS!.liquidToken as `0x${string}`,
@@ -32,6 +32,6 @@ export async function seedRoleAssets(): Promise<void> {
       account,
       chain: forkChain,
     });
-    await pub.waitForTransactionReceipt({ hash: h2 });
+    await confirm(h2, 'mint (ERC-20 seeding)');
   }
 }
