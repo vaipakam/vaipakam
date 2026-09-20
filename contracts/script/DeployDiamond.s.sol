@@ -93,8 +93,9 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 
-contract DeployDiamond is Script {
+contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
     // `public` so the deploy-integration test (Issue #72) can read the
     // built Diamond after calling `run()` — the script's own

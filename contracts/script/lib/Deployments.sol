@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
+import {IArtifactRoot} from "./ArtifactRoot.sol";
 
 /**
  * @title Deployments
@@ -51,13 +52,57 @@ library Deployments {
 
     // ── Public path API ────────────────────────────────────────────────────
 
+    /// The committed artifact root, relative to `foundry.toml#root` (i.e. the
+    /// `contracts/` directory). `fs_permissions` grants read-write on this
+    /// subtree and nowhere else, so an override must stay INSIDE it.
+    string internal constant ARTIFACT_ROOT = "deployments";
+
+    /// The directory holding every chain's `addresses.json` for this run.
+    /// Normally {ARTIFACT_ROOT}; a script that has set an override through
+    /// {ArtifactRootBase} gets its own directory instead.
+    ///
+    /// @dev The override is read from the CALLING SCRIPT, not from the
+    ///      environment — this library's `internal` functions execute in the
+    ///      script's context, so `address(this)` is that script and the answer
+    ///      comes out of its storage. See `ArtifactRoot.sol` for why that
+    ///      distinction is load-bearing (`vm.setEnv` is process-global and
+    ///      every parallel test shares it). A caller that does not implement
+    ///      {IArtifactRoot} — most scripts — falls through to the default,
+    ///      which is why the call is wrapped rather than required.
+    function artifactRoot() internal view returns (string memory) {
+        try IArtifactRoot(address(this)).artifactRootOverride() returns (
+            string memory overridden
+        ) {
+            if (bytes(overridden).length != 0) return overridden;
+        } catch {
+            // Not an ArtifactRootBase script: the committed root is correct.
+        }
+        return ARTIFACT_ROOT;
+    }
+
+    /// Directory holding `addresses.json` for an arbitrary EVM chain.
+    function dirForChainId(uint256 cid) internal view returns (string memory) {
+        return string.concat(artifactRoot(), "/", slugForChainId(cid));
+    }
+
+    /// Path to an arbitrary EVM chain's `addresses.json`.
+    ///
+    /// @dev EVERY artifact path in this library is built here. Five call sites
+    ///      used to concatenate `"deployments/" + slug + "/addresses.json"`
+    ///      by hand, which is four opportunities for one of them to disagree
+    ///      with the others — and would have been four places to forget when
+    ///      the root became redirectable.
+    function pathForChainId(uint256 cid) internal view returns (string memory) {
+        return string.concat(dirForChainId(cid), "/addresses.json");
+    }
+
     /// Absolute-from-foundry-root path to the active chain's
     /// `addresses.json`. Foundry resolves relative paths against
     /// `foundry.toml#root` (i.e. the `contracts/` directory in this
     /// repo). The committed file lives at
     /// `contracts/deployments/<slug>/addresses.json`.
     function path() internal view returns (string memory) {
-        return string.concat("deployments/", chainSlug(), "/addresses.json");
+        return pathForChainId(block.chainid);
     }
 
     /// Per-chain folder slug for the *active* chain. Used both for the
@@ -199,9 +244,7 @@ library Deployments {
     ///         in the mesh hasn't yet been redeployed against PR #272+
     ///         contracts.
     function readRewardMessengerForChain(uint256 chainId) internal view returns (address) {
-        string memory p = string.concat(
-            "deployments/", slugForChainId(chainId), "/addresses.json"
-        );
+        string memory p = pathForChainId(chainId);
         require(
             _fileExists(p),
             string.concat(
@@ -271,9 +314,7 @@ library Deployments {
         view
         returns (address)
     {
-        string memory p = string.concat(
-            "deployments/", slugForChainId(chainId), "/addresses.json"
-        );
+        string memory p = pathForChainId(chainId);
         require(
             _fileExists(p),
             string.concat(
@@ -500,10 +541,7 @@ library Deployments {
         if (!_fileExists(p)) {
             // `vm.writeJson` does NOT create parent directories; on
             // a fresh chain the per-chain folder won't exist yet.
-            CHEATS.createDir(
-                string.concat("deployments/", chainSlug()),
-                true
-            );
+            CHEATS.createDir(dirForChainId(block.chainid), true);
             CHEATS.writeJson(finalJson, p);
         }
     }
@@ -615,7 +653,31 @@ library Deployments {
     ///         `DEPLOY_SKIP_ARTIFACTS` is set on a live broadcast — call it at
     ///         the top of a deploy script so the simulation fails BEFORE any
     ///         transaction is sent.
+    ///
+    /// @dev    A script that has REDIRECTED its artifact root writes
+    ///         regardless of `DEPLOY_SKIP_ARTIFACTS`, and this is the point of
+    ///         the redirect rather than an exception to the rule. The skip
+    ///         exists so a `forge test` deploy does not clobber the committed
+    ///         `deployments/anvil/addresses.json`; a redirected run cannot
+    ///         reach that file, so the hazard the skip answers is already gone.
+    ///         It matters because the env flag is PROCESS-GLOBAL: a sibling
+    ///         test exporting `DEPLOY_SKIP_ARTIFACTS=true` — which several do —
+    ///         would otherwise silently turn off the writes an artifact
+    ///         assertion depends on, and the assertion would then read a file
+    ///         nobody wrote. The override is script-instance storage and
+    ///         therefore thread-local, so this cannot turn writes ON for any
+    ///         run that did not ask.
+    ///
+    ///         {ArtifactRootBase.setArtifactRootOverride} refuses to set an
+    ///         override anywhere but Anvil or `forge test`, so no live
+    ///         broadcast can reach this branch.
     function artifactWritesEnabled() internal view returns (bool) {
+        if (
+            keccak256(bytes(artifactRoot())) !=
+            keccak256(bytes(ARTIFACT_ROOT))
+        ) {
+            return true;
+        }
         ArtifactWrites mode = artifactWriteMode(
             block.chainid,
             CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun),
@@ -739,10 +801,7 @@ library Deployments {
     function _ensureFile() private {
         string memory p = path();
         if (_fileExists(p)) return;
-        CHEATS.createDir(
-            string.concat("deployments/", chainSlug()),
-            true
-        );
+        CHEATS.createDir(dirForChainId(block.chainid), true);
         string memory head = "deployments-bootstrap";
         CHEATS.serializeUint(head, "chainId", block.chainid);
         string memory init = CHEATS.serializeString(
