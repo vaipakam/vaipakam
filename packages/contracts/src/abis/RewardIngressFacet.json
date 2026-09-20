@@ -3742,6 +3742,17 @@
   },
   {
     "type": "error",
+    "name": "TransportBatchNotAdmitted",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportBatchNotFullyIndexed",
     "inputs": [
       {

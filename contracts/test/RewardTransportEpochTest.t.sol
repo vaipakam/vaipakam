@@ -441,14 +441,24 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         (bytes32 stillNone, , , , , ) = _epoch().getTransportBatch(h);
         assertEq(stillNone, bytes32(0), "a refused admission opens no epoch");
 
-        // And the gate it would have closed is still open, so the packet has
-        // lost nothing by the attempt.
+        // And the packet stays GATED, which is what it means for a refused
+        // admission to have cost nothing (Codex #2232 r4). This assertion
+        // used to drive a classification through here and call the packet
+        // unharmed — but a rollout-admissible packet holds no epoch only
+        // until somebody admits it, so classifying now would spend, with no
+        // release and no debit, exactly the value its own listed days are
+        // entitled to reach. The refusal names the missing step.
         AdminFacet(address(diamond)).pause();
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotAdmitted.selector, h));
         _recon().classifyLegacyPacket(h, 0, 1e18, keccak256("roll7c"));
         AdminFacet(address(diamond)).unpause();
 
-        // The committed list still admits it, on the reduced remainder.
+        // The committed list still admits it, on the WHOLE remainder — the
+        // failed attempt consumed nothing and the refusal above took nothing.
         assertEq(_epoch().admitLegacyTransportBatch(h, dayIds), h, "the committed list admits it");
+        (, uint256 balance, uint256 admitted, , , ) = _epoch().getTransportBatch(h);
+        assertEq(admitted, 8e18, "over everything the delivery still held");
+        assertEq(balance, admitted, "with nothing spent in the meantime");
     }
 
     /// Each refusal by name, and each straddled against the admission above —
@@ -530,6 +540,49 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
 
     /// A packet holding no epoch passes the gate untouched — the rule is about
     /// value held in a transport epoch, and such a packet holds none.
+    /// "No epoch" and "no epoch YET" are different, and only the first is
+    /// ungated (Codex #2232 r4).
+    ///
+    /// A 3a-to-3b packet carries a day-list commitment and holds no batch
+    /// until somebody calls the permissionless rollout admission. Reading
+    /// that as "pre-ledger" let an administrator classify its remainder away
+    /// with no release and no debit — the bypass the epoch gate exists to
+    /// close, surviving on precisely the population the rollout entry exists
+    /// to rescue. Both sides are driven here: the same packet is refused
+    /// before admission and classifies after the full close-out, and the
+    /// debit lands.
+    function test_Classification_RefusesARolloutPacketUntilItIsAdmitted() public {
+        (bytes32 h, uint256[] memory dayIds) = _asRolloutPacket(9e18, 2, 70, keccak256("gate1"));
+
+        AdminFacet(address(diamond)).pause();
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotAdmitted.selector, h));
+        _recon().classifyLegacyPacket(h, 0, 3e18, keccak256("gate1a"));
+        AdminFacet(address(diamond)).unpause();
+
+        // Admission alone is not enough either — it opens the epoch, and the
+        // release is still owed.
+        _epoch().admitLegacyTransportBatch(h, dayIds);
+        AdminFacet(address(diamond)).pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(TransportBatchNotReleased.selector, h, h)
+        );
+        _recon().classifyLegacyPacket(h, 0, 3e18, keccak256("gate1b"));
+        AdminFacet(address(diamond)).unpause();
+
+        // Indexed, parked, acknowledged — and the same call now lands, taking
+        // its value from the parked remainder.
+        _epoch().materializeTransportBatchPage(h, dayIds);
+        _epoch().parkTransportBatchRemainder(h);
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        AdminFacet(address(diamond)).pause();
+        _recon().classifyLegacyPacket(h, 0, 3e18, keccak256("gate1c"));
+        AdminFacet(address(diamond)).unpause();
+
+        (uint256 parked, , , , uint256 debited) = _epoch().getTransportRemainder(h);
+        assertEq(parked, 6e18, "the remainder is stepped down by what was classified");
+        assertEq(debited, 3e18, "and the exit is recorded");
+    }
+
     function test_Classification_IsUngatedForAPacketWithNoEpoch() public {
         bytes32 h = _deliver(10e18, _days(2), 8, keccak256("t3"), true);
         // Typed: its recycled component was credited at ingress, so there is

@@ -1424,16 +1424,8 @@ library LibRewardCustody {
         uint256[] calldata dayIds
     ) internal returns (bytes32 batchId) {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
-        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(packetHash);
-        if (p.batchId != bytes32(0)) {
-            revert IVaipakamErrors.TransportBatchAlreadyAdmitted(packetHash);
-        }
-        if (p.dayListHash == bytes32(0) || p.dayCount == 0) {
-            revert IVaipakamErrors.TransportPacketHasNoDayList(packetHash);
-        }
-        if (p.freshShare != 0 || p.recycledShare != 0) {
-            revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
-        }
+        uint8 status = rolloutAdmissionStatus(p);
+        if (status != ROLLOUT_ADMISSIBLE) _revertRolloutRefusal(status, packetHash);
         // #1566 transport epochs PR 3b — CLOSING THE GATE REQUIRES EXHIBITING
         // THE MATERIAL THAT REOPENS IT.
         //
@@ -1463,9 +1455,81 @@ library LibRewardCustody {
         if (supplied != p.dayListHash) {
             revert IVaipakamErrors.TransportDayListMismatch(packetHash, p.dayListHash, supplied);
         }
-        uint256 untyped = p.unclassified;
-        if (untyped == 0) revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);
-        batchId = _openTransportBatch(s, p, packetHash, p.dayCount, untyped);
+        batchId = _openTransportBatch(s, p, packetHash, p.dayCount, p.unclassified);
+    }
+
+    // ─── the ROLLOUT ADMISSIBILITY predicate, and its ONE clause list ───────
+
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r4) — the statuses
+    ///      {rolloutAdmissionStatus} answers with. They exist so the clause
+    ///      list has exactly ONE home: the retrospective ADMISSION and the
+    ///      classification GATE both need to know "is this packet one the
+    ///      rollout can still bring in?", and they need the same answer.
+    ///      Asking it twice in two places is how the gate came to exempt the
+    ///      very packets the admission was written to rescue.
+    uint8 internal constant ROLLOUT_ADMISSIBLE = 0;
+    uint8 internal constant ROLLOUT_UNKNOWN_PACKET = 1;
+    uint8 internal constant ROLLOUT_ALREADY_ADMITTED = 2;
+    uint8 internal constant ROLLOUT_NO_DAY_LIST = 3;
+    uint8 internal constant ROLLOUT_WIRE_TYPED = 4;
+    uint8 internal constant ROLLOUT_NOTHING_UNTYPED = 5;
+
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — whether the
+    ///         ROLLOUT admission could still open an epoch over this packet,
+    ///         and if not, why not.
+    /// @dev    The single definition of "eligible for retrospective
+    ///         admission". Every clause is a property of the PACKET RECORD, so
+    ///         the answer does not depend on who is asking or what they
+    ///         supply; proving the day-list MATERIAL is the admission's own
+    ///         extra step and deliberately not here, because it is evidence a
+    ///         caller exhibits rather than a property the packet has.
+    ///
+    ///         TWO consumers, and that is the whole point:
+    ///
+    ///         - {admitLegacyTransportBatch}, which refuses by name;
+    ///         - {takeFromReleasedRemainder}, whose "no batch, nothing to
+    ///           gate" shortcut is correct ONLY for a packet no epoch can ever
+    ///           be opened over.
+    ///
+    ///         The second is the r4 finding. A 3a-to-3b packet carries a day
+    ///         list and holds `batchId == 0` until somebody calls the
+    ///         permissionless admission — so the gate read it as pre-ledger
+    ///         and let an administrator classify its remainder away without a
+    ///         release and without a debit, which is the bypass the epoch
+    ///         exists to close, surviving on precisely the population the
+    ///         rollout entry exists to rescue. Two readings of one question,
+    ///         one of them tacit; now one function.
+    function rolloutAdmissionStatus(LibVaipakam.IngressPacket storage p)
+        internal
+        view
+        returns (uint8)
+    {
+        if (p.arrivedAt == 0) return ROLLOUT_UNKNOWN_PACKET;
+        if (p.batchId != bytes32(0)) return ROLLOUT_ALREADY_ADMITTED;
+        if (p.dayListHash == bytes32(0) || p.dayCount == 0) return ROLLOUT_NO_DAY_LIST;
+        if (p.freshShare != 0 || p.recycledShare != 0) return ROLLOUT_WIRE_TYPED;
+        if (p.unclassified == 0) return ROLLOUT_NOTHING_UNTYPED;
+        return ROLLOUT_ADMISSIBLE;
+    }
+
+    /// @dev The status-to-error mapping, kept beside the predicate so a new
+    ///      clause cannot be added without a refusal to name it. Never called
+    ///      with {ROLLOUT_ADMISSIBLE}; the trailing revert is the unreachable
+    ///      default a future clause would otherwise fall through silently.
+    function _revertRolloutRefusal(uint8 status, bytes32 packetHash) private pure {
+        if (status == ROLLOUT_UNKNOWN_PACKET) {
+            revert IVaipakamErrors.IngressPacketUnknown(packetHash);
+        }
+        if (status == ROLLOUT_ALREADY_ADMITTED) {
+            revert IVaipakamErrors.TransportBatchAlreadyAdmitted(packetHash);
+        }
+        if (status == ROLLOUT_NO_DAY_LIST) {
+            revert IVaipakamErrors.TransportPacketHasNoDayList(packetHash);
+        }
+        if (status == ROLLOUT_WIRE_TYPED) {
+            revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
+        }
+        revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the ONE writer
@@ -1644,13 +1708,31 @@ library LibRewardCustody {
     ///         the rule is about value held in a transport epoch, and a d5
     ///         delivery, a pre-3b arrival, and a delivery that landed before
     ///         custody was activated all hold none.
+    ///
+    ///         "No batch" is NOT "no batch YET" (Codex #2232 r4). A 3a-to-3b
+    ///         packet carries a day-list commitment and holds no batch only
+    ///         until somebody calls the permissionless rollout admission — so
+    ///         reading a zero `batchId` as "pre-ledger" let an administrator
+    ///         classify exactly that population's remainder away with no
+    ///         release and no debit, which is the bypass this gate exists to
+    ///         close. The two cases are told apart by the ONE predicate the
+    ///         admission itself uses, {rolloutAdmissionStatus}: a packet it
+    ///         still calls admissible must be admitted and released first, and
+    ///         is refused here by name. A packet it refuses can never hold an
+    ///         epoch, and that is the shortcut's real precondition.
     function takeFromReleasedRemainder(
         LibVaipakam.Storage storage s,
         bytes32 packetHash,
         uint256 amount
     ) internal {
-        bytes32 batchId = s.ingressPackets[packetHash].batchId;
-        if (batchId == bytes32(0)) return;
+        LibVaipakam.IngressPacket storage packet = s.ingressPackets[packetHash];
+        bytes32 batchId = packet.batchId;
+        if (batchId == bytes32(0)) {
+            if (rolloutAdmissionStatus(packet) == ROLLOUT_ADMISSIBLE) {
+                revert IVaipakamErrors.TransportBatchNotAdmitted(packetHash);
+            }
+            return;
+        }
         if (!s.transportBatches[batchId].released) {
             revert IVaipakamErrors.TransportBatchNotReleased(packetHash, batchId);
         }

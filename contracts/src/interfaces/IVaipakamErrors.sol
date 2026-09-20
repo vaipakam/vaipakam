@@ -571,6 +571,19 @@ interface IVaipakamErrors {
     ///         for the same reason the ingress opens no epoch for an empty
     ///         remainder.
     error TransportPacketNothingUntyped(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — this packet
+    ///         holds no transport epoch YET, and it is one the rollout
+    ///         admission can still open one over: it landed with a 3a day-list
+    ///         commitment, its wire typed nothing, and its remainder is still
+    ///         unclassified. Classifying it now would spend, with no release
+    ///         and no debit, value its own listed days are entitled to reach
+    ///         — the bypass the epoch gate exists to close, on precisely the
+    ///         population the retrospective admission exists to rescue.
+    ///         Admit it (`admitLegacyTransportBatch`, permissionless, with the
+    ///         committed day list), index it, park it, acknowledge it, then
+    ///         classify. A packet the rollout refuses can never hold an epoch
+    ///         and is classifiable as before.
+    error TransportBatchNotAdmitted(bytes32 packetHash);
     /// @notice #1566 transport epochs PR 3b — the batch's remainder is already
     ///         parked. Parking is once and for all: the remainder it names is
     ///         what the batch's obligations left, and a second park would

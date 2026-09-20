@@ -132,6 +132,25 @@ both halves on the reasoning that the specification calls the close-out
 permissionless — it says that of parking, and of attesting a delivery's split,
 and not of the acknowledgment.
 
+### A delivery that can still be brought in is not an ungated one
+
+The close-out gate asks whether a delivery holds an epoch. A delivery that
+landed before this ledger existed holds none and never can, so it was
+reconcilable as it always had been — correct, and the rule was applied one step
+too widely. A delivery from the window described above holds no epoch **yet**:
+it carries the day-list commitment, and anyone can bring it in at any time. Read
+as though it were pre-ledger, it could be reconciled away first — with no
+close-out and nothing drawn down — which is the bypass the gate exists to
+prevent, surviving on precisely the population the retrospective entry exists to
+rescue.
+
+The two are now told apart by the same test that decides whether the
+retrospective entry would accept the delivery, so they cannot answer
+differently. A delivery that entry would still accept must be brought in and
+closed out before it can be reconciled, and the refusal says so and names the
+missing step. A delivery it would refuse can never hold an epoch, and is
+reconcilable exactly as before.
+
 ### Reading what has left an epoch
 
 The ledger now states, separately, how much has been reconciled out of a parked
@@ -170,6 +189,40 @@ recorded one is now reported loudly and carried past rather than aborting the
 run: the live receiver is the one that must succeed, a stale record is not, and
 a receiver left behind fails closed on its next delivery rather than losing
 anything.
+
+The refresh additionally **retires the old delivery entry points before the
+first cut**, not after the last one. Retiring them is what makes an
+un-upgraded receiver's delivery fail outright instead of half-succeeding, and
+doing it last left the whole refresh window open to the case the receiver
+upgrade cannot reach: an older mirror where the platform cannot say which
+receiving contract it uses and the recorded address is missing or stale. There
+is no receiver to upgrade there, so nothing could close the window by
+resolving one — closing it structurally does. From that first transaction on, a
+delivery through any receiving contract that has not been upgraded is refused
+and re-delivered afterwards, whether or not the refresh ever identified it. The
+same retirement runs again at the end, where it is now the sweep for a run
+interrupted in between.
+
+### Keeping a funding batch inside what the destination can retire
+
+The destination retires a delivery's whole day list in one go and refuses a
+delivery naming more days than it can — a limit this release introduces.
+
+The automated funding pass builds those deliveries, and it sized them only by
+the amount of VPFI they move. Those two limits come apart exactly when it
+matters: after an outage, or a run of delayed source reports, many days are
+owed at once, each carrying a small amount. The total sits comfortably inside
+the monetary limit while the day list runs far past what the destination
+accepts — so every attempt was refused before anything was sent, and the next
+attempt rebuilt the identical batch. A mirror in that state would have stayed
+unfunded indefinitely, with nothing in the ledger to show why.
+
+The pass now stops at the destination's limit and reports the rest as
+deferred, exactly as it already does when the monetary limit binds: the mirror
+is reported as not fully funded, and the next pass takes the next instalment,
+so the backlog drains instead of wedging. Days that are only being closed out
+count towards the limit too, because they still occupy a place in the list the
+destination has to retire.
 
 Nothing here moves value yet: no draw exists until the next release adds one,
 and on a chain that has not received an old-wire delivery none of this is

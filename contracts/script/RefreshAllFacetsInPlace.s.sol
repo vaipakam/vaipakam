@@ -527,6 +527,30 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // that block re-does only the Remove.
         _upgradeRemitReceiverAhead(diamond);
 
+        // ─── the RETIRED ingress selectors go BEFORE the first cut too ────
+        //
+        // Codex #2232 r4, and it is the half of the window the upgrade above
+        // cannot reach. That upgrade closes the window for a receiver this
+        // script can FIND; the retired selector is what an un-upgraded one
+        // still calls, and until it is unrouted that call SUCCEEDS against the
+        // previous ingress bytecode and opens no transport epoch. Pre-cut, on
+        // an older mirror that does not route the receiver lens and whose
+        // artifact is missing or stale, there is no receiver to find — so the
+        // window stayed open in exactly the case the resolution fallback
+        // exists for.
+        //
+        // Removing here makes it fail-closed WITHOUT having to resolve
+        // anything: from this transaction on, a delivery through any
+        // un-upgraded receiver reverts, CCIP records a failed message, and it
+        // re-executes against the finished Diamond. That is the posture the
+        // rest of this run already relies on, and it holds for a receiver
+        // this script never saw.
+        //
+        // The same call runs again after the cuts as the interrupted-run
+        // sweep; see {_removeRetiredIngress} and the block there for why the
+        // completion-marker argument for removing LAST no longer applies.
+        _removeRetiredIngress(diamond, loupe);
+
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
         //
@@ -720,60 +744,35 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         //   (b) OPERATIONAL — upgrade the receiver proxy, so the happy path
         //       works immediately rather than needing a manual re-execution.
         //
-        // Ordering follows the M1 lesson above: the still-routed old selector
-        // is the DURABLE completion marker, so it is Removed LAST. If the
-        // receiver upgrade lands but the Remove is dropped, a rerun re-enters
-        // and redoes both (re-upgrading to a fresh implementation is
-        // idempotent in effect). Removing first would clear the marker while
-        // the upgrade could still fail, permanently skipping it.
-        // The retired signatures live in {retiredIngressSignatures} so the
-        // list is a surface a test can pin (Codex #2232 r1); this loop only
-        // asks the loupe which of them are still routed here.
-        string[] memory retiredSigs = retiredIngressSignatures();
-        bytes4[] memory retired = new bytes4[](retiredSigs.length);
-        uint256 retiredRouted;
-        for (uint256 r; r < retiredSigs.length; ++r) {
-            retired[r] = bytes4(keccak256(bytes(retiredSigs[r])));
-            if (loupe.facetAddress(retired[r]) != address(0)) ++retiredRouted;
-        }
-        if (retiredRouted != 0) {
-            // Codex #2232 r3 — this block is now the REMOVE LEG ONLY. The
-            // receiver upgrade it used to carry ran here, after every cut
-            // batch, which is precisely the window in which an old-wire
-            // delivery reaches the widened ingress through a generation-4
-            // receiver and opens no epoch; and it resolved the receiver from
-            // the artifact alone, so a stale record could abort a run whose
-            // live receiver was fine. Both are fixed where they belong — the
-            // upgrade ahead of the cuts, the requirement in the one ungated
-            // block above — and keeping a third copy here would only be
-            // another place for the resolution rule to drift.
-            //
-            // The Remove stays LAST and stays the durable completion marker:
-            // the gate above (`retiredRouted != 0`) is true until it mines, so
-            // a run whose Remove is dropped re-enters and re-does it, while
-            // the pre-cut probe is generation-gated and no-ops.
-
-            // Only the selectors actually routed are Removed — a Diamond
-            // already past B2-d5 has no 6-arg selector, and asking the cut to
-            // Remove an unrouted one reverts, which would abort the whole
-            // refresh over a migration that had already happened.
-            bytes4[] memory rmIngress = new bytes4[](retiredRouted);
-            uint256 k;
-            for (uint256 r; r < retired.length; ++r) {
-                if (loupe.facetAddress(retired[r]) != address(0)) rmIngress[k++] = retired[r];
-            }
-            IDiamondCut.FacetCut[] memory rmIngressCut =
-                new IDiamondCut.FacetCut[](1);
-            rmIngressCut[0] = IDiamondCut.FacetCut({
-                facetAddress: address(0),
-                action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rmIngress
-            });
-            IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
-            console.log(
-                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b) and the 12-arg onCompensationBudgetReceived"
-            );
-        }
+        // ORDERING — the Remove runs BEFORE the first cut, and this call is
+        // the sweep behind it (Codex #2232 r4).
+        //
+        // It used to run only here, last, on the M1 reasoning that a
+        // still-routed retired selector is the DURABLE COMPLETION MARKER: if
+        // the receiver upgrade landed but the Remove was dropped, a rerun
+        // re-entered this block and redid both. That reasoning retired with
+        // r3. The receiver upgrade no longer lives in this block — it runs
+        // ahead of the cuts and is gated on the proxy's own
+        // `WIRE_GENERATION`, so a rerun redoes it whenever the proxy is still
+        // behind, whether or not the Remove ever mined. The marker was
+        // protecting something that has moved.
+        //
+        // What removing LAST cost, meanwhile, was the whole cut window. Layer
+        // (a) above is only fail-closed while the retired selector is
+        // unrouted; until the Remove mines it stays pointed at the PREVIOUS
+        // ingress bytecode, so an un-upgraded receiver's delivery in that
+        // window SUCCEEDS and opens no transport epoch — the r3 hazard again,
+        // in the one case r3's fix cannot reach: a Diamond on which no
+        // receiver could be resolved pre-cut at all (an older mirror that does
+        // not route the lens, with a missing or stale artifact). Resolving a
+        // receiver more cleverly cannot close that; making the window
+        // fail-closed regardless of what was resolved does.
+        //
+        // So {_removeRetiredIngress} runs ahead of the cut dispatch and again
+        // here. It removes only what the loupe still routes, so the second
+        // call is a no-op on a normal run and the sweep for an interrupted
+        // one — and a rerun re-enters it exactly as before.
+        _removeRetiredIngress(diamond, loupe);
         // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
         // ingress gained the same parameter, and the Diamond-releasing
         // `custodyUncreditFresh` retired with the in-holder unwind. Both are
@@ -1776,6 +1775,60 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // the cuts, where `getRewardReporterConfig` can say which this is.
             console.log("remit receiver: none resolvable pre-cut - decided after the cuts");
         }
+    }
+
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r4) — Remove every
+    ///      RETIRED ingress selector the loupe still routes, in one cut.
+    ///
+    ///      ONE implementation, called TWICE: ahead of the cut dispatch, where
+    ///      it makes the whole refresh window fail-closed for a receiver that
+    ///      was never upgraded, and again after the cuts, where it is the
+    ///      sweep for a run that was interrupted between the two. Idempotent
+    ///      by construction — it removes only what is routed and asking a cut
+    ///      to Remove an unrouted selector reverts, which would abort a
+    ///      refresh over a migration that had already happened.
+    ///
+    ///      The retired signatures live in {retiredIngressSignatures} so the
+    ///      list is a surface a test can pin (Codex #2232 r1); this only asks
+    ///      the loupe which of them are still routed here.
+    /// @return removed How many were Removed by this call.
+    function _removeRetiredIngress(address diamond, IDiamondLoupe loupe)
+        private
+        returns (uint256 removed)
+    {
+        string[] memory retiredSigs = retiredIngressSignatures();
+        bytes4[] memory retired = new bytes4[](retiredSigs.length);
+        for (uint256 r; r < retiredSigs.length; ++r) {
+            retired[r] = bytes4(keccak256(bytes(retiredSigs[r])));
+            if (loupe.facetAddress(retired[r]) != address(0)) ++removed;
+        }
+        if (removed == 0) {
+            console.log("remit ingress: no retired selector routed - nothing to remove");
+            return 0;
+        }
+        bytes4[] memory rmIngress = new bytes4[](removed);
+        uint256 k;
+        for (uint256 r; r < retired.length; ++r) {
+            if (loupe.facetAddress(retired[r]) != address(0)) rmIngress[k++] = retired[r];
+        }
+        IDiamondCut.FacetCut[] memory rmIngressCut = new IDiamondCut.FacetCut[](1);
+        rmIngressCut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: rmIngress
+        });
+        IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
+        // Read back rather than assumed: an un-Removed selector is the whole
+        // defect this call exists to prevent, so it is verified, not hoped for.
+        for (uint256 r; r < rmIngress.length; ++r) {
+            require(
+                loupe.facetAddress(rmIngress[r]) == address(0),
+                "RefreshAllFacetsInPlace: a retired ingress selector is still routed after the Remove"
+            );
+        }
+        console.log(
+            "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b) and the 12-arg onCompensationBudgetReceived"
+        );
     }
 
     /// @dev `mandatory` says whether a failed upgrade stops the run. True for
