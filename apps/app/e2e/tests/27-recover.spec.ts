@@ -39,6 +39,7 @@ import {
   forkChain,
   pub,
   walletFor,
+  confirm,
 } from '../lib/chain';
 import { anvilRpc, setBalance } from '../lib/anvil';
 import { encodeFunctionData, parseAbi, parseUnits, type Address } from 'viem';
@@ -71,7 +72,7 @@ async function setSanctionsOracle(target: Address): Promise<void> {
         }),
       },
     ])) as `0x${string}`;
-    await pub.waitForTransactionReceipt({ hash: txHash });
+    await confirm(txHash, 'setSanctionsOracle');
   } finally {
     await anvilRpc('anvil_stopImpersonatingAccount', [ADMIN]);
   }
@@ -123,7 +124,7 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
       chain: forkChain,
       account,
     });
-    await pub.waitForTransactionReceipt({ hash });
+    await confirm(hash, 'getOrCreateUserVault');
     vault = (await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
@@ -145,7 +146,7 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
     chain: forkChain,
     account,
   });
-  await pub.waitForTransactionReceipt({ hash: mintHash });
+  await confirm(mintHash, 'mint (recover seeding)');
 
   const walletBalBefore = (await pub.readContract({
     address: token,
