@@ -19,7 +19,9 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *
  *         WHY ITS OWN FACET. Admission happens at ingress and lives with the
  *         ingress; everything after it is a distinct lifecycle with distinct
- *         callers — permissionless indexing, and operator parking — and the
+ *         callers — permissionless indexing and parking, and the operator's
+ *         acknowledgment that releases a batch (Codex #2232 r7: this said
+ *         "operator parking", which names the wrong half) — and the
  *         two facets that would otherwise host it, {RewardReconciliationFacet}
  *         and {RewardIngressFacet}, are respectively out of EIP-170 headroom
  *         and named for something else. PR 3b-ii's per-day allocation pass
@@ -306,17 +308,28 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         call valid is STATE, never the caller.
     ///
     ///         It does, however, require the COMMITTED DAY LIST, and that is
-    ///         not a authority check — it is the symmetry that keeps the call
-    ///         safe to leave open. This admission closes the classification
-    ///         gate on a packet that was ungated until now, and the only route
-    ///         back through that gate runs via
-    ///         {materializeTransportBatchPage}, which proves the list against
-    ///         the same commitment. Taking the hash here means closing the
-    ///         gate costs exactly what opening it costs; without it, anyone
-    ///         could close a gate only a list-holder could reopen — a liveness
-    ///         regression a stranger could inflict on the oldest deliveries,
-    ///         whose list survives only in long-past event data. The list is
-    ///         not stored, so this is not a second copy of the membership.
+    ///         not an authority check.
+    ///
+    ///         NOT the symmetry argument this entry was introduced with, which
+    ///         is RETIRED (Codex #2232 r5/r7): that argument said the list is
+    ///         required because the admission CLOSES a classification gate only
+    ///         a list-holder could reopen. Since
+    ///         {LibRewardCustody.rolloutAdmissionStatus} became the gate's rule
+    ///         too, an owed packet is gated by its own SHAPE from the moment it
+    ///         lands, so this call closes nothing and a justification resting on
+    ///         what it closes is false. It is written out here rather than left
+    ///         standing, because this NatSpec is the public face of a funds gate
+    ///         and a retired rationale read as current is how the conflation
+    ///         behind it survived five rounds.
+    ///
+    ///         The check stays for the reason that does hold: this is the one
+    ///         call that fixes an IMMUTABLE anchor over the protected row, and
+    ///         an anchor bounding a membership nobody can exhibit describes a
+    ///         set nobody can enumerate. It costs a caller nothing it does not
+    ///         already need — {materializeTransportBatchPage} proves the same
+    ///         list against the same commitment, so no route to a release
+    ///         exists without it. The list is not stored, so this is not a
+    ///         second copy of the membership.
     ///
     ///         Design §5c records the day-list commitment on every arrival on
     ///         a wire older than d6 precisely so "a packet landing between 3a

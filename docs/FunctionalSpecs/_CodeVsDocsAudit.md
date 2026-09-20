@@ -924,17 +924,26 @@ binding it to the days its own delivery named is a stricter gate on the same
 money, never a second claim on it. Recorded in the entry's NatSpec, in
 `TokenomicsTechSpec.md`, and in the design note.
 
-**A second-order defect this entry's fix introduced, and its own resolution.**
-The admission originally took only the packet hash. It sets `p.batchId`, which
-CLOSES the classification gate on a packet that was ungated until that moment,
-while the only route back through that gate (`materializeTransportBatchPage`)
-proves the day list against the packet's commitment. Anyone could therefore
-close a gate that only a holder of the committed list could reopen — and the
-rollout population is by definition the oldest deliveries, whose list survives
-only in long-past event data, which this programme already has an open blocker
-on reading (#2095). The admission now takes the committed list and proves it,
-so closing the gate costs exactly what opening it costs. The list is not
+**A second-order defect this entry's fix introduced, its resolution, and the
+justification that resolution later outlived.** The admission originally took
+only the packet hash. It sets `p.batchId`, and at the time that CLOSED the
+classification gate on a packet ungated until that moment, while the only route
+back through the gate (`materializeTransportBatchPage`) proves the day list
+against the packet's commitment — so anyone could close a gate only a holder of
+the committed list could reopen, on the oldest deliveries, whose list survives
+only in long-past event data this programme has an open blocker on reading
+(#2095). The admission takes the committed list and proves it. The list is not
 stored; admission stays compact.
+
+**That symmetry argument is now retired and must not be repeated** (Codex #2232
+r5/r7). Once `rolloutAdmissionStatus` became the classification gate's rule as
+well, an owed packet is gated by its own SHAPE from the moment it lands, so the
+admission closes nothing. The requirement stays for the reason that does hold:
+it is the one call that fixes an immutable anchor over the protected row, and an
+anchor bounding a membership nobody can exhibit describes a set nobody can
+enumerate. The retired reason is recorded rather than deleted because it stood
+in seven places at once, and a reader who remembers it should find this note
+instead of concluding the docs were merely behind.
 
 ### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
 
