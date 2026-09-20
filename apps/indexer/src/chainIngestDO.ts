@@ -463,6 +463,26 @@ export class ChainIngestDO {
     if (!hasD1Binding(this.env.DB)) {
       // eslint-disable-next-line no-console
       console.warn(maintenanceSkipNotice(WORKER_NAME, 'the ingest alarm'));
+      // CLOSE THE SOCKETS BEFORE RETURNING (#2252 r9 P2). Returning alone
+      // leaves every hibernatable socket open and auto-answering `ping`, so a
+      // connected client keeps its push rail marked live: `IndexerPushSync`
+      // clears that flag only from `onclose`, and `railHealth` trusts the last
+      // cursor signal for 450s. The app would therefore present a STOPPED
+      // ingest rail as healthy for minutes — a surface asserting a freshness
+      // it no longer has, which is the exact failure this whole change exists
+      // to prevent, arriving through the one door the entry-point refusals do
+      // not cover.
+      //
+      // `1012` is the registered "service restart" close code, which is what
+      // this is: the client's own reconnect/polling fallback is the correct
+      // response and needs no special casing.
+      for (const ws of this.state.getWebSockets()) {
+        try {
+          ws.close(1012, 'maintenance: ingest paused');
+        } catch {
+          // Already closing — nothing to do, same as `webSocketClose`.
+        }
+      }
       return;
     }
     // Synchronously (before any await) mark a scan live, so any concurrent

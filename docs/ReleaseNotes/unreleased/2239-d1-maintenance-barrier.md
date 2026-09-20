@@ -22,8 +22,13 @@ propagation delay stops mattering, and an unlisted entry point is covered
 precisely because nothing is listed.
 
 What **three** of the four services gained is the ability to be held that way
-**gracefully** — the exception is the nightly backup service, which shares none
-of this code and is described further down. Without it, code that expected a
+**gracefully**. The exception is the nightly backup service: it sits outside
+the shared code and has no equivalent gate, so removing its database access
+makes its scheduled run fail outright rather than decline politely. That is the
+expected behaviour during a window and not a new fault — it writes nothing a
+user can see, so nothing is lost, but an operator watching the logs should know
+to expect a raw error from it rather than the clean refusal the other three
+give. Without it, code that expected a
 database would simply crash, which is loud but tells nobody whether their write
 landed. Now each of those three refuses at its entrance: a caller gets a temporary-unavailable answer that says plainly that
 nothing they sent was recorded and that nothing read back would be current,

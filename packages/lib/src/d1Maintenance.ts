@@ -27,11 +27,17 @@
  * Durable Object alarm admitted by the PREVIOUS deployment keeps the
  * environment it captured — bound, to the database being abandoned — and can
  * still write until it finishes. Removing the binding does not reach inside a
- * running execution. That residual is real, it is what an operator's drain
- * waits out, and it is stated in `docs/FunctionalSpecs/ProjectDetailsREADME.md`
- * §13 and in the cutover runbook. This comment said "including … continuation"
- * without the qualifier while both of those already carried it, which is the
- * one place a future author would come looking for the rule.
+ * running execution.
+ *
+ * **There is no drain procedure yet, and this comment must not imply one**
+ * (#2252 r9). An earlier revision said the residual "is what an operator's
+ * drain waits out … and is stated in the cutover runbook", which points a
+ * maintainer at a safeguard that does not exist: the runbook lists the drain
+ * criterion among the inputs it is still missing and defers the whole
+ * procedure to #2255. The residual is stated as intent in
+ * `docs/FunctionalSpecs/ProjectDetailsREADME.md` §13; how an operator waits it
+ * out is open. Treat this module as covering admitted work only, and do not
+ * assume anything upstream has handled the rest.
  *
  * ## What this module adds on top, and why it is NOT the barrier
  *
