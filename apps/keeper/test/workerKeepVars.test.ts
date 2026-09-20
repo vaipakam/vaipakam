@@ -298,6 +298,122 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
+    /**
+     * A config named outside the convention is identified by CONTENT (#2171 r8).
+     *
+     * Retiring the command scanner removed this coverage: it read whatever
+     * path the command selected, and its deleted fixture `a config selected
+     * through an argv array is the one consulted` seeded `apps/agent/
+     * unsafe.jsonc` and asserted the deploy was refused. The header used to
+     * accept the loss, reasoning that recognising such a file meant
+     * classifying arbitrary JSON — which is what turned the round-one tree red
+     * on `ops/mesh-watcher/package.json`. That draft keyed on `name`. Keying
+     * on `compatibility_date` does not have the property that broke it: no
+     * manifest, tsconfig, lockfile or ABI in this tree carries the field.
+     *
+     * The bounds guards below are the half that matters most, since the
+     * failure this replaces was a FALSE REPORT rather than a miss.
+     */
+    const OUTSIDE = 'configs/agent-staging.jsonc';
+    const OUTSIDE_BODY = { name: 'vaipakam-agent', compatibility_date: '2026-01-01' };
+
+    it('rejects a deployable config whose name is not `wrangler*`', () => {
+      withSeeded(OUTSIDE, `${JSON.stringify(OUTSIDE_BODY)}\n`, (r) => {
+        expect(r.ok, `${OUTSIDE} was accepted without keep_vars`).toBe(false);
+        expect(r.out).toContain(OUTSIDE);
+        // Reported for the right reason, not incidentally: the message has to
+        // tell the reader why a file they did not name `wrangler*` is here.
+        expect(r.out).toContain('not named `wrangler*`');
+        expect(r.out).toContain('compatibility_date');
+      });
+    });
+
+    it('accepts it once it declares the key, and says how it was identified', () => {
+      withSeeded(OUTSIDE, `${JSON.stringify({ ...OUTSIDE_BODY, keep_vars: true })}\n`, (r) => {
+        expect(r.ok, `${OUTSIDE} was rejected despite declaring keep_vars: ${r.out}`).toBe(true);
+        expect(r.out).toContain('identified by a top-level `compatibility_date`');
+        expect(r.out).toContain(OUTSIDE);
+      });
+    });
+
+    it('counts a content-identified Pages config as exempt, not as asserted', () => {
+      // A count is a claim (#2171 r6). A Pages config reached by the second
+      // identification declares nothing and cannot, so it must not appear in
+      // the "identified by content" total either.
+      withSeeded(
+        'configs/site.jsonc',
+        `{"name": "vaipakam-site", "compatibility_date": "2026-01-01", "pages_build_output_dir": "./dist"}\n`,
+        (r) => {
+          expect(r.ok, r.out).toBe(true);
+          expect(r.out).toContain('1 Pages config(s) are exempt');
+          expect(r.out).not.toContain('identified by a top-level');
+        },
+      );
+    });
+
+    // BOUNDS GUARDS for the second identification. These pass with or without
+    // it; they pin that it is a test for ONE wrangler-invented field and not a
+    // general attempt to classify JSON, which is the failure it has to avoid.
+    it('bounds guard: `name` + `main` is NOT the discriminator', () => {
+      // The shape a package manifest has. An earlier draft keyed on `name`
+      // and reddened the committed tree; `name` + `main` would repeat it.
+      withSeeded(
+        'apps/agent/package.json',
+        `{"name": "vaipakam-agent", "main": "dist/index.js", "version": "1.0.0"}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: an unparseable .json is passed over, not reported', () => {
+      // Discovery by content is a RECOGNISER. A file it cannot parse is not a
+      // config; making that an error would fail the check on files it has no
+      // business judging. A `wrangler*`-named file keeps the stricter
+      // treatment, because there the name is a claim — asserted below.
+      withSeeded('apps/agent/broken.json', 'not json at all {{{\n', (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('a `wrangler*`-named file that does not parse IS still reported', () => {
+      withSeeded('apps/agent/wrangler.broken.jsonc', 'not json at all {{{\n', (r) => {
+        expect(r.ok, 'a malformed config named `wrangler*` was passed over').toBe(false);
+        expect(r.out).toContain('apps/agent/wrangler.broken.jsonc');
+      });
+    });
+
+    it('bounds guard: the field mentioned somewhere other than the top level', () => {
+      // The test is a SHAPE test on the parsed object, so a nested or
+      // string-valued mention does not make a file a config.
+      withSeeded(
+        'apps/agent/notes.json',
+        `{"docs": {"compatibility_date": "wrangler requires this"}}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: TOML is NOT identified by content — a stated trade', () => {
+      // Recognising TOML by content needs the grammar this check refuses to
+      // carry; the only thing available without it is a raw substring, which
+      // would report a `.toml` that merely mentions the field in a comment.
+      // Buying one narrow case with a new false-report class is the trade
+      // #1995 says not to make. Pinned so the gap stays deliberate — if
+      // someone later adds TOML content discovery, this test is where the
+      // argument has to be answered.
+      withSeeded(
+        'configs/agent.toml',
+        'name = "vaipakam-agent"\ncompatibility_date = "2026-01-01"\n',
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('bounds guard: vendored trees are not walked for content either', () => {
+      withSeeded(
+        'apps/agent/node_modules/pkg/config.jsonc',
+        `{"name": "x", "compatibility_date": "2026-01-01"}\n`,
+        (r) => expect(r.ok, 'a vendored config was treated as ours').toBe(true),
+      );
+    });
+
     it('the real tree carries the key on EVERY config, app and www included', () => {
       // The two Workers with no `vars` are the ones the deleted predicate
       // excluded, so their declarations are the part of this change most

@@ -71,15 +71,38 @@
  *     either — it FELL BACK to judging the command on its own terms and
  *     reported, which is a defence a file scan structurally cannot offer. So
  *     this one wants the owner's acceptance rather than a note.
- *   - A checked-in wrangler config named outside the `wrangler*` convention.
- *     ALSO A REMOVAL rather than an inherited gap (#2171 r8): the retired
- *     scanner read whatever path the command selected, and its deleted fixture
- *     `a config selected through an argv array is the one consulted` seeded
- *     `apps/agent/unsafe.jsonc` and asserted the deploy was refused. Narrower
- *     than the generated case — it needs someone to check in a deployable
- *     config under a name no config here uses — but narrower is not absent.
- *     See THE ONE MISS in the note below for why recognising it would cost
- *     false reports.
+ *   - A checked-in Worker config named outside the `wrangler*` convention
+ *     that ALSO omits `compatibility_date` (deployed with the date supplied as
+ *     `--compatibility-date`), or that is TOML. The convention gap itself is
+ *     now CLOSED — see THE SECOND IDENTIFICATION below — and these are its
+ *     narrower residues, named rather than implied because a defence that has
+ *     grown should be as exact about its edge as one that has shrunk. The TOML
+ *     residue is a deliberate trade, argued beside the code that declines it.
+ *
+ * THE SECOND IDENTIFICATION (closes the #2171 r8 removal). A config is
+ * recognised by EITHER of two total tests, and everything either one finds
+ * goes through the single requirement pass below:
+ *
+ *   1. WRANGLER'S FILENAME CONVENTION — `wrangler*.json`/`.jsonc`/`.toml`.
+ *   2. WRANGLER'S OWN REQUIRED WORKER FIELD — a top-level string
+ *      `compatibility_date`. `--config` accepts any path, so a deployable
+ *      config checked in as `configs/agent-staging.jsonc` is reachable, and
+ *      the retired scanner did cover it: its deleted fixture `a config
+ *      selected through an argv array is the one consulted` seeded
+ *      `apps/agent/unsafe.jsonc` and asserted the deploy was refused.
+ *
+ * Neither test needs an execution model, a notion of which text is a command,
+ * or wrangler's CLI-and-config merge semantics — the three things that made
+ * the retired predicate unbounded. Test 2 is a shape test for ONE key that
+ * wrangler invented and nothing else in this tree carries. The earlier draft
+ * that turned the tree red on `ops/mesh-watcher/package.json` keyed on `name`,
+ * a field every manifest has; `name` + `main` would repeat that for the same
+ * reason, which is why the discriminator is the field no manifest has.
+ *
+ * The REMEDY for a config found by test 2 is the same as for any other —
+ * declare the key — NOT a demand that it be renamed. The safety property is
+ * the declaration. The filename is a convention, and a guard that exists to
+ * stop vars being wiped is the wrong place to enforce one.
  *
  * WHY IT RUNS UNCONDITIONALLY, and does not live only in the keeper's Vitest
  * suite. The Workers it checks span `apps/` and `ops/`, while the only CI job
@@ -213,16 +236,24 @@ const problems = [];
  * the others already accept — a deploy can no longer REMOVE a var, which
  * becomes a deliberate dashboard action.
  *
- * THE ONE REMAINING MISS OF THIS RULE — one rather than six, though it is a
- * REMOVAL and not a limitation the change inherited; see the accepted list
- * above. A wrangler config checked in
- * under a name that does not begin `wrangler`. `--config` accepts any path,
- * so such a file is reachable and this check will not see it. Recognising it
- * would mean classifying arbitrary JSON by its contents, which is where the
- * false reports come from — the first draft of the round-one rule turned the
- * tree red on `ops/mesh-watcher/package.json` because it shares the Worker's
- * name. The convention is therefore stated as a rule for contributors:
- * a wrangler config is named `wrangler*.jsonc`.
+ * A CONFIG NAMED OUTSIDE THE CONVENTION IS NO LONGER MISSED. It was, and the
+ * previous revision of this note explained why recognising it would cost false
+ * reports: classifying arbitrary JSON by its contents is what turned the
+ * round-one tree red on `ops/mesh-watcher/package.json`. That reasoning was
+ * right about the rule it was describing — which keyed on `name` — and wrong
+ * as a general claim about content. Keying on `compatibility_date` instead is
+ * a test for a field wrangler invented, which no manifest, tsconfig or lockfile
+ * carries; the walk below applies it as a second identification, and
+ * everything it finds is asserted by the same pass as everything else.
+ *
+ * What is left is a residue rather than the gap: a config that carries neither
+ * the name nor the field, deployed with `--compatibility-date` supplying what
+ * the file omits. That one is listed with the accepted cases at the top, where
+ * the things this check does not cover are stated together.
+ *
+ * The convention remains a rule for contributors — a wrangler config is named
+ * `wrangler*.jsonc` — but it is now a tidiness rule rather than the thing
+ * safety rests on.
  */
 
 /**
@@ -260,7 +291,20 @@ const SKIP_PATHS = new Set(['contracts/lib', 'contracts/out', 'contracts/cache']
 /** Wrangler's own config filename convention — a total test on the name. */
 const CONFIG_NAME = /^wrangler[^/]*\.(jsonc|json|toml)$/;
 
-function walkConfigs(rel, out) {
+/** Files the second identification may read — the extensions wrangler loads. */
+const CANDIDATE_NAME = /\.(jsonc|json|toml)$/;
+
+/**
+ * The field the second identification keys on.
+ *
+ * Wrangler requires `compatibility_date` for a Worker and invented the name;
+ * no manifest, tsconfig, lockfile or ABI in this tree carries it. That is what
+ * makes reading content safe HERE and unsafe in the round-one draft, which
+ * keyed on `name` and turned the tree red on a package manifest.
+ */
+const WORKER_FIELD = 'compatibility_date';
+
+function walkConfigs(rel, named, candidates) {
   let entries;
   try {
     entries = readdirSync(rel ? join(REPO_ROOT, rel) : REPO_ROOT, { withFileTypes: true });
@@ -270,16 +314,65 @@ function walkConfigs(rel, out) {
   for (const e of entries) {
     const child = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
-      if (!SKIP_BASENAMES.has(e.name) && !SKIP_PATHS.has(child)) walkConfigs(child, out);
+      if (!SKIP_BASENAMES.has(e.name) && !SKIP_PATHS.has(child)) {
+        walkConfigs(child, named, candidates);
+      }
     } else if (CONFIG_NAME.test(e.name)) {
-      out.push(child);
+      named.push(child);
+    } else if (CANDIDATE_NAME.test(e.name)) {
+      candidates.push(child);
     }
   }
 }
 
-const configs = [];
-walkConfigs('', configs);
-configs.sort();
+const named = [];
+const candidates = [];
+walkConfigs('', named, candidates);
+
+/**
+ * How each config was identified, so a report can say WHY a file is asserted.
+ *
+ * Discovery by content is a RECOGNISER, not an assertion: a candidate that
+ * cannot be read, does not parse, or is not a JSON object is simply not a
+ * config, and is passed over in silence. Treating an unparseable `.json`
+ * somewhere in the tree as a problem would make this check fail on files it
+ * has no business judging — the opposite of the bounded shape the header
+ * argues for. A file named `wrangler*` keeps the stricter treatment it already
+ * had: there, a parse failure IS reported, because the name is a claim.
+ */
+const discovery = new Map(named.map((rel) => [rel, 'name']));
+
+for (const rel of candidates) {
+  let text;
+  try {
+    text = readFileSync(join(REPO_ROOT, rel), 'utf8');
+  } catch {
+    continue;
+  }
+  // Cheap reject first: most of the tree's JSON is ABIs and lockfiles, and
+  // only the few files mentioning the field are worth parsing.
+  if (!text.includes(WORKER_FIELD)) continue;
+  // TOML IS NOT IDENTIFIED BY CONTENT, deliberately. The JSON test is a shape
+  // test on a parsed object — a top-level key of type string. The TOML
+  // equivalent needs the grammar this file refuses to carry, and the only
+  // thing available without it is a raw substring, which would report a `.toml`
+  // that merely MENTIONS the field in a comment. That is the loose inference
+  // the retired scanner was made of, and buying one narrow case with a new
+  // false-report class is the trade #1995 says not to make. A `wrangler*.toml`
+  // is still refused by name below, where the name is a claim about the file.
+  if (rel.endsWith('.toml')) continue;
+  let cfg;
+  try {
+    cfg = parseJsonc(text);
+  } catch {
+    continue;
+  }
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
+  if (typeof cfg[WORKER_FIELD] !== 'string') continue;
+  discovery.set(rel, 'content');
+}
+
+const configs = [...discovery.keys()].sort();
 
 /** Configs the deployment tool refuses the declaration for — counted apart. */
 const exempt = [];
@@ -366,7 +459,15 @@ for (const rel of configs) {
         `config declares it, whatever Worker it names and whether or not that ` +
         `Worker\n    has vars today — a deploy can select any config and can ` +
         `override the Worker name on\n    the command line, so which config ` +
-        `is "the" one is not decidable from here.`,
+        `is "the" one is not decidable from here.` +
+        (discovery.get(rel) === 'content'
+          ? `\n    This file is not named \`wrangler*\`, and is asserted ` +
+            `because it carries a top-level\n    \`${WORKER_FIELD}\` — the ` +
+            `field wrangler requires of a Worker config. \`--config\` ` +
+            `accepts\n    any path, so the name does not decide whether a ` +
+            `deploy can load it. Declare the key;\n    renaming it is a ` +
+            `tidiness choice, not what makes it safe.`
+          : ''),
     );
   }
   // NAMED ENVIRONMENTS ARE NOT ASSERTED, and the previous revision was wrong
@@ -411,6 +512,16 @@ for (const dir of VAR_CARRYING_WORKERS) {
   }
 }
 
+// Derived AFTER the requirement pass, because `exempt` is filled by it and a
+// Pages config found by content declares nothing — counting it among the
+// asserted ones would make the summary line claim something untrue about a
+// file this check deliberately skipped (#2171 r6, the same defect in the
+// exempt total).
+const exemptSet = new Set(exempt);
+const assertedByContent = configs.filter(
+  (rel) => discovery.get(rel) === 'content' && !exemptSet.has(rel),
+);
+
 if (problems.length > 0) {
   console.error(
     `\n[check-keep-vars] ${problems.length} problem(s):\n\n` +
@@ -434,6 +545,15 @@ if (problems.length > 0) {
 console.log(
   `[check-keep-vars] OK — ${configs.length - exempt.length} wrangler ` +
     `config(s) declare preservation` +
+    // COUNTED APART for the same reason the exempt ones are: the two
+    // identifications answer different questions, and a reader verifying the
+    // line should be able to tell how many files are here because of their
+    // name and how many because of what they contain.
+    (assertedByContent.length
+      ? ` (${assertedByContent.length} of them identified by a top-level ` +
+        `\`${WORKER_FIELD}\` rather than by filename: ` +
+        `${assertedByContent.join(', ')})`
+      : '') +
     (exempt.length
       ? `, and ${exempt.length} Pages config(s) are exempt because the tool ` +
         `refuses the key there (${exempt.join(', ')})`
