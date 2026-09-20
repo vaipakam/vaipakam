@@ -1631,6 +1631,14 @@ library LibRewardCustody {
         }
         uint256 left = available - amount;
         rem.amount = left;
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — record the EXIT, not
+        // only the new balance. `amount` falling is what happened; `debited`
+        // is what left, and it is the term that keeps the epoch's conservation
+        // identity closed (`admitted == balance + parked + debited`) once a
+        // classification has taken from it. Without it the identity is false
+        // the moment this line first runs, which is a ledger that reconciles
+        // only while it is untouched.
+        rem.debited += amount;
         emit TransportRemainderDebited(batchId, amount, left);
     }
 

@@ -81,13 +81,20 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         than finding the value in a general pool it has no claim on.
     ///         PERMISSIONLESS (Codex #2232 r2), because the specification says
     ///         so and for the reason it gives: attesting a packet's split and
-    ///         releasing its value for classification are both open to anyone
-    ///         and may happen in either order, which is exactly why the
-    ///         evidence bound is derived at use time rather than snapshotted.
-    ///         An earlier revision of this facet gated both halves on
-    ///         `ADMIN_ROLE`, which turned a specified lifecycle into an
+    ///         parking what its obligations left are both open to anyone and
+    ///         may happen in either order, which is exactly why the evidence
+    ///         bound is derived at use time rather than snapshotted. An
+    ///         earlier revision of this facet gated parking on `ADMIN_ROLE`,
+    ///         which turned a specified mechanical step into an
     ///         administrator-dependent one and left a valid batch's closeout
     ///         waiting on whoever holds the role.
+    ///
+    ///         That reason extends to THIS half and not to the other one, and
+    ///         a later revision over-corrected by opening both (Codex #2232
+    ///         r3): the ACKNOWLEDGMENT is the operator disposition the design
+    ///         names, and it is gated. See
+    ///         {acknowledgeTransportBatchRemainder} for which act is which and
+    ///         why the split is exactly where the authority changes.
     ///
     ///         What makes a release valid is STATE, not the caller: the batch
     ///         must exist and its membership must be whole. 3b-ii adds §5c's
@@ -108,12 +115,43 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         derives the bound a classification reads from the packet's
     ///         immutable attested caps, NET of what the batch's own transport
     ///         legs have spent.
-    ///         Permissionless for the same reason as the park above, and
-    ///         state-gated the same way: a remainder must be parked and not
-    ///         already acknowledged.
+    ///
+    ///         ADMIN, and NOT for the reason the park above is permissionless
+    ///         (Codex #2232 r3). The two halves of the release look like one
+    ///         lifecycle and are two different kinds of act, which is what an
+    ///         earlier revision of this facet got wrong in both directions —
+    ///         first gating both on `ADMIN_ROLE`, then opening both.
+    ///
+    ///         PARKING IS MECHANICAL. It moves a batch's own remainder into a
+    ///         holding of the same batch, under the same membership
+    ///         commitment; no authority is exercised, nothing becomes
+    ///         spendable that was not, and the design says so at
+    ///         `Vpfi1566CanonicalDeliveredBoundDesign.md:6695-6703` — attesting
+    ///         and parking are permissionless and may happen in either order,
+    ///         which is precisely why the evidence bound is derived at use
+    ///         time rather than snapshotted here.
+    ///
+    ///         THE ACKNOWLEDGMENT IS A DISPOSITION. Design `:3019-3029` calls
+    ///         it "a deliberate operator disposition carrying a recorded
+    ///         acknowledgment, keyed by the batch", in the same family as
+    ///         slice 0's shortfall disposition, and names its consequence:
+    ///         obligations arriving afterwards for any of that batch's listed
+    ///         days are REFUSED to the extent they looked to it. That is a
+    ///         decision to stop waiting on a lane that cannot prove closure —
+    ///         it forfeits a claim belonging to somebody else, and it is
+    ///         one-way. Leaving it open let any caller forge the owner
+    ///         decision that both unlocks authenticated-fresh classification
+    ///         and governs how later listed obligations are handled.
+    ///
+    ///         So the release still cannot be reached by draining a batch
+    ///         alone — that was the point of splitting it — and the half that
+    ///         carries the consequence is the half that carries the authority.
+    ///         State-gated as before on top of the role: a remainder must be
+    ///         parked and not already acknowledged.
     function acknowledgeTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
+        onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }
@@ -172,20 +210,36 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return (b.consumedFresh, b.consumedRecycled);
     }
 
-    /// @notice A batch's parked remainder.
-    /// @return amount       What was parked; zero when nothing is.
+    /// @notice A batch's parked remainder, and what has left it.
+    /// @dev    `amount` and `debited` are reported TOGETHER because neither is
+    ///         readable on its own (Codex #2232 r3): a remainder parked at 10
+    ///         and classified for 4 holds 6, and 6 alone cannot be told from a
+    ///         batch that only ever parked 6. Both are what closes the epoch's
+    ///         conservation identity — a batch's `admitted` is always its
+    ///         `balance` plus what is parked plus what classification took,
+    ///         plus (from PR 3b-ii) its transport legs.
+    /// @return amount       What is parked NOW; zero when nothing is, and also
+    ///                      zero once classification has taken all of it.
     /// @return dayListHash  The membership that still binds it.
     /// @return dayCount     How many days that list names.
     /// @return acknowledged Whether the acknowledgment has been recorded.
+    /// @return debited      CUMULATIVE value classification has taken out of
+    ///                      this remainder; never falls.
     function getTransportRemainder(bytes32 batchId)
         external
         view
-        returns (uint256 amount, bytes32 dayListHash, uint32 dayCount, bool acknowledged)
+        returns (
+            uint256 amount,
+            bytes32 dayListHash,
+            uint32 dayCount,
+            bool acknowledged,
+            uint256 debited
+        )
     {
         LibVaipakam.TransportRemainder storage r =
             LibVaipakam.storageSlot().transportRemainders[batchId];
-        if (r.batchId == bytes32(0)) return (0, bytes32(0), 0, false);
-        return (r.amount, r.dayListHash, r.dayCount, r.acknowledged);
+        if (r.batchId == bytes32(0)) return (0, bytes32(0), 0, false, 0);
+        return (r.amount, r.dayListHash, r.dayCount, r.acknowledged, r.debited);
     }
 
     /// @notice One day's batch MEMBERSHIP index, paginated, with each entry's

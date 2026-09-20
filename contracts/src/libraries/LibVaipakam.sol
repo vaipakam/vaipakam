@@ -7827,6 +7827,19 @@ library LibVaipakam {
         bytes32 dayListHash;
         uint32 dayCount;
         bool acknowledged;
+        /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — CUMULATIVE
+        ///      value that has left this remainder through classification.
+        ///      `amount` falls as classifications take from it, so without a
+        ///      running total of what left, an epoch's admitted figure cannot
+        ///      be reconciled against what it still holds: the arithmetic
+        ///      simply stops adding up after the first classification, and
+        ///      every reader is left inferring the difference. Stating the
+        ///      exit is what makes `admitted == balance + parked + debited`
+        ///      an identity a reader (and the conservation invariant) can
+        ///      check rather than a claim that happens to hold while nothing
+        ///      has been spent. PR 3b-ii's transport legs are the ledger's
+        ///      other exits and are already carried on the batch.
+        uint256 debited;
     }
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy

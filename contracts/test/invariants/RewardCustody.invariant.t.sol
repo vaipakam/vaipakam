@@ -87,7 +87,7 @@ contract RewardCustodyInvariant is SetupTest {
 
         targetContract(address(handler));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(handler));
-        bytes4[] memory sel = new bytes4[](9);
+        bytes4[] memory sel = new bytes4[](10);
         sel[0] = RewardCustodyHandler.fund.selector;
         sel[1] = RewardCustodyHandler.claim.selector;
         sel[2] = RewardCustodyHandler.absorb.selector;
@@ -100,6 +100,12 @@ contract RewardCustodyInvariant is SetupTest {
         // admission is a SECOND way an epoch comes into existence, so the
         // conservation invariant above must see epochs opened that way too.
         sel[8] = RewardCustodyHandler.rolloutAdmit.selector;
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — and the RELEASE, or
+        // the campaign cannot reach the debit seam at all: classification
+        // against an epoch-backed packet is gated on it, so without this
+        // action every such call reverts at the gate and the conservation
+        // invariant passes over a transition it never performs.
+        sel[9] = RewardCustodyHandler.releaseEpoch.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
@@ -217,10 +223,22 @@ contract RewardCustodyInvariant is SetupTest {
 
     /// #1566 transport epochs PR 3b — every TRANSPORT EPOCH conserves under
     /// every interleaving: what a batch was admitted with is always what it
-    /// still holds plus what has been parked out of it. There is no third
-    /// place for it to be in 3b-i (no draw exists), which is exactly why the
-    /// identity is worth pinning now: 3b-ii adds the draws, and it will have
-    /// to keep this true with a third term rather than discover it broken.
+    /// still holds, plus what has been parked out of it, plus EVERY WAY VALUE
+    /// HAS LEFT IT. In 3b-i there is exactly one such way — a classification
+    /// taking from the released remainder — and the transport legs are pinned
+    /// at zero below because no draw exists until 3b-ii, which will turn that
+    /// pin into two more terms of this same sum.
+    ///
+    /// The exits are named rather than netted (Codex #2232 r3). An earlier
+    /// revision asserted `balance + parked == admitted`, which is not the
+    /// conservation identity — it is the identity BEFORE the first
+    /// classification, and false after it: park 10 and classify 4 and the two
+    /// sides read 6 and 10. It passed 50,000 calls only because the campaign
+    /// could not reach the transition at all (no handler action released a
+    /// batch, so every classification against an epoch-backed packet reverted
+    /// at the gate). A blind invariant and a false one, and the blindness is
+    /// what hid the falsity — which is why `test_Handler_ReleaseAndClassify
+    /// ReachesTheDebit` below pins the liveness rather than trusting it.
     ///
     /// It also pins the rule the ingress relies on: a batch is admitted with
     /// the UNTYPED REMAINDER, so a delivery that stated a component can never
@@ -233,9 +251,13 @@ contract RewardCustodyInvariant is SetupTest {
             bytes32 h = handler.packetAt(i);
             (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
-            (uint256 parked, , , ) = ep.getTransportRemainder(h);
-            assertEq(balance + parked, admitted, "transport epoch conserves");
+            (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
             (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
+            assertEq(
+                balance + parked + debited + legFresh + legRecycled,
+                admitted,
+                "transport epoch conserves"
+            );
             assertEq(legFresh + legRecycled, 0, "no draw exists until PR 3b-ii");
         }
     }
@@ -365,6 +387,43 @@ contract RewardCustodyInvariant is SetupTest {
     }
 
 
+    /// #1566 transport epochs PR 3b (Codex #2232 r3) — the handler can REACH
+    /// the released-epoch debit, and the conservation identity holds ACROSS
+    /// it.
+    ///
+    /// This is the liveness half of `invariant_TransportEpochsConserve`, and
+    /// it exists because that invariant previously reported success over a
+    /// transition the campaign could not perform: no action released a batch,
+    /// so every classification against an epoch-backed packet reverted at the
+    /// gate and the debit seam was never touched in 50,000 calls. A count of
+    /// calls says nothing about which code they reached, so the reach is
+    /// asserted here rather than assumed there.
+    ///
+    /// It also pins the arithmetic the old assertion got wrong: after a
+    /// classification, `balance + parked` is SHORT of `admitted` by exactly
+    /// what left, and it is `debited` that closes it.
+    function test_Handler_ReleaseAndClassifyReachesTheDebit() public {
+        handler.untypedIngress(2); // even: the untyped wire, so an epoch exists
+        bytes32 h = handler.packetAt(0);
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+
+        handler.releaseEpoch(0);
+        assertGt(handler.released(), 0, "the handler released an epoch");
+        (, , , bool acknowledged, ) = ep.getTransportRemainder(h);
+        assertTrue(acknowledged, "and the acknowledgment is recorded");
+
+        for (uint256 seed = 1; seed <= 32 && handler.classified() == 0; ++seed) {
+            handler.classify(seed);
+        }
+        assertGt(handler.classified(), 0, "a classification was applied against the released epoch");
+
+        (, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
+        (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
+        assertGt(debited, 0, "and it DEBITED the remainder - the seam is reached");
+        assertLt(balance + parked, admitted, "which the old two-term identity would have called a loss");
+        assertEq(balance + parked + debited, admitted, "the epoch conserves with the exit named");
+    }
+
     /// Codex #2206 r3 — the handler's classification actions PERSIST (it
     /// unpauses with the role that can): driven directly, the log grows, so
     /// the packet and queue invariants above are exercised on real state
@@ -437,6 +496,13 @@ contract RewardCustodyHandler is Test {
     ///      Same reason as the counter above: an invariant over epochs opened
     ///      a second way proves nothing if the handler never opens one.
     uint256 public rolloutAdmitted;
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — how many epochs
+    ///      this handler has RELEASED (parked and acknowledged). Same reason as
+    ///      the two counters above, and the sharpest of the three: the release
+    ///      is what a classification against an epoch-backed packet is gated
+    ///      on, so with this at zero the whole debit seam is unreachable and
+    ///      every invariant over it passes vacuously.
+    uint256 public released;
     bytes32[] internal packetHashes;
     uint256 internal seqStamped;
     uint256 public freshSpentAtActionStart;
@@ -597,11 +663,19 @@ contract RewardCustodyHandler is Test {
     /// admission, so an epoch opened that way is a subject of the conservation
     /// invariant under every interleaving and not only in its own unit suite.
     ///
-    /// Skipped where a remainder is already parked. The fixture clears the
-    /// batch row, and a parked entry outliving it is an artifact of the
-    /// mutator rather than a state the chain can reach: a rollout packet by
-    /// definition never had a batch to park. Excluding it also excludes every
-    /// classified packet, since classification is gated behind the release.
+    /// Skipped where a remainder ROW EXISTS. The fixture clears the batch row,
+    /// and a remainder entry outliving it is an artifact of the mutator rather
+    /// than a state the chain can reach: a rollout packet by definition never
+    /// had a batch to park.
+    ///
+    /// The probe is the row's `dayCount`, not its `amount` (Codex #2232 r3).
+    /// An earlier revision tested `parked != 0` and reasoned that this also
+    /// excluded every classified packet, since classification is gated behind
+    /// the release — true only while a classification could not empty the
+    /// remainder. It can: park 10, classify 10, and `amount` is back to zero
+    /// with the row very much alive. `dayCount` is copied from the batch at
+    /// parking and never falls, so it answers "is there a row" rather than
+    /// "does the row still hold anything", which is the question being asked.
     function rolloutAdmit(uint256 seed) external {
         _start();
         if (packetHashes.length == 0) return;
@@ -609,11 +683,49 @@ contract RewardCustodyHandler is Test {
         RewardEpochFacet ep = RewardEpochFacet(diamond);
         (bytes32 packetHash, , , , , ) = ep.getTransportBatch(h);
         if (packetHash == bytes32(0)) return; // a typed delivery has no epoch to redo
-        (uint256 parked, , , ) = ep.getTransportRemainder(h);
-        if (parked != 0) return;
+        (, , uint32 remDayCount, , ) = ep.getTransportRemainder(h);
+        if (remDayCount != 0) return;
         TestMutatorFacet(diamond).unadmitTransportBatchRaw(h);
         try ep.admitLegacyTransportBatch(h) {
             rolloutAdmitted++;
+        } catch {
+            refusals++;
+        }
+    }
+
+    /// #1566 transport epochs PR 3b (Codex #2232 r3) — RELEASE a random
+    /// landed packet's epoch: materialize its membership, park what its
+    /// obligations left, and record the acknowledgment.
+    ///
+    /// Without this the campaign could not reach `takeFromReleasedRemainder`
+    /// AT ALL. Classification against an epoch-backed packet is gated on the
+    /// release, no other action performed one, so every such call reverted at
+    /// the gate and landed in `refusals` — the new debit seam was untouched by
+    /// 50,000 calls while the conservation invariant reported success over it.
+    /// That is the failure mode an invariant campaign is least able to
+    /// announce, so `released` is counted and asserted on, the way
+    /// `untypedAdmitted` and `rolloutAdmitted` already are.
+    ///
+    /// Each step is attempted independently rather than guarded up front: the
+    /// three are reachable in different states (a batch may already be
+    /// indexed, already parked, already acknowledged by an earlier draw of
+    /// this action), and refusing the whole action on any of them would make
+    /// the reachable interleavings a function of draw order.
+    function releaseEpoch(uint256 seed) external {
+        _start();
+        if (packetHashes.length == 0) return;
+        bytes32 h = packetHashes[seed % packetHashes.length];
+        RewardEpochFacet ep = RewardEpochFacet(diamond);
+        (bytes32 packetHash, , , , , ) = ep.getTransportBatch(h);
+        if (packetHash == bytes32(0)) return; // a typed delivery has no epoch to release
+        // The handler's untyped deliveries all list exactly this one day, so
+        // the whole list re-supplied here is the list the commitment covers.
+        uint256[] memory days_ = new uint256[](1);
+        days_[0] = 1;
+        try ep.materializeTransportBatchPage(h, days_) {} catch {}
+        try ep.parkTransportBatchRemainder(h) {} catch {}
+        try ep.acknowledgeTransportBatchRemainder(h) {
+            released++;
         } catch {
             refusals++;
         }

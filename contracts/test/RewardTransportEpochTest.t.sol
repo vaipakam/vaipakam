@@ -520,8 +520,9 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(_epoch().parkTransportBatchRemainder(h), 9e18, "parked what the obligations left");
 
         (, uint256 balance, uint256 admitted, , , ) = _epoch().getTransportBatch(h);
-        (uint256 amount, bytes32 dayListHash, uint32 dayCount, bool acknowledged) =
+        (uint256 amount, bytes32 dayListHash, uint32 dayCount, bool acknowledged, uint256 debited) =
             _epoch().getTransportRemainder(h);
+        assertEq(debited, 0, "nothing has been classified out of it yet");
         assertEq(balance, 0, "the epoch holds nothing now");
         assertEq(admitted, balance + amount, "and the batch conserves");
         assertEq(amount, 9e18, "the remainder is the whole balance");
@@ -571,21 +572,36 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         _epoch().acknowledgeTransportBatchRemainder(h);
     }
 
-    /// The release is PERMISSIONLESS, as the specification says: attesting a
-    /// packet's split and releasing its value for classification are both open
-    /// to anyone and may happen in either order. What makes a release valid is
+    /// PARKING is permissionless, as the specification says: attesting a
+    /// packet's split and parking what its obligations left are both open to
+    /// anyone and may happen in either order. What makes a park valid is
     /// state, never the caller.
-    function test_Release_IsOpenToAnyone() public {
+    ///
+    /// The ACKNOWLEDGMENT is not, and this test straddles the line rather than
+    /// asserting one side of it (Codex #2232 r3). The design calls the
+    /// acknowledgment "a deliberate operator disposition" whose consequence is
+    /// that later obligations for the batch's listed days are refused to the
+    /// extent they looked to it — a claim forfeited on somebody else's behalf,
+    /// one-way. A stranger may do the mechanical half and may not take that
+    /// decision.
+    function test_Release_ParkIsOpenToAnyone_AcknowledgmentIsNot() public {
         bytes32 h = _untyped(6e18, 2, 12, keccak256("perm"));
         address stranger = makeAddr("stranger");
 
         vm.prank(stranger);
         assertEq(_epoch().parkTransportBatchRemainder(h), 6e18, "anyone may park");
+
         vm.prank(stranger);
+        vm.expectRevert();
         _epoch().acknowledgeTransportBatchRemainder(h);
 
+        ( , , , , , bool releasedByStranger) = _epoch().getTransportBatch(h);
+        assertFalse(releasedByStranger, "and a stranger's acknowledgment changes nothing");
+
+        // The operator's does. This suite runs as the admin.
+        _epoch().acknowledgeTransportBatchRemainder(h);
         ( , , , , , bool released) = _epoch().getTransportBatch(h);
-        assertTrue(released, "and anyone may acknowledge");
+        assertTrue(released, "the operator disposition releases it");
     }
 
     /// Materialization is permissionless too, and for the same reason: the
@@ -615,13 +631,13 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         bytes32 h = _untyped(10e18, 2, 40, keccak256("dbt"));
         _epoch().parkTransportBatchRemainder(h);
         _epoch().acknowledgeTransportBatchRemainder(h);
-        (uint256 parked, , , ) = _epoch().getTransportRemainder(h);
+        (uint256 parked, , , , ) = _epoch().getTransportRemainder(h);
         assertEq(parked, 10e18, "the whole balance is parked");
 
         AdminFacet(address(diamond)).pause();
         _recon().classifyLegacyPacket(h, 0, 4e18, keccak256("d1"));
         AdminFacet(address(diamond)).unpause();
-        (parked, , , ) = _epoch().getTransportRemainder(h);
+        (parked, , , , ) = _epoch().getTransportRemainder(h);
         assertEq(parked, 6e18, "stepped down by what the classification took");
 
         // And the entry is a CEILING: past it the classification is refused by
@@ -635,7 +651,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         // not the batch.
         _recon().classifyLegacyPacket(h, 0, 6e18, keccak256("d3"));
         AdminFacet(address(diamond)).unpause();
-        (parked, , , ) = _epoch().getTransportRemainder(h);
+        (parked, , , , ) = _epoch().getTransportRemainder(h);
         assertEq(parked, 0, "the entry is emptied exactly");
     }
 

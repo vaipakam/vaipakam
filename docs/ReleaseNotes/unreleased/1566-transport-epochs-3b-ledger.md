@@ -89,18 +89,65 @@ Deliveries that arrived before that commitment was recorded have no day list to
 be bound to and are unchanged; so are deliveries on a chain whose reward
 custody has not been switched on, for the same reason as above.
 
+### Who may close an epoch out
+
+The close-out's two steps are open to different parties, because they are
+different kinds of act.
+
+Parking what a delivery's obligations left is **mechanical, and anyone may do
+it**. It moves the delivery's own remainder into a holding of that same
+delivery, under the same membership; nothing becomes spendable that was not
+spendable before, and a valid delivery's close-out must never sit waiting on
+whoever happens to hold the operator role.
+
+Recording the acknowledgment is **an operator decision, and only the operator
+may take it**. It is the platform choosing to stop waiting on a lane that
+cannot prove its own closure, and it has a consequence somebody else bears:
+obligations arriving afterwards for any of that delivery's listed days are
+refused to the extent they looked to it. That is a claim written off on a
+user's behalf and it cannot be undone. An earlier revision of this work opened
+both halves on the reasoning that the specification calls the close-out
+permissionless — it says that of parking, and of attesting a delivery's split,
+and not of the acknowledgment.
+
+### Reading what has left an epoch
+
+The ledger now states, separately, how much has been reconciled out of a parked
+remainder, alongside how much of it is left. The two are reported together
+because neither is readable alone: a remainder parked at ten and reconciled for
+four holds six, and six on its own cannot be told from a delivery that only
+ever parked six. With both stated, anyone can check that a delivery's opening
+figure still equals what it holds plus what has been parked plus what has left
+— rather than having to infer the difference and hope.
+
 ### Operational note for the in-place refresh
 
-The refresh that installs this work now upgrades the mirror's receiving
-contract **before** it installs the new Diamond code, rather than after. In the
-old order there was a gap in which a delivery could arrive at new Diamond code
-through an old receiver, be accepted, and silently receive no epoch — bypassing
-the close-out gate permanently. In the new order a delivery arriving in that
-gap is refused outright and re-delivered once the refresh finishes, which costs
-a retry and loses nothing. The refresh also now identifies that receiving
-contract the way every other step does — by asking the platform which one it
-actually uses, and treating the recorded address as a fallback — so a stale
-record can no longer stop a refresh whose live receiver is perfectly fine.
+The refresh that installs this work now cuts the facets that share the epoch
+ledger's accounting — the one that opens an epoch, the one that spends from it,
+and the one carrying the steps between — as **a single transaction**, rather
+than letting them fall wherever the batching put them. Previously they could go
+out several transactions apart, and in between the platform ran a mixed version
+of one rule: new code opening an epoch while old code, still installed, reduced
+the same delivery's unreconciled figure without touching that epoch — two
+records claiming one amount. The window is now removed rather than narrowed:
+before that transaction every participant is old and consistent, after it every
+participant is new and consistent, and there is no state in between for a
+delivery or an operator to land in. A group that outgrew a single transaction
+would stop the refresh before it started rather than split silently.
+
+The refresh also upgrades the mirror's receiving contract **before** it installs
+the new Diamond code, rather than after. In the old order there was a gap in
+which a delivery could arrive at new Diamond code through an old receiver, be
+accepted, and silently receive no epoch — bypassing the close-out gate
+permanently. In the new order a delivery arriving in that gap is refused
+outright and re-delivered once the refresh finishes, which costs a retry and
+loses nothing. The refresh identifies that receiving contract the way every
+other step does — by asking the platform which one it actually uses, and
+treating the recorded address as a fallback — and a failure to upgrade the
+recorded one is now reported loudly and carried past rather than aborting the
+run: the live receiver is the one that must succeed, a stale record is not, and
+a receiver left behind fails closed on its next delivery rather than losing
+anything.
 
 Nothing here moves value yet: no draw exists until the next release adds one,
 and on a chain that has not received an old-wire delivery none of this is

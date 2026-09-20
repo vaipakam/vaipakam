@@ -400,41 +400,67 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
 
-        // #1566 transport epochs PR 3a (Codex #2224 r5) — the MIRROR-SIDE
-        // INGRESS is cut FIRST, before any other item's cut goes out.
+        // #1566 transport epochs PR 3a/3b — the ATOMIC CUT GROUP goes out
+        // FIRST, and goes out WHOLE, in one diamondCut transaction.
         //
         // Cuts are built in items[] order and sent in SELECTOR_BUDGET-sized
         // transactions, so an item near the end of the array lands several
-        // transactions after the first. That is ordinarily harmless, but the
-        // value-bearing receive entries deliberately skip `whenNotPaused` so
-        // in-flight deliveries can still land while the Diamond is paused for
-        // migration (the migration mode) — which means the pause this script
-        // takes as its first transaction does NOT hold arrivals back. A
-        // delivery arriving mid-refresh would therefore execute whatever
-        // implementation those three selectors currently point at, and until
-        // this item's cut lands that is the OLD remittance bytecode, which
-        // records a packet with no day-list commitment for the transport
-        // epochs to materialize against — permanently, since the commitment
-        // is written once, with the record.
+        // transactions after the first. That is ordinarily harmless, because
+        // facets are ordinarily independent: each selector's old and new
+        // bytecode agree about storage, so which side of a batch boundary it
+        // falls on does not matter.
         //
-        // Hoisting closes it: after the first cut transaction every arrival
-        // takes the new ingress, and before it the deployment is wholly
-        // pre-3a, where a packet without a commitment is a historical one by
-        // definition and is handled as such. The facet is safe to install
-        // ahead of the rest — its library code is inlined into its own
-        // bytecode, and the custody entry it calls is unchanged by this PR.
+        // It is NOT harmless for a set of facets that share one accounting
+        // rule. Between the batch that replaces one of them and the batch that
+        // replaces the next, the Diamond routes a MIXED VERSION of that rule —
+        // and the value-bearing receive entries deliberately skip
+        // `whenNotPaused` so in-flight deliveries can still land while the
+        // Diamond is paused for migration, which means the pause this script
+        // takes as its first transaction does not hold arrivals back and the
+        // window is reachable.
+        //
+        // THE INVARIANT, stated once here rather than rediscovered per facet:
+        // the transport-epoch lifecycle's participants must switch version
+        // TOGETHER. No cut transaction may leave one of them new while another
+        // is old. Three review rounds each found a different instance of that
+        // one defect (Codex #2232 r1/r2/r3) and each was answered by hoisting
+        // one more name to the front, which is a patch per path:
+        //
+        //   - the OLD ingress records a packet with no day-list commitment for
+        //     the epochs to materialize against — permanently, since the
+        //     commitment is written once, with the record;
+        //   - the NEW ingress opens a transport batch while the OLD
+        //     `classifyLegacyPacket` is still routed, and that implementation
+        //     reduces the packet's `unclassified` figure without checking or
+        //     debiting the batch — two claims on one amount, which is exactly
+        //     what §5c's one-accounting-path rule forbids;
+        //   - and the epoch facet's own lifecycle entries must not be
+        //     reachable against an ingress that has not yet been replaced.
+        //
+        // Cutting the group as ONE transaction removes the window rather than
+        // narrowing it: before that transaction every participant is old and
+        // consistent, after it every participant is new and consistent, and
+        // there is no state in between for an arrival or an operator to land
+        // in. `_hoistGroupFirst` puts the group at the head of `items[]` and
+        // `_groupCutEnd` forces the batch boundary immediately after it.
         //
         // Pausing the standalone receiver instead was considered and
         // rejected: `unpause()` there is owner-only while `pause()` is
         // guardian-or-owner, so a run whose broadcaster is not the owner
         // could halt the lane and be unable to restart it — trading a
         // bounded, self-closing window for an unbounded one.
-        _hoistFirst(items, "rewardIngressFacet");
+        uint256 groupLen = _hoistGroupFirst(items, _atomicCutGroup());
 
         // Split each facet's canonical selector list against the live loupe:
         // routed -> Replace, unrouted -> Add.
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](items.length * 2);
         uint256 nCuts;
+        // Where the group's cut entries end, and how many selectors they carry.
+        // Both are counted here rather than re-derived below: `_split` decides
+        // how many entries an item produces (one, two, or none), so the only
+        // reliable boundary is the one recorded while building.
+        uint256 groupCutEnd;
+        uint256 groupSelectors;
         for (uint256 i; i < items.length; ++i) {
             (bytes4[] memory adds, bytes4[] memory reps) = _split(loupe, items[i].selectors);
             if (reps.length > 0) {
@@ -453,7 +479,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
             console.log(items[i].key, items[i].impl);
             console.log("   replace:", reps.length, "add:", adds.length);
+            if (i + 1 == groupLen) {
+                groupCutEnd = nCuts;
+                groupSelectors = _selectorsIn(cuts, 0, nCuts);
+            }
         }
+
+        // The group is one transaction or the run does not start. If it ever
+        // outgrows the budget the honest outcome is a loud refusal here, in
+        // simulation, rather than a silent split in production that reopens
+        // the window the group exists to close — which is the failure mode
+        // this whole construct is a fix for, and it must not come back as a
+        // capacity accident.
+        require(
+            groupSelectors <= SELECTOR_BUDGET,
+            "RefreshAllFacetsInPlace: atomic cut group exceeds SELECTOR_BUDGET"
+        );
 
         // ─── the RECEIVER is upgraded BEFORE the first cut ────────────────
         //
@@ -488,9 +529,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
-        uint256 batchStart;
+        //
+        // The atomic group is sent first and ALONE. Letting it merely lead the
+        // ordinary batching would not do: the budget loop packs following
+        // items into the same transaction until the budget is reached, which
+        // is harmless, but it would also SPLIT the group across two
+        // transactions the moment the group grew past the budget — the exact
+        // mixed-version window this is here to remove, reappearing silently
+        // as the group grows. A forced boundary makes the group's atomicity a
+        // property of the dispatch rather than of its current size.
+        uint256 batchStart = groupCutEnd;
         uint256 batchSelectors;
-        for (uint256 i; i < nCuts; ++i) {
+        if (groupCutEnd > 0) {
+            _sendBatch(diamond, cuts, 0, groupCutEnd);
+            console.log("  ^ atomic cut group: entries", groupCutEnd, "selectors", groupSelectors);
+        }
+        for (uint256 i = groupCutEnd; i < nCuts; ++i) {
             uint256 selLen = cuts[i].functionSelectors.length;
             if (batchSelectors > 0 && batchSelectors + selLen > SELECTOR_BUDGET) {
                 _sendBatch(diamond, cuts, batchStart, i);
@@ -582,9 +636,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             (, , , bool isCanonicalRewardRecv, ) =
                 RewardReporterFacet(diamond).getRewardReporterConfig();
 
-            if (liveRecv != address(0)) _probeUpgradeRemitReceiver(liveRecv);
+            // Same fatality rule as the pre-cut pass, and it is the rule this
+            // block's own comment above has asserted since it was written
+            // without the code ever enforcing it (Codex #2232 r3): the live
+            // receiver is mandatory, the artifact is best-effort. Normally
+            // both are no-ops here — the pre-cut pass is generation-gated and
+            // has already done the work — so this runs for real only where the
+            // live address could not be resolved before the cuts.
+            if (liveRecv != address(0)) _probeUpgradeRemitReceiver(liveRecv, true);
             if (artifactRecv != address(0) && artifactRecv != liveRecv) {
-                _probeUpgradeRemitReceiver(artifactRecv);
+                _probeUpgradeRemitReceiver(artifactRecv, false);
             }
 
             address recv = liveRecv != address(0) ? liveRecv : artifactRecv;
@@ -1687,9 +1748,27 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     function _upgradeRemitReceiverAhead(address diamond) private {
         address live = _liveRemitReceiverOptional(diamond);
         address artifact = _readAddrOptional(".rewardRemittanceReceiver");
-        if (live != address(0)) _probeUpgradeRemitReceiver(live);
+        // AUTHORITY DECIDES FATALITY (Codex #2232 r3 F3). The LIVE receiver is
+        // the one the refreshed ingress will trust, so failing to upgrade it
+        // must stop the run — proceeding would install the widened ingress
+        // for a receiver that cannot call it. The ARTIFACT is a RECORD of a
+        // receiver, and a record can be stale: a superseded proxy whose
+        // upgrade authority has rotated away reverts on `upgradeToAndCall`,
+        // and an earlier revision let that revert abort a refresh whose live
+        // receiver had already been resolved and upgraded successfully — a
+        // stale bookkeeping entry deciding the fate of a correct deployment.
+        //
+        // Removing the artifact probe was the other option and is worse: a
+        // rotation IN PROGRESS is exactly when the two differ, and that is
+        // when leaving the outgoing receiver un-upgraded matters. So it stays,
+        // demoted to best-effort — attempted, and reported loudly when it
+        // fails, never fatal. The failure is safe in the direction that
+        // matters: an un-upgraded receiver calls the retired selector, which
+        // this run removes, so its deliveries REVERT and re-execute after the
+        // refresh. Fail-closed and recoverable, against a run aborted midway.
+        if (live != address(0)) _probeUpgradeRemitReceiver(live, true);
         if (artifact != address(0) && artifact != live) {
-            _probeUpgradeRemitReceiver(artifact);
+            _probeUpgradeRemitReceiver(artifact, false);
         }
         if (live == address(0) && artifact == address(0)) {
             // Not a failure here: the canonical chain legitimately has no
@@ -1699,7 +1778,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
-    function _probeUpgradeRemitReceiver(address proxy) private {
+    /// @dev `mandatory` says whether a failed upgrade stops the run. True for
+    ///      the LIVE receiver the ingress will trust; false for an artifact
+    ///      entry, which is corroborating and may be stale (see
+    ///      {_upgradeRemitReceiverAhead}). A non-mandatory failure is logged
+    ///      rather than swallowed: the operator must be told which proxy was
+    ///      left behind, because a receiver still on the old generation is a
+    ///      lane whose deliveries will revert until it is upgraded by hand.
+    function _probeUpgradeRemitReceiver(address proxy, bool mandatory) private {
         if (proxy == address(0)) return;
         uint256 gen = 0;
         (bool ok, bytes memory ret) = proxy.staticcall(
@@ -1708,23 +1794,35 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
             address newImpl = address(new RewardRemittanceReceiver());
-            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
-            Deployments.writeRewardRemittanceReceiverImpl(newImpl);
-            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
-            // derived from the constant the gate above reads, never written
-            // out again: a hardcoded figure here reports the wrong installed
-            // wire state to the operator the first time a generation moves,
-            // and it moved for the messenger in this very PR.
-            console.log(
-                string.concat(
-                    "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
-                    vm.toString(gen),
-                    " -> ",
-                    vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
-                    ") impl:"
-                ),
-                newImpl
-            );
+            try UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "") {
+                Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+                // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+                // derived from the constant the gate above reads, never written
+                // out again: a hardcoded figure here reports the wrong installed
+                // wire state to the operator the first time a generation moves,
+                // and it moved for the messenger in this very PR.
+                console.log(
+                    string.concat(
+                        "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
+                        vm.toString(gen),
+                        " -> ",
+                        vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
+                        ") impl:"
+                    ),
+                    newImpl
+                );
+            } catch {
+                if (mandatory) {
+                    revert("RefreshAllFacetsInPlace: live remit receiver upgrade failed");
+                }
+                console.log(
+                    "P2-w2: WARNING - artifact remit receiver NOT upgraded (stale entry?), proxy:",
+                    proxy
+                );
+                console.log(
+                    "       its deliveries will revert on the retired selector until upgraded by hand"
+                );
+            }
         }
     }
 
@@ -1949,25 +2047,92 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         return abi.decode(ret, (address));
     }
 
-    /// @dev #1566 transport epochs PR 3a — move one item to the front of the
-    ///      refresh so its cut goes out in the FIRST batch. Order is otherwise
-    ///      irrelevant here (every other consumer of `items` is a set
-    ///      operation: the write-back, the verification sweep, the parity
-    ///      test), which is why a swap is enough and no ordering machinery is
-    ///      needed. Reverts on an unknown key rather than silently leaving the
-    ///      order unchanged — a rename must not quietly reopen the window this
-    ///      exists to close.
-    function _hoistFirst(Item[] memory items, string memory key) internal pure {
-        bytes32 want = keccak256(bytes(key));
-        for (uint256 i; i < items.length; ++i) {
-            if (keccak256(bytes(items[i].key)) == want) {
-                Item memory head = items[0];
-                items[0] = items[i];
-                items[i] = head;
-                return;
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the facets that
+    ///         must be cut in ONE diamondCut transaction, because they share
+    ///         one accounting rule and a mixed version of it is unsound.
+    /// @dev    The MEMBERSHIP TEST, so a future facet is not left out by
+    ///         judgement: a facet belongs here when its replacement changes
+    ///         how the TRANSPORT EPOCH ledger is written or read, such that
+    ///         running it against another member's previous bytecode would
+    ///         make two surfaces disagree about one amount.
+    ///
+    ///         - `rewardIngressFacet` OPENS an epoch (and stamps the day-list
+    ///           commitment every later step proves against);
+    ///         - `rewardReconciliationFacet` hosts `classifyLegacyPacket`,
+    ///           which SPENDS from it and is the surface that, on its previous
+    ///           bytecode, reduces a packet's `unclassified` figure without
+    ///           debiting the batch;
+    ///         - `rewardEpochFacet` carries the lifecycle BETWEEN those two —
+    ///           the paged indexing, the park, the acknowledgment — so its
+    ///           entries must not be reachable against an ingress that has not
+    ///           yet been replaced.
+    ///
+    ///         `RefreshScriptAtomicGroupTest` pins this list, so adding a
+    ///         fourth participant to the lifecycle without adding it here
+    ///         fails a test that names the rule rather than shipping a refresh
+    ///         with the window quietly reopened.
+    ///
+    ///         This is deliberately a SMALL set. Hoisting is not free — every
+    ///         member is also a facet whose new bytecode runs against the rest
+    ///         of the Diamond's OLD bytecode for the remainder of the run — so
+    ///         membership is for facets that would otherwise disagree about
+    ///         value, not for facets that are merely related.
+    function _atomicCutGroup() internal pure returns (string[] memory keys) {
+        keys = new string[](3);
+        keys[0] = "rewardIngressFacet";
+        keys[1] = "rewardReconciliationFacet";
+        keys[2] = "rewardEpochFacet";
+    }
+
+    /// @dev #1566 transport epochs PR 3b — move every key of the atomic group
+    ///      to the front of the refresh, in the order given, so their cuts are
+    ///      built contiguously and can be dispatched as one transaction.
+    ///      Order is otherwise irrelevant here (every other consumer of
+    ///      `items` is a set operation: the write-back, the verification
+    ///      sweep, the parity test), which is why swaps are enough and no
+    ///      ordering machinery is needed.
+    ///
+    ///      Reverts on an unknown key rather than silently leaving the order
+    ///      unchanged — a rename must not quietly reopen the window this
+    ///      exists to close — and on a DUPLICATE key, which would otherwise
+    ///      swap a member back out of the group it had just been placed in
+    ///      and leave the count reporting a group larger than the one built.
+    /// @return groupLen How many leading items the group occupies.
+    function _hoistGroupFirst(Item[] memory items, string[] memory keys)
+        internal
+        pure
+        returns (uint256 groupLen)
+    {
+        for (uint256 k; k < keys.length; ++k) {
+            bytes32 want = keccak256(bytes(keys[k]));
+            for (uint256 j; j < k; ++j) {
+                require(
+                    keccak256(bytes(keys[j])) != want,
+                    "RefreshAllFacetsInPlace: duplicate atomic cut group key"
+                );
             }
+            bool found;
+            for (uint256 i = groupLen; i < items.length; ++i) {
+                if (keccak256(bytes(items[i].key)) == want) {
+                    Item memory head = items[groupLen];
+                    items[groupLen] = items[i];
+                    items[i] = head;
+                    ++groupLen;
+                    found = true;
+                    break;
+                }
+            }
+            require(found, "RefreshAllFacetsInPlace: atomic cut group key not found");
         }
-        revert("RefreshAllFacetsInPlace: _hoistFirst key not found");
+    }
+
+    /// @dev Total selectors carried by `cuts[start:end]`.
+    function _selectorsIn(IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end)
+        internal
+        pure
+        returns (uint256 total)
+    {
+        for (uint256 i = start; i < end; ++i) total += cuts[i].functionSelectors.length;
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {
