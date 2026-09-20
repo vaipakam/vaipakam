@@ -2012,11 +2012,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         view
         returns (address)
     {
-        string memory path = string.concat(
-            "deployments/",
-            Deployments.slugForChainId(block.chainid),
-            "/addresses.json"
-        );
+        string memory path = Deployments.path();
         try vm.readFile(path) returns (string memory json) {
             try vm.parseJsonAddress(json, key) returns (address a) {
                 return a;

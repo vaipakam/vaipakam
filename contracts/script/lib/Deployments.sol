@@ -138,18 +138,42 @@ library Deployments {
         }
     }
 
+    /// Directory holding a chain's artifacts, addressed by SLUG.
+    ///
+    /// @dev The bottom of the path API: every other path helper here reaches
+    ///      {artifactRoot} through this, so there is exactly one place that
+    ///      decides where artifacts live. Exists as its own layer because one
+    ///      caller resolves its chain from `CHAIN_SLUG` rather than from
+    ///      `block.chainid` (#2261), and rebuilding the root by hand to serve
+    ///      that is what put four scripts outside the redirect.
+    function dirForSlug(string memory slug) internal view returns (string memory) {
+        return string.concat(artifactRoot(), "/", slug);
+    }
+
     /// Directory holding `addresses.json` for an arbitrary EVM chain.
     function dirForChainId(uint256 cid) internal view returns (string memory) {
-        return string.concat(artifactRoot(), "/", slugForChainId(cid));
+        return dirForSlug(slugForChainId(cid));
+    }
+
+    /// Path to a slug-addressed chain's `addresses.json`.
+    function pathForSlug(string memory slug) internal view returns (string memory) {
+        return string.concat(dirForSlug(slug), "/addresses.json");
     }
 
     /// Path to an arbitrary EVM chain's `addresses.json`.
     ///
-    /// @dev EVERY artifact path in this library is built here. Five call sites
-    ///      used to concatenate `"deployments/" + slug + "/addresses.json"`
-    ///      by hand, which is four opportunities for one of them to disagree
-    ///      with the others — and would have been four places to forget when
-    ///      the root became redirectable.
+    /// @dev Five call sites used to concatenate
+    ///      `"deployments/" + slug + "/addresses.json"` by hand, which is four
+    ///      opportunities for one of them to disagree with the others — and
+    ///      four places to forget when the root became redirectable.
+    ///
+    ///      This note used to open "EVERY artifact path in this library is
+    ///      built here", and #2261 found that false twice over. Two more
+    ///      scripts were still hand-building an `addresses.json` path
+    ///      (`Handover`, `RefreshAllFacetsInPlace`) and two more a per-chain
+    ///      RECORD path, so four call sites sat outside the redirect while
+    ///      this comment said none did. The single place is {dirForSlug}, one
+    ///      layer down; read the claim there, not here.
     function pathForChainId(uint256 cid) internal view returns (string memory) {
         return string.concat(dirForChainId(cid), "/addresses.json");
     }
@@ -161,6 +185,33 @@ library Deployments {
     /// `contracts/deployments/<slug>/addresses.json`.
     function path() internal view returns (string memory) {
         return pathForChainId(block.chainid);
+    }
+
+    /// Path to a NAMED artifact sitting beside the ACTIVE chain's
+    /// `addresses.json` — a ceremony record, an activation receipt, anything
+    /// per-chain that is not the address inventory itself.
+    ///
+    /// @dev #2261. The note on {pathForChainId} claimed every artifact path was
+    ///      built in one place, and that was true of the paths carrying
+    ///      ADDRESSES — but the scripts writing per-chain RECORDS still
+    ///      concatenated `"deployments/" + slug + "/…"` themselves, so they
+    ///      were outside the consolidation and outside the redirect. A
+    ///      redirected run wrote its ceremony record into the COMMITTED tree
+    ///      while every other artifact from that run went to the scratch tree.
+    ///      This exists so a per-chain artifact cannot be reached except
+    ///      through {artifactRoot}.
+    ///
+    ///      Active-chain only, deliberately: there is no cross-chain caller,
+    ///      and a `namedPathForChainId(cid, …)` twin to mirror
+    ///      {pathForChainId} would be surface nothing calls. One that appears
+    ///      later composes {dirForChainId} with its file name and still cannot
+    ///      escape the root, which is the property being defended here.
+    function namedPath(string memory fileName)
+        internal
+        view
+        returns (string memory)
+    {
+        return string.concat(dirForChainId(block.chainid), "/", fileName);
     }
 
     /// Per-chain folder slug for the *active* chain. Used both for the

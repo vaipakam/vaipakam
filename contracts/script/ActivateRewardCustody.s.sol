@@ -454,7 +454,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         console.log("Confirmed -- received / paid:", received, paid);
         console.log("Confirmed rows -- live / recycled:", live, recycled);
         console.log("Confirmed rows -- recovery / overage:", recovery, overage);
-        string memory durable = string.concat("deployments/", Deployments.chainSlug(), "/reward-custody-activated.json");
+        string memory durable =
+            Deployments.namedPath("reward-custody-activated.json");
         if (_nonBroadcastWritesEnabled()) {
             string memory obj = "confirmed";
             vm.serializeAddress(obj, "confirmedHolder", liveHolder);
