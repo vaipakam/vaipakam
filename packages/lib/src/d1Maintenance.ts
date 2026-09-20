@@ -242,6 +242,16 @@ export function maintenanceSkipNotice(worker: string, lane: string): string {
  * every two minutes through an outage of unknown length. If the procedure ever
  * defines a bounded window, a `Retry-After` can be added as a **policy** the
  * procedure supports rather than as an estimate the service invents.
+ *
+ * **The body speaks for THIS request only** (#2252 r11). An earlier revision
+ * said "no request is being served against a database right now", which is a
+ * claim about the whole deployment and is not true: an execution admitted by
+ * the PREVIOUS deployment keeps the environment it was given and can still
+ * write until it finishes. That is the residual this change names rather than
+ * eliminates, and the refusal body was quietly denying it — the same overclaim
+ * as the invented `Retry-After`, in the one sentence whose entire job is to be
+ * trustworthy. What the service can actually substantiate is the narrow fact:
+ * the request now being answered reached no database.
  */
 export function maintenanceRefusal(worker: string): {
   body: string;
@@ -251,7 +261,7 @@ export function maintenanceRefusal(worker: string): {
   return {
     body:
       `${worker} is temporarily unavailable: a database binding is being ` +
-      `moved. No request is being served against a database right now, so ` +
+      `moved. This request has not been served against a database, so ` +
       `nothing you sent has been recorded and nothing you read here would be ` +
       `current. How long this lasts is not something this service can tell ` +
       `you — retry with your own backoff.\n`,

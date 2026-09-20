@@ -466,12 +466,20 @@ export class ChainIngestDO {
       // CLOSE THE SOCKETS BEFORE RETURNING (#2252 r9 P2). Returning alone
       // leaves every hibernatable socket open and auto-answering `ping`, so a
       // connected client keeps its push rail marked live: `IndexerPushSync`
-      // clears that flag only from `onclose`, and `railHealth` trusts the last
-      // cursor signal for 450s. The app would therefore present a STOPPED
-      // ingest rail as healthy for minutes — a surface asserting a freshness
-      // it no longer has, which is the exact failure this whole change exists
-      // to prevent, arriving through the one door the entry-point refusals do
-      // not cover.
+      // clears that flag only from `onclose`. The app would go on presenting a
+      // STOPPED ingest rail as healthy — a surface asserting a freshness it no
+      // longer has, which is the exact failure this whole change exists to
+      // prevent, arriving through the one door the entry-point refusals do not
+      // cover.
+      //
+      // It is a LATENCY fix, not the only line of defence, and #2252 r11 is
+      // why that distinction is written down: `railHealth` demotes anyway once
+      // both the last cursor-carrying frame and the last cursor ADVANCE fall
+      // outside `cadenceSec × 1.5` (450s on the 5-minute DO cadence), and an
+      // auto-answered `ping` refreshes neither. So this closes the window
+      // where an alarm is pending; a DO sitting idle keeps its sockets until
+      // the client's own check demotes them, and that residual is stated in
+      // the scheduled handler rather than chased with a wake.
       //
       // `1012` is the registered "service restart" close code, which is what
       // this is: the client's own reconnect/polling fallback is the correct

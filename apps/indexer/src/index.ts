@@ -72,7 +72,6 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
-  ALL_CHAIN_IDS,
   WORKER_NAME,
   type WorkerEnv,
   type Env,
@@ -176,43 +175,36 @@ export default {
     if (!hasD1Binding(env.DB)) {
       // eslint-disable-next-line no-console
       console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
-      // WAKE THE INGEST DOs SO THEY DROP THEIR SOCKETS (#2252 r10).
+      // AND NOTHING ELSE — in particular, this tick does NOT reach out to the
+      // ingest Durable Objects to make them drop their inherited sockets.
       //
-      // The alarm closes its sockets when it declines — but only if an alarm
-      // is pending. After a caught-up scan there is none, which is the COMMON
-      // idle state, and this tick is exactly what would normally have pinged
-      // them. Returning without it leaves inherited hibernatable sockets open
-      // and auto-answering `ping`, so a connected client keeps presenting a
-      // stopped ingest rail as healthy until its 450s cursor timeout.
+      // It did, for one round (#2252 r10), and removing it again is the root
+      // fix for a seam that produced a correct finding three rounds running.
+      // Each round found a different path by which the wake failed to reach
+      // every socket: the alarm that closes them is not pending on an idle DO
+      // (r9→r10), the cadence gate above skips four ticks in five so the wake
+      // would not run at all on those (r11), and reaching every DO without
+      // resolving any secret means keeping a hand-written list of chain ids
+      // beside the real one (r11). That last cost is the tell: the wake could
+      // only be made complete by ENUMERATING the chains — the same unfinishable
+      // list this whole change exists to stop writing, reproduced one level
+      // down inside it.
       //
-      // A trigger POST arms an immediate alarm, and that alarm finds no
-      // binding and closes the sockets — so no new Durable Object surface is
-      // needed for this; the path that already exists does the work.
+      // What the wake actually bought was LATENCY, not correctness, because
+      // the client does not depend on the socket closing. `railHealth` demotes
+      // to polling unless BOTH the last cursor-carrying frame and the last
+      // cursor ADVANCE are inside `cadenceSec × 1.5`; an auto-answered `ping`
+      // carries no cursor and nothing advances while ingest is stopped, so a
+      // held-open socket goes unhealthy on its own within that window — 450s
+      // on the 5-minute DO cadence. That bound is client-side, needs nothing
+      // from this Worker, and is MEASURED, unlike the in-flight residual.
       //
-      // `ALL_CHAIN_IDS` rather than `getChainConfigs`, because resolving the
-      // env to learn which chains are configured would spend the Secrets Store
-      // reads this branch exists to avoid. Addressing a DO that never existed
-      // creates an empty one that closes nothing, which costs a storage row
-      // and is the cheaper error than missing a chain that holds sockets.
-      if (env.CHAIN_INGEST_DO) {
-        const ns = env.CHAIN_INGEST_DO;
-        for (const chainId of ALL_CHAIN_IDS) {
-          const stub = ns.get(ns.idFromName(String(chainId)));
-          ctx.waitUntil(
-            stub
-              .fetch('https://chain-ingest-do/trigger', {
-                method: 'POST',
-                body: JSON.stringify({ chainId, targetBlock: '0' }),
-              })
-              .then(() => undefined)
-              .catch(() => {
-                // Best effort. A DO that cannot be reached keeps its sockets
-                // for now; the client's own 450s timeout is the backstop, and
-                // failing the whole maintenance tick over it would be worse.
-              }),
-          );
-        }
-      }
+      // So the honest shape is: a socket inherited by a maintenance build may
+      // keep auto-answering `ping` until the client demotes it, bounded by the
+      // server-reported cadence × 1.5. The alarm still closes sockets on any DO
+      // that has an alarm pending — which is every DO that was mid-catch-up
+      // when the window opened — and that path costs nothing and enumerates
+      // nothing. The remainder is named rather than chased.
       return;
     }
     // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point

@@ -65,6 +65,27 @@ opened to remove. So the residual is recorded as a known gap rather than as a
 step somebody else performs. What changed is the shape of the unknown: one
 measurable quantity, instead of an open-ended set of entry points to get right.
 
+**A second residual is named for the same reason, and naming it is what
+replaced three rounds of chasing it.** Live connections that the app holds open
+to watch for new activity are handed over intact when a maintenance build takes
+over, and a connection that nobody has closed goes on answering the browser's
+keepalives — so for a while the app can present a paused data feed as a live
+one. Three consecutive review rounds each found a genuine hole in the attempt
+to close those connections from the outside, and the third made the cause
+visible: closing every one of them reliably meant keeping a hand-written list
+of the chains they belong to, which is the same unfinishable list this change
+exists to stop writing, reproduced inside it. The attempt was removed.
+
+What makes that safe to remove is that the app does not rely on it. The app
+decides a feed is live from whether new data has actually arrived recently, on
+a schedule the service itself reports; a keepalive carries no data, and no data
+arrives while the feed is paused, so the app marks it stale by itself within a
+known window and falls back to periodic refreshes. Connections belonging to a
+feed that was mid-catch-up when the window opened are still closed immediately,
+because that costs nothing and lists nothing. The rest are left to the app's own
+check, and the wait is stated rather than implied — unlike the first residual,
+this one has a measured bound.
+
 **What this change does NOT include, and the reason is worth recording.** It
 ships the ability to hold a service off its data; it does not ship the
 step-by-step procedure for actually moving the database. The operating runbook
