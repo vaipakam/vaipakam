@@ -9,6 +9,31 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 
 /**
+ * @notice Records whether `DeployDiamond` actually invoked its artifact
+ *         verification, so the CALL SITE is covered and not only the check.
+ *
+ * @dev    #2253 r2 — mutation-checking the root fix found it unguarded:
+ *         deleting `verifyArtifactCompleteness(diamond)` from Step 7b left this
+ *         entire suite green (6 passed, 0 failed), because every test here
+ *         reads the artifact itself and asserts the same property the deploy
+ *         asserts. The check was right and nothing depended on it running.
+ *
+ *         That is the vacuous-fixture failure this repository has been caught
+ *         by before, and it is worth stating plainly: a fix with no fixture
+ *         that fails without it is not covered, however carefully it is
+ *         written. This probe closes it — it delegates to `super`, so the real
+ *         verification still runs, and records the call.
+ */
+contract DeployDiamondVerificationProbe is DeployDiamond {
+    bool public verificationRan;
+
+    function verifyArtifactCompleteness(address diamond_) internal override {
+        verificationRan = true;
+        super.verifyArtifactCompleteness(diamond_);
+    }
+}
+
+/**
  * @title  DeployArtifactCompletenessTest
  * @notice Issue #1800 — the regression guard for #1798, which found THIRTEEN
  *         facets cut into the Diamond and never recorded in `addresses.json`.
@@ -466,5 +491,46 @@ contract DeployArtifactCompletenessTest is Test {
             "deployments",
             "the committed artifact root moved - every deploy script, the frontend export and the census inventory read it"
         );
+    }
+
+    // ── 5. The deploy's own verification is wired, not just present ───
+
+    /// @notice `DeployDiamond` actually INVOKES its artifact verification.
+    ///
+    /// @dev    #2253 r2. Every other test in this file reads the artifact and
+    ///         asserts completeness itself, which means all of them stay green
+    ///         with the deploy's own check deleted — mutation-checked and
+    ///         confirmed: removing `verifyArtifactCompleteness(diamond)` from
+    ///         Step 7b gave "6 passed; 0 failed". The check was correct and
+    ///         entirely unguarded.
+    ///
+    ///         This is the fixture that fails when the CALL SITE goes away. It
+    ///         matters more than it looks: the in-deploy check is the whole
+    ///         reason the guarantee does not depend on this file's chain matrix
+    ///         being complete, so losing the call silently would quietly return
+    ///         the guarantee to whatever these tests happen to enumerate.
+    function test_TheDeployItself_InvokesArtifactVerification() public {
+        string memory root = string.concat(
+            _scratchRoot("verification-wired"), "/31337"
+        );
+        if (vm.isDir(root)) vm.removeDir(root, true);
+
+        DeployDiamondVerificationProbe probe =
+            new DeployDiamondVerificationProbe();
+        probe.setArtifactRootOverride(root);
+
+        assertFalse(
+            probe.verificationRan(),
+            "the probe must start un-fired, or its assertion below proves nothing"
+        );
+
+        probe.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
+
+        assertTrue(
+            probe.verificationRan(),
+            "DeployDiamond completed without invoking verifyArtifactCompleteness - the artifact completeness guarantee is not wired into the deploy, and every other test in this file would still pass"
+        );
+
+        vm.removeDir(root, true);
     }
 }

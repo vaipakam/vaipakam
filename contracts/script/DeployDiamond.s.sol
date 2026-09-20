@@ -130,6 +130,38 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         env-var round-trip, no parallel-test race. Production
     ///         `forge script` invocations keep using `run()` and are
     ///         unaffected.
+    /// @notice Require that every facet installed in `diamond_` was recorded in
+    ///         the artifact this run wrote.
+    ///
+    /// @dev    **VIRTUAL so that the CALL SITE is testable, not only the
+    ///         check.** #2253 r2 found the completeness check itself unguarded:
+    ///         deleting the call from Step 7b left the whole deploy-artifact
+    ///         suite green, because those tests read the artifact independently
+    ///         and assert the same property. A fix nothing fails without is not
+    ///         covered, however carefully the check itself is written — exactly
+    ///         the vacuous-fixture trap. A test probe overrides this, records
+    ///         that it ran, and delegates to `super`; deleting the call site
+    ///         then turns that fixture red.
+    ///
+    ///         `diamondCutFacet` is appended SEPARATELY because
+    ///         `facetAddresses()` structurally cannot report it:
+    ///         `VaipakamDiamond`'s constructor writes
+    ///         `selectorToFacetAndPosition[diamondCut.selector].facetAddress`
+    ///         directly, without pushing into the enumeration. Leaving it out
+    ///         would blind this check to the one facet that can never be
+    ///         re-cut, since removing the cut function removes the ability to
+    ///         cut (#1798 r9).
+    function verifyArtifactCompleteness(address diamond_) internal virtual {
+        address[] memory routed = DiamondLoupeFacet(diamond_).facetAddresses();
+        address[] memory recorded = new address[](routed.length + 1);
+        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
+        recorded[routed.length] = DiamondLoupeFacet(diamond_).facetAddress(
+            IDiamondCut.diamondCut.selector
+        );
+        Deployments.requireFacetsRecorded(recorded);
+        console.log("Verified: every installed facet is recorded in the artifact.");
+    }
+
     function runWith(
         address admin,
         address treasury,
@@ -1123,14 +1155,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // directly, without pushing into the enumeration. Leaving it out would
         // blind this check to the one facet that can never be re-cut — removing
         // the cut function removes the ability to cut. (#1798 r9.)
-        address[] memory routed = DiamondLoupeFacet(diamond).facetAddresses();
-        address[] memory recorded = new address[](routed.length + 1);
-        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
-        recorded[routed.length] = DiamondLoupeFacet(diamond).facetAddress(
-            IDiamondCut.diamondCut.selector
-        );
-        Deployments.requireFacetsRecorded(recorded);
-        console.log("Verified: every installed facet is recorded in the artifact.");
+        verifyArtifactCompleteness(diamond);
 
         // ── Summary ─────────────────────────────────────────────────────
         console.log("");
