@@ -272,7 +272,17 @@ if (strictOn) {
     functionName: 'setRiskStrictMode',
     args: [false],
   });
-  await pub.waitForTransactionReceipt({ hash });
+  // #2183: a receipt is not a success. A reverted normalization would
+  // leave strict mode ON and every OFF-posture assertion below would
+  // then be testing the posture this block exists to clear — reported
+  // as a product failure rather than as the setup failure it is.
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    throw new Error(
+      `setRiskStrictMode(false) normalization tx ${hash} mined but REVERTED ` +
+        `(status=${receipt.status}) — the wallet is still in strict mode`,
+    );
+  }
 }
 
 // A plain navigation, NOT `visit()`. The site is already known reachable
@@ -460,8 +470,23 @@ check(
           functionName: 'setVaultRiskTier',
           args: [0],
         });
-        await pub.waitForTransactionReceipt({ hash });
-        console.log('cleanup: restored via direct write');
+        // #2183. Unlike the normalization above, a revert here does NOT
+        // slip through — the block-floored `check` below re-reads the
+        // tier and fails the run whatever path got it there. What a bare
+        // wait costs is the LOG: "restored via direct write" would be
+        // printed for a write that restored nothing, so the operator
+        // reading the transcript is told the opposite of what the
+        // failure beneath it means.
+        const receipt = await pub.waitForTransactionReceipt({ hash });
+        if (receipt.status === 'success') {
+          console.log('cleanup: restored via direct write');
+        } else {
+          console.log(
+            `cleanup: direct write tx ${hash} mined but REVERTED ` +
+              `(status=${receipt.status}) — wallet NOT restored here; ` +
+              `the confirmation below is what decides the run`,
+          );
+        }
       }
     }
     // The restore is a CHECK, not best-effort logging (Codex #1539

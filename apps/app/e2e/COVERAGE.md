@@ -21,6 +21,32 @@ existing one, stating WHERE it is verified.
 A feature may appear in both tiers (CI-Anvil for the flow mechanics,
 live for the deployed-service half).
 
+**A spec must confirm its own setup, and a mined transaction is not a
+confirmation** (#2183). `waitForTransactionReceipt` resolves for a REVERTED
+transaction — it reports the failure in `status`, which a bare `await` never
+reads. A setup write that reverts therefore continues as though its effect
+landed, and the spec fails much later on a surface three steps downstream, with
+a message about the UI that says nothing about the cause. That is not
+hypothetical: it is what made `26-sale-listing-hold` look like a flake for
+weeks, red and green on the same SHA, because whether the listing reverted
+depended on live forked chain state rather than on the tree.
+
+Two rules follow, and they are separate:
+
+1. **Never `await pub.waitForTransactionReceipt(...)` bare.** Use
+   `confirm(hash, label)` from `e2e/lib/chain.ts`, which throws on a revert and
+   names the write in the first line of the failure. A spec that genuinely
+   EXPECTS a revert calls the raw wait and asserts `status` at the call site,
+   so the expectation is visible. In the `.mjs` live drivers, which cannot
+   import the TypeScript helper, check `receipt.status` inline — most already
+   do (#1539, #2107).
+2. **Assert the setup's EFFECT from chain state, not from the surface under
+   test.** `confirm` rules out a revert; it does not establish that the write
+   put the world in the state the assertions need. A spec whose only evidence
+   of its own setup is the screen it is testing cannot distinguish a broken
+   product from a broken setup — which is exactly the ambiguity that sent
+   several #2183 investigations at the rendering layer.
+
 **What a live driver's exit code means** — 0 PASS, 1 FAIL (an assertion
 against a page actually observed), 2 BLOCKED (could not observe, or
 could not trust what was observed). The distinction is load-bearing for
