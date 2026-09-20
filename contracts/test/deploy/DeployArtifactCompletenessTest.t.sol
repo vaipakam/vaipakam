@@ -37,6 +37,33 @@ contract DeployDiamondVerificationProbe is DeployDiamond {
     }
 }
 
+
+/**
+ * @notice A deploy whose artifact verification always FAILS, so the failure
+ *         path itself can be tested without mutating `DeployDiamond`.
+ *
+ * @dev    #2253 r3 P1. Appending an address the deploy never recorded forces
+ *         `requireFacetsRecorded` down its failure branch while every real
+ *         write has already happened — which is exactly the situation the
+ *         finding described: a caught omission, after the canonical artifact
+ *         has been overwritten.
+ */
+contract DeployDiamondFailingVerificationProbe is DeployDiamond {
+    address internal constant NEVER_RECORDED = address(0xDEAD);
+
+    function verifyArtifactCompleteness(
+        address diamond_,
+        string memory priorArtifact,
+        bool priorExisted
+    ) internal override {
+        address[] memory bogus = new address[](1);
+        bogus[0] = NEVER_RECORDED;
+        Deployments.requireFacetsRecorded(bogus, priorArtifact, priorExisted);
+        // unreachable: the call above always reverts
+        diamond_;
+    }
+}
+
 /**
  * @title  DeployArtifactCompletenessTest
  * @notice Issue #1800 — the regression guard for #1798, which found THIRTEEN
@@ -533,6 +560,65 @@ contract DeployArtifactCompletenessTest is Test {
         assertTrue(
             probe.verificationRan(),
             "DeployDiamond completed without invoking verifyArtifactCompleteness - the artifact completeness guarantee is not wired into the deploy, and every other test in this file would still pass"
+        );
+
+        vm.removeDir(root, true);
+    }
+
+    // ── 6. A failed verification leaves the artifact as it found it ───
+
+    /// @notice When verification fails, the artifact is restored to what it
+    ///         was before the run — not left holding the failed run's writes.
+    ///
+    /// @dev    #2253 r3 P1, and this is the fixture the fix needs rather than
+    ///         the fix the tests happened to have. Every OTHER test in this
+    ///         file writes to a scratch root, so none of them would notice the
+    ///         restore being deleted; the property only matters for the file a
+    ///         later reader trusts.
+    ///
+    ///         Why it matters on a real deploy: filesystem cheatcode effects
+    ///         survive a revert, and a `--broadcast` run executes the whole
+    ///         script body in forge's pre-send simulation — the repo's own
+    ///         wrapper documents that such a refusal sends no transactions. So
+    ///         without the restore, a caught omission leaves the inventory's
+    ///         source of truth naming simulated addresses for a Diamond that
+    ///         was never deployed. The check would have manufactured a worse
+    ///         failure than the silence it exists to end.
+    ///
+    ///         Two deploys with DIFFERENT deployer keys, so their addresses
+    ///         differ and a restore is distinguishable from a no-op.
+    function test_FailedVerification_LeavesThePriorArtifactIntact() public {
+        string memory root = string.concat(
+            _scratchRoot("failed-verification-restores"), "/31337"
+        );
+        if (vm.isDir(root)) vm.removeDir(root, true);
+        string memory artifact = string.concat(root, "/anvil/addresses.json");
+
+        // ── a good deploy, which the artifact should keep describing ──
+        DeployDiamond good = new DeployDiamond();
+        good.setArtifactRootOverride(root);
+        good.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
+        address firstDiamond = good.diamond();
+
+        assertEq(
+            vm.parseJsonAddress(vm.readFile(artifact), ".diamond"),
+            firstDiamond,
+            "the good deploy did not record its own diamond"
+        );
+
+        // ── a deploy that fails verification, from a different deployer ──
+        uint256 otherKey = DEPLOYER_KEY + 1;
+        DeployDiamondFailingVerificationProbe bad =
+            new DeployDiamondFailingVerificationProbe();
+        bad.setArtifactRootOverride(root);
+
+        vm.expectRevert();
+        bad.runWith(ADMIN_FOR_HANDOVER, TREASURY, otherKey);
+
+        assertEq(
+            vm.parseJsonAddress(vm.readFile(artifact), ".diamond"),
+            firstDiamond,
+            "a failed verification left the artifact describing the FAILED run - the restore is missing, and on a real --broadcast deploy this file would name simulated addresses for a Diamond that was never deployed"
         );
 
         vm.removeDir(root, true);
