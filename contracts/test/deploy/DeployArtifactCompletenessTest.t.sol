@@ -223,18 +223,27 @@ contract DeployArtifactCompletenessTest is Test {
         );
     }
 
-    // ── 3. The redirect is refused where it would hide a real deploy ──
+    // ── 3. The redirect refuses rather than quietly meaning something ──
 
-    /// @notice The artifact redirect is local-only, and says so loudly.
+    /// @notice An empty artifact root is refused outright, not read as "the
+    ///         default".
     ///
-    /// @dev    A redirect is a way to write an artifact where nobody reads it.
-    ///         On a live broadcast that is the #2070 failure in a new hat: a
-    ///         Diamond reaches a chain and the census inventory never sees it.
-    ///         The refusal is a revert rather than a silent fall-back to the
-    ///         default, because a caller that believed it had redirected and
-    ///         had not would assert against the COMMITTED artifact and pass for
-    ///         entirely the wrong reason.
-    function test_ArtifactRootOverride_RefusedOffAnvilOutsideTest() public {
+    /// @dev    The test name says only what this asserts, deliberately. The
+    ///         OTHER half of the guard — that a redirect is refused anywhere
+    ///         but Anvil or `forge test`, because writing an artifact where
+    ///         nobody reads it is the #2070 failure in a new hat — CANNOT be
+    ///         reached from here: the guard's test-context arm is satisfied by
+    ///         the very fact that this is running under `forge test`, whatever
+    ///         chain id `vm.chainId` claims. Exercising it needs a live
+    ///         broadcast, which no test performs. Naming this function after
+    ///         the unreachable half would have been a fixture that passes
+    ///         VACUOUSLY while reading as coverage of something else.
+    ///
+    ///         Both halves refuse by reverting rather than falling back to the
+    ///         default, for the same reason: a caller that believed it had
+    ///         redirected and had not would assert against the COMMITTED
+    ///         artifact and pass for entirely the wrong reason.
+    function test_ArtifactRootOverride_RefusesAnEmptyRoot() public {
         DeployDiamond script = new DeployDiamond();
 
         // Under `forge test` the test-context arm of the guard is satisfied
