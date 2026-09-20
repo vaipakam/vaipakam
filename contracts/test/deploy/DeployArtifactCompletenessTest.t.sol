@@ -43,7 +43,7 @@ contract DeployDiamondVerificationProbe is DeployDiamond {
  *         path itself can be tested without mutating `DeployDiamond`.
  *
  * @dev    #2253 r3 P1. Appending an address the deploy never recorded forces
- *         `requireFacetsRecorded` down its failure branch while every real
+ *         the completeness assertion to fail while every real
  *         write has already happened — which is exactly the situation the
  *         finding described: a caught omission, after the canonical artifact
  *         has been overwritten.
@@ -58,8 +58,16 @@ contract DeployDiamondFailingVerificationProbe is DeployDiamond {
     ) internal override {
         address[] memory bogus = new address[](1);
         bogus[0] = NEVER_RECORDED;
-        Deployments.requireFacetsRecorded(bogus, priorArtifact, priorExisted);
-        // unreachable: the call above always reverts
+        // #2253 r5 — mirrors the real hook's shape: the assertion reverts
+        // WITHOUT restoring, and the caller's catch does the restore. A probe
+        // that restored inline would test a path the deploy does not take.
+        try this.assertFacetsRecordedExternal(bogus) {
+            revert("probe: the bogus address was somehow recorded");
+        } catch (bytes memory err) {
+            Deployments.restoreArtifact(priorArtifact, priorExisted);
+            assembly { revert(add(err, 0x20), mload(err)) }
+        }
+        // unreachable
         diamond_;
     }
 }
@@ -620,6 +628,68 @@ contract DeployArtifactCompletenessTest is Test {
             firstDiamond,
             "a failed verification left the artifact describing the FAILED run - the restore is missing, and on a real --broadcast deploy this file would name simulated addresses for a Diamond that was never deployed"
         );
+
+        vm.removeDir(root, true);
+    }
+
+    // ── 7. A re-deploy does not inherit the previous run's facet keys ─
+
+    /// @notice Deploying twice into the SAME artifact leaves `.facets`
+    ///         describing only the second run.
+    ///
+    /// @dev    #2253 r5 P2, and this is the fixture whose absence the finding
+    ///         named: every other test here deletes its scratch root before
+    ///         deploying, which MASKED the bug rather than missing it by
+    ///         chance. The typed writers merge into the existing file, so
+    ///         without `clearFacets()` a second deploy inherits the first run's
+    ///         keys — and on the documented fresh-Anvil workflow
+    ///         (`anvil-bootstrap.sh` restarts the chain and reuses the fixed
+    ///         default deployer) the CREATE addresses REPEAT, so a deleted
+    ///         `writeFacet` leaves a matching stale value and the value-scan
+    ///         passes for a facet the run never recorded.
+    ///
+    ///         Deploying from two DIFFERENT deployer keys gives two disjoint
+    ///         address sets, so "inherited" and "cleared" are distinguishable:
+    ///         with the clear, no first-run address survives.
+    function test_Redeploy_DoesNotInheritThePriorRunsFacetKeys() public {
+        string memory root = string.concat(
+            _scratchRoot("redeploy-clears-facets"), "/31337"
+        );
+        if (vm.isDir(root)) vm.removeDir(root, true);
+        string memory artifact = string.concat(root, "/anvil/addresses.json");
+
+        DeployDiamond first = new DeployDiamond();
+        first.setArtifactRootOverride(root);
+        first.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
+        address[] memory firstFacets =
+            IDiamondLoupe(first.diamond()).facetAddresses();
+        assertGt(firstFacets.length, 0, "first deploy built no Diamond");
+
+        // Deliberately NOT clearing the root: this is the re-deploy case.
+        DeployDiamond second = new DeployDiamond();
+        second.setArtifactRootOverride(root);
+        second.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY + 1);
+
+        string memory json = vm.readFile(artifact);
+        for (uint256 i; i < firstFacets.length; ++i) {
+            assertFalse(
+                _recordedAsFacet(json, firstFacets[i]),
+                string.concat(
+                    "the artifact still carries the FIRST deploy's facet ",
+                    vm.toString(firstFacets[i]),
+                    " - `.facets` was not cleared, so it describes two Diamonds at once and the completeness scan can pass on a stale value"
+                )
+            );
+        }
+
+        address[] memory secondFacets =
+            IDiamondLoupe(second.diamond()).facetAddresses();
+        for (uint256 i; i < secondFacets.length; ++i) {
+            assertTrue(
+                _recordedAsFacet(json, secondFacets[i]),
+                "the second deploy's own facet is missing after the clear"
+            );
+        }
 
         vm.removeDir(root, true);
     }
