@@ -2,7 +2,7 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert, makeRoutingBoundary, UNROUTED } from './census-grandfathered-custody.mjs';
 import { toFunctionSelector } from 'viem';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
@@ -122,4 +122,35 @@ test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload pr
   // an empty revert is not the fallback either
   assert.equal(isFunctionDoesNotExistRevert({ data: '0x' }), false);
   assert.equal(isFunctionDoesNotExistRevert(null), false);
+});
+
+test('the routing boundary: a read is gated by ITS OWN selector, answers UNROUTED instead of throwing, and probes each selector once (#2095 r26)', async () => {
+  const probed = [];
+  const reads = [];
+  const routed = new Set(['getFallbackSnapshot']); // the Diamond routes the snapshot getter and NOT the loan getter
+  const probe = async (fn) => { probed.push(fn); return routed.has(fn); };
+  const read = async (fn, args) => { reads.push([fn, args]); return `${fn}:ok`; };
+  const { selectorRouted, readRouted } = makeRoutingBoundary(probe, read);
+
+  assert.equal(await readRouted('getFallbackSnapshot', [], [1n]), 'getFallbackSnapshot:ok');
+  // THE REGRESSION: the loan getter is cut out. Before r26 this read threw
+  // FunctionDoesNotExist and took the whole deployment's evidence with it.
+  assert.equal(await readRouted('getLoanDetails', [], [1n]), UNROUTED, 'an unrouted selector answers the sentinel');
+  assert.deepEqual(reads, [['getFallbackSnapshot', [1n]]], 'an unrouted selector is never called');
+
+  // the per-loan loop asks again for every id: one probe per selector, not per read
+  await readRouted('getFallbackSnapshot', [], [2n]);
+  await readRouted('getLoanDetails', [], [2n]);
+  assert.deepEqual(probed, ['getFallbackSnapshot', 'getLoanDetails'], 'routing is resolved once per selector');
+  assert.equal(await selectorRouted('getFallbackSnapshot', [], [3n]), true, 'the gates read the same one answer');
+  assert.equal(probed.length, 2);
+});
+
+test('the routing boundary does NOT remember a failed probe — only an answer is a fact about the Diamond (#2095 r26)', async () => {
+  let attempt = 0;
+  const probe = async () => { attempt += 1; if (attempt === 1) throw new Error('rate limited'); return true; };
+  const { selectorRouted } = makeRoutingBoundary(probe, async () => 'value');
+  await assert.rejects(() => selectorRouted('getIntentCommit', [], [1n]), /rate limited/);
+  assert.equal(await selectorRouted('getIntentCommit', [], [1n]), true, 'the next caller probes again rather than inheriting a transport failure as "unrouted"');
+  assert.equal(attempt, 2);
 });

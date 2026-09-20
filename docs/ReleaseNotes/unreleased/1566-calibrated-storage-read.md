@@ -49,3 +49,19 @@ own: a live Diamond refreshed in place across one of those removals reads
 older state at the wrong slots, and nothing in the deploy tooling checks the
 property an in-place upgrade depends on. That is raised as its own issue
 (#2092); the guidance file now says the struct must only ever grow.
+
+Two rules about what the census may claim were widened after review, and both
+are the same idea said properly rather than said again in one more place. A
+row counted as VPFI custody rests on exactly the comparison a row filed away
+from it rests on — the row getter's asset against the token getter's answer —
+so where those getters do not read the same layout, the census now withdraws
+both sides of that comparison, not only the rows it excluded. The amounts are
+kept and reported as evidence whose asset is unknown; the class total is not
+stated at all, because stating it would assert the very thing the comparison
+could not settle.
+
+And a Diamond routes its functions one at a time, so any one of them may be
+missing. Where a getter the census wanted is not routed, the class that needed
+it is now recorded as undetermined and the rest of the deployment is still
+read — where before a single absent getter could end the whole deployment's
+read and leave every other class unexamined.

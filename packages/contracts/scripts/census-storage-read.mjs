@@ -567,3 +567,48 @@ export function gettersShareLayout(attributed, hosts) {
   for (const s of sets.slice(1)) common = common.filter((e) => s.has(e));
   return common.length ? { shared: true, reason: `all attribute to layout era ${common[0]}` } : { shared: false, reason: 'the hosts attribute to different layout eras' };
 }
+
+/**
+ * #2095 r26 P1 — INCLUSION is as scope-dependent as exclusion, and one rule now
+ * says so for both.
+ *
+ * A row enters a class, or is filed away from it, by the SAME comparison: the
+ * row getter's asset against the token getter's answer. Rounds 24 and 25 gated
+ * only the rows that comparison EXCLUDED, so a row whose asset happened to
+ * equal the token getter's answer was still counted as a proven VPFI liability
+ * while the two getters read different layouts — the census reporting a figure
+ * its own evidence could not substantiate. There is no asymmetry to preserve
+ * here: when the hosts do not share a layout the comparison is uninterpretable,
+ * whichever way it came out.
+ *
+ * So every scope-dependent row — counted and excluded alike — becomes
+ * unknown-asset evidence and the class is not certified. The rows and their
+ * AMOUNTS are kept (those were read, and dropping them would hide what is
+ * there); the class TOTAL is withdrawn, because stating it would assert the
+ * asset the comparison could not settle. Same shape as the storage-path
+ * downgrade: `count` names how many rows are in evidence, `rows` is empty,
+ * `total` is null beside a `totalUnavailable` that says why.
+ *
+ * Pure; exported for the test.
+ */
+export function downgradeUnreconciledScope(cls, share, { getters } = {}) {
+  if (!cls || share?.shared) return cls;
+  const included = cls.rows ?? [];
+  const excluded = cls.nonVpfiRowsExcluded ?? [];
+  if (!included.length && !excluded.length) return cls;
+  const who = getters ?? 'the scope getters';
+  return {
+    ...cls,
+    status: 'indeterminate',
+    provenBy: undefined,
+    count: included.length + excluded.length,
+    rows: [],
+    total: null,
+    totalUnavailable: `the asset of every row is unreconciled — ${who} do not attribute to a common layout`,
+    nonVpfiRowsExcluded: [],
+    unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...included, ...excluded],
+    indeterminateReason:
+      `${included.length} row(s) counted as VPFI and ${excluded.length} filed non-VPFI, but ${who} do not attribute to a ` +
+      `common layout (${share?.reason ?? 'no layout agreement'}) — the asset is not reconciled either way; refusing to certify`,
+  };
+}

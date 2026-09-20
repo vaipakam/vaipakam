@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -372,4 +372,43 @@ test('the snapshot getter and the loan getter must attribute to a common layout 
   const withToken = [...attributed, { address: '0xToken', eras: [{ commit: 'e2', layoutEra: 'e2' }] }, { address: '0xTokenOld', eras: [{ commit: 'e0', layoutEra: 'e0' }] }];
   assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xToken']).shared, true);
   assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xTokenOld']).shared, false, 'a token getter on another layout breaks the exclusion');
+});
+
+test('an unshared layout withdraws the rows it COUNTED, not only the rows it excluded (#2095 r26 P1)', () => {
+  const cls = {
+    status: 'proven',
+    provenBy: 'routed-getter',
+    count: 2,
+    total: '30',
+    rows: [{ loanId: '1', collateralTotal: '10' }, { loanId: '2', collateralTotal: '20' }],
+    nonVpfiRowsExcluded: [{ loanId: '3', asset: '0xother', collateralTotal: '5' }],
+    unknownAssetRows: [{ loanId: '4' }],
+  };
+  // shared: nothing moves, and the class keeps its proof
+  assert.deepEqual(downgradeUnreconciledScope(cls, { shared: true, reason: 'one facet hosts every getter' }, { getters: 'g' }), cls);
+
+  // the round-25 shape — rows were excluded — still downgrades
+  const share = { shared: false, reason: 'the hosts attribute to different layout eras' };
+  const d = downgradeUnreconciledScope(cls, share, { getters: 'the snapshot, loan and token getters' });
+  assert.equal(d.status, 'indeterminate');
+  assert.equal(d.provenBy, undefined);
+  assert.deepEqual(d.rows, [], 'a counted row is no longer presented as a counted row');
+  assert.deepEqual(d.nonVpfiRowsExcluded, []);
+  assert.equal(d.unknownAssetRows.length, 4, 'every scope-dependent row joins the unknown-asset evidence, the pre-existing one kept');
+  assert.equal(d.count, 3, 'the count names the rows in evidence');
+  assert.equal(d.total, null, 'a total would assert the asset the comparison could not settle');
+  assert.match(d.totalUnavailable, /unreconciled/);
+  assert.match(d.indeterminateReason, /2 row\(s\) counted as VPFI and 1 filed non-VPFI/);
+  assert.match(d.indeterminateReason, /different layout eras/);
+
+  // THE REGRESSION: rows counted, none excluded — this passed through untouched before r26
+  const includedOnly = { ...cls, nonVpfiRowsExcluded: [] };
+  const only = downgradeUnreconciledScope(includedOnly, share, { getters: 'g' });
+  assert.equal(only.status, 'indeterminate', 'an included row is as scope-dependent as an excluded one');
+  assert.equal(only.total, null);
+  assert.equal(only.unknownAssetRows.length, 3);
+
+  // no scope-dependent row at all (the no-loans bound): nothing to withdraw
+  const none = { status: 'proven', provenBy: 'no-loans-ever-created', count: 0, total: '0', rows: [], nonVpfiRowsExcluded: [] };
+  assert.deepEqual(downgradeUnreconciledScope(none, share, { getters: 'g' }), none, 'an unshared layout cannot unprove a class that read no rows');
 });

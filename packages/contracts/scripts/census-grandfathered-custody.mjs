@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -624,16 +624,16 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     const fbShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.fallback), hostOf(scopeSelectors.loan), hostOf(scopeSelectors.token)]);
     const intentShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.intent), hostOf(scopeSelectors.token)]);
     result.scanned.layoutProvenance.scopeGetters = { fallback: fbShare, intent: intentShare };
-    const fb = result.classes.fallbackSnapshotCustody;
-    const fbExcluded = fb?.nonVpfiRowsExcluded ?? [];
-    if (!fbShare.shared && fbExcluded.length) {
-      result.classes.fallbackSnapshotCustody = { ...fb, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(fb.unknownAssetRows ?? []), ...fbExcluded], nonVpfiRowsExcluded: [], indeterminateReason: `${fbExcluded.length} fallback row(s) were filed non-VPFI, but the snapshot, loan and token getters do not attribute to a common layout (${fbShare.reason}) — the asset is not reconciled; refusing to certify` };
-    }
-    const it = result.classes.liveIntentCommits;
-    const itExcluded = it?.nonVpfiRowsExcluded ?? [];
-    if (!intentShare.shared && itExcluded.length) {
-      result.classes.liveIntentCommits = { ...it, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(it.unknownAssetRows ?? []), ...itExcluded], nonVpfiRowsExcluded: [], indeterminateReason: `${itExcluded.length} intent row(s) were filed non-VPFI, but the intent getter and the token getter do not attribute to a common layout (${intentShare.reason}) — the asset is not reconciled; refusing to certify` };
-    }
+    // #2095 r26 P1 — ONE rule for both sides of the comparison and both
+    // classes: a row counted as VPFI rests on the same getter agreement as a
+    // row filed away from it, so an unshared layout withdraws both. The rule
+    // itself lives in census-storage-read.mjs, where the test can reach it.
+    result.classes.fallbackSnapshotCustody = downgradeUnreconciledScope(result.classes.fallbackSnapshotCustody, fbShare, {
+      getters: 'the snapshot, loan and token getters',
+    });
+    result.classes.liveIntentCommits = downgradeUnreconciledScope(result.classes.liveIntentCommits, intentShare, {
+      getters: 'the intent getter and the token getter',
+    });
   }
   process.stderr.write(`census: ${who} — layout provenance: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}): ${attribution.attributed.length} attributed, ${attribution.unattributed.length} unattributed, ${attribution.noCode.length} without code${candidateList.length ? `; ${candidateList.length} build candidate(s) proposed (${newCandidates} new in the candidates file)` : ''}\n`);
   const refusals = [];
@@ -820,6 +820,51 @@ function fetchViaNodeAgents(url, init = {}) {
   });
 }
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+/**
+ * What `readRouted` answers for a selector this Diamond does not route (#2095
+ * r26). A sentinel rather than `null` or a throw: `null` is a value some reads
+ * could legitimately return, and a throw is what used to take a whole
+ * deployment's evidence down with one unrouted getter.
+ */
+export const UNROUTED = Symbol('selector-not-routed-on-this-diamond');
+/**
+ * The routing boundary (#2095 r26). Cuts are per selector, so EVERY payload
+ * read has to be gated by ITS OWN selector's routing. Four rounds running
+ * found the read whose gate nobody had made — the pagination selector (r23),
+ * `facetAddress` (r24), the two custody getters (r25), then `getLoanDetails`
+ * and `facets` (r26) — and each was fixed where it was found, which is what
+ * made the next one possible: a hand-made boolean per call site is a rule you
+ * can forget, once per site.
+ *
+ * So the per-site boolean goes. Routing is resolved ONCE per selector here and
+ * remembered, every gate reads that one answer, and `readRouted` answers
+ * `UNROUTED` rather than throwing — an unrouted selector leaves the class that
+ * needed it indeterminate; it does not abort the deployment and take every
+ * other class's evidence with it. A new read cannot be added without saying
+ * what it does when its selector is not there.
+ *
+ * A probe that FAILS (rate limit, transport, a pruned replica) is not
+ * remembered: the entry is dropped so the next caller probes again. Only an
+ * answer — routed or not — is cached, because only an answer is a fact about
+ * the Diamond. Exported for the test.
+ */
+export function makeRoutingBoundary(probeRouting, read) {
+  const memo = new Map();
+  const selectorRouted = (fn, abiList, probeArgs) => {
+    if (!memo.has(fn)) {
+      memo.set(
+        fn,
+        Promise.resolve()
+          .then(() => probeRouting(fn, abiList, probeArgs))
+          .catch((err) => { memo.delete(fn); throw err; }),
+      );
+    }
+    return memo.get(fn);
+  };
+  const readRouted = async (fn, abiList, args = [], probeArgs = args) =>
+    (await selectorRouted(fn, abiList, probeArgs)) ? read(fn, args) : UNROUTED;
+  return { selectorRouted, readRouted };
+}
 /**
  * True only for the `IntentNoCommit` revert — the facet's own signal that no
  * commit is live for that loan. Every other revert propagates: a census must
@@ -2105,11 +2150,23 @@ async function censusDeployment(dep) {
     if (facetAddressRouted) return (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS;
     return selectorRoutedDirect(fn, args ?? zeroArgsFor(item));
   };
+  // Every gate and every payload read below goes through this one boundary —
+  // see `makeRoutingBoundary` for why the per-site boolean it replaces was the
+  // seam four review rounds kept landing on.
+  const { selectorRouted, readRouted } = makeRoutingBoundary(routedByLoupeOrProbe, read);
+  // The loupe enumeration the provenance pass reads, through the same boundary.
+  // It already treats a failure as "surface unreadable" and records the reason,
+  // so here the sentinel becomes that reason rather than a second convention.
+  const readFacetsThroughBoundary = async () => {
+    const list = await readRouted('facets', loupe, []);
+    if (list === UNROUTED) throw new Error('facets() is not routed on this Diamond (facetAddresses() is — cuts are per selector)');
+    return list;
+  };
   // enumeration needs BOTH the stats and the pagination selector (#2095 r23 P2)
   let enumerable = false;
   if (!notADiamond) {
-    const statsRouted = await routedByLoupeOrProbe('getProtocolStats', metrics, []);
-    const pageRouted = statsRouted && await routedByLoupeOrProbe('getAllLoansPaginated', metrics, [0n, 1n]);
+    const statsRouted = await selectorRouted('getProtocolStats', metrics, []);
+    const pageRouted = statsRouted && await selectorRouted('getAllLoansPaginated', metrics, [0n, 1n]);
     enumerable = statsRouted && pageRouted;
     if (statsRouted && !pageRouted) process.stderr.write(`census: ${who} — getProtocolStats routed but getAllLoansPaginated is not; taking the storage path\n`);
   }
@@ -2230,7 +2287,7 @@ async function censusDeployment(dep) {
       scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
-    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null });
+    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? readFacetsThroughBoundary : null, who, manifestEntry: dep.manifestEntry ?? null });
   }
 
   const stats = await read('getProtocolStats');
@@ -2306,12 +2363,12 @@ async function censusDeployment(dep) {
   // verdict instead of passing as a zero.
   const intentSelector = toFunctionSelector(intentView.find((e) => e.name === 'getIntentCommit'));
   // with the loupe unrouted the getter and the producer are probed directly (#2095 r23 P2)
-  const intentSurfaceRouted = await routedByLoupeOrProbe('getIntentCommit', intentView, [1n]);
+  const intentSurfaceRouted = await selectorRouted('getIntentCommit', intentView, [1n]);
 
   const producerSelector = toFunctionSelector(
     intentProducer.find((e) => e.name === 'commitSwapToRepayIntent'),
   );
-  const producerRouted = await routedByLoupeOrProbe('commitSwapToRepayIntent', intentProducer);
+  const producerRouted = await selectorRouted('commitSwapToRepayIntent', intentProducer);
 
   // Only needed when the getter is unrouted; when it IS routed we read live
   // state directly, which subsumes the history question entirely.
@@ -2399,10 +2456,20 @@ async function censusDeployment(dep) {
     // to explain for its continuity to be established.
     // #2095 r24 P2 — without a loupe the current surface cannot be enumerated,
     // so the routing history is UNREADABLE (its continuity has no yardstick),
-    // not a thrown failure
+    // not a thrown failure.
+    // #2095 r26 P2 — and `facets()` is its OWN selector: `loupeRouted` says
+    // `facetAddresses()` answered, which a Diamond can route while `facets()`
+    // is cut out. Through the routing boundary, so an unrouted `facets()`
+    // reaches the same UNREADABLE verdict as a wholly unrouted loupe instead
+    // of throwing out of the middle of this deployment.
+    const unreadableSurface = () =>
+      producerRouted
+        ? { refuted: true, verdict: 'refuted', reason: 'the intent producer answers a direct probe now — rows may exist' }
+        : { refuted: false, verdict: 'unreadable', reason: 'the current surface cannot be enumerated (facets() is not routed), so the routing history has no continuity yardstick' };
     const cutHistory = loupeRouted
       ? await (async () => {
-          const facetList = await read('facets');
+          const facetList = await readRouted('facets', loupe, []);
+          if (facetList === UNROUTED) return unreadableSurface();
           const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
           return refuteProducerNeverRouted({ client, diamond, fromBlock: BigInt(addresses.deployBlock ?? 0), toBlock: atBlock, producerSelector, producerRouted, routedSelectors });
         })()
@@ -2445,8 +2512,8 @@ async function censusDeployment(dep) {
   // #2095 r25 P2 — cuts are per selector: each custody getter is probed before
   // the loop; an unrouted one is recorded and its classes stay indeterminate
   // (the era-complete storage read still reports what it finds)
-  const rebateGetterRouted = await routedByLoupeOrProbe('getBorrowerLifRebate', claim, [1n]);
-  const snapshotGetterRouted = await routedByLoupeOrProbe('getFallbackSnapshot', claim, [1n]);
+  const rebateGetterRouted = await selectorRouted('getBorrowerLifRebate', claim, [1n]);
+  const snapshotGetterRouted = await selectorRouted('getFallbackSnapshot', claim, [1n]);
   if (!rebateGetterRouted || !snapshotGetterRouted) process.stderr.write(`census: ${who} — custody getter(s) unrouted: ${[!rebateGetterRouted && 'getBorrowerLifRebate', !snapshotGetterRouted && 'getFallbackSnapshot'].filter(Boolean).join(', ')}; their classes stay indeterminate\n`);
   for (const id of loanIds) {
     if (rebateGetterRouted) {
@@ -2461,25 +2528,40 @@ async function censusDeployment(dep) {
     const custody = lenderCollateral + treasuryCollateral + borrowerCollateral;
     if (active || custody > 0n) {
       // The snapshot carries amounts, not the asset — the LOAN names it.
-      const loan = await read('getLoanDetails', [id]);
-      const asset = (loan.collateralAsset ?? loan[0]?.collateralAsset ?? '').toString();
-      if (!vpfiToken) {
-        // Codex #2070 r7 P2 — with no resolvable VPFI token the asset is UNKNOWN,
-        // not proven non-VPFI. Recorded separately; the class stays indeterminate.
-        unknownAssetFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
-        continue;
+      // #2095 r26 P2 — and `getLoanDetails` is its own selector: a Diamond can
+      // route the snapshot getter with the loan getter cut out, and this read
+      // used to throw FunctionDoesNotExist and abort the whole deployment.
+      // Through the routing boundary the row keeps its amount and goes to the
+      // unknown-asset evidence the census already has for exactly this case
+      // (an asset it cannot name is not an asset it may exclude).
+      const loan = await readRouted('getLoanDetails', loanView, [id]);
+      // Classified by branch, never by `continue` (#2095 r26): these three
+      // early exits sat inside the loan loop, so a row the fallback pass filed
+      // non-VPFI — or could not name — skipped this id's INTENT read as well,
+      // while class 3 still reported itself proven over ids it had not read.
+      // Same shape as the finding above: a verdict certifying evidence it
+      // never collected. Filing a fallback row now ends the fallback pass for
+      // this id and nothing else.
+      if (loan === UNROUTED) {
+        unknownAssetFallbackRows.push({ loanId: id.toString(), asset: 'unknown — getLoanDetails is not routed on this Diamond', collateralTotal: custody.toString() });
+      } else {
+        const asset = (loan.collateralAsset ?? loan[0]?.collateralAsset ?? '').toString();
+        if (!vpfiToken) {
+          // Codex #2070 r7 P2 — with no resolvable VPFI token the asset is UNKNOWN,
+          // not proven non-VPFI. Recorded separately; the class stays indeterminate.
+          unknownAssetFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
+        } else if (asset.toLowerCase() !== vpfiToken.toLowerCase()) {
+          nonVpfiFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
+        } else {
+          fallbackRows.push({
+            loanId: id.toString(),
+            active,
+            collateralTotal: custody.toString(),
+            lenderPrincipalDue: lenderPrincipalDue.toString(),
+            treasuryPrincipalDue: treasuryPrincipalDue.toString(),
+          });
+        }
       }
-      if (asset.toLowerCase() !== vpfiToken.toLowerCase()) {
-        nonVpfiFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
-        continue;
-      }
-      fallbackRows.push({
-        loanId: id.toString(),
-        active,
-        collateralTotal: custody.toString(),
-        lenderPrincipalDue: lenderPrincipalDue.toString(),
-        treasuryPrincipalDue: treasuryPrincipalDue.toString(),
-      });
     }
 
     }
@@ -2801,7 +2883,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? readFacetsThroughBoundary : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
 }
 
 /**
