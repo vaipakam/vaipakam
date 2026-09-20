@@ -1,4 +1,4 @@
-## Thread — the Push rail can send again, because the pin was the bug (PR #<n>)
+## Thread — the Push rail can send again, because the pin was the bug (PR #2247)
 
 Push notifications on this deployment had not been issuing anything. The
 platform's Push client was pinned to a version that signs its verification
@@ -50,4 +50,5 @@ production channel and confirming it arrives.
 Closes #2220. Follow-up, deliberately not folded in: the Push rail exists as
 two near-identical copies, one per Worker, and they have already drifted — only
 one of them carries the request-accounting introduced when this outage was
-diagnosed. Hoisting it to a single shared implementation is filed separately.
+diagnosed, and only one carries the check described above at all. Hoisting it to
+a single shared implementation is filed as #2248.
