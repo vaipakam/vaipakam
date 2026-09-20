@@ -21,10 +21,11 @@ there is no network-level rule left to bypass, the schedule is untouched so its
 propagation delay stops mattering, and an unlisted entry point is covered
 precisely because nothing is listed.
 
-What the services gained is the ability to be held that way **gracefully**.
-Without it, code that expected a database would simply crash, which is loud but
-tells nobody whether their write landed. Now each service refuses at its
-entrance: a caller gets a temporary-unavailable answer that says plainly that
+What **three** of the four services gained is the ability to be held that way
+**gracefully** — the exception is the nightly backup service, which shares none
+of this code and is described further down. Without it, code that expected a
+database would simply crash, which is loud but tells nobody whether their write
+landed. Now each of those three refuses at its entrance: a caller gets a temporary-unavailable answer that says plainly that
 nothing they sent was recorded and that nothing read back would be current,
 with a retry hint; background ticks decline to start and say so once, rather
 than launching a dozen pieces of work that each discover the refusal
@@ -54,13 +55,22 @@ entry points to get right.
 The operating procedure for the database move now carries the sequence
 end-to-end, and the part that makes it work is an invariant rather than a step.
 The four services still switch over at independent times, exactly as they
-always did. What changed is what the others are doing meanwhile: during the
-window the set is only ever *some on the new database, the rest refusing* — it
-is never *some on the new, some on the old*. Nothing can write to the abandoned
-database because nothing is pointed at it any more. Staggered switching stops
-being a window in which writes are lost and becomes merely staggered. A service
-whose switch fails now fails safe, staying on the refusing build rather than
-carrying on against the database being left behind.
+always did. What changed is what the others are doing meanwhile.
+
+**Once every service has been confirmed held off its data** — and only from
+that point — the set is only ever *some on the new database, the rest
+refusing*; it is never *some on the new, some on the old*. Nothing can write to
+the abandoned database because nothing is pointed at it any more. Staggered
+switching stops being a window in which writes are lost and becomes merely
+staggered.
+
+The scoping matters and is not a caveat. Holding the services off their data is
+itself done one at a time, so while that is happening some are still on the old
+database — which is the ordinary state being left, not a violation. A service
+that fails to be held off fails the opposite way from one that fails to switch
+over: the first is still writing where it should not and stops the procedure
+dead, the second is simply refusing and can be fixed at leisure. Both were
+previously described as if only the second existed.
 
 Several things fall out of that and are now stated in one place rather than
 scattered. Unrelated changes must not be merged for the duration, because any

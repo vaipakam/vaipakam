@@ -613,14 +613,26 @@ favourable one.
   Q1 confirmations have passed — the binding move is only safe under the
   invariant, and the invariant is what Q1 establishes.
 
-**P4 — the merge freeze is a PRECONDITION, not a closing note** (#2252 r4 P1).
-It must be in force **before Q1's first maintenance deploy** and stay in
-force through Q4's final confirmation. Every merge to `main` triggers
-every Worker's build, and during this window the committed tree names the
-SOURCE right up until the Q3 merge — so any unrelated merge landing after
-Q0 rebuilds an already-unbound Worker straight back onto the database
-being abandoned. That is the one way P1 can be broken from outside, and it is
-broken silently. An earlier revision stated the freeze after the steps that
+**P4 — freeze every DEPLOYMENT, not merely every merge, and do it as a
+PRECONDITION** (#2252 r4 P1, widened r6 P1). It must be in force **before
+Q1's first maintenance deploy** and stay in force through Q4's final
+confirmation.
+
+The rule: **between Q0 and Q4, the only deployments that may happen are the
+ones this procedure names — Q1's four maintenance deploys, Q3's merge, and
+Q3's manual `ops/offchain-data-warm` deploy.** Nothing else. That covers three
+distinct routes, and an earlier revision named only the first:
+
+- a **merge to `main`**, which triggers every Worker's build;
+- a **manual `wrangler deploy`** from any checkout — it needs no merge and
+  takes whatever config that tree holds;
+- a **dashboard rollback**, which this document already notes creates a fresh
+  deployment rather than restoring an old one.
+
+All three land the same way, because during this window the committed tree
+names the **SOURCE** right up until the Q3 merge: any of them rebuilds an
+already-unbound Worker straight back onto the database being abandoned. That
+is how P1 gets broken from outside, and it is broken silently. An earlier revision stated the freeze after the steps that
 depend on it, which told an operator to start it at the moment it had stopped
 mattering.
 
@@ -645,8 +657,10 @@ wanted, that is a separate, designed step.
 
 #### The procedure — Q-steps, so they cannot be read as §3's Steps 0–3
 
-**Q0. Freeze merges to `main`** — per P4, before anything else, and keep it
-   frozen until Q4 is complete.
+**Q0. Freeze every deployment route** — merges to `main`, manual
+   `wrangler deploy`, and dashboard rollbacks alike. Per P4, before anything
+   else, and in force until Q4 is complete. The only deployments permitted in
+   between are Q1's, Q3's merge and Q3's manual backup-Worker deploy.
 
 **Q1. Deploy the maintenance build** to all four Workers (`apps/{indexer,
    keeper,agent}` and `ops/offchain-data-warm`) — same commit, `d1_databases`
@@ -688,9 +702,52 @@ wanted, that is a separate, designed step.
    identically. What it does not get is the named refusal and the one-line log,
    so expect a raw error from that Worker during the window and do not read it
    as a new fault. It writes no user-facing rows, so nothing is lost either way.
-**Q2. Drain.** Executions admitted BEFORE the maintenance deploy still hold the
-   environment they captured and can still write. This is the one residual,
-   and it is real — see below.
+**Q2. Drain — and it has a completion criterion, which is an OBSERVATION of
+   the source database rather than a wait** (#2252 r6 P1). Executions admitted
+   before the maintenance deploy still hold the environment they captured and
+   can still write. This is the one residual, and it is real.
+
+   An earlier revision said "drain" and gave nothing to check, so Q2b could
+   finish exporting while a straggler continuation was still to write — the
+   very row the archive exists for. Do not substitute a guessed interval; ask
+   the database whether anything is still writing to it:
+
+   ```bash
+   # [run] 2026-09-20 — verified against the live account, read-only.
+   # Per-minute write activity for the SOURCE database. Requires a token with
+   # Account Analytics: Read. Substitute the database id being LEFT BEHIND.
+   #   POST https://api.cloudflare.com/client/v4/graphql
+   #   query { viewer { accounts(filter:{accountTag:$acct}) {
+   #     d1AnalyticsAdaptiveGroups(limit:50,
+   #       filter:{datetimeMinute_geq:$start, datetimeMinute_leq:$end},
+   #       orderBy:[datetimeMinute_DESC]) {
+   #       sum { writeQueries rowsWritten readQueries }
+   #       dimensions { databaseId datetimeMinute } } } } }
+   ```
+
+   **The signal is unambiguous, because the steady state is not quiet.** Read
+   live on 2026-09-20, `vaipakam-archive` runs at a floor of **1 write query
+   and 1 row written per minute**, every minute, spiking to 16 — that is the
+   indexer's cursor advancing. So `writeQueries: 0` is a real observation and
+   not merely an absence of traffic: a zero minute means nothing wrote, where
+   on a quiet database zero would mean nothing had happened to write.
+
+   Q2 is complete when the source reports **zero write queries for several
+   consecutive minutes**, read a few minutes after the last Q1 confirmation so
+   the per-minute rollup has settled.
+
+   **What this does and does not prove, stated rather than assumed.** It
+   observes WRITES, not executions: a continuation that is still running but
+   has not yet reached its write is invisible to it, so zero writes is a
+   NECESSARY condition and not a proof of quiescence. It is nonetheless far
+   stronger than a guessed interval, because it is a direct measurement of the
+   thing that actually matters — whether the database being abandoned is still
+   receiving rows — rather than a proxy for it.
+
+   **The cutover does not proceed on this alone.** P5's drain figure is still
+   owed: measure the real `waitUntil` tail before running this and record it
+   here, then hold for it AND require the zero-write observation. Two
+   independent conditions, neither invented.
 **Q2b. Re-export the retained rows, AFTER the drain and before activating the
    target** (#2252 r3 P1). §1's export is taken before any of this starts, and
    the four maintenance deploys are sequential — so between that export and
