@@ -1,4 +1,4 @@
-## Thread — a service that cannot reach its data now says so, and stopping every writer no longer means listing them (PR #<n>)
+## Thread — a service that cannot reach its data now says so, and stopping every writer no longer means listing them (PR #2252)
 
 Moving one of the platform's off-chain databases requires stopping everything
 that writes to it first, and until now the operating procedure could not say
@@ -52,11 +52,31 @@ shape of the unknown: one measurable quantity instead of an open-ended set of
 entry points to get right.
 
 The operating procedure for the database move now carries the sequence
-end-to-end, including an explicitly marked exception: the nightly backup
-service sits outside the shared code and so fails bluntly rather than politely
-during a window. It writes nothing a user can see, so nothing is lost — but an
-operator watching the logs should expect a raw error from it and not read that
-as a new fault.
+end-to-end, and the part that makes it work is an invariant rather than a step.
+The four services still switch over at independent times, exactly as they
+always did. What changed is what the others are doing meanwhile: during the
+window the set is only ever *some on the new database, the rest refusing* — it
+is never *some on the new, some on the old*. Nothing can write to the abandoned
+database because nothing is pointed at it any more. Staggered switching stops
+being a window in which writes are lost and becomes merely staggered. A service
+whose switch fails now fails safe, staying on the refusing build rather than
+carrying on against the database being left behind.
+
+Two things fall out of that and are stated as steps. Other changes must not be
+merged during the window, because any merge re-deploys every service from a
+tree that may still name the old database — which would put one back on it
+while others have already moved, recreating exactly the split the invariant
+rules out. And confirmation is read from the deployment's own configuration
+rather than from how a service behaves: two of the four cannot be asked
+behaviourally at all — one is currently unscheduled and answers no requests,
+the other runs once a day — so a procedure that depended on watching them
+refuse could not be carried out.
+
+There is also an explicitly marked exception: the nightly backup service sits
+outside the shared code and so fails bluntly rather than politely during a
+window. It writes nothing a user can see, so nothing is lost — but an operator
+watching the logs should expect a raw error from it and not read that as a new
+fault.
 
 The functional specification gains the intent underneath all of this: a service
 that cannot reach its data says so rather than answering anyway; holding a

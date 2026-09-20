@@ -528,8 +528,22 @@ outside every list is covered because the mechanism never names one.
 
 1. **Deploy the maintenance build** to all four Workers (`apps/{indexer,
    keeper,agent}` and `ops/offchain-data-warm`) — same commit, `d1_databases`
-   removed. Confirm each is refusing: a request to the indexer or the agent
-   answers `503`, and the logs carry the `[d1] … maintenance build` line.
+   removed.
+
+   **Confirm from the CONTROL PLANE, because two of the four cannot be asked
+   behaviourally** (#2252 r1 P2). Read each Worker's bindings — *Settings →
+   Bindings* in the dashboard, or the API — and confirm no D1 binding is
+   present. That is the same check Step 3 below already relies on, for the
+   same reason it gives there: it reflects what is actually deployed, and it
+   is the only check available when the request surfaces are closed.
+
+   Do **not** make the behavioural check the gate. `apps/keeper` is on
+   `"crons": []` and exports only `scheduled`, so it emits nothing on demand
+   and cannot be prodded into logging anything; `ops/offchain-data-warm` runs
+   once a day at `17 3 * * *` and has no refusal seam at all. A `503` from the
+   indexer or the agent, and the `[d1] … maintenance build` line in their
+   logs, are worth reading as corroboration on the two Workers that serve
+   requests — and prove nothing about the other two.
 
    **How you produce it today is the weakest link in this procedure, and it is
    deliberately not dressed up.** There is no flag that deploys a Worker
@@ -555,13 +569,41 @@ outside every list is covered because the mechanism never names one.
 2. **Drain.** Executions admitted BEFORE the maintenance deploy still hold the
    environment they captured and can still write. This is the one residual,
    and it is real — see below.
-3. **Move the bindings.** Merge the commit that points all four at the target
-   database, and let each Worker's build run.
-4. **Confirm** every binding individually, per Step 3 below. The binding read
-   is the confirmation available while the Workers are still refusing.
-5. **Restore** — deploy the build that carries the binding again. Work resumes
-   on the next tick; the indexer's ingest alarm is restarted by the cron
-   backstop, which is what it is for.
+3. **Move the bindings, which is also what restores service.** Merge the
+   commit that points all four at the target database, and let each Worker's
+   build run. Each deployment that lands carries the new binding, so that
+   Worker resumes on the target as it lands. **There is no separate restore
+   step, and an earlier revision's step 5 said there was** (#2252 r1 P1) — it
+   described re-deploying a binding that step 3 had already delivered, and it
+   made step 4's "while the Workers are still refusing" false for any Worker
+   whose build had finished.
+4. **Confirm** every binding individually, per Step 3 below. Workers whose
+   builds have landed are live on the target; the rest are still unbound and
+   refusing. Both are fine — see the invariant.
+
+**THE INVARIANT THAT MAKES STEP 3 SAFE, and it is the whole reason the
+maintenance build comes first.** Those four builds still activate at
+independent times, exactly as they always did. What changed is what the other
+Workers are doing meanwhile:
+
+> During the window the deployment set is only ever **{on the target, unbound
+> and refusing}**. It is never **{on the target, on the source}**.
+
+Nothing can write to the abandoned database, because after step 1 nothing is
+bound to it. The mixed state still exists and is now harmless — which is the
+difference between staggered activation and a write-loss window, and it is why
+"quiesce first" is not decoration.
+
+Two consequences worth acting on:
+
+- **A failed build fails SAFE.** A Worker whose build errors stays on the
+  maintenance deployment — refusing, not writing to the old database. Fix the
+  build; nothing is accumulating in the wrong place while you do.
+- **Freeze other merges to `main` for the duration.** Every merge triggers
+  every Worker's build, and a build from a tree whose config still names the
+  source would put that Worker back on the abandoned database while others are
+  already on the target — reintroducing precisely the split this invariant
+  rules out.
 
 #### The residual, stated rather than absorbed
 
