@@ -1291,6 +1291,47 @@ never an array of a 40+-field struct, whose ABI coder inflates peak stack.
 Chunking bounds the symptom; lean DTOs are what stop the ceiling being
 re-crossed.
 
+### `1 too deep in the stack` is often NOT a full frame — read solc's last line
+
+**Before treating a `Variable expr_… is N too deep in the stack` error as a
+frame-size problem, check whether the output ends with "No memoryguard was
+present."** If it does, the frame is a red herring and the real cause is
+somewhere else in the same contract.
+
+viaIR rescues a deep frame with a **stack-to-memory mover**, which solc emits
+only behind a `memoryguard` — and it withholds that guard from the **whole
+contract** when ANY inline-assembly block in it is unannotated. So a single
+`assembly { … }` without `("memory-safe")` un-rescues every frame in that
+contract, and solc reports the frame that overflowed rather than the block that
+caused it. The two can be far apart: in #2253 the block was in a `catch` inside
+a library, and the named frame was `DeployDiamond.runWith`, which neither
+contains nor calls it.
+
+Verified by single-variable experiment on that PR — deleting only the two words
+`("memory-safe")` reproduces the error; restoring them compiles, nothing else
+changed. **Five revisions were spent moving a call around before anyone read
+solc's last line**, and the intermediate diagnoses (the call site is too deep,
+an `internal` hook leaves a subclass no budget, the compilation unit is too big)
+were all plausible and all wrong.
+
+Two practical consequences:
+
+- **Annotate new inline assembly `("memory-safe")` — but only when it is.** The
+  annotation licenses the mover to relocate stack slots into memory; applying it
+  to a block that writes outside its own allocations invites memory corruption,
+  which is a far worse failure than a build error. It is an audit, not a
+  find-and-replace. A block that only READS memory (e.g. `revert(add(p, 0x20),
+  mload(p))` over a `bytes memory` it already holds) is safe.
+- **`forge build --skip test` cannot see a test contract doing this.** A probe
+  or helper under `test/` that inherits a script and carries an unannotated
+  block fails only in the test build, which is the failure mode that cost #2253
+  those five revisions.
+
+`contracts/test/deploy/PartialRefreshRoutingTest.t.sol` and ~25 blocks under
+`src/`/`script/` are still unannotated. They are LATENT, not broken: the guard
+is per-contract and those contracts compile today. Sweeping them is tracked in
+**#2260** and needs the audit above, not a bulk edit.
+
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
 The single live tracker for in-flight and queued work is the GitHub

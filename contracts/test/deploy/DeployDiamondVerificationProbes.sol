@@ -8,22 +8,31 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
  * @notice The two `DeployDiamond` subclasses `DeployArtifactCompletenessTest`
  *         drives.
  *
- * @dev    **Both override `assertFacetsRecordedExternal`, and nothing else.
- *         That is a hard constraint, not a style choice.**
+ * @dev    **Keep inline assembly out of these contracts, annotated or not.**
  *
- *         `DeployDiamond.runWith` sits at the viaIR whole-unit stack ceiling,
- *         and a subclass gets its OWN inlined copy of it. That copy has zero
- *         spare slots: an earlier revision put the seam on an `internal
- *         virtual` hook called from `runWith`, and every override body tried —
- *         down to a single external self-call taking one argument — failed the
- *         test build with `Variable … is 1 too deep in the stack` while the
- *         identical base contract compiled cleanly. `forge build --skip test`
- *         reports success throughout, because it never compiles these.
+ *         An earlier revision of this header blamed the viaIR stack ceiling:
+ *         it claimed a subclass's copy of `runWith` has zero spare slots, so an
+ *         `internal virtual` hook could never be an override seam. That was
+ *         wrong, and it is corrected rather than deleted because it is exactly
+ *         the sort of mechanism that sounds right and gets rediscovered.
  *
- *         An EXTERNAL function is not inlined into `runWith`, so overriding one
- *         costs that frame nothing. Do not add an override of anything
- *         `internal` here, and do not add a subclass of `DeployDiamond` that
- *         does.
+ *         What actually happened: the failing probe carried a bare
+ *         `assembly { revert(add(err, 0x20), mload(err)) }` to rethrow a caught
+ *         revert. An unannotated assembly block withdraws viaIR's
+ *         stack-to-memory mover for the WHOLE contract — and these contracts
+ *         inherit `runWith`, whose ~80 live facet addresses depend on it. solc
+ *         then reports `Variable … is 1 too deep in the stack` naming `runWith`,
+ *         a function the assembly block is nowhere near, and adds the real
+ *         diagnosis on its last line: "No memoryguard was present."
+ *
+ *         So the probes failed on their own assembly, not on the seam, and five
+ *         revisions were spent moving a call that was never the cause. Neither
+ *         probe uses assembly now — the failing one reverts with a plain string.
+ *         If one ever needs a block again, annotate it `("memory-safe")` and
+ *         only if it genuinely is; see the note in `Deployments.finalizeArtifact`.
+ *
+ *         `forge build --skip test` cannot see any of this, because it never
+ *         compiles these contracts.
  */
 
 /**

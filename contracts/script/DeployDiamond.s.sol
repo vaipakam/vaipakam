@@ -121,32 +121,33 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice The completeness assertion, reached by
     ///         `Deployments.finalizeArtifact` across a call to this contract.
     ///
-    /// @dev    **This is the virtual seam for the whole check, and it is
-    ///         external for two independent reasons.**
+    /// @dev    **Why it is EXTERNAL.** `Deployments.assertFacetsRecorded`
+    ///         reverts WITHOUT restoring the artifact snapshot — the caller owns
+    ///         the finally — and Solidity's `try` only wraps external calls, so
+    ///         the restore the library performs on any failure needs this
+    ///         boundary to exist at all. That reason stands on its own.
     ///
-    ///         `Deployments.assertFacetsRecorded` reverts WITHOUT restoring the
-    ///         artifact snapshot — the caller owns the finally — and Solidity's
-    ///         `try` only wraps external calls, so the restore the library does
-    ///         on any failure needs this boundary to exist.
+    ///         **Why it is VIRTUAL.** #2253 r2 found the completeness check
+    ///         unguarded in the other direction: deleting its call from Step 7b
+    ///         left the whole deploy-artifact suite green, because those tests
+    ///         read the artifact independently and assert the same property. A
+    ///         fix that nothing fails without is not covered, however carefully
+    ///         the check itself is written. So the CALL SITE has to be
+    ///         observable, and a probe overrides this to observe it.
     ///
-    ///         And #2253 r2 found the completeness check unguarded in the other
-    ///         direction: deleting its call from Step 7b left the whole
-    ///         deploy-artifact suite green, because those tests read the
-    ///         artifact independently and assert the same property. A fix that
-    ///         nothing fails without is not covered, however carefully the check
-    ///         itself is written. So the CALL SITE has to be observable, which
-    ///         means a probe has to be able to override something on the path —
-    ///         and `runWith` sits at the viaIR whole-unit stack ceiling with
-    ///         exactly zero spare slots in a subclass's copy. An `internal`
-    ///         hook was tried first and cannot work: it is inlined into each
-    ///         derived contract's own copy of `runWith`, so ANY override body,
-    ///         down to a single external self-call, overflows that copy while
-    ///         the identical base compiles. Five rounds went into shaving that
-    ///         one slot before the seam moved here. An external function is not
-    ///         inlined, so overriding this costs `runWith` nothing.
-    ///
-    ///         Note that `forge build --skip test` cannot see a probe blowing
-    ///         that budget — only the test build compiles them.
+    ///         **What the `1 too deep in the stack` failures were NOT.** An
+    ///         earlier revision of this comment claimed `runWith` leaves a
+    ///         subclass zero spare slots, so an `internal` hook could not be an
+    ///         override seam. That is unsupported and is very likely wrong; it
+    ///         is corrected here rather than deleted, because it is the kind of
+    ///         plausible-sounding mechanism that gets rediscovered. See the
+    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what was
+    ///         actually happening — briefly: an unannotated inline-assembly
+    ///         block withdraws viaIR's stack-to-memory mover for the WHOLE
+    ///         contract, and solc reports that as the frame being too deep. The
+    ///         probes each carried such a block, which is why they failed while
+    ///         the base compiled, and five revisions were spent moving a call
+    ///         that was never the cause.
     ///
     ///         Gated to self-calls so it is not an operator-reachable entry
     ///         point on a broadcast script.

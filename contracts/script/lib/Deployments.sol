@@ -605,6 +605,28 @@ library Deployments {
             restoreArtifact(prior, existed);
             // Re-revert with the assertion's own message. The operator needs to
             // read which facet was unrecorded, not that a call failed.
+            //
+            // ("memory-safe") IS LOAD-BEARING AND IS NOT A STYLE CHOICE. Drop
+            // those two words and `forge build --skip test` fails with
+            // `Variable expr_…_address is 1 too deep in the stack` pointing at
+            // `DeployDiamond.runWith` — a function this block is not in and
+            // does not call. Verified by changing nothing else (#2253 r6).
+            //
+            // viaIR rescues a deep frame with a stack-to-memory mover, and solc
+            // emits that mover only behind a `memoryguard`, which it withholds
+            // from the WHOLE contract if any inline-assembly block is
+            // unannotated. So one unannotated block here un-rescues every frame
+            // that inlines this library, and the error names the frame that
+            // overflowed rather than the block that caused it. solc does say so,
+            // on the last line of its own output: "No memoryguard was present."
+            // Five revisions of this PR moved a call around chasing the frame
+            // and never read that line.
+            //
+            // The annotation is true, not merely convenient: a memory-safe block
+            // may READ any memory, and `revert(p, s)` only reads — `err` is a
+            // `bytes memory` this block already holds, and both `add(err, 0x20)`
+            // and `mload(err)` stay inside it.
+            //
             // forge-lint: disable-next-line(unsafe-assembly)
             assembly ("memory-safe") {
                 revert(add(err, 0x20), mload(err))
