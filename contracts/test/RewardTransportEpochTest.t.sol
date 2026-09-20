@@ -14,6 +14,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -76,6 +77,9 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     }
     function _mut() internal view returns (TestMutatorFacet) {
         return TestMutatorFacet(address(diamond));
+    }
+    function _lens() internal view returns (RewardRemittanceLensFacet) {
+        return RewardRemittanceLensFacet(address(diamond));
     }
 
     function _becomeMirror() internal {
@@ -834,6 +838,77 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(arrivals[0], 2000, "but the key at position 0 is the LATER arrival");
         assertEq(arrivals[1], 1000, "and the key at position 1 the earlier one");
         assertTrue(arrivals[0] > arrivals[1], "so the array's order and the arrival order disagree");
+    }
+
+    // ─── 5. the fourth door, and why it cannot reach an epoch ────────────────
+
+    /// The R4 repatriation steps a packet's `unclassified` down OUTSIDE the
+    /// epoch gate — `releaseUnclassifiedForReturn` reduces the packet and
+    /// books the exit as `disposed` without consulting any batch. So if ONE
+    /// packet could ever hold both a transport epoch and a stranded record,
+    /// a return would leave the epoch anchored over value that has gone
+    /// home: `admitted` would outrun what the packet still holds, the
+    /// remainder could never be debited down, and in 3b-ii a listed day
+    /// would draw against a balance that is not there.
+    ///
+    /// It cannot, and this pins WHY, because the reason is INCIDENTAL to
+    /// this ledger rather than stated by it. A stranded record binds to a
+    /// packet only through `unclassifiedQuarantine`, whose two call sites
+    /// both pass a COMPENSATION packet's stamp; and the compensation ingress
+    /// records its whole amount as the fresh component, which
+    /// `rolloutAdmissionStatus` refuses permanently as `ROLLOUT_WIRE_TYPED`.
+    /// Nothing in the epoch ledger declares that dependency, so an ingress
+    /// change that recorded a compensation untyped would open this door
+    /// silently and no existing test would notice.
+    function test_FourthDoor_CannotReachAPacketHoldingAnEpoch() public {
+        uint256 dayId = 3;
+        // A compensation whose remitter is not the day's era quarantines
+        // (reason 2) — the route that attaches a stranded record to a packet
+        // on an activated deployment, and so arms the fourth door on it.
+        _mut().setDayClockEraRaw(dayId, address(0xE2A));
+        _mut().setBroadcastV2AppliedRaw(dayId, true);
+        bytes32 compId = keccak256("comp-fourth-door");
+        _ingress().onCompensationBudgetReceived(
+            address(vpfi), 6e18, dayId, CHAIN_BASE, 900, REMITTER, 3e18, 3e18,
+            0, 1, uint64(7 days), uint64(24 hours), compId
+        );
+        bytes32 comp = keccak256(abi.encode(uint256(CHAIN_BASE), compId));
+
+        // The door is armed on THIS packet: the record names it, and the
+        // holder backs value a return can draw straight out of its row.
+        LibVaipakam.StrandedRecovery memory sr = _lens().getStrandedRecovery(REMITTER, 900);
+        assertEq(sr.packetHash, comp, "the stranded record names the compensation packet");
+        assertEq(sr.held, 6e18, "and the holder backs what a return would draw");
+
+        // And no epoch can ever be opened over it. The live entry never runs
+        // on a compensation; the retrospective one refuses by name.
+        uint256[] memory one = new uint256[](1);
+        one[0] = dayId;
+        vm.expectRevert(abi.encodeWithSelector(TransportPacketWireTyped.selector, comp));
+        _epoch().admitLegacyTransportBatch(comp, one);
+
+        // WHY it refuses, taken from the record's SHAPE rather than from this
+        // fixture's numbers: the compensation ingress states the whole amount
+        // as the fresh component. Change that and the refusal above becomes
+        // an admission without a single line of the epoch ledger changing.
+        LibVaipakam.IngressPacket memory p = _lens().getIngressPacket(comp);
+        // Pinned non-vacuously: two zeros would satisfy the equality below and
+        // would ALSO be the untyped shape this clause is meant to refuse.
+        assertEq(p.actualReceived, 6e18, "the whole delivery is on the record");
+        assertEq(p.freshShare, p.actualReceived, "a compensation is recorded WIRE-TYPED, whole");
+        assertTrue(
+            p.dayListHash != bytes32(0),
+            "and it does carry a 3a commitment - the day list is not what refuses it"
+        );
+
+        // The other side of the pair: an untyped BUDGET delivery DOES open an
+        // epoch, and nothing is bound to it under its own receipt, so the door
+        // is shut on the one packet that holds an anchor.
+        bytes32 h = _untyped(10e18, 2, 901, keccak256("fourth-door-budget"));
+        assertEq(_lens().getIngressPacket(h).batchId, h, "the budget packet holds its epoch");
+        LibVaipakam.StrandedRecovery memory none = _lens().getStrandedRecovery(REMITTER, 901);
+        assertEq(none.packetHash, bytes32(0), "and no stranded record names it");
+        assertEq(none.held, 0, "with nothing for a return to draw from it");
     }
 }
 

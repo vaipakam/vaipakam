@@ -174,6 +174,27 @@ ever parked six. With both stated, anyone can check that a delivery's opening
 figure still equals what it holds plus what has been parked plus what has left
 — rather than having to infer the difference and hope.
 
+### The one other way protected value leaves, and why it cannot reach an epoch
+
+There is a second route by which a delivery's held-aside value can leave
+without being reconciled: a compensation that arrived unusable is quarantined
+and later returned home to the chain that sent it. That route does not consult
+the epoch ledger at all — it reduces the delivery's unreconciled figure
+directly. Had the two ever met on one delivery, a return would have left its
+epoch promising the days it named more than the delivery still held: a figure
+that could never be worked down, and, once the days can draw, a draw against
+value that is no longer there.
+
+They cannot meet, and this release says so where it matters and pins it with a
+test. Only a compensation arrival is ever returnable, and a compensation always
+states its whole amount as one named component — which is precisely the shape
+that is refused an epoch, because a delivery with named components had them
+credited on arrival. So the guarantee holds today, but it holds on a decision
+made by the ARRIVAL rules rather than by the epoch ledger, which checks nothing
+of the sort. Changing how a compensation states its amount would reopen the
+route silently. That dependency is now written into both surfaces and asserted
+by a regression test, so it fails loudly instead.
+
 ### Operational note for the in-place refresh
 
 The refresh that installs this work now cuts the facets that share the epoch

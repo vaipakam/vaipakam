@@ -1515,6 +1515,12 @@ library LibRewardCustody {
         if (p.arrivedAt == 0) return ROLLOUT_UNKNOWN_PACKET;
         if (p.batchId != bytes32(0)) return ROLLOUT_ALREADY_ADMITTED;
         if (p.dayListHash == bytes32(0) || p.dayCount == 0) return ROLLOUT_NO_DAY_LIST;
+        // This clause carries a SECOND guarantee beyond the one-accounting-path
+        // rule it was written for, and the second one is load-bearing: it is
+        // what keeps a transport epoch off every packet a stranded record can
+        // bind to, so the R4 repatriation's step-down — which consults no
+        // batch — can never strand an anchor over value that has gone home.
+        // See {releaseUnclassifiedForReturn}.
         if (p.freshShare != 0 || p.recycledShare != 0) return ROLLOUT_WIRE_TYPED;
         if (p.unclassified == 0) return ROLLOUT_NOTHING_UNTYPED;
         return ROLLOUT_ADMISSIBLE;
@@ -1969,6 +1975,27 @@ library LibRewardCustody {
     ///         value leaves the `Unclassified` row for the return sender,
     ///         measured, and every figure that described it there steps
     ///         down with it.
+    /// @dev    #1566 transport epochs PR 3b — THIS DOOR CONSULTS NO BATCH,
+    ///         and must not need to. It reduces `p.unclassified` outside the
+    ///         epoch gate, so a packet holding both an epoch and a stranded
+    ///         record would end a return with its `admitted` anchor over
+    ///         value that has gone home: a remainder that can never be
+    ///         debited down, and in 3b-ii a listed day drawing on a balance
+    ///         that is not there.
+    ///
+    ///         The two cannot meet, and the reason is INCIDENTAL to this
+    ///         ledger rather than declared by it, which is why it is written
+    ///         here. A record binds to a packet only through
+    ///         {unclassifiedQuarantine}, whose two call sites both pass a
+    ///         COMPENSATION packet's stamp; and the compensation ingress
+    ///         records its whole amount as the fresh component, which
+    ///         {rolloutAdmissionStatus} refuses permanently as
+    ///         `ROLLOUT_WIRE_TYPED` while the live admission never runs on a
+    ///         compensation at all. So the exclusion rests on the INGRESS's
+    ///         choice of component, not on anything the epoch ledger
+    ///         enforces: record a compensation untyped and this door opens
+    ///         silently. `test_FourthDoor_CannotReachAPacketHoldingAnEpoch`
+    ///         is what fails when it does.
     function releaseUnclassifiedForReturn(
         LibVaipakam.Storage storage s,
         bytes32 receiptKey,
