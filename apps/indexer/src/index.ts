@@ -58,6 +58,12 @@
  * signing Worker reads (#1722). The GET surface stays public-read.
  */
 
+import {
+  hasD1Binding,
+  maintenanceRefusal,
+  maintenanceSkipNotice,
+  resolveD1Binding,
+} from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
@@ -66,6 +72,7 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
+  WORKER_NAME,
   type WorkerEnv,
   type Env,
   type SecretBinding,
@@ -158,6 +165,46 @@ export default {
     // rows — acts on minutes divisible by 5. A skipped tick returns
     // here having done no work at all.
     if (!shouldRunCronTick(controller.scheduledTime, doIngestEnabled(env))) {
+      return;
+    }
+    // #2239 — decline the whole tick when this build has no D1 binding. Every
+    // pass below reads or writes the database, so one line here beats a
+    // separate failure from each `waitUntil` continuation — and declining
+    // before the budget is created keeps a maintenance tick from spending
+    // Secrets Store reads it has no use for.
+    if (!hasD1Binding(env.DB)) {
+      // eslint-disable-next-line no-console
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      // AND NOTHING ELSE — in particular, this tick does NOT reach out to the
+      // ingest Durable Objects to make them drop their inherited sockets.
+      //
+      // It did, for one round (#2252 r10), and removing it again is the root
+      // fix for a seam that produced a correct finding three rounds running.
+      // Each round found a different path by which the wake failed to reach
+      // every socket: the alarm that closes them is not pending on an idle DO
+      // (r9→r10), the cadence gate above skips four ticks in five so the wake
+      // would not run at all on those (r11), and reaching every DO without
+      // resolving any secret means keeping a hand-written list of chain ids
+      // beside the real one (r11). That last cost is the tell: the wake could
+      // only be made complete by ENUMERATING the chains — the same unfinishable
+      // list this whole change exists to stop writing, reproduced one level
+      // down inside it.
+      //
+      // What the wake actually bought was LATENCY, not correctness, because
+      // the client does not depend on the socket closing. `railHealth` demotes
+      // to polling unless BOTH the last cursor-carrying frame and the last
+      // cursor ADVANCE are inside `cadenceSec × 1.5`; an auto-answered `ping`
+      // carries no cursor and nothing advances while ingest is stopped, so a
+      // held-open socket goes unhealthy on its own within that window — 450s
+      // on the 5-minute DO cadence. That bound is client-side, needs nothing
+      // from this Worker, and is MEASURED, unlike the in-flight residual.
+      //
+      // So the honest shape is: a socket inherited by a maintenance build may
+      // keep auto-answering `ping` until the client demotes it, bounded by the
+      // server-reported cadence × 1.5. The alarm still closes sockets on any DO
+      // that has an alarm pending — which is every DO that was mid-catch-up
+      // when the window opened — and that path costs nothing and enumerates
+      // nothing. The remainder is named rather than chased.
       return;
     }
     // THE TICK'S SUBREQUEST COUNTER (#2221), created at the entry point
@@ -317,6 +364,41 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(req.url);
+
+    // #2239 — one answer for every route while this build has no D1 binding.
+    //
+    // Blunt ON PURPOSE, and it sits above the early routes deliberately. A
+    // per-route list of which routes touch D1 is the enumeration this whole
+    // mechanism exists to stop, and this Worker is the clearest case for the
+    // blunt rule: its read-API answers FROM the database, so during a binding
+    // move there is nothing truthful for it to serve. A 503 that says so is
+    // better than a 200 carrying rows from a database about to be discarded.
+    //
+    // The WebSocket upgrade below is covered by the same refusal. A socket
+    // accepted now would be fed by an ingest lane that is not running, which
+    // is the "live socket, stale data" state that route's own comment calls
+    // out as the thing to avoid.
+    if (!hasD1Binding(env.DB)) {
+      // CARRY THE NORMAL CORS POLICY (#2252 r3 P1). This branch sits above
+      // every route's preflight, and a 503 with no
+      // `Access-Control-Allow-Origin` is invisible to a browser: the caller
+      // sees an opaque network failure, never the status and never the body
+      // saying nothing read here would be current. This Worker's CORS is open
+      // (T-041), so the header is `*` whatever the route.
+      //
+      // The preflight must SUCCEED for the same reason — a refused `OPTIONS`
+      // means the browser never issues the real request, so there is no 503
+      // for anyone to read. `handleLoansPreflight` is reused rather than a
+      // fourth copy of the policy being written here: it is the most
+      // permissive of this Worker's three preflight shapes, and during a
+      // maintenance window every route answers the same way regardless.
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      const { body, status, headers } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, {
+        status,
+        headers: { ...headers, 'Access-Control-Allow-Origin': '*' },
+      });
+    }
 
     // #757 — inbound chain webhook. Dispatched BEFORE the global `resolveEnv`
     // so an unauthenticated POST never triggers the other Secrets-Store
@@ -663,7 +745,11 @@ async function handleChainEventWebhook(
     parsed.providerId ?? `${chainId}:sha256:${await sha256Hex(rawBody)}`;
 
   // 4. Early dedupe — drop a delivery already recorded (no DO work).
-  const seen = await env.DB.prepare(
+  // Through the maintenance seam (#2239): this route is dispatched BEFORE
+  // `resolveEnv`, so it is one of the paths that would otherwise read an
+  // absent binding directly.
+  const db = resolveD1Binding(env.DB, WORKER_NAME);
+  const seen = await db.prepare(
     `SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?`,
   )
     .bind(deliveryId)
@@ -693,7 +779,7 @@ async function handleChainEventWebhook(
   }
 
   // 6. Record the dedupe row ONLY after a durable accept, then ack.
-  await env.DB.prepare(
+  await db.prepare(
     `INSERT OR IGNORE INTO webhook_deliveries (delivery_id, seen_at) VALUES (?, ?)`,
   )
     .bind(deliveryId, Math.floor(Date.now() / 1000))

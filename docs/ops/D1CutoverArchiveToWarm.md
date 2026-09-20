@@ -497,7 +497,10 @@ to present one as a procedure.
 - So the writers must be stopped across the change, and restarted only once
   every binding is confirmed.
 
-**How to stop them is an open question, deliberately left open** (#2239). Four
+**How to stop them was an open question. The MECHANISM is now settled (#2239,
+shipped in #2252); the PROCEDURE is not (#2255)** — see the update below, and
+read the rest of this section as the record of why an inventory was refused.
+Four
 review rounds of #2238 tried to write that procedure as an inventory of
 writers to close, and each round found another way one reaches D1 that the
 previous wording missed — a second Worker's routes, a cron event that
@@ -506,17 +509,38 @@ re-arms itself, `waitUntil` work admitted before the gate, `workers.dev`
 aliases that bypass a zone rule, and a schedule change that takes up to
 fifteen minutes to propagate.
 
+**UPDATE 2026-09-20: the MECHANISM now exists; the PROCEDURE still does not**
+(#2239, shipped in #2252). The Workers can be held off the database by
+capability removal — a deployment whose `d1_databases` entry is absent, so
+nothing in the isolate can obtain a handle whatever entry point it arrives
+through — and they now cooperate with that state rather than crashing into it.
+`docs/FunctionalSpecs/ProjectDetailsREADME.md` §13 states the intent under
+"Off-Chain Data Services".
+
+**That is the mechanism, not the runbook.** Writing the step-by-step procedure
+around it needs four things this document does not yet have: tooling to produce
+a maintenance build without hand-editing production config (#2250), an owner
+decision on whether retained rows are archived or restored, a drain criterion
+that survives its own premise, and the contract-redeploy sequencing in §2.
+**#2255 carries that work and the open findings against the draft.** Until it
+lands the procedure is unspecified, and the paragraphs that follow explain why
+writing one anyway is worse than saying so. Their references have been moved
+from #2239 to #2255 so the distinction holds: the mechanism is settled, the
+procedure is not.
+
 **Enumerating the ways code can reach a database is an unbounded predicate.**
 Writing a list here that reads authoritative and is incomplete is worse than
 saying so: an operator follows it, believes the writers are stopped, and loses
-exactly the rows this section exists to protect. #2239 carries the
-requirements, the evidence for each, and the decisions an owner has to make —
-including whether a maintenance build should simply carry **no D1 binding at
-all**, which is the one formulation that does not depend on having enumerated
-the entry points correctly.
+exactly the rows this section exists to protect. #2239 carried the
+requirements and the evidence for each, and **its central question is now
+answered**: a maintenance build carries **no D1 binding at all**, which is the
+one formulation that does not depend on having enumerated the entry points
+correctly. That is shipped. What remains open is the procedure built on it —
+#2255.
 
-**Until #2239 is settled, treat this cutover as requiring an operator who
-accepts that exposure** — which is what the next section describes, honestly
+**Until #2255 lands, treat this cutover as requiring an operator who
+accepts that exposure** — the mechanism to avoid it exists, the procedure for
+applying it safely does not — which is what the next section describes, honestly
 labelled.
 
 ### The alternative, and when it is defensible
@@ -526,7 +550,7 @@ when someone is watching and run Step 3 immediately, accepting that anything
 written in between may be lost. This was chosen when there were no real users.
 It is not a decision to inherit once there are.
 
-**Until #2239 lands, this is effectively the only procedure this document can
+**Until #2255 lands, this is effectively the only procedure this document can
 honestly offer** — and the reason to say that out loud is that a partial gate
 is this option wearing a disguise. Closing the public routes while cron still
 ticks, or while a Durable Object alarm re-arms itself, accepts the same
@@ -635,8 +659,8 @@ the one that authorises restoring normal operation:
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
    fails here, stop the writers again rather than leaving them running while
-   investigating — by whatever means #2239 settles on, which today means
-   accepting the exposure knowingly.
+   investigating — by deploying the maintenance build the mechanism provides,
+   though the surrounding procedure for doing so safely is still #2255.
 
 An earlier revision made the agent write probe "the test that closes the
 deployment window". It cannot be: it is unavailable exactly when the window is
@@ -654,7 +678,8 @@ open. The binding read closes the window; the write confirms it afterwards.
 something you have to DO, not something you observe** (#2238 r2 P1).
 
 A revert is a binding change, so everything above applies to it unchanged —
-including that the procedure for stopping the writers is unspecified (#2239).
+including that the procedure for stopping the writers is unspecified (#2255;
+the mechanism it will use is shipped).
 The revert has the same mixed state, in the same shape, and the same
 consequence for a write that lands on the wrong side of it.
 Confirming afterwards cannot make the window safe — during the revert's own
