@@ -856,16 +856,24 @@ async function preNotifyChain(
     // while the wording still said the deployment had none. That sends an
     // operator to look for an unset binding when the value is sitting there
     // and invalid, which is the slower of the two things to discover.
+    //
+    // A THIRD CAUSE WAS REMOVED, not forgotten (#2220 r1). This line used to
+    // name "the installed Push SDK and the installed ethers major disagree
+    // about how to sign" and to spell out the v5 `_signTypedData` call. That
+    // WAS the live condition — the SDK pin was `^0.0.1`, which on a `0.0.x`
+    // version means exactly `0.0.1`, and that release signs the v5 way only.
+    // Correcting the pin removed it: `1.7.32` adapts to either signing style,
+    // and the guard in `push.ts` now accepts either too. Leaving the sentence
+    // would point a responder at a dependency pair that can no longer be the
+    // answer — the most expensive kind of stale diagnostic, because it reads
+    // as specific expertise.
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured.size} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
         `deployment cannot send Push at all, so no Push was sent to them and ` +
-        `none can be. They were reached on Telegram or not at all. Three ` +
+        `none can be. They were reached on Telegram or not at all. Two ` +
         `things produce this and the fix differs: PUSH_CHANNEL_PK is unset, ` +
-        `it is set but not a valid key, or the installed Push SDK and the ` +
-        `installed ethers major disagree about how to sign (the SDK calls ` +
-        `the v5 '_signTypedData', which an ethers v6 wallet does not have). ` +
-        `Check the secret first, then the dependency pair — either way the ` +
+        `or it is set but not a valid key. Check the secret — either way the ` +
         `Push channel on those subscriptions is inert.`,
     );
   }
