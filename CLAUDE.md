@@ -661,17 +661,29 @@ config is exempt, keyed on `pages_build_output_dir`: wrangler refuses
 file that satisfies both. A TOML config is refused with an instruction rather
 than parsed. Directories are skipped by exact path where the name is ambiguous
 (`contracts/lib` is vendored, `packages/lib` is ours) and by basename only for
-unambiguously generated ones. Two things it does not cover are stated in the script's
-header, and **BOTH are reductions rather than inherited gaps** — the scanner
-covered each, and review established both by naming its deleted fixtures. One
-is a config **generated or rewritten at deploy time**, which the scanner
-refused by falling back to judging the command when it could not read the
-selected file. The other is a checked-in config named **outside the
-`wrangler*` convention**, which the scanner read because it followed whatever
-path the command selected. The second is narrower — no config in this repo is
-named that way — but it is a removal, and an earlier revision wrongly called it
-merely the price of not classifying files. Do not rebuild the command scanner;
-if either gap has to close, it needs an owner decision first.
+unambiguously generated ones. A config is ALSO identified by **content** — a
+top-level string `compatibility_date`, the field wrangler requires of a Worker
+and that no manifest, tsconfig, lockfile or ABI in this tree carries. That
+second identification closes the **outside-the-`wrangler*`-convention** gap
+(owner decision 2026-09-20): `--config` accepts any path, so a deployable
+config checked in as `configs/agent-staging.jsonc` is reachable, and the
+retired scanner did cover it. Anything either test finds goes through the one
+requirement pass, and the remedy is the same — declare the key. **Do not key
+content discovery on `name`, or on `name` + `main`**: that is what reddened the
+committed tree on `ops/mesh-watcher/package.json`, and the whole reason this
+works is that the discriminator is a field no manifest has.
+
+Two residues are stated in the script's header rather than implied. A config
+**generated or rewritten at deploy time** — a genuine reduction against the
+scanner, which fell back to judging the command when it could not read the
+selected file, and the one gap still open. And a non-conventionally-named
+config that is **TOML**, or that also **omits `compatibility_date`** and takes
+the date from `--compatibility-date`. The TOML one is a deliberate trade: the
+JSON test is a shape test on a parsed object, while TOML would need either the
+grammar this check refuses to carry or a raw substring that reports a file
+merely mentioning the field in a comment — buying one narrow case with a new
+false-report class. **Do not rebuild the command scanner**; if the generated-
+config gap has to close, it needs an owner decision first.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.
