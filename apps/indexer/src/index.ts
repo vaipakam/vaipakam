@@ -349,8 +349,25 @@ export default {
     // is the "live socket, stale data" state that route's own comment calls
     // out as the thing to avoid.
     if (!hasD1Binding(env.DB)) {
-      const { body, ...rest } = maintenanceRefusal(WORKER_NAME);
-      return new Response(body, rest);
+      // CARRY THE NORMAL CORS POLICY (#2252 r3 P1). This branch sits above
+      // every route's preflight, and a 503 with no
+      // `Access-Control-Allow-Origin` is invisible to a browser: the caller
+      // sees an opaque network failure, never the status and never the body
+      // saying nothing read here would be current. This Worker's CORS is open
+      // (T-041), so the header is `*` whatever the route.
+      //
+      // The preflight must SUCCEED for the same reason — a refused `OPTIONS`
+      // means the browser never issues the real request, so there is no 503
+      // for anyone to read. `handleLoansPreflight` is reused rather than a
+      // fourth copy of the policy being written here: it is the most
+      // permissive of this Worker's three preflight shapes, and during a
+      // maintenance window every route answers the same way regardless.
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      const { body, status, headers } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, {
+        status,
+        headers: { ...headers, 'Access-Control-Allow-Origin': '*' },
+      });
     }
 
     // #757 — inbound chain webhook. Dispatched BEFORE the global `resolveEnv`

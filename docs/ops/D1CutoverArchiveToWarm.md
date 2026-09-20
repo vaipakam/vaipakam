@@ -467,8 +467,23 @@ has not been measured at the bindings themselves.**
 **The rule, and it is one rule for both directions.**
 
 > Before merging any change to a D1 binding — the cutover or its revert —
-> **quiesce every user-facing writer.** Restore traffic only once **every**
-> Worker's binding has been confirmed on the intended database.
+> **quiesce every user-facing writer.** No writer may be live on the database
+> being left behind at any point after that.
+
+**AMENDED 2026-09-20** (#2252 r3 P2). This rule used to end "restore traffic
+only once **every** Worker's binding has been confirmed", and that is no
+longer followable: deploying the new binding is *what* restores that Worker,
+so an operator cannot both move the bindings and keep traffic stopped until
+all four are confirmed. The instruction and the mechanism contradicted each
+other.
+
+**The decision, recorded rather than implied: staggered restoration onto the
+TARGET is acceptable.** What was never acceptable is a writer live on the
+SOURCE after the move begins, and that is what the rule now says. The
+quiescence procedure below is what makes the difference real — after its step
+1 nothing is bound to the source, so a Worker resuming early resumes on the
+target and cannot write to the database being abandoned. See the invariant
+stated there.
 
 **"Every user-facing writer" is more than agent**, which is the second thing
 the old frame got wrong (#2238 r2 P1) — and establishing HOW MANY more turned
@@ -494,8 +509,10 @@ to present one as a procedure.
 - Writes reaching the abandoned database in that window are lost, and some of
   them are things a user watched succeed: a threshold, a signed offer, a
   support ticket, a legal hold **and its audit record**.
-- So the writers must be stopped across the change, and restarted only once
-  every binding is confirmed.
+- So the writers must be stopped across the change — and, per the amended
+  rule above, restarted onto the TARGET as each binding lands rather than held
+  until all four are confirmed. Staggered restoration onto the target is
+  acceptable; a writer live on the source after the move begins is not.
 
 **The mechanism is capability removal, not an inventory** (#2239, owner
 decision 2026-09-20). Four review rounds of #2238 tried to write this
@@ -510,10 +527,19 @@ minutes to propagate. That list was never going to finish, because
 > the write capability.
 
 A **maintenance build** is a deploy of the same code whose `d1_databases`
-entry is absent. Nothing in the isolate can obtain a database handle — not a
-route, not a cron tick, not a Durable Object alarm, not a `waitUntil`
+entry is absent. **Nothing that runs in it** can obtain a database handle — not
+a route, not a cron tick, not a Durable Object alarm, not a `waitUntil`
 continuation, not a request that arrived over a `workers.dev` alias, and not an
-entry point nobody has thought of yet. The Workers cooperate with that state
+entry point nobody has thought of yet.
+
+**"That runs in it" is doing real work in that sentence** (#2252 r3 P2). The
+guarantee covers work admitted by the MAINTENANCE build. Work admitted by the
+deployment before it holds the environment it captured and can still write
+until it finishes — a `waitUntil` continuation, a Durable Object alarm already
+in flight. That is the drain in step 2, and it is the one residual this
+procedure carries; stating the list categorically would make the control-plane
+confirmation look stronger than it is in exactly the interval where the
+difference matters. The Workers cooperate with that state
 rather than crashing into it: each declines at its entrance, answering `503`
 with a `Retry-After` and a body that says nothing was recorded, and logging one
 line per tick rather than one failure per pass.
@@ -569,10 +595,41 @@ outside every list is covered because the mechanism never names one.
 2. **Drain.** Executions admitted BEFORE the maintenance deploy still hold the
    environment they captured and can still write. This is the one residual,
    and it is real — see below.
+2b. **Re-export the retained rows, AFTER the drain and before activating the
+   target** (#2252 r3 P1). §1's export is taken before any of this starts, and
+   the four maintenance deploys are sequential — so between that export and
+   the last Worker going unbound, the agent or the indexer can still accept a
+   new threshold, support ticket, diagnostic record or legal hold **and its
+   audit row** into the source. Those are acknowledged to a user. Activating
+   the empty target without re-taking them discards exactly the rows §1 set
+   out to protect, and they are the ones a redeploy does NOT obsolete.
+
+   So re-run the counts across all nine born-off-chain tables here, compare
+   against the earlier export, and take a fresh export of anything that moved.
+   This is the moment when it is safe to do so and still true: everything is
+   unbound, the drain has finished, so nothing can add a row after this read
+   and before the target goes live. Taking it any earlier leaves a gap; taking
+   it any later means reading a database that is no longer the one being
+   written to.
 3. **Move the bindings, which is also what restores service.** Merge the
    commit that points all four at the target database, and let each Worker's
    build run. Each deployment that lands carries the new binding, so that
-   Worker resumes on the target as it lands. **There is no separate restore
+   Worker resumes on the target as it lands.
+
+   **A merge restores only THREE of the four** (#2252 r3 P2).
+   `ops/offchain-data-warm` does not auto-deploy — §2 establishes that, and it
+   is why its maintenance build in step 1 is a manual deploy too. Deploy it by
+   hand here, with the form quoted in §0:
+
+   ```bash
+   # [unrun here] — verified form, copied from OffChainRestore.md §7b
+   ( cd ops/offchain-data-warm && npm ci && npm run deploy )
+   ```
+
+   Omit it and its `DB_ARCHIVE` stays absent: the nightly backup keeps
+   failing, and step 4 can never confirm all four bindings on the target.
+   Nothing is lost while that is true — it writes no user-facing rows — but
+   the cutover is not finished. **There is no separate restore
    step, and an earlier revision's step 5 said there was** (#2252 r1 P1) — it
    described re-deploying a binding that step 3 had already delivered, and it
    made step 4's "while the Workers are still refusing" false for any Worker

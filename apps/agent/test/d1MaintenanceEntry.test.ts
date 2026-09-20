@@ -39,11 +39,48 @@ describe('fetch, on a build with no D1 binding', () => {
     );
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('120');
+    // No `FRONTEND_ORIGIN` on this env — which a maintenance build can also
+    // look like — so the CORS helpers must not throw. They used to: the type
+    // claimed `string` and the runtime does not guarantee it, and a throw here
+    // would turn the deliberate 503 into a 500 (#2252 r3 P1).
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
     const body = await res.text();
     // The part that matters on a funds-adjacent surface: the caller is told
     // the write did not land. A bare 500 leaves them unable to tell a refused
     // write from a half-applied one.
     expect(body).toContain('nothing you sent has been recorded');
+  });
+
+  it('carries the CORS policy, so a browser can actually READ the refusal', async () => {
+    // #2252 r3 P1. The check sits above the preflight and the Origin gate, so
+    // without this a browser caller sees an opaque network failure — never
+    // the status, never the body saying the write was not recorded. A
+    // guarantee the caller cannot read is not a guarantee.
+    const env = { FRONTEND_ORIGIN: 'https://app.example' } as WorkerEnv;
+    const res = await worker.fetch(
+      new Request('https://agent.example/thresholds', {
+        method: 'PUT',
+        headers: { Origin: 'https://app.example' },
+      }),
+      env,
+      fakeCtx(),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.example');
+    expect(res.headers.get('vary')).toBe('Origin');
+
+    // And the preflight SUCCEEDS — a refused OPTIONS means the browser never
+    // issues the real request, so there is no 503 for anyone to read.
+    const pre = await worker.fetch(
+      new Request('https://agent.example/thresholds', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://app.example' },
+      }),
+      env,
+      fakeCtx(),
+    );
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBe('https://app.example');
   });
 
   it('refuses a route that touches no database, deliberately', async () => {

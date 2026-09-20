@@ -41,6 +41,31 @@ describe('fetch, on a build with no D1 binding', () => {
     expect(await res.text()).toContain('nothing you read here would be current');
   });
 
+  it('carries the CORS policy, so a browser can actually READ the refusal', async () => {
+    // #2252 r3 P1. Same reasoning as the agent's case; this Worker's CORS is
+    // open (T-041), so the header is `*` whatever the route.
+    const res = await worker.fetch(
+      new Request('https://indexer.example/loans?chain=84532', {
+        headers: { Origin: 'https://app.example' },
+      }),
+      NO_BINDINGS,
+      fakeCtx(),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+
+    const pre = await worker.fetch(
+      new Request('https://indexer.example/loans?chain=84532', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://app.example' },
+      }),
+      NO_BINDINGS,
+      fakeCtx(),
+    );
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBe('*');
+  });
+
   it('refuses the routes dispatched BEFORE resolveEnv too', async () => {
     // The chain-event webhook and the WebSocket upgrade both run ahead of the
     // env resolution, which is exactly why the check sits above them: they

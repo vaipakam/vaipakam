@@ -239,8 +239,29 @@ export default {
     // whose write is refused must be told it did not happen, rather than be
     // handed a 500 that could mean anything.
     if (!hasD1Binding(env.DB)) {
-      const { body, ...rest } = maintenanceRefusal(WORKER_NAME);
-      return new Response(body, rest);
+      // CARRY THE NORMAL CORS POLICY (#2252 r3 P1). This branch sits above the
+      // preflight and Origin gate, and a 503 with no
+      // `Access-Control-Allow-Origin` is invisible to a browser: the caller
+      // sees an opaque network failure, never the status and never the body
+      // that says the write was not recorded. That would defeat the entire
+      // point of answering rather than throwing.
+      //
+      // The preflight must SUCCEED for the same reason. A refused `OPTIONS`
+      // means the browser never issues the real request, so there is no 503
+      // for anyone to read.
+      if (req.method === 'OPTIONS') return preflight(req, env);
+      const { body, status, headers } = maintenanceRefusal(WORKER_NAME);
+      return new Response(body, {
+        status,
+        headers: {
+          ...headers,
+          'Access-Control-Allow-Origin': resolveAllowedOrigin(req, env),
+          // The echoed origin varies by request, so caches must key on it —
+          // even under `no-store`, intermediaries and the browser's own
+          // preflight cache read this.
+          Vary: 'Origin',
+        },
+      });
     }
 
     // T-078 — resolve the Secrets Store bindings once, here at the
@@ -780,7 +801,17 @@ async function handleTelegramWebhook(
 
 // ─── CORS helpers ──────────────────────────────────────────────────
 
-function preflight(req: Request, env: Env): Response {
+/**
+ * The CORS policy is a function of `FRONTEND_ORIGIN` ALONE, so these helpers
+ * take that field rather than the resolved `Env` (#2252 r3 P1). The
+ * maintenance branch answers BEFORE `resolveEnv`, and a CORS policy that
+ * demanded a resolved env would have forced either a duplicate policy there
+ * or a resolve the branch exists to avoid. `FRONTEND_ORIGIN` is a plain var,
+ * present identically on the raw and resolved envs.
+ */
+type CorsEnv = { FRONTEND_ORIGIN?: string };
+
+function preflight(req: Request, env: CorsEnv): Response {
   const origin = req.headers.get('Origin') ?? '';
   if (!isOriginMatch(origin, env)) return new Response(null, { status: 403 });
   return new Response(null, {
@@ -794,15 +825,37 @@ function preflight(req: Request, env: Env): Response {
   });
 }
 
-function isAllowedOrigin(req: Request, env: Env): boolean {
+function isAllowedOrigin(req: Request, env: CorsEnv): boolean {
   const origin = req.headers.get('Origin') ?? '';
   return isOriginMatch(origin, env);
 }
 
-function isOriginMatch(origin: string, env: Env): boolean {
+function isOriginMatch(origin: string, env: CorsEnv): boolean {
   if (!origin) return false;
-  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
-  return allow.includes(origin);
+  return allowList(env).includes(origin);
+}
+
+/**
+ * The configured origins, tolerating an ABSENT `FRONTEND_ORIGIN`.
+ *
+ * The type said `string` and the runtime does not guarantee it: it is a
+ * wrangler var, and a deployment can simply not carry it. Both helpers used
+ * to call `.split` on it directly, which threw a `TypeError` — harmless while
+ * every caller sat behind route handling that would have failed anyway, and
+ * NOT harmless once the maintenance branch runs before everything else
+ * (#2252 r3 P1). A throw there turns the deliberate 503 into a 500, which is
+ * precisely the indistinguishable failure the maintenance answer exists to
+ * replace. Caught by the entry-point tests, which pass an env with no vars at
+ * all — which is also what a maintenance build can look like.
+ *
+ * Empty entries are dropped so a trailing comma cannot put `''` in the list
+ * and make an empty `Origin` header match.
+ */
+function allowList(env: CorsEnv): string[] {
+  return (env.FRONTEND_ORIGIN ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -814,9 +867,9 @@ function isOriginMatch(origin: string, env: Env): boolean {
  * — returning a different allow-list entry, even one that's also
  * authorized, makes the browser reject the response.
  */
-function resolveAllowedOrigin(req: Request, env: Env): string {
+function resolveAllowedOrigin(req: Request, env: CorsEnv): string {
   const origin = req.headers.get('Origin') ?? '';
-  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
+  const allow = allowList(env);
   if (origin && allow.includes(origin)) return origin;
   return allow[0] ?? '*';
 }
