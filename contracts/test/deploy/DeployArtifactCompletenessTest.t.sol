@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
+import {ArtifactRootBase} from "../../script/lib/ArtifactRoot.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 
@@ -93,18 +94,78 @@ contract DeployArtifactCompletenessTest is Test {
         return string.concat("deployments/.forge-test/", testName);
     }
 
-    /// @dev Deploy for real, into a scratch root, and hand back both the
-    ///      Diamond and the artifact the deploy itself wrote.
-    function _deployWritingArtifact(string memory testName)
+    /// @dev The chain ids the completeness assertion is exercised on.
+    ///
+    ///      #2253 r1 P2 — an earlier revision ran on 31337 ALONE and hard-coded
+    ///      the `/anvil/` path, which made a chain-gated omission
+    ///      (`if (block.chainid == 31337) Deployments.writeFacet(…)`) pass the
+    ///      guard while being absent from every live-chain artifact. That is
+    ///      precisely the evasion the PR claimed to have answered, so the claim
+    ///      was wrong for every chain but the one being tested.
+    ///
+    ///      Every Phase-1 mainnet target and its testnet is listed. Arbitrum is
+    ///      deliberately INCLUDED rather than skipped as awkward: it is the one
+    ///      chain whose deploy takes a different code path
+    ///      (`Deployments.currentL2Block` queries the ArbSys precompile at
+    ///      0x64, absent from forge's EVM), so omitting it would leave the
+    ///      chain most likely to diverge as the one never checked.
+    function _chainIds() internal pure returns (uint256[] memory ids) {
+        ids = new uint256[](9);
+        ids[0] = 31337;      // anvil
+        ids[1] = 1;          // ethereum
+        ids[2] = 8453;       // base
+        ids[3] = 84532;      // base-sepolia
+        ids[4] = 11155111;   // sepolia
+        ids[5] = 10;         // optimism
+        ids[6] = 137;        // polygon
+        ids[7] = 42161;      // arbitrum      (ArbSys path)
+        ids[8] = 421614;     // arb-sepolia   (ArbSys path)
+    }
+
+    /// @dev Chain-slug directory the artifact lands in, mirroring
+    ///      `Deployments.slugForChainId`. Written out rather than imported so a
+    ///      silent change to that mapping shows up as a missing file here
+    ///      instead of both sides moving together and the test still passing.
+    function _slug(uint256 cid) internal pure returns (string memory) {
+        if (cid == 31337)     return "anvil";
+        if (cid == 1)         return "ethereum";
+        if (cid == 8453)      return "base";
+        if (cid == 84532)     return "base-sepolia";
+        if (cid == 11155111)  return "sepolia";
+        if (cid == 10)        return "optimism";
+        if (cid == 137)       return "polygon";
+        if (cid == 42161)     return "arbitrum";
+        if (cid == 421614)    return "arb-sepolia";
+        revert("test: unlisted chain id");
+    }
+
+    /// @dev Deploy for real ON `chainId`, into a scratch root, and hand back
+    ///      both the Diamond and the artifact the deploy itself wrote.
+    function _deployWritingArtifact(string memory testName, uint256 chainId)
         internal
         returns (address diamond, string memory artifactJson)
     {
-        string memory root = _scratchRoot(testName);
+        string memory root = string.concat(
+            _scratchRoot(testName), "/", vm.toString(chainId)
+        );
 
         // A previous run's file would satisfy the assertion without this run
         // having written anything — the vacuous pass this suite is required to
         // watch for. Start from nothing every time.
         if (vm.isDir(root)) vm.removeDir(root, true);
+
+        vm.chainId(chainId);
+
+        // forge's EVM does not emulate the Arbitrum ArbSys precompile, and
+        // `Deployments.currentL2Block` reverts with an instruction to set
+        // ARB_L2_DEPLOY_BLOCK rather than silently stamping the L1 block. That
+        // env var is process-global — the hazard this whole file is built to
+        // avoid — so the precompile is mocked instead, which is thread-local.
+        vm.mockCall(
+            address(0x64),
+            abi.encodeWithSignature("arbBlockNumber()"),
+            abi.encode(uint256(1))
+        );
 
         address deployer = vm.addr(DEPLOYER_KEY);
         DeployDiamond script = new DeployDiamond();
@@ -112,10 +173,16 @@ contract DeployArtifactCompletenessTest is Test {
         script.runWith(deployer, TREASURY, DEPLOYER_KEY);
         diamond = script.diamond();
 
-        string memory artifactPath = string.concat(root, "/anvil/addresses.json");
+        string memory artifactPath = string.concat(
+            root, "/", _slug(chainId), "/addresses.json"
+        );
         assertTrue(
             vm.isFile(artifactPath),
-            "the deploy wrote no artifact at all - the redirect or the write step is broken, and every assertion below would pass vacuously without this line"
+            string.concat(
+                "the deploy on chain ",
+                vm.toString(chainId),
+                " wrote no artifact at all - the redirect or the write step is broken, and every assertion below would pass vacuously without this line"
+            )
         );
         artifactJson = vm.readFile(artifactPath);
 
@@ -152,25 +219,30 @@ contract DeployArtifactCompletenessTest is Test {
     ///         `facetAddresses()` is recorded in the artifact the same deploy
     ///         wrote.
     function test_EveryLoupeFacetAddress_IsRecordedInTheArtifact() public {
-        (address diamond, string memory artifactJson) =
-            _deployWritingArtifact("every-loupe-facet-address");
+        uint256[] memory ids = _chainIds();
+        for (uint256 c; c < ids.length; ++c) {
+            (address diamond, string memory artifactJson) =
+                _deployWritingArtifact("every-loupe-facet-address", ids[c]);
 
-        address[] memory live = IDiamondLoupe(diamond).facetAddresses();
-        assertGt(
-            live.length,
-            0,
-            "the loupe reported no facets - the deploy did not build a Diamond"
-        );
-
-        for (uint256 i; i < live.length; ++i) {
-            assertTrue(
-                _recordedAsFacet(artifactJson, live[i]),
-                string.concat(
-                    "facet at ",
-                    vm.toString(live[i]),
-                    " is cut into the Diamond but appears under no `.facets.*` key in addresses.json - add its Deployments.writeFacet(...) line to DeployDiamond.s.sol"
-                )
+            address[] memory live = IDiamondLoupe(diamond).facetAddresses();
+            assertGt(
+                live.length,
+                0,
+                "the loupe reported no facets - the deploy did not build a Diamond"
             );
+
+            for (uint256 i; i < live.length; ++i) {
+                assertTrue(
+                    _recordedAsFacet(artifactJson, live[i]),
+                    string.concat(
+                        "on chain ",
+                        vm.toString(ids[c]),
+                        ": facet at ",
+                        vm.toString(live[i]),
+                        " is cut into the Diamond but appears under no `.facets.*` key in addresses.json - add its Deployments.writeFacet(...) line to DeployDiamond.s.sol"
+                    )
+                );
+            }
         }
     }
 
@@ -198,8 +270,10 @@ contract DeployArtifactCompletenessTest is Test {
     ///         becomes redundant and should say so out loud rather than quietly
     ///         duplicating test 1.
     function test_DiamondCutFacet_IsRecordedAlthoughUnenumerated() public {
+        uint256[] memory ids = _chainIds();
+        for (uint256 c; c < ids.length; ++c) {
         (address diamond, string memory artifactJson) =
-            _deployWritingArtifact("diamond-cut-facet");
+            _deployWritingArtifact("diamond-cut-facet", ids[c]);
 
         address cutFacet = IDiamondLoupe(diamond).facetAddress(
             IDiamondCut.diamondCut.selector
@@ -219,8 +293,13 @@ contract DeployArtifactCompletenessTest is Test {
 
         assertTrue(
             _recordedAsFacet(artifactJson, cutFacet),
-            "diamondCutFacet is installed by the constructor but appears under no `.facets.*` key in addresses.json - facetAddresses() cannot see it, so nothing else would have caught this"
+            string.concat(
+                "on chain ",
+                vm.toString(ids[c]),
+                ": diamondCutFacet is installed by the constructor but appears under no `.facets.*` key in addresses.json - facetAddresses() cannot see it, so nothing else would have caught this"
+            )
         );
+        }
     }
 
     // ── 3. The redirect refuses rather than quietly meaning something ──
@@ -263,6 +342,94 @@ contract DeployArtifactCompletenessTest is Test {
             "",
             "a refused override must leave the script on the committed default"
         );
+    }
+
+    /// @notice Every root that could resolve to the COMMITTED artifact is
+    ///         refused, and none of them by comparing strings to the default.
+    ///
+    /// @dev    #2253 r1 P2. The first revision decided "is this redirected?"
+    ///         by `artifactRoot() != "deployments"`, so each alias below was
+    ///         NOT equal, therefore counted as redirected, therefore forced
+    ///         writes on — and wrote straight over the committed
+    ///         `deployments/anvil/addresses.json` that the redirect exists to
+    ///         protect. The fix is not a path normaliser (that predicate is
+    ///         unbounded — `.`, `..`, `//`, trailing slashes, symlinks — and
+    ///         #1995 is the recorded cost of enumerating one). It is two total
+    ///         tests, and these cases pin both.
+    function test_ArtifactRootOverride_RefusesAnythingOutsideTheScratchTree()
+        public
+    {
+        DeployDiamond script = new DeployDiamond();
+
+        string[6] memory aliasesOfTheDefault = [
+            "deployments",
+            "deployments/",
+            "./deployments",
+            "deployments/.",
+            "deployments/anvil",
+            "/tmp/somewhere-else"
+        ];
+        for (uint256 i; i < aliasesOfTheDefault.length; ++i) {
+            vm.expectRevert(
+                bytes(
+                    "ArtifactRootBase: a redirected artifact root must start with deployments/.forge-test/ - any other root can alias the committed artifact, and fs_permissions grants write access under deployments/ only"
+                )
+            );
+            script.setArtifactRootOverride(aliasesOfTheDefault[i]);
+        }
+
+        // Inside the scratch tree by prefix, but climbing back out.
+        string[3] memory escapes = [
+            "deployments/.forge-test/../..",
+            "deployments/.forge-test/../../anvil",
+            "deployments/.forge-test/a/../../.."
+        ];
+        for (uint256 i; i < escapes.length; ++i) {
+            vm.expectRevert(
+                bytes(
+                    "ArtifactRootBase: a redirected artifact root must contain no `..` segment - with one it can climb back out of the scratch directory and reach the committed artifact"
+                )
+            );
+            script.setArtifactRootOverride(escapes[i]);
+        }
+
+        assertEq(
+            script.artifactRootOverride(),
+            "",
+            "not one of those may have been accepted"
+        );
+
+        // `..` is rejected as a SEGMENT, not as a substring: a directory whose
+        // name merely contains two dots is legitimate and must still be
+        // accepted, or the guard would be refusing safe roots to look strict.
+        script.setArtifactRootOverride("deployments/.forge-test/my..dir");
+        assertEq(
+            script.artifactRootOverride(),
+            "deployments/.forge-test/my..dir",
+            "a directory name containing `..` is not a parent-directory segment"
+        );
+    }
+
+    /// @notice The scratch prefix lies inside the committed root.
+    ///
+    /// @dev    **This is a BOUNDS GUARD, not a behavioural test** — it passes
+    ///         whether or not the rest of this file is correct, and would only
+    ///         fail if someone edited one of the two constants. It is here
+    ///         because `fs_permissions` grants write access under
+    ///         `deployments/` and nowhere else: a scratch prefix that drifted
+    ///         outside it would fail every redirected write with an FS
+    ///         permission error rather than anything self-explanatory.
+    function test_BoundsGuard_ScratchPrefixLiesUnderTheCommittedRoot()
+        public
+        pure
+    {
+        bytes memory prefix = bytes(ArtifactRootBase.SCRATCH_PREFIX);
+        bytes memory root = bytes(Deployments.ARTIFACT_ROOT);
+        assertGt(prefix.length, root.length, "prefix cannot be the root itself");
+        for (uint256 i; i < root.length; ++i) {
+            assertEq(prefix[i], root[i], "scratch prefix left the committed root");
+        }
+        assertEq(prefix[root.length], "/", "scratch prefix must be a subdirectory");
     }
 
     // ── 4. An un-redirected script still writes where it always did ───

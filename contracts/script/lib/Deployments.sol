@@ -80,6 +80,28 @@ library Deployments {
         return ARTIFACT_ROOT;
     }
 
+    /// TRUE when this run writes to a scratch root rather than the committed
+    /// one.
+    ///
+    /// @dev Reads the PRESENCE of an override, never a comparison of the
+    ///      resolved root against {ARTIFACT_ROOT} (#2253 r1 P2). A string
+    ///      comparison answers "does this look like the default?", which every
+    ///      alias of the default — `./deployments`, `deployments/`,
+    ///      `deployments/.` — gets wrong in the dangerous direction: not equal,
+    ///      therefore "redirected", therefore writes forced on, therefore the
+    ///      committed artifact overwritten. The fact is already known without
+    ///      inferring it, and `ArtifactRootBase.SCRATCH_PREFIX` makes an
+    ///      override that aliases the default unrepresentable.
+    function artifactIsRedirected() internal view returns (bool) {
+        try IArtifactRoot(address(this)).artifactRootOverride() returns (
+            string memory overridden
+        ) {
+            return bytes(overridden).length != 0;
+        } catch {
+            return false;
+        }
+    }
+
     /// Directory holding `addresses.json` for an arbitrary EVM chain.
     function dirForChainId(uint256 cid) internal view returns (string memory) {
         return string.concat(artifactRoot(), "/", slugForChainId(cid));
@@ -638,13 +660,31 @@ library Deployments {
     ///         `forge test` run — and a live broadcast that carries it is
     ///         REFUSED. A dry-run (no `--broadcast`) never writes: its addresses
     ///         are simulated.
-    function artifactWriteMode(uint256 chainId, bool dryRun, bool underTest, bool skipRequested)
+    /// @dev `redirected` — this run has an artifact-root override, so its
+    ///      artifact cannot reach the committed one. It belongs INSIDE the
+    ///      rule rather than as an early return in front of it (#2253 r1 P2).
+    ///      An earlier revision short-circuited `artifactWritesEnabled` before
+    ///      this function ran, which skipped the `dryRun` arm: an Anvil script
+    ///      carrying an override and run WITHOUT `--broadcast` then reached
+    ///      `writeChainHeader()` — which has no dry-run guard of its own — and
+    ///      produced a header-only artifact for a deployment that never
+    ///      happened, while the typed writers after it correctly skipped. One
+    ///      rule, every combination, is what the enum and this signature exist
+    ///      for; a special case in front of it is not a smaller change, it is
+    ///      the same change with one arm silently unreachable.
+    function artifactWriteMode(
+        uint256 chainId,
+        bool dryRun,
+        bool underTest,
+        bool skipRequested,
+        bool redirected
+    )
         internal
         pure
         returns (ArtifactWrites)
     {
         if (dryRun) return ArtifactWrites.Skip;
-        if (!skipRequested) return ArtifactWrites.Write;
+        if (!skipRequested || redirected) return ArtifactWrites.Write;
         if (chainId == 31337 || underTest) return ArtifactWrites.Skip;
         return ArtifactWrites.RefuseSkipOnLiveBroadcast;
     }
@@ -670,19 +710,14 @@ library Deployments {
     ///
     ///         {ArtifactRootBase.setArtifactRootOverride} refuses to set an
     ///         override anywhere but Anvil or `forge test`, so no live
-    ///         broadcast can reach this branch.
+    ///         broadcast can reach that arm.
     function artifactWritesEnabled() internal view returns (bool) {
-        if (
-            keccak256(bytes(artifactRoot())) !=
-            keccak256(bytes(ARTIFACT_ROOT))
-        ) {
-            return true;
-        }
         ArtifactWrites mode = artifactWriteMode(
             block.chainid,
             CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun),
             CHEATS.isContext(VmSafe.ForgeContext.TestGroup),
-            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false)
+            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false),
+            artifactIsRedirected()
         );
         require(
             mode != ArtifactWrites.RefuseSkipOnLiveBroadcast,
@@ -709,6 +744,21 @@ library Deployments {
     ///      inventory.
     function requireMarkedPublication(string memory jsonKey) internal view {
         if (!isIdentityKey(jsonKey) || block.chainid == 31337) return;
+        // #2253 r1 P2 — a REDIRECTED artifact is exempt on the same ground the
+        // Anvil chain is, and for a stronger reason: it is not in the inventory
+        // and cannot be, because it is written to a scratch directory the
+        // census never reads and `.gitignore` never commits. Without this the
+        // seam was half-built — `setArtifactRootOverride` permits a redirect on
+        // any chain id under `forge test`, and the first `writeChainHeader()`
+        // on any chain but 31337 then demanded a live-publication token and a
+        // matching committed manifest marker, so the supposedly test-safe
+        // redirect reverted before producing its scratch artifact. That is what
+        // made the chain-gated-write assertion untestable on live chain ids.
+        //
+        // This cannot weaken the real gate: the override is refused outright
+        // off-Anvil-outside-test, so a live broadcast has no way to set one and
+        // no way to reach this return.
+        if (artifactIsRedirected()) return;
         string memory token = CHEATS.envOr("VAIPAKAM_LIVE_PUBLICATION_TOKEN", string(""));
         require(
             bytes(token).length != 0,
