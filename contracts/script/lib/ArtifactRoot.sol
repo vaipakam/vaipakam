@@ -33,6 +33,32 @@ interface IArtifactRoot {
     function artifactRootOverride() external view returns (string memory);
 }
 
+/// @notice The ONLY directory a redirected artifact may be written to.
+///
+/// @dev    #2253 r1 P2 — an earlier revision took any root and decided "is this
+///         redirected?" by comparing the string against `"deployments"`.
+///         `./deployments`, `deployments/` and `deployments/.` all fail that
+///         comparison while resolving to the committed artifact, so each would
+///         have been treated as a safe redirect AND forced writes on —
+///         overwriting the exact file the redirect exists to protect.
+///
+///         The answer is not a path normaliser. Deciding "does this string
+///         resolve to that directory?" over `.`, `..`, `//`, trailing slashes
+///         and symlinks is an unbounded predicate, and #1995 is the recorded
+///         cost of enumerating one. Two TOTAL tests replace it: the root must
+///         start with this prefix, and must contain no `..` segment. No alias
+///         of the committed root can begin with `deployments/.forge-test/`,
+///         and without `..` nothing beginning with it can climb back out — so
+///         the committed artifact is unreachable by construction rather than
+///         by case analysis.
+///
+///         Declared at FILE level rather than on the contract so tests can
+///         import it directly: an `internal constant` member is not reachable
+///         as `ArtifactRootBase.SCRATCH_PREFIX` from another contract, and
+///         making it `public` to work around that would add a getter to every
+///         deploy script's ABI for a value only a test reads.
+string constant ARTIFACT_SCRATCH_PREFIX = "deployments/.forge-test/";
+
 /**
  * @title  ArtifactRootBase
  * @notice Inherited by every deploy script whose artifact a TEST may need to
@@ -52,26 +78,6 @@ abstract contract ArtifactRootBase is IArtifactRoot {
         address(uint160(uint256(keccak256("hevm cheat code"))));
     Vm private constant CHEATS = Vm(VM_ADDR);
 
-    /// @notice The ONLY directory a redirected artifact may be written to.
-    ///
-    /// @dev    #2253 r1 P2 — an earlier revision took any root and decided
-    ///         "is this redirected?" by comparing the string against
-    ///         `"deployments"`. `./deployments`, `deployments/` and
-    ///         `deployments/.` all fail that comparison while resolving to the
-    ///         committed artifact, so each would have been treated as a safe
-    ///         redirect AND forced writes on — overwriting the exact file the
-    ///         redirect exists to protect.
-    ///
-    ///         The answer is not a path normaliser. Deciding "does this string
-    ///         resolve to that directory?" over `.`, `..`, `//`, trailing
-    ///         slashes and symlinks is an unbounded predicate, and #1995 is the
-    ///         recorded cost of enumerating one. Two TOTAL tests replace it:
-    ///         the root must start with this prefix, and must contain no `..`
-    ///         segment. No alias of the committed root can begin with
-    ///         `deployments/.forge-test/`, and without `..` nothing beginning
-    ///         with it can climb back out — so the committed artifact is
-    ///         unreachable by construction rather than by case analysis.
-    string internal constant SCRATCH_PREFIX = "deployments/.forge-test/";
 
     string private _artifactRootOverride;
 
@@ -104,7 +110,7 @@ abstract contract ArtifactRootBase is IArtifactRoot {
             "ArtifactRootBase: artifact root override must be non-empty - pass no override at all to use the committed default"
         );
         require(
-            _startsWith(newRoot, SCRATCH_PREFIX),
+            _startsWith(newRoot, ARTIFACT_SCRATCH_PREFIX),
             "ArtifactRootBase: a redirected artifact root must start with deployments/.forge-test/ - any other root can alias the committed artifact, and fs_permissions grants write access under deployments/ only"
         );
         require(

@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
-import {ArtifactRootBase} from "../../script/lib/ArtifactRoot.sol";
+import {ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/ArtifactRoot.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 
@@ -91,7 +91,7 @@ contract DeployArtifactCompletenessTest is Test {
         pure
         returns (string memory)
     {
-        return string.concat("deployments/.forge-test/", testName);
+        return string.concat(ARTIFACT_SCRATCH_PREFIX, testName);
     }
 
     /// @dev The chain ids the completeness assertion is exercised on.
@@ -423,7 +423,7 @@ contract DeployArtifactCompletenessTest is Test {
         public
         pure
     {
-        bytes memory prefix = bytes(ArtifactRootBase.SCRATCH_PREFIX);
+        bytes memory prefix = bytes(ARTIFACT_SCRATCH_PREFIX);
         bytes memory root = bytes(Deployments.ARTIFACT_ROOT);
         assertGt(prefix.length, root.length, "prefix cannot be the root itself");
         for (uint256 i; i < root.length; ++i) {
