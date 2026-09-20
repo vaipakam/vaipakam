@@ -22,6 +22,17 @@
  * rather than in this file. Nothing here can be bypassed by forgetting to call
  * it, because it is not what provides the safety.
  *
+ * **The guarantee is over work the maintenance deployment ADMITS, and that
+ * qualifier is load-bearing** (#2252 r8). A `waitUntil` continuation or a
+ * Durable Object alarm admitted by the PREVIOUS deployment keeps the
+ * environment it captured — bound, to the database being abandoned — and can
+ * still write until it finishes. Removing the binding does not reach inside a
+ * running execution. That residual is real, it is what an operator's drain
+ * waits out, and it is stated in `docs/FunctionalSpecs/ProjectDetailsREADME.md`
+ * §13 and in the cutover runbook. This comment said "including … continuation"
+ * without the qualifier while both of those already carried it, which is the
+ * one place a future author would come looking for the rule.
+ *
  * ## What this module adds on top, and why it is NOT the barrier
  *
  * With the binding gone, `env.DB` is `undefined` and the call sites throw
