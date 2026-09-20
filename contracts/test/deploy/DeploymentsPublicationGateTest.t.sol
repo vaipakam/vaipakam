@@ -110,8 +110,24 @@ contract DeploymentsPublicationGateTest is Test {
 
     // ── the artifact-write rule (#2070 r27) ──────────────────────────────
 
-    function _mode(uint256 chainId, bool dryRun, bool underTest, bool skip) internal pure returns (uint8) {
-        return uint8(Deployments.artifactWriteMode(chainId, dryRun, underTest, skip));
+    function _mode(uint256 chainId, bool dryRun, bool underTest, bool skip)
+        internal
+        pure
+        returns (uint8)
+    {
+        return _mode(chainId, dryRun, underTest, skip, false);
+    }
+
+    function _mode(
+        uint256 chainId,
+        bool dryRun,
+        bool underTest,
+        bool skip,
+        bool redirected
+    ) internal pure returns (uint8) {
+        return uint8(
+            Deployments.artifactWriteMode(chainId, dryRun, underTest, skip, redirected)
+        );
     }
 
     function test_ArtifactWriteMode_IsOneRule() public pure {
@@ -132,6 +148,33 @@ contract DeploymentsPublicationGateTest is Test {
         assertEq(_mode(84532, false, false, true), R);
         assertEq(_mode(1, false, false, true), R);
         assertEq(_mode(8453, false, false, true), R);
+    }
+
+    /// @notice #2253 r1 P2 — the redirect arm lives INSIDE the rule, so a
+    ///         dry-run still suppresses the write.
+    ///
+    /// @dev    The first revision short-circuited `artifactWritesEnabled`
+    ///         ahead of this function whenever a root override was set, which
+    ///         skipped the `dryRun` arm entirely. An Anvil script carrying an
+    ///         override and run WITHOUT `--broadcast` then reached
+    ///         `writeChainHeader()` — which carries no dry-run guard of its own
+    ///         — and produced a header-only artifact for a deployment that
+    ///         never happened, while every typed writer after it correctly
+    ///         skipped. The first row below is that bug; it would have passed
+    ///         as `W` before the fix.
+    function test_ArtifactWriteMode_RedirectDoesNotOutrankDryRun() public pure {
+        uint8 W = uint8(Deployments.ArtifactWrites.Write);
+        uint8 S = uint8(Deployments.ArtifactWrites.Skip);
+
+        // a dry-run still wins over a redirect
+        assertEq(_mode(31337, true, true, true, true), S);
+        assertEq(_mode(31337, true, true, false, true), S);
+
+        // …and that is the ONLY thing that outranks it: a redirect otherwise
+        // writes despite a sibling test's process-global DEPLOY_SKIP_ARTIFACTS,
+        // which is the whole reason the arm exists.
+        assertEq(_mode(31337, false, true, true, true), W);
+        assertEq(_mode(84532, false, true, true, true), W);
     }
 
     /// @dev Under `forge test` the live call can only ever land on Write or

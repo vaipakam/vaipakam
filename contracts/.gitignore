@@ -12,3 +12,16 @@ docs/
 
 # Dotenv file
 .env
+
+# Scratch artifact roots written by the deploy-sanity suite.
+#
+# `DeployArtifactCompletenessTest` (#1800) runs the REAL deploy with artifact
+# writing ON so it can assert the file the deploy produced, and redirects the
+# write here so the committed `deployments/anvil/addresses.json` is never
+# touched. It lives under `deployments/` because `foundry.toml#fs_permissions`
+# grants read-write on that subtree and nowhere else.
+#
+# Each run removes its own directory; this entry is for the run that reverted
+# on a failed assertion and never reached the cleanup, so a red test does not
+# also leave the tree dirty.
+deployments/.forge-test/

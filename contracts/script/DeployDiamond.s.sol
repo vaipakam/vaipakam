@@ -93,8 +93,9 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 
-contract DeployDiamond is Script {
+contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
     // `public` so the deploy-integration test (Issue #72) can read the
     // built Diamond after calling `run()` — the script's own
@@ -115,6 +116,66 @@ contract DeployDiamond is Script {
             vm.envUint("DEPLOYER_PRIVATE_KEY")
         );
     }
+
+
+    /// @notice The completeness assertion, reached by
+    ///         `Deployments.finalizeArtifact` across a call to this contract.
+    ///
+    /// @dev    **Why it is EXTERNAL.** `Deployments.assertFacetsRecorded`
+    ///         reverts WITHOUT restoring the artifact snapshot — the caller owns
+    ///         the finally — and Solidity's `try` only wraps external calls, so
+    ///         the restore the library performs on any failure needs this
+    ///         boundary to exist at all. That reason stands on its own.
+    ///
+    ///         **Why it is VIRTUAL.** #2253 r2 found the completeness check
+    ///         unguarded in the other direction: deleting its call from Step 7b
+    ///         left the whole deploy-artifact suite green, because those tests
+    ///         read the artifact independently and assert the same property. A
+    ///         fix that nothing fails without is not covered, however carefully
+    ///         the check itself is written. So the CALL SITE has to be
+    ///         observable, and a probe overrides this to observe it.
+    ///
+    ///         **What the `1 too deep in the stack` failures were NOT.** An
+    ///         earlier revision of this comment claimed `runWith` leaves a
+    ///         subclass zero spare slots, so an `internal` hook could not be an
+    ///         override seam. That is unsupported and is very likely wrong; it
+    ///         is corrected here rather than deleted, because it is the kind of
+    ///         plausible-sounding mechanism that gets rediscovered. See the
+    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what was
+    ///         actually happening — briefly: an unannotated inline-assembly
+    ///         block withdraws viaIR's stack-to-memory mover for the WHOLE
+    ///         contract, and solc reports that as the frame being too deep. The
+    ///         probes each carried such a block, which is why they failed while
+    ///         the base compiled, and five revisions were spent moving a call
+    ///         that was never the cause.
+    ///
+    ///         Gated to self-calls so it is not an operator-reachable entry
+    ///         point on a broadcast script.
+    function assertFacetsRecordedExternal(address[] memory expected)
+        external
+        virtual
+    {
+        require(msg.sender == address(this), "DeployDiamond: self-call only");
+        _assertFacetsRecorded(expected);
+    }
+
+    /// @dev The assertion itself, separated from the entry point so an
+    ///      overriding probe can run exactly what the base runs instead of a
+    ///      copy of it that could drift. `internal`, and not called from
+    ///      `runWith`: the entry point above is what the deploy reaches, across
+    ///      the boundary its `try` needs.
+    function _assertFacetsRecorded(address[] memory expected) internal view {
+        Deployments.assertFacetsRecorded(expected);
+    }
+
+    /// @dev Restore the snapshot. `internal` so a test probe replicating the
+    ///      deploy's failure path uses the SAME restore the deploy uses, rather
+    ///      than a copy that could drift from it.
+    function restoreArtifactForTest() internal {
+        (string memory prior, bool existed) = Deployments.callerSnapshot();
+        Deployments.restoreArtifact(prior, existed);
+    }
+
 
     /// @notice Parameterised entry point — same deploy logic, but admin /
     ///         treasury / deployer-key are passed directly instead of read
@@ -930,7 +991,15 @@ contract DeployDiamond is Script {
             return;
         }
 
+        // #2253 r3 P1 — capture the artifact BEFORE this run rewrites it.
+        // Every write below lands on the CANONICAL file, and filesystem
+        // cheatcode effects survive a revert; on a `--broadcast` run forge
+        // executes this whole body in its pre-send simulation, so a failed
+        // verification at Step 7b would otherwise leave the inventory's source
+        // of truth describing a Diamond that was never deployed. Step 7b
+        // restores this snapshot before reverting.
         Deployments.writeChainHeader();
+
         Deployments.writeDiamond(diamond);
 
         // Issue #69 — record the authoritative facet count into
@@ -1071,14 +1140,16 @@ contract DeployDiamond is Script {
         // why this was an inconvenience rather than a lost deploy — but the
         // artifact is supposed to be the record.
         //
-        // NOTHING AUTOMATED STOPS THIS FROM REGROWING YET. A predeploy step that
-        // read these scripts as text was written and withdrawn — review found
-        // thirteen ways past it, because proving a registration executes under a
-        // stable identity on every chain is a scope-and-control-flow question a
-        // text parser cannot answer. #1800 replaces it with the assertion that
-        // needs no parsing: run the deploy with artifacts on, then require every
-        // facet the built Diamond routes to appear in the JSON it wrote. Until
-        // that lands, adding a facet means adding its write HERE by hand.
+        // STEP 7b BELOW NOW STOPS THIS FROM REGROWING (#1800, #2253 r2). A
+        // predeploy step that read these scripts as TEXT was written and
+        // withdrawn first — review found thirteen ways past it, because proving
+        // a registration executes under a stable identity on every chain is a
+        // scope-and-control-flow question a text parser cannot answer. What
+        // replaces it needs no parsing: after these writes, the deploy reads
+        // back the artifact it just produced and requires every facet the built
+        // Diamond routes to appear in it. Adding a facet still means adding its
+        // write HERE — the difference is that forgetting now fails the deploy
+        // instead of passing silently.
         Deployments.writeFacet("aggregatorAdapterFactoryFacet", address(aggregatorAdapterFactoryFacet));
         Deployments.writeFacet("backstopFacet",           address(backstopFacet));
         Deployments.writeFacet("consolidationFacet",      address(consolidationFacet));
@@ -1095,80 +1166,25 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("perkFacet",               address(perkFacet));
         Deployments.writeFacet("rewardBroadcastFacet",   address(rewardBroadcastFacet));
 
-        console.log(
-            "Wrote addresses to deployments/",
-            Deployments.chainSlug(),
-            "/addresses.json"
-        );
+        // ── Summary + completeness check ────────────────────────────────
+        // Prints the header, the Diamond, and EVERY facet this run recorded —
+        // read back from the artifact — then requires every facet installed in
+        // the Diamond to appear there.
+        //
+        // The per-facet lines used to be a second hand-maintained block of ~45
+        // `console.log`s right here, naming the same addresses the `writeFacet`
+        // block above had just written. Printing from the artifact instead is
+        // the honest summary: the operator sees what was RECORDED, so a missing
+        // `writeFacet` shows up as a missing line rather than being masked by a
+        // parallel list that still had it — which is exactly how #1798 stayed
+        // invisible to anyone reading a deploy log.
+        //
+        // The failure branch is the library's: it restores the artifact this
+        // run overwrote before re-reverting, so a caught omission does not
+        // leave the inventory describing a Diamond that was never deployed.
+        Deployments.finalizeArtifact(diamond);
 
-        // ── Summary ─────────────────────────────────────────────────────
         console.log("");
-        console.log("=== Deployment Summary ===");
-        console.log("Diamond:              ", diamond);
-        console.log("DiamondCutFacet:      ", address(cutFacet));
-        console.log("DiamondLoupeFacet:    ", address(loupeFacet));
-        console.log("OwnershipFacet:       ", address(ownershipFacet));
-        console.log("AccessControlFacet:   ", address(accessControlFacet));
-        console.log("AdminFacet:           ", address(adminFacet));
-        console.log("ProfileFacet:         ", address(profileFacet));
-        console.log("OracleFacet:          ", address(oracleFacet));
-        console.log("OracleAdminFacet:     ", address(oracleAdminFacet));
-        console.log("VaipakamNFTFacet:     ", address(nftFacet));
-        console.log("VaultFactoryFacet:   ", address(vaultFactoryFacet));
-        console.log("OfferCreateFacet:     ", address(offerCreateFacet));
-        console.log("OfferParallelSaleFacet:", address(offerParallelSaleFacet));
-        console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
-        console.log("OfferAcceptFeeFacet:  ", address(offerAcceptFeeFacet));
-        console.log("OfferMatchFacet:      ", address(offerMatchFacet));
-        console.log("OfferCancelFacet:     ", address(offerCancelFacet));
-        console.log("OfferMutateFacet:     ", address(offerMutateFacet));
-        console.log("LoanFacet:            ", address(loanFacet));
-        console.log("RepayFacet:           ", address(repayFacet));
-        console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
-        console.log("SwapToRepayFacet:     ", address(swapToRepayFacet));
-        console.log("DefaultedFacet:       ", address(defaultedFacet));
-        console.log("RiskFacet:            ", address(riskFacet));
-        console.log("RiskMatchLiquidationFacet:", address(riskMatchLiquidationFacet));
-        console.log("RiskSplitLiquidationFacet:", address(riskSplitLiquidationFacet));
-        console.log("ClaimFacet:           ", address(claimFacet));
-        console.log("AddCollateralFacet:   ", address(addCollateralFacet));
-        console.log("TreasuryFacet:        ", address(treasuryFacet));
-        console.log("PayrollFacet:         ", address(payrollFacet));
-        console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
-        console.log("EarlyWithdrawalDirectFacet:", address(earlyWithdrawalDirectFacet));
-        console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
-        console.log("PrecloseFacet:        ", address(precloseFacet));
-        console.log("PrepayListingFacet:   ", address(prepayListingFacet));
-        console.log("NFTPrepayListingFacet:", address(nftPrepayListingFacet));
-        console.log("NFTPrepayDutchListingFacet:", address(nftPrepayDutchListingFacet));
-        console.log("NFTPrepayListingAtomicFacet:", address(nftPrepayListingAtomicFacet));
-        console.log("RefinanceFacet:       ", address(refinanceFacet));
-        console.log("MetricsFacet:         ", address(metricsFacet));
-        console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
-        console.log("VPFITokenFacet:       ", address(vpfiTokenFacet));
-        console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
-        console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
-        console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
-        console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
-        console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
-        console.log("RewardClaimFacet:", address(rewardClaimFacet));
-        console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
-        console.log("PerkFacet:", address(perkFacet));
-        console.log("RewardBroadcastFacet:", address(rewardBroadcastFacet));
-        console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
-        console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
-        console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
-        console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
-        console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
-        console.log("RewardRemittanceLensFacet:", address(rewardRemittanceLensFacet));
-        console.log("RewardCompensationDispatchFacet:", address(rewardCompensationDispatchFacet));
-        console.log("RewardCustodyFacet:   ", address(rewardCustodyFacet));
-        console.log("RewardReconciliationFacet:", address(rewardReconciliationFacet));
-        console.log("RewardIngressFacet:   ", address(rewardIngressFacet));
-        console.log("ConfigFacet:          ", address(configFacet));
-        console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
-        console.log("RiskAccessFacet:      ", address(riskAccessFacet));
-        console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
         console.log("");
@@ -1177,6 +1193,7 @@ contract DeployDiamond is Script {
         console.log("   - RewardReporterFacet.setIsCanonicalRewardChain (true only on Base)");
         console.log("   - RewardAggregatorFacet.setExpectedSourceChainIds (Base only)");
         console.log("   See docs/ops/DeploymentRunbook.md section 3.");
+
     }
 
     // ── Helper: build a FacetCut struct ─────────────────────────────────

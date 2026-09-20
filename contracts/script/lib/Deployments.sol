@@ -3,6 +3,43 @@ pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
+import {IArtifactRoot} from "./ArtifactRoot.sol";
+// The REAL cut interface, imported rather than approximated. An earlier
+// revision declared a "minimal" `diamondCut(bytes,address,bytes)` here to keep
+// this library free of domain imports; that has a DIFFERENT selector from the
+// real `diamondCut(FacetCut[],address,bytes)`, so the loupe lookup returned
+// address(0) and the guard reported every deploy as missing a facet. A
+// hand-written interface is not a free abstraction when a selector is the thing
+// being looked up.
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+
+/// @dev The completeness assertion, as {finalizeArtifact} reaches it: on the
+///      CALLING SCRIPT, across an external call to itself.
+///
+///      Two things need that boundary, and neither is a matter of taste.
+///      Solidity's `try` only wraps external calls, and {finalizeArtifact} has
+///      to catch EVERY way the assertion can fail so it can put the operator's
+///      artifact back before re-reverting. And the assertion is the one seam a
+///      test needs to override — to observe that a real deploy reached it, or
+///      to force it to fail. (An earlier revision justified the boundary on
+///      the viaIR stack ceiling as well, claiming a subclass has no room to
+///      override anything inlined into `runWith`. That was unsupported — see
+///      the `memoryguard` note on {finalizeArtifact} for what the stack errors
+///      actually were. The `try` reason above stands on its own.)
+interface IArtifactVerifier {
+    function assertFacetsRecordedExternal(address[] calldata expected) external;
+}
+
+/// @dev Minimal loupe surface, declared here so the artifact library keeps no
+///      dependency on the domain contracts it records. The CUT interface is
+///      imported rather than approximated the same way — see the note on that
+///      import — because there a selector is the value being looked up.
+interface ILoupeMinimal {
+    function facetAddresses() external view returns (address[] memory);
+    function facetAddress(bytes4 selector) external view returns (address);
+}
+
+
 
 /**
  * @title Deployments
@@ -51,13 +88,79 @@ library Deployments {
 
     // ── Public path API ────────────────────────────────────────────────────
 
+    /// The committed artifact root, relative to `foundry.toml#root` (i.e. the
+    /// `contracts/` directory). `fs_permissions` grants read-write on this
+    /// subtree and nowhere else, so an override must stay INSIDE it.
+    string internal constant ARTIFACT_ROOT = "deployments";
+
+    /// The directory holding every chain's `addresses.json` for this run.
+    /// Normally {ARTIFACT_ROOT}; a script that has set an override through
+    /// {ArtifactRootBase} gets its own directory instead.
+    ///
+    /// @dev The override is read from the CALLING SCRIPT, not from the
+    ///      environment — this library's `internal` functions execute in the
+    ///      script's context, so `address(this)` is that script and the answer
+    ///      comes out of its storage. See `ArtifactRoot.sol` for why that
+    ///      distinction is load-bearing (`vm.setEnv` is process-global and
+    ///      every parallel test shares it). A caller that does not implement
+    ///      {IArtifactRoot} — most scripts — falls through to the default,
+    ///      which is why the call is wrapped rather than required.
+    function artifactRoot() internal view returns (string memory) {
+        try IArtifactRoot(address(this)).artifactRootOverride() returns (
+            string memory overridden
+        ) {
+            if (bytes(overridden).length != 0) return overridden;
+        } catch {
+            // Not an ArtifactRootBase script: the committed root is correct.
+        }
+        return ARTIFACT_ROOT;
+    }
+
+    /// TRUE when this run writes to a scratch root rather than the committed
+    /// one.
+    ///
+    /// @dev Reads the PRESENCE of an override, never a comparison of the
+    ///      resolved root against {ARTIFACT_ROOT} (#2253 r1 P2). A string
+    ///      comparison answers "does this look like the default?", which every
+    ///      alias of the default — `./deployments`, `deployments/`,
+    ///      `deployments/.` — gets wrong in the dangerous direction: not equal,
+    ///      therefore "redirected", therefore writes forced on, therefore the
+    ///      committed artifact overwritten. The fact is already known without
+    ///      inferring it, and `ARTIFACT_SCRATCH_PREFIX` makes an override
+    ///      that aliases the default unrepresentable.
+    function artifactIsRedirected() internal view returns (bool) {
+        try IArtifactRoot(address(this)).artifactRootOverride() returns (
+            string memory overridden
+        ) {
+            return bytes(overridden).length != 0;
+        } catch {
+            return false;
+        }
+    }
+
+    /// Directory holding `addresses.json` for an arbitrary EVM chain.
+    function dirForChainId(uint256 cid) internal view returns (string memory) {
+        return string.concat(artifactRoot(), "/", slugForChainId(cid));
+    }
+
+    /// Path to an arbitrary EVM chain's `addresses.json`.
+    ///
+    /// @dev EVERY artifact path in this library is built here. Five call sites
+    ///      used to concatenate `"deployments/" + slug + "/addresses.json"`
+    ///      by hand, which is four opportunities for one of them to disagree
+    ///      with the others — and would have been four places to forget when
+    ///      the root became redirectable.
+    function pathForChainId(uint256 cid) internal view returns (string memory) {
+        return string.concat(dirForChainId(cid), "/addresses.json");
+    }
+
     /// Absolute-from-foundry-root path to the active chain's
     /// `addresses.json`. Foundry resolves relative paths against
     /// `foundry.toml#root` (i.e. the `contracts/` directory in this
     /// repo). The committed file lives at
     /// `contracts/deployments/<slug>/addresses.json`.
     function path() internal view returns (string memory) {
-        return string.concat("deployments/", chainSlug(), "/addresses.json");
+        return pathForChainId(block.chainid);
     }
 
     /// Per-chain folder slug for the *active* chain. Used both for the
@@ -199,9 +302,7 @@ library Deployments {
     ///         in the mesh hasn't yet been redeployed against PR #272+
     ///         contracts.
     function readRewardMessengerForChain(uint256 chainId) internal view returns (address) {
-        string memory p = string.concat(
-            "deployments/", slugForChainId(chainId), "/addresses.json"
-        );
+        string memory p = pathForChainId(chainId);
         require(
             _fileExists(p),
             string.concat(
@@ -271,9 +372,7 @@ library Deployments {
         view
         returns (address)
     {
-        string memory p = string.concat(
-            "deployments/", slugForChainId(chainId), "/addresses.json"
-        );
+        string memory p = pathForChainId(chainId);
         require(
             _fileExists(p),
             string.concat(
@@ -352,6 +451,323 @@ library Deployments {
     /// per-facet addresses for explorer links.
     function writeFacet(string memory facetKey, address a) internal {
         _writeAddr(string.concat(".facets.", facetKey), a);
+    }
+
+    /// @notice Require that every address in `expected` was recorded under some
+    ///         `.facets.*` key of the artifact this run just wrote.
+    ///
+    /// @dev    **The ROOT fix for #1800, and it is deliberately NOT a test**
+    ///         (#2253 r2). The guard began life as a test that deployed under a
+    ///         matrix of chain ids and asserted completeness for each. Review
+    ///         then found, correctly and twice, that the matrix was incomplete:
+    ///         first that it covered only chain 31337, then that it listed a
+    ///         RETIRED chain while omitting an ACTIVE one and never exercised
+    ///         the production admin≠deployer topology. Each time, a
+    ///         registration guarded on the uncovered dimension would pass.
+    ///
+    ///         Those two rounds are one seam, and the seam is unbounded: a
+    ///         write can be guarded on chain id, on admin≠deployer, on the
+    ///         treasury address, on `block.number`, on any env var, on
+    ///         anything at all. A test matrix can only ever enumerate the
+    ///         dimensions somebody thought of, so every round buys one more
+    ///         dimension and leaves the class open — the #1995 pattern, which
+    ///         this repository has twice resolved by DELETING the enumeration
+    ///         rather than extending it.
+    ///
+    ///         So the completeness check moves OUT of the test matrix and INTO
+    ///         the deploy. Every real deploy now verifies its own artifact,
+    ///         under whatever chain, admin topology, treasury and configuration
+    ///         that deploy actually runs with. There is no matrix to be
+    ///         incomplete, because there is no matrix: the conditions under
+    ///         test are by construction the conditions in effect. A guard on an
+    ///         un-enumerated dimension cannot evade a check that runs inside
+    ///         the branch it guards.
+    ///
+    ///         It is also strictly stronger than any test could be — it covers
+    ///         mainnet chains and operator topologies no test will ever run.
+    ///
+    ///         Ordering matters: call this AFTER every `writeFacet` and outside
+    ///         the broadcast. A failure here means the Diamond was deployed but
+    ///         its artifact is incomplete, which is recoverable — the addresses
+    ///         remain on-chain via `DiamondLoupeFacet.facetAddresses()` and in
+    ///         the broadcast log — so failing loudly at the end is strictly
+    ///         better than the silence #1798 actually shipped with.
+    function snapshotArtifact()
+        internal
+        view
+        returns (string memory prior, bool existed)
+    {
+        string memory p = path();
+        existed = _fileExists(p);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        if (existed) prior = CHEATS.readFile(p);
+    }
+
+    /// @dev Capture the artifact and hand it to the calling script to hold.
+    ///
+    ///      Pushed into the script rather than returned because the caller
+    ///      cannot hold it: `DeployDiamond.runWith` is at the viaIR stack
+    ///      ceiling, and four compiles failed on "Variable expr_… is 1 too
+    ///      deep" from nothing more than one extra local or a destructured
+    ///      return in that frame. A script that does not implement
+    ///      {IArtifactRoot} simply has no snapshot, which is why this is
+    ///      wrapped rather than required.
+    function _recordSnapshotOnCaller() private {
+        (string memory prior, bool existed) = snapshotArtifact();
+        try IArtifactRoot(address(this)).recordArtifactSnapshot(prior, existed) {
+        } catch {
+            // Not an ArtifactRootBase script: nothing verifies, nothing restores.
+        }
+    }
+
+    /// @dev The snapshot {_recordSnapshotOnCaller} stored, or empty.
+    function callerSnapshot()
+        internal
+        view
+        returns (string memory prior, bool priorExisted)
+    {
+        try IArtifactRoot(address(this)).artifactSnapshot() returns (
+            string memory p_, bool e_
+        ) {
+            return (p_, e_);
+        } catch {
+            return ("", false);
+        }
+    }
+
+    /// @notice Close out the run's artifact: print what was recorded, then
+    ///         require every facet the built Diamond reports to appear in it,
+    ///         restoring the operator's previous artifact if it does not.
+    ///
+    /// @dev    Takes only the Diamond address and does its own loupe reads on
+    ///         purpose. `DeployDiamond.runWith` is AT the viaIR stack ceiling
+    ///         with ~80 live facet addresses, and building the facet list in
+    ///         that frame is what several failed compiles were; it also absorbs
+    ///         the "Wrote addresses to …" log and the deployment summary the
+    ///         frame used to print itself, so the net change there is negative.
+    ///
+    ///         Ordering matters: this runs AFTER every `writeFacet` and outside
+    ///         the broadcast. A failure means the Diamond was deployed but its
+    ///         artifact is incomplete — recoverable, since the addresses remain
+    ///         on-chain via `facetAddresses()` and in the broadcast log — so
+    ///         failing loudly at the end is strictly better than the silence
+    ///         #1798 actually shipped with.
+    ///
+    ///         The LOUPE surface is declared inline (two view functions, no
+    ///         selector semantics) but the CUT interface is imported: its
+    ///         selector is the value being looked up, and an approximation of
+    ///         it silently resolves to a different function.
+    function finalizeArtifact(address diamond) internal {
+        console.log("");
+        console.log("=== Deployment Summary ===");
+        console.log("Diamond:              ", diamond);
+        // The RESOLVED path, never a rebuilt `deployments/<slug>/…`. A run
+        // with an artifact-root override writes under the scratch tree, and a
+        // line naming the canonical file would send an operator to inspect a
+        // file this run never touched — the opposite of the deployment config
+        // actually in effect (#2253 r7).
+        console.log("Wrote addresses to", path());
+        if (!artifactWritesEnabled()) {
+            // Say so rather than print nothing. A run with artifact writes off
+            // has no recorded facet set to read back, and a summary that simply
+            // stopped after the Diamond address would read as "this deploy
+            // installed no facets".
+            console.log(
+                "Artifact writes are off for this run, so there is no recorded"
+                " facet set to list and no completeness check to run."
+            );
+            return;
+        }
+
+        printRecordedFacets();
+
+        address[] memory routed = ILoupeMinimal(diamond).facetAddresses();
+        address[] memory recorded = new address[](routed.length + 1);
+        for (uint256 i; i < routed.length; ++i) recorded[i] = routed[i];
+        // `diamondCutFacet` is appended SEPARATELY: the Diamond's constructor
+        // installs that selector by writing `selectorToFacetAndPosition`
+        // directly, so `facetAddresses()` structurally cannot report it, and a
+        // check built only on that enumeration would be blind to the one facet
+        // that can never be re-cut (#1798 r9).
+        recorded[routed.length] =
+            ILoupeMinimal(diamond).facetAddress(IDiamondCut.diamondCut.selector);
+
+        // Reached through the CALLER so the assertion can be wrapped, and so a
+        // failure puts the operator's artifact back before it propagates.
+        //
+        // #2253 r5 P1 — restoring inside the assertion's own not-found branch
+        // was a bet that its author had enumerated the failure modes, and this
+        // PR's history says that bet loses: `parseJsonAddress` reverts outright
+        // when a `.facets` entry holds the wrong JSON type, and that revert
+        // happened before execution ever reached the restore. Catching here
+        // covers every failure the assertion has today and every one added to
+        // it later.
+        try IArtifactVerifier(address(this)).assertFacetsRecordedExternal(recorded) {
+            return;
+        } catch (bytes memory err) {
+            (string memory prior, bool existed) = callerSnapshot();
+            restoreArtifact(prior, existed);
+            // Re-revert with the assertion's own message. The operator needs to
+            // read which facet was unrecorded, not that a call failed.
+            //
+            // ("memory-safe") IS LOAD-BEARING AND IS NOT A STYLE CHOICE. Drop
+            // those two words and `forge build --skip test` fails with
+            // `Variable expr_…_address is 1 too deep in the stack` pointing at
+            // `DeployDiamond.runWith` — a function this block is not in and
+            // does not call. Verified by changing nothing else (#2253 r6).
+            //
+            // viaIR rescues a deep frame with a stack-to-memory mover, and solc
+            // emits that mover only behind a `memoryguard`, which it withholds
+            // from the WHOLE contract if any inline-assembly block is
+            // unannotated. So one unannotated block here un-rescues every frame
+            // that inlines this library, and the error names the frame that
+            // overflowed rather than the block that caused it. solc does say so,
+            // on the last line of its own output: "No memoryguard was present."
+            // Five revisions of this PR moved a call around chasing the frame
+            // and never read that line.
+            //
+            // The annotation is true, not merely convenient — and the reason
+            // is the ALLOCATION BOUND, not read-only-ness. `("memory-safe")`
+            // does not license arbitrary reads: once the mover is enabled it
+            // spills stack slots into memory, so a block reading outside
+            // Solidity's own allocations can observe those spills. What makes
+            // this block safe is that `err` is an allocated `bytes memory` the
+            // block already holds, and both `add(err, 0x20)` and `mload(err)`
+            // stay inside it (#2253 r7).
+            //
+            // forge-lint: disable-next-line(unsafe-assembly)
+            assembly ("memory-safe") {
+                revert(add(err, 0x20), mload(err))
+            }
+        }
+    }
+
+    /// @notice Print every facet the run recorded, read back FROM the artifact.
+    ///
+    /// @dev    #2253 r6. `runWith` used to print this list from a second,
+    ///         hand-maintained block of ~45 `console.log`s naming the same
+    ///         addresses the `writeFacet` block above it had just written.
+    ///
+    ///         Reading the artifact back instead makes the summary honest: what
+    ///         the operator sees is what was RECORDED, not a parallel list that
+    ///         can disagree with it. A `writeFacet` omission — the #1798 bug —
+    ///         was invisible in the old summary precisely because the two lists
+    ///         were independent, so an operator reading it saw a facet that the
+    ///         artifact did not name. Here it shows up as a missing line, and
+    ///         the check immediately below turns it into a failed deploy.
+    ///
+    ///         It also takes ~45 live addresses out of `runWith`'s frame, which
+    ///         is welcome on a function near the viaIR stack ceiling — but that
+    ///         is a side effect and was NOT the fix. Removing the block was
+    ///         tried as the fix and measured: it moved the overflow by a single
+    ///         slot and did not clear it. What cleared it was annotating an
+    ///         inline-assembly block `("memory-safe")` — see the note on
+    ///         {finalizeArtifact}. The honesty argument above is the whole
+    ///         reason this change was kept.
+    function printRecordedFacets() internal view {
+        string memory p = path();
+        if (!_fileExists(p)) return;
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        string[] memory keys = CHEATS.parseJsonKeys(file, ".facets");
+        for (uint256 i; i < keys.length; ++i) {
+            console.log(
+                keys[i],
+                CHEATS.parseJsonAddress(file, string.concat(".facets.", keys[i]))
+            );
+        }
+    }
+
+    /// @notice Empty the `.facets` namespace so it describes THIS run only.
+    ///
+    /// @dev    #2253 r5 P2 — the typed writers MERGE into the existing file, so
+    ///         a re-deploy inherits the previous run's facet keys. On the
+    ///         documented fresh-Anvil workflow that is not hypothetical:
+    ///         `anvil-bootstrap.sh` restarts the chain and reuses the fixed
+    ///         default deployer, so the CREATE addresses REPEAT while the
+    ///         committed `deployments/anvil/addresses.json` stays. Deleting a
+    ///         `writeFacet` then leaves the prior run's matching value in place,
+    ///         and a scan of the file's VALUES passes for a facet this run never
+    ///         recorded.
+    ///
+    ///         Clearing first makes the namespace mean what the check assumes it
+    ///         means. That is also the honest artifact semantics: a fresh
+    ///         Diamond's facet set is not the previous Diamond's, and a key
+    ///         inherited from a superseded deploy is a stale address wearing a
+    ///         current label.
+    function clearFacets() internal {
+        if (!artifactWritesEnabled()) return;
+        _ensureFile();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        CHEATS.writeJson("{}", path(), ".facets");
+    }
+
+    /// @notice Put the artifact back as {snapshotArtifact} found it.
+    ///
+    /// @dev    #2253 r5 P1 — separated from the check so the caller can run it
+    ///         as a FINALLY around every failure mode, not only the one the
+    ///         check anticipated. See {assertFacetsRecorded}.
+    function restoreArtifact(string memory prior, bool priorExisted) internal {
+        string memory p = path();
+        if (priorExisted) {
+            // forge-lint: disable-next-line(unsafe-cheatcode)
+            CHEATS.writeFile(p, prior);
+        } else if (_fileExists(p)) {
+            // forge-lint: disable-next-line(unsafe-cheatcode)
+            CHEATS.removeFile(p);
+        }
+    }
+
+    /// @notice Require that every address in `expected` is recorded under some
+    ///         `.facets.*` key. REVERTS WITHOUT RESTORING — the caller owns the
+    ///         restore, so that it covers every way this can fail.
+    ///
+    /// @dev    #2253 r5 P1. An earlier revision restored inside the
+    ///         facet-not-found branch, which left every OTHER failure
+    ///         un-restored: `parseJsonAddress` reverts outright when an existing
+    ///         `.facets` entry holds the wrong JSON type, and that revert
+    ///         happened before execution ever reached the restore. The artifact
+    ///         then stayed clobbered — precisely the outcome the snapshot exists
+    ///         to prevent, reachable by a different door.
+    ///
+    ///         Restoring in a branch is a bet that the author enumerated the
+    ///         failure modes; this PR's own history says that bet loses. The
+    ///         caller now wraps this in try/catch and restores on ANY revert,
+    ///         including ones added later.
+    function assertFacetsRecorded(address[] memory expected) internal view {
+        if (!artifactWritesEnabled()) return;
+
+        string memory p = path();
+        require(
+            _fileExists(p),
+            "Deployments: the deploy wrote no artifact to verify - the completeness check must run after the artifact writes"
+        );
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        string[] memory keys = CHEATS.parseJsonKeys(file, ".facets");
+
+        for (uint256 i; i < expected.length; ++i) {
+            bool found;
+            for (uint256 j; j < keys.length && !found; ++j) {
+                if (
+                    CHEATS.parseJsonAddress(
+                        file, string.concat(".facets.", keys[j])
+                    ) == expected[i]
+                ) {
+                    found = true;
+                }
+            }
+            require(
+                found,
+                string.concat(
+                    "Deployments: facet ",
+                    CHEATS.toString(expected[i]),
+                    " is installed in the Diamond but was never recorded under any .facets.* key of ",
+                    p,
+                    " - add its Deployments.writeFacet(...) line. Nothing was deployed and the previous artifact has been left untouched. The address is not lost: DiamondLoupeFacet.facetAddresses() and the broadcast log both still carry it."
+                )
+            );
+        }
     }
 
     // ── Scalar/uint writes ─────────────────────────────────────────────────
@@ -481,7 +897,20 @@ library Deployments {
     /// Stamp the file with `chainId` + `deployedAt`. Called from the
     /// top of `DeployDiamond.s.sol` so a partial deploy that crashes
     /// halfway still leaves a discoverable artifact.
+    /// @dev Also OPENS the artifact for this run: captures what was there (so a
+    ///      failed completeness check can put it back — #2253 r3 P1) and, at the
+    ///      end, empties `.facets` so the namespace describes this run only
+    ///      (#2253 r5 P2). The snapshot is returned for the caller to hold.
+    ///
+    ///      Folded in here rather than added as separate statements because
+    ///      `DeployDiamond.runWith` is AT the viaIR stack ceiling with ~80 live
+    ///      facet addresses: three compiles failed on "Variable expr_… is 1 too
+    ///      deep" purely from extra call sites in that frame. It is also the
+    ///      honest seam — writing the chain header IS the start of the run's
+    ///      artifact — and this function has exactly ONE caller
+    ///      (`DeployDiamond`), so nothing else changes behaviour.
     function writeChainHeader() internal {
+        _recordSnapshotOnCaller();
         requireMarkedPublication(".chainId");
         string memory p = path();
         // Build a minimal header object. Subsequent writes to the
@@ -500,12 +929,10 @@ library Deployments {
         if (!_fileExists(p)) {
             // `vm.writeJson` does NOT create parent directories; on
             // a fresh chain the per-chain folder won't exist yet.
-            CHEATS.createDir(
-                string.concat("deployments/", chainSlug()),
-                true
-            );
+            CHEATS.createDir(dirForChainId(block.chainid), true);
             CHEATS.writeJson(finalJson, p);
         }
+        clearFacets();
     }
 
     // ── Internal helpers ───────────────────────────────────────────────────
@@ -600,13 +1027,31 @@ library Deployments {
     ///         `forge test` run — and a live broadcast that carries it is
     ///         REFUSED. A dry-run (no `--broadcast`) never writes: its addresses
     ///         are simulated.
-    function artifactWriteMode(uint256 chainId, bool dryRun, bool underTest, bool skipRequested)
+    /// @dev `redirected` — this run has an artifact-root override, so its
+    ///      artifact cannot reach the committed one. It belongs INSIDE the
+    ///      rule rather than as an early return in front of it (#2253 r1 P2).
+    ///      An earlier revision short-circuited `artifactWritesEnabled` before
+    ///      this function ran, which skipped the `dryRun` arm: an Anvil script
+    ///      carrying an override and run WITHOUT `--broadcast` then reached
+    ///      `writeChainHeader()` — which has no dry-run guard of its own — and
+    ///      produced a header-only artifact for a deployment that never
+    ///      happened, while the typed writers after it correctly skipped. One
+    ///      rule, every combination, is what the enum and this signature exist
+    ///      for; a special case in front of it is not a smaller change, it is
+    ///      the same change with one arm silently unreachable.
+    function artifactWriteMode(
+        uint256 chainId,
+        bool dryRun,
+        bool underTest,
+        bool skipRequested,
+        bool redirected
+    )
         internal
         pure
         returns (ArtifactWrites)
     {
         if (dryRun) return ArtifactWrites.Skip;
-        if (!skipRequested) return ArtifactWrites.Write;
+        if (!skipRequested || redirected) return ArtifactWrites.Write;
         if (chainId == 31337 || underTest) return ArtifactWrites.Skip;
         return ArtifactWrites.RefuseSkipOnLiveBroadcast;
     }
@@ -615,12 +1060,31 @@ library Deployments {
     ///         `DEPLOY_SKIP_ARTIFACTS` is set on a live broadcast — call it at
     ///         the top of a deploy script so the simulation fails BEFORE any
     ///         transaction is sent.
+    ///
+    /// @dev    A script that has REDIRECTED its artifact root writes
+    ///         regardless of `DEPLOY_SKIP_ARTIFACTS`, and this is the point of
+    ///         the redirect rather than an exception to the rule. The skip
+    ///         exists so a `forge test` deploy does not clobber the committed
+    ///         `deployments/anvil/addresses.json`; a redirected run cannot
+    ///         reach that file, so the hazard the skip answers is already gone.
+    ///         It matters because the env flag is PROCESS-GLOBAL: a sibling
+    ///         test exporting `DEPLOY_SKIP_ARTIFACTS=true` — which several do —
+    ///         would otherwise silently turn off the writes an artifact
+    ///         assertion depends on, and the assertion would then read a file
+    ///         nobody wrote. The override is script-instance storage and
+    ///         therefore thread-local, so this cannot turn writes ON for any
+    ///         run that did not ask.
+    ///
+    ///         {ArtifactRootBase.setArtifactRootOverride} refuses to set an
+    ///         override anywhere but Anvil or `forge test`, so no live
+    ///         broadcast can reach that arm.
     function artifactWritesEnabled() internal view returns (bool) {
         ArtifactWrites mode = artifactWriteMode(
             block.chainid,
             CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun),
             CHEATS.isContext(VmSafe.ForgeContext.TestGroup),
-            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false)
+            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false),
+            artifactIsRedirected()
         );
         require(
             mode != ArtifactWrites.RefuseSkipOnLiveBroadcast,
@@ -647,6 +1111,21 @@ library Deployments {
     ///      inventory.
     function requireMarkedPublication(string memory jsonKey) internal view {
         if (!isIdentityKey(jsonKey) || block.chainid == 31337) return;
+        // #2253 r1 P2 — a REDIRECTED artifact is exempt on the same ground the
+        // Anvil chain is, and for a stronger reason: it is not in the inventory
+        // and cannot be, because it is written to a scratch directory the
+        // census never reads and `.gitignore` never commits. Without this the
+        // seam was half-built — `setArtifactRootOverride` permits a redirect on
+        // any chain id under `forge test`, and the first `writeChainHeader()`
+        // on any chain but 31337 then demanded a live-publication token and a
+        // matching committed manifest marker, so the supposedly test-safe
+        // redirect reverted before producing its scratch artifact. That is what
+        // made the chain-gated-write assertion untestable on live chain ids.
+        //
+        // This cannot weaken the real gate: the override is refused outright
+        // off-Anvil-outside-test, so a live broadcast has no way to set one and
+        // no way to reach this return.
+        if (artifactIsRedirected()) return;
         string memory token = CHEATS.envOr("VAIPAKAM_LIVE_PUBLICATION_TOKEN", string(""));
         require(
             bytes(token).length != 0,
@@ -739,10 +1218,7 @@ library Deployments {
     function _ensureFile() private {
         string memory p = path();
         if (_fileExists(p)) return;
-        CHEATS.createDir(
-            string.concat("deployments/", chainSlug()),
-            true
-        );
+        CHEATS.createDir(dirForChainId(block.chainid), true);
         string memory head = "deployments-bootstrap";
         CHEATS.serializeUint(head, "chainId", block.chainid);
         string memory init = CHEATS.serializeString(

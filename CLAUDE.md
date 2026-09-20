@@ -273,19 +273,44 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
   never-refreshed chain was missing them. Those thirteen writes are now in the
   deploy script.
 
-  **There is no automated guard against this recurring yet**, and that is a
-  deliberate, recorded position rather than an oversight. A step-4c that read
-  the deploy scripts as text was written and then withdrawn: review found
-  thirteen distinct ways to get a registration past it, and each fix opened the
-  next. Proving "this registration executes, under this identity, on every
-  chain" is a question about scope, control flow and aliasing, and a shell
-  parser reading lines of Solidity cannot answer it — it was reaching a green
-  verdict it had not earned, which on a pre-deploy gate is worse than no gate.
-  **#1800** replaces it with the assertion that needs no parsing: run the deploy
-  with artifact writing on and require every address `facetAddresses()` reports
-  to appear in the JSON it wrote. The refresh-key-identity check
-  (`RefreshScriptFacetParityTest` documents it as out of its own scope) goes
-  there too.
+  **The guard now exists, and it is in the DEPLOY rather than in a check over
+  the scripts** (#1800). `DeployDiamond` Step 7b reads back the artifact it just
+  wrote and requires every address `facetAddresses()` reports — plus
+  `diamondCutFacet`, which the constructor installs outside that enumeration —
+  to appear under some `.facets.*` key. Forgetting a `writeFacet` now fails the
+  deploy instead of passing silently.
+
+  A step-4c that read the deploy scripts as TEXT was written and withdrawn
+  first: review found thirteen distinct ways to get a registration past it, and
+  each fix opened the next. Proving "this registration executes, under this
+  identity, on every chain" is a question about scope, control flow and
+  aliasing, and a shell parser reading lines of Solidity cannot answer it — it
+  was reaching a green verdict it had not earned, which on a pre-deploy gate is
+  worse than no gate.
+
+  **A TEST could not close it either, and that is the part worth remembering.**
+  The first version of #1800 asserted the same property from a test that
+  deployed across a matrix of chain ids. Review found the matrix incomplete
+  twice running — first that it covered only chain 31337, then that it listed a
+  retired chain while omitting an active one and never exercised the production
+  admin≠deployer topology. Both were correct, and both were the same seam: a
+  write can be guarded on chain id, on admin≠deployer, on the treasury, on
+  `block.number`, on any env var, so a matrix only ever covers what somebody
+  enumerated. Inside the deploy there is no matrix to be incomplete, because the
+  conditions under test ARE the conditions in effect.
+
+  Two properties of that guard are load-bearing and easy to undo by accident.
+  It **snapshots the artifact before the writes and restores it before
+  reverting** — filesystem cheatcode effects survive a revert, and a
+  `--broadcast` run executes the whole body in its pre-send simulation, so
+  failing after mutating the canonical file would leave the inventory's source
+  of truth describing a Diamond that was never deployed. And its **call site is
+  covered by a probe**, because deleting the call left the entire deploy-artifact
+  suite green: every test there reads the artifact independently and asserts the
+  same property, so nothing depended on the deploy doing it.
+
+  The refresh-key-identity check (`RefreshScriptFacetParityTest` documents it as
+  out of its own scope) is still outstanding.
 
   Note also that this class of omission is an inconvenience rather than a lost
   address — the implementation stays recoverable on-chain via
@@ -1265,6 +1290,56 @@ from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —
 never an array of a 40+-field struct, whose ABI coder inflates peak stack.
 Chunking bounds the symptom; lean DTOs are what stop the ceiling being
 re-crossed.
+
+### `1 too deep in the stack` is often NOT a full frame — read solc's last line
+
+**Before treating a `Variable expr_… is N too deep in the stack` error as a
+frame-size problem, check whether the output ends with "No memoryguard was
+present."** If it does, the frame is a red herring and the real cause is
+somewhere else in the same contract.
+
+viaIR rescues a deep frame with a **stack-to-memory mover**, which solc emits
+only behind a `memoryguard` — and it withholds that guard from the **whole
+contract** when ANY inline-assembly block in it is unannotated. So a single
+`assembly { … }` without `("memory-safe")` un-rescues every frame in that
+contract, and solc reports the frame that overflowed rather than the block that
+caused it. The two can be far apart: in #2253 the block was in a `catch` inside
+a library, and the named frame was `DeployDiamond.runWith`, which neither
+contains nor calls it.
+
+Verified by single-variable experiment on that PR — deleting only the two words
+`("memory-safe")` reproduces the error; restoring them compiles, nothing else
+changed. **Five revisions were spent moving a call around before anyone read
+solc's last line**, and the intermediate diagnoses (the call site is too deep,
+an `internal` hook leaves a subclass no budget, the compilation unit is too big)
+were all plausible and all wrong.
+
+Two practical consequences:
+
+- **Annotate new inline assembly `("memory-safe")` — but only when it is.** The
+  annotation licenses the mover to relocate stack slots into memory, so a block
+  that steps outside Solidity's memory model invites corruption or
+  optimizer-dependent behaviour — a far worse failure than a build error. It is
+  an audit, not a find-and-replace.
+
+  **The test is the ALLOCATION BOUND, not read-vs-write.** Every access — read
+  included — must stay inside memory Solidity owns for that block: its own
+  allocations, the scratch space, the zero slot, or memory past the free
+  pointer that the block allocates itself. Read-only is *not* a licence: once
+  the mover is enabled, an arbitrary read can observe the very slots it spilled
+  there, which is how a "harmless" block becomes optimizer-dependent. The
+  rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
+  allocated `bytes memory` the block already holds and `add(err, 0x20)` /
+  `mload(err)` stay within it — not because it only reads (#2253 r7).
+- **`forge build --skip test` cannot see a test contract doing this.** A probe
+  or helper under `test/` that inherits a script and carries an unannotated
+  block fails only in the test build, which is the failure mode that cost #2253
+  those five revisions.
+
+`contracts/test/deploy/PartialRefreshRoutingTest.t.sol` and ~25 blocks under
+`src/`/`script/` are still unannotated. They are LATENT, not broken: the guard
+is per-contract and those contracts compile today. Sweeping them is tracked in
+**#2260** and needs the audit above, not a bulk edit.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
