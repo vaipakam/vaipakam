@@ -525,7 +525,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // the durable completion marker (the M1 lesson), and this probe is
         // generation-gated and therefore idempotent, so a rerun that re-enters
         // that block re-does only the Remove.
-        _upgradeRemitReceiverAhead(diamond);
+        _upgradeRemitReceiverAhead(diamond, signer);
 
         // ─── the RETIRED ingress selectors go BEFORE the first cut too ────
         //
@@ -688,9 +688,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // both are no-ops here — the pre-cut pass is generation-gated and
             // has already done the work — so this runs for real only where the
             // live address could not be resolved before the cuts.
-            if (liveRecv != address(0)) _probeUpgradeRemitReceiver(liveRecv, true);
+            if (liveRecv != address(0)) _probeUpgradeRemitReceiver(liveRecv, true, signer);
             if (artifactRecv != address(0) && artifactRecv != liveRecv) {
-                _probeUpgradeRemitReceiver(artifactRecv, false);
+                _probeUpgradeRemitReceiver(artifactRecv, false, signer);
             }
 
             // THE REQUIREMENT READS THE LIVE ADDRESS AND NOTHING ELSE (Codex
@@ -1791,7 +1791,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      Generation-gated in
     ///      {_probeUpgradeRemitReceiver}, so it is a no-op on a rerun and on
     ///      every already-current proxy.
-    function _upgradeRemitReceiverAhead(address diamond) private {
+    function _upgradeRemitReceiverAhead(address diamond, address broadcaster) private {
         address live = _liveRemitReceiverOptional(diamond);
         address artifact = _readAddrOptional(".rewardRemittanceReceiver");
         // AUTHORITY DECIDES FATALITY (Codex #2232 r3 F3). The LIVE receiver is
@@ -1807,14 +1807,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // Removing the artifact probe was the other option and is worse: a
         // rotation IN PROGRESS is exactly when the two differ, and that is
         // when leaving the outgoing receiver un-upgraded matters. So it stays,
-        // demoted to best-effort — attempted, and reported loudly when it
-        // fails, never fatal. The failure is safe in the direction that
-        // matters: an un-upgraded receiver calls the retired selector, which
-        // this run removes, so its deliveries REVERT and re-execute after the
-        // refresh. Fail-closed and recoverable, against a run aborted midway.
-        if (live != address(0)) _probeUpgradeRemitReceiver(live, true);
+        // demoted to best-effort — attempted where this signer has the
+        // authority, and reported loudly where it does not, never fatal. The
+        // skip is safe in the direction that matters: an un-upgraded receiver
+        // calls the retired selector, which this run removes, so its
+        // deliveries REVERT and are MANUALLY RE-EXECUTED after the refresh
+        // (CCIP does not redeliver a failed message on its own —
+        // {CcipMessenger} and the cutover runbook both define the recovery as
+        // manual re-execution). Recoverable, against a run aborted midway.
+        //
+        // The demotion is enforced by PREFLIGHTING the upgrade authority, not
+        // by catching the revert — see {_probeUpgradeRemitReceiver}, where a
+        // caught revert under `startBroadcast` was still a queued transaction
+        // and so was never best-effort at all (Codex #2232 r14).
+        if (live != address(0)) _probeUpgradeRemitReceiver(live, true, broadcaster);
         if (artifact != address(0) && artifact != live) {
-            _probeUpgradeRemitReceiver(artifact, false);
+            _probeUpgradeRemitReceiver(artifact, false, broadcaster);
         }
         if (live == address(0) && artifact == address(0)) {
             // Not a failure here: the canonical chain legitimately has no
@@ -1884,11 +1892,36 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     /// @dev `mandatory` says whether a failed upgrade stops the run. True for
     ///      the LIVE receiver the ingress will trust; false for an artifact
     ///      entry, which is corroborating and may be stale (see
-    ///      {_upgradeRemitReceiverAhead}). A non-mandatory failure is logged
+    ///      {_upgradeRemitReceiverAhead}). A non-mandatory skip is logged
     ///      rather than swallowed: the operator must be told which proxy was
     ///      left behind, because a receiver still on the old generation is a
     ///      lane whose deliveries will revert until it is upgraded by hand.
-    function _probeUpgradeRemitReceiver(address proxy, bool mandatory) private {
+    ///
+    ///      NO try/catch — THE AUTHORITY IS PREFLIGHTED INSTEAD (Codex #2232
+    ///      r14). This runs under `startBroadcast`, and the rule this script
+    ///      already states for the armed-fresh seed (Codex #1699 r4 P1 /
+    ///      #2158 r25 P1) applies verbatim here: Forge records every external
+    ///      call made in broadcast mode as a transaction whether or not
+    ///      Solidity caught its simulated revert, so a call EXPECTED to revert
+    ///      must not be made at all. Catching the revert therefore never made
+    ///      the artifact probe best-effort — the reverting `upgradeToAndCall`
+    ///      stayed in the broadcast list and failed the run at send time,
+    ///      AFTER the cuts had mined. That is the mid-run abort the r3 demotion
+    ///      was introduced to prevent, reintroduced by the mechanism chosen to
+    ///      prevent it.
+    ///
+    ///      `_authorizeUpgrade` on {RewardRemittanceReceiver} is `onlyOwner`,
+    ///      so the one EXPECTED failure — a superseded proxy whose ownership
+    ///      has rotated away from this signer — is answerable by a
+    ///      `staticcall`, which broadcasts nothing. A proxy this signer cannot
+    ///      upgrade is skipped before any transaction exists. Anything that
+    ///      reverts AFTER that check is unexpected, and an unexpected revert
+    ///      must abort rather than be swallowed, which a plain call does.
+    function _probeUpgradeRemitReceiver(
+        address proxy,
+        bool mandatory,
+        address broadcaster
+    ) private {
         if (proxy == address(0)) return;
         uint256 gen = 0;
         (bool ok, bytes memory ret) = proxy.staticcall(
@@ -1896,36 +1929,49 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
-            address newImpl = address(new RewardRemittanceReceiver());
-            try UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "") {
-                Deployments.writeRewardRemittanceReceiverImpl(newImpl);
-                // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
-                // derived from the constant the gate above reads, never written
-                // out again: a hardcoded figure here reports the wrong installed
-                // wire state to the operator the first time a generation moves,
-                // and it moved for the messenger in this very PR.
-                console.log(
-                    string.concat(
-                        "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
-                        vm.toString(gen),
-                        " -> ",
-                        vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
-                        ") impl:"
-                    ),
-                    newImpl
-                );
-            } catch {
+            // Read the upgrade authority before creating any transaction. A
+            // proxy that does not answer `owner()` is treated as un-upgradable
+            // by this signer rather than optimistically called: it is either
+            // not this contract or not a proxy, and either way the upgrade
+            // would revert.
+            (bool okOwner, bytes memory ownerRet) = proxy.staticcall(
+                abi.encodeWithSignature("owner()")
+            );
+            address proxyOwner =
+                (okOwner && ownerRet.length == 32) ? abi.decode(ownerRet, (address)) : address(0);
+            if (proxyOwner != broadcaster) {
                 if (mandatory) {
-                    revert("RefreshAllFacetsInPlace: live remit receiver upgrade failed");
+                    revert(
+                        "RefreshAllFacetsInPlace: live remit receiver is not owned by ADMIN_PRIVATE_KEY - it cannot be upgraded by this run"
+                    );
                 }
                 console.log(
-                    "P2-w2: WARNING - artifact remit receiver NOT upgraded (stale entry?), proxy:",
+                    "P2-w2: WARNING - artifact remit receiver NOT upgraded, not owned by this signer (stale entry?), proxy:",
                     proxy
                 );
                 console.log(
                     "       its deliveries will revert on the retired selector until upgraded by hand"
                 );
+                return;
             }
+            address newImpl = address(new RewardRemittanceReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
+            // derived from the constant the gate above reads, never written
+            // out again: a hardcoded figure here reports the wrong installed
+            // wire state to the operator the first time a generation moves,
+            // and it moved for the messenger in this very PR.
+            console.log(
+                string.concat(
+                    "P2-w2: upgraded RewardRemittanceReceiv (wire gen ",
+                    vm.toString(gen),
+                    " -> ",
+                    vm.toString(REMIT_RECEIVER_WIRE_GENERATION),
+                    ") impl:"
+                ),
+                newImpl
+            );
         }
     }
 

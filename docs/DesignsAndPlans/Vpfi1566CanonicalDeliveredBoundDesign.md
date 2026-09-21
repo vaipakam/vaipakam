@@ -2675,7 +2675,11 @@ revision unimplementable:
      forced to traverse that whole history exceeds the gas limit,
      permanently blocking the obligation and its era's terminalization
      behind backing that exists. Each day keeps an arrival-ordered batch
-     index and a consumption cursor; allocation resumes at the cursor,
+     index and a consumption cursor — **"arrival-ordered" here is this
+     plan's original wording and was NOT built that way; see correction (a)
+     in the 3b-i landed note, which keeps the array a membership set and
+     returns arrival as data. Do not read cursor position as oldest-first.**
+     Allocation resumes at the cursor,
      and **exhausting a WITHIN-CAP batch updates EVERY member day's index
      in that act — the atomic rule holds ONLY under the ingress fan-out
      cap; an admitted OVERSIZE packet takes the resumable `RETIRING`
@@ -6779,7 +6783,12 @@ on the live era alone.
 > The split falls at the EVIDENCE/SPEND seam, so each half is whole:
 >
 > - **3b-i — the epoch ledger** (LANDED): the untyped per-packet balance,
->   the per-day arrival-ordered index and cursor, the dispatch fan-out cap,
+>   the per-day MEMBERSHIP SET and cursor — each entry carrying its packet's
+>   own immutable `arrivedAt` as DATA, never as its position; see correction
+>   (a) below, which this summary restated the rejected wording of until
+>   Codex #2232 r14. A 3b-ii implementer must not read cursor position as
+>   oldest-first: `materializeTransportBatchPage` appends in caller-controlled
+>   materialization order. Then the dispatch fan-out cap,
 >   the compact admission and its paged materialization, the batch-keyed
 >   parked remainder and its acknowledgment (the LIBRARY of both; the facet entries refuse every caller until 3b-ii — owner decision #2258), the batch gate on
 >   classification, and the REAL bodies for 3a's two seams —
@@ -6798,7 +6807,9 @@ on the live era alone.
 >   exactly the one-delivery-spendable-twice error §5c forbids. The receiver
 >   and the Diamond must be refreshed together for it; the full refresh
 >   carries both, and a mirror on an older receiver fails closed (the
->   transport records the failure and re-executes after the upgrade).
+>   transport records the failure; an operator re-executes the message by hand
+>   after the upgrade — CCIP does not redeliver it, per `CcipMessenger`'s own
+>   header and the cutover runbook. Corrected Codex #2232 r14).
 >
 >   TWO corrections this plan's own wording invited, both found in review
 >   (Codex #2232 r3) and both recorded here rather than edited into the
@@ -6881,7 +6892,9 @@ on the live era alone.
 
 - One UNTYPED balance per old-wire packet, bounded by `actualReceived`,
   the listed `dayIds` as its membership filter; the per-day arrival-ordered
-  batch index and consumption cursor; the `dayIds` fan-out cap enforced at
+  batch index and consumption cursor (same caveat as §5c — "arrival-ordered"
+  is this plan's wording, superseded by correction (a) in the 3b-i landed
+  note: a membership set, with arrival returned as data); the `dayIds` fan-out cap enforced at
   dispatch — **and the compact admission for an old-wire packet whose list
   exceeds it** (review r1: a packet dispatched before the cap existed
   stays transport-executable, so 3b can neither index it by writing every

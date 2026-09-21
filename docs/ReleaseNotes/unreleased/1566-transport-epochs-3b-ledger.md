@@ -236,8 +236,12 @@ the new Diamond code, rather than after. In the old order there was a gap in
 which a delivery could arrive at new Diamond code through an old receiver, be
 accepted, and silently receive no epoch — bypassing the close-out gate
 permanently. In the new order a delivery arriving in that gap is refused
-outright and re-delivered once the refresh finishes, which costs a retry and
-loses nothing. The refresh identifies that receiving contract by asking the platform which one
+outright, and nothing about it is lost — but **the recovery is not automatic**.
+The transport records a refused delivery as a failed message that an operator
+must re-execute by hand once the refresh has finished; it is not redelivered on
+its own. Completing the refresh and waiting is therefore not enough, and any
+delivery that landed in the gap is still carrying its tokens until someone
+re-executes it. The refresh identifies that receiving contract by asking the platform which one
 it actually uses. The separately recorded address is **not a stand-in for
 that**: it is only a second contract the refresh will try to upgrade, so that a
 changeover in progress leaves neither the outgoing nor the incoming one behind.
@@ -271,8 +275,9 @@ upgrade cannot reach: an older mirror where the platform cannot say which
 receiving contract it uses and the recorded address is missing or stale. There
 is no receiver to upgrade there, so nothing could close the window by
 resolving one — closing it structurally does. From that first transaction on, a
-delivery through any receiving contract that has not been upgraded is refused
-and re-delivered afterwards, whether or not the refresh ever identified it. The
+delivery through any receiving contract that has not been upgraded is refused,
+whether or not the refresh ever identified it, and is then re-executed by hand
+afterwards — again, not automatically. The
 same retirement runs again at the end, where it is now the sweep for a run
 interrupted in between.
 
