@@ -258,6 +258,29 @@ because step 3 below is the part of it that had to be re-learned.
       > three DID deploy from that merge. It does not establish that a
       > green build is sufficient, which is the trap stated above.
       >
+      > **[evidence] 2026-09-21, and this is the one to remember** —
+      > `ff92150df` merged at `09:34:08Z` touching
+      > `packages/contracts/src/**`, a workspace package **all three
+      > writers import**. Exactly ONE built: `Workers Builds:
+      > vaipakam-keeper`, `success` at `09:35:26Z`, deployed `09:35:22Z`.
+      > The indexer and agent did not build and did not deploy — their
+      > live versions were still yesterday's `11:30:55Z` / `11:32:56Z`
+      > when this was measured at `10:52Z`.
+      >
+      > One merge, three Workers that all depend on what changed, one
+      > deployment. **So a barrier commit touching all three configs can
+      > land with only some of them held**, which is the half-applied
+      > barrier — the state where the procedure believes the writers are
+      > stopped and one of them is still writing. `--writers-held` is what
+      > catches that. Nothing about the merge does.
+      >
+      > Note the division of labour, because the two checks sound alike
+      > and are not: `check-d1-name-consistency` refuses a half-applied
+      > barrier in the TREE (some writers stripped, some not);
+      > `--writers-held` catches a half-applied barrier in PRODUCTION (all
+      > stripped in the tree, not all deployed). Neither substitutes for
+      > the other, and this merge is why the second one exists.
+      >
       > **A direct `wrangler deploy` needs a credential the session token
       > does not have, and it fails after the decision to begin.** All
       > three writers bind **Secrets Store** secrets (`apps/indexer` 15,
@@ -1278,6 +1301,30 @@ the one that authorises restoring normal operation:
    `MISMATCH` on `3cffebf5…` (archive) at 100%, which is the correct
    pre-cutover answer and is what a probe that works looks like when the
    thing it checks has not happened yet.
+
+   **[run] 2026-09-21 10:52Z — the ROLLBACK direction, green for the
+   first time.** `--expect vaipakam-archive` against the same live state
+   returns `OK` for all four, with the loud header naming it as the
+   rollback direction. Both verdicts are the same reading of the same
+   four Workers, so the pair confirms the probe distinguishes the two
+   databases rather than merely reporting whatever it was asked for:
+
+   ```
+   expecting vaipakam-archive (3cffebf5…) — NOT the successor (vaipakam-warm).
+   This is the rollback direction; say so in the run log
+
+     vaipakam-indexer             964d9628 @ 100%  DB=3cffebf5… OK
+     vaipakam-keeper              cf230d1e @ 100%  DB=3cffebf5… OK
+     vaipakam-agent               54293476 @ 100%  DB=3cffebf5… OK
+     vaipakam-offchain-data-warm  31cfc0b2 @ 100%  DB_ARCHIVE=3cffebf5… OK
+   ```
+
+   That branch had never been run green before — it is the one the
+   rollback depends on and the one whose expectation was being resolved
+   from an account name lookup until #2267 r23. It is also the first run
+   since the Worker roster moved into `lib/d1-workers.mjs`, so it
+   exercises that rewiring against the live control plane rather than
+   against the repository alone.
 
    **And the behaviour agreed, which is how the false pass was caught.**
    `indexer_cursor` was sampled on BOTH databases three minutes apart:
