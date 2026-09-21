@@ -236,7 +236,8 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         q.deliveredCap = cap;
         q.bucket = bucket;
         q.ovIds = new bytes32[](0);
-        q.ovDrawn = new uint256[](0);
+        q.ovFresh = new uint256[](0);
+        q.ovRecycled = new uint256[](0);
         LibRewardCustody.AllocResult memory r = _epoch().getTransportAllocationForDay(q);
         return (r.transportFresh, r.transportRecycled, r.capHit);
     }
@@ -636,6 +637,72 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _epochOf(NEED, _one(1), 1, keccak256("one-day-worth"));
         assertEq(_preview(), NEED, "one epoch, one side - not both");
         assertEq(_claim(), NEED, "and the claim agrees");
+    }
+
+    /// @dev The residual leg is chosen on the deficits NET of the mandatory
+    ///      draws (Codex #2276 r4 P1), on Codex's own figures: day A needs
+    ///      10F/5R, day B 1F/5R (domain 11F/10R), live fresh 5, bucket 5, an
+    ///      11-token epoch on day A. Mandatory: 5F. Net deficits 1F vs 5R, so
+    ///      the rest goes recycled first: 6F/5R, and both days settle.
+    function test_TheResidualLeg_IsChosenNetOfTheMandatoryDraws() public {
+        _epochOf(11e18, _one(1), 1, keccak256("eleven"));
+        (uint256 tf, uint256 tr, ) = _alloc(1, 10e18, 5e18, 11e18, 10e18, type(uint256).max, 5e18, 5e18);
+        assertEq(tf, 6e18, "fresh: the mandatory 5 and one more");
+        assertEq(tr, 5e18, "recycled: the whole leg, the greater net deficit");
+    }
+
+    function _attest(uint256 remitId, uint256 fresh, uint256 recycled) internal {
+        RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, fresh, recycled);
+    }
+
+    /// @dev An ATTESTED packet's epoch pays each leg only within that
+    ///      component's remaining cap (Codex #2276 r4 P1): 4F/6R of 10, a day
+    ///      asking 6F gets 4F from the epoch, and asking 6F/3R gets 4F/3R.
+    function test_AnAttestedEpoch_PaysEachLegWithinItsRoom() public {
+        _epochOf(10e18, _one(1), 7, keccak256("attested"));
+        _attest(7, 4e18, 6e18);
+        (uint256 tf, uint256 tr, ) = _alloc(1, 6e18, 0, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 4e18, "fresh capped at the attested fresh");
+        assertEq(tr, 0);
+        (tf, tr, ) = _alloc(1, 6e18, 3e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 4e18);
+        assertEq(tr, 3e18, "recycled within its own room");
+    }
+
+    /// @dev A split attested AFTER a draw re-types the legs already drawn so
+    ///      the caps hold (Codex #2276 r4 P1): a fresh-only day drew 0.4 fresh
+    ///      from an unattested epoch; the attestation says 0.1F/9.9R; the legs
+    ///      become 0.1F/0.3R, the epoch's total unchanged.
+    function test_ALateAttestation_RetypesTheLegsAlreadyDrawn() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _one(1), 9, keccak256("late"));
+        assertEq(_claim(), NEED);
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, NEED, "drawn fresh, nothing known to bound it");
+        assertEq(lr, 0);
+        _attest(9, 0.1e18, 9.9e18);
+        (lf, lr) = _legs(h);
+        assertEq(lf, 0.1e18, "the fresh leg now fits the attested fresh");
+        assertEq(lr, 0.3e18, "the excess re-typed recycled");
+        assertEq(_balance(h) + lf + lr, 10e18, "the epoch's identity holds");
+    }
+
+    /// @dev A cap-hit deferral's prune is progress the claim keeps even when
+    ///      it pays nothing (Codex #2276 r4 P2): 64 leading epochs exhausted
+    ///      (parked) and a funded 65th beyond the window. The first claim pays
+    ///      nothing, does not revert, and moves the cursor; the second pays.
+    function test_APrune_SurvivesAnEmptyClaim() public {
+        _scene(NEED);
+        for (uint256 i; i < 64; ++i) {
+            bytes32 h = _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("dust", i)));
+            _mut().parkTransportBatchRaw(h);
+        }
+        _epochOf(NEED, _one(1), 300, keccak256("funded"));
+        assertEq(_cursor(1), 0, "fixture: the window starts at the husks");
+        assertEq(_claim(), 0, "deferred on the window, not reverted");
+        assertEq(_cursor(1), 64, "the prune persisted");
+        assertEq(_claim(), NEED, "the next attempt sees the funded epoch");
     }
 
     /// @dev A draw records its exit on the PACKET too, so the packet's own

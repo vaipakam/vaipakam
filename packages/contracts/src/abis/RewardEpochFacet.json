@@ -56,7 +56,13 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "pruned",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -160,7 +166,12 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "ovDrawn",
+            "name": "ovFresh",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "ovRecycled",
             "type": "uint256[]",
             "internalType": "uint256[]"
           }
@@ -194,7 +205,12 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "planTakes",
+            "name": "planFresh",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "planRecycled",
             "type": "uint256[]",
             "internalType": "uint256[]"
           }

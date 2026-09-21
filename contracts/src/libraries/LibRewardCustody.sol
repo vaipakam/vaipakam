@@ -1031,6 +1031,10 @@ library LibRewardCustody {
     /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
     ///         moved past exhausted epochs at the front of its index.
     event TransportDayCursorAdvanced(uint256 indexed dayId, uint256 cursor);
+    /// @dev A split attested after draws re-typed the legs already drawn so the
+    ///      attested component caps hold (Codex #2276 r4): the epoch's total is
+    ///      unchanged, one leg fell and the other rose by the same amount.
+    event TransportLegsRetyped(bytes32 indexed batchId, uint256 freshToRecycled, uint256 recycledToFresh);
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
     ///         split of a d2 remittance was attested for the packet that
     ///         delivered it, both caps scaled to what actually landed.
@@ -1875,21 +1879,33 @@ library LibRewardCustody {
     ///         window held.
     struct TransportDrawPlan {
         bytes32[] ids;
-        uint256[] takes;
-        /// @dev What the plan draws in total: `min(asked, available)`.
-        uint256 covered;
+        /// @dev Each drawable epoch's effective balance (net of the overlay)
+        ///      and the ROOM each of its packet's two attested component caps
+        ///      leaves it — the balance itself where the packet is unattested
+        ///      (Codex #2276 r4 P1: a cap covers classification PLUS the
+        ///      transport leg, so a known cap bounds a draw's leg).
+        uint256[] bals;
+        uint256[] freshRoom;
+        uint256[] recycledRoom;
         /// @dev The day's cursor-visible coverage: the summed effective balances
         ///      of every drawable epoch in the window.
         uint256 available;
         /// @dev The window ended before the index did: unseen epochs may hold
-        ///      more, and `available` is not the day's whole coverage.
+        ///      coverage this plan could not see.
         bool capHit;
     }
 
-    /// @notice What an allocation is asked for, and what it answers.
-    /// @dev    Structs rather than scalars because the day primitive that asks
-    ///         sits at the viaIR stack ceiling in four facets: one memory
-    ///         pointer at its call site where eleven arguments would not fit.
+    /// @dev The ONE split of a plan into per-epoch legs: fresh first within
+    ///      each epoch's fresh room, then recycled within its recycled room,
+    ///      in the plan's order. The allocation's last step, the draw and the
+    ///      dry run's overlay all use it, so what was priced is what is drawn.
+    struct TransportTakes {
+        uint256[] fresh;
+        uint256[] recycled;
+        uint256 coveredFresh;
+        uint256 coveredRecycled;
+    }
+
     struct AllocRequest {
         uint256 dayId;
         uint256 needFresh;
@@ -1900,19 +1916,23 @@ library LibRewardCustody {
         uint256 deliveredCap;
         uint256 bucket;
         /// @dev The preview's simulation of draws already planned on earlier
-        ///      days of the same dry run; empty on the settle path.
+        ///      days of the same dry run, by leg (a leg counts against its
+        ///      cap's room); empty on the settle path.
         bytes32[] ovIds;
-        uint256[] ovDrawn;
+        uint256[] ovFresh;
+        uint256[] ovRecycled;
     }
 
     struct AllocResult {
         uint256 transportFresh;
         uint256 transportRecycled;
         bool capHit;
-        /// @dev The plan the allocation would draw — what the settle wrapper
-        ///      draws, and what a dry run folds into its overlay.
+        /// @dev The per-epoch legs the allocation would draw — what a dry run
+        ///      folds into its overlay; the settle wrapper re-derives the same
+        ///      legs from the same plan and split in the same transaction.
         bytes32[] planIds;
-        uint256[] planTakes;
+        uint256[] planFresh;
+        uint256[] planRecycled;
     }
 
     /// @notice The ONE walk of a day's index that every read and write of its
@@ -1938,17 +1958,28 @@ library LibRewardCustody {
     ///         expose its whole balance to its first page's days before its
     ///         later days were indexed, and those days could find it drained.
     ///
-    ///         `ovIds` / `ovDrawn` is the preview's overlay (Codex #2276 r1
-    ///         P2): each batch's balance is read net of what the overlay
-    ///         records for it, so a batch listing two days is not counted for
-    ///         both in one dry run. Empty on the settle path, where the
-    ///         storage the draw just wrote is the truth.
+    ///         ROOMS (Codex #2276 r4 P1): an ATTESTED packet's two component
+    ///         caps each cover classification plus the transport leg of that
+    ///         component, so the plan carries, per epoch, how much of each leg
+    ///         its packet's cap still leaves — the cap net of what is
+    ///         classified and what its own draws already took — and
+    ///         {splitTransportTakes} never assigns a leg past it. An
+    ///         unattested packet's rooms are its balance: nothing is known
+    ///         to bound them, and a split attested later re-types what was
+    ///         drawn ({attestPacketSplit}).
+    ///
+    ///         `ovIds` / `ovFresh` / `ovRecycled` is the preview's overlay
+    ///         (Codex #2276 r1 P2, typed since r4): each batch's balance and
+    ///         rooms are read net of what the overlay records for it, so a
+    ///         batch listing two days is not counted for both in one dry run.
+    ///         Empty on the settle path, where the storage the draw just
+    ///         wrote is the truth.
     function planTransportDraw(
         LibVaipakam.Storage storage s,
         uint256 dayId,
-        uint256 asked,
         bytes32[] memory ovIds,
-        uint256[] memory ovDrawn
+        uint256[] memory ovFresh,
+        uint256[] memory ovRecycled
     ) internal view returns (TransportDrawPlan memory plan) {
         bytes32[] storage index = s.transportBatchesByDay[dayId];
         uint256 len = index.length;
@@ -1959,6 +1990,8 @@ library LibRewardCustody {
         uint256 n = end > i ? end - i : 0;
         bytes32[] memory ids = new bytes32[](n);
         uint256[] memory bals = new uint256[](n);
+        uint256[] memory fRoom = new uint256[](n);
+        uint256[] memory rRoom = new uint256[](n);
         uint256[] memory keys = new uint256[](n);
         uint256 live;
         for (; i < end; ) {
@@ -1966,20 +1999,27 @@ library LibRewardCustody {
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
-                bal -= _overlayOf(ovIds, ovDrawn, id, bal);
+                (uint256 ovF, uint256 ovR) = _overlayOf(ovIds, ovFresh, ovRecycled, id);
+                bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal != 0) {
+                    (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal, ovF, ovR);
+                    LibVaipakam.IngressPacket storage p = s.ingressPackets[id];
                     // dayCount in the high bits, arrival below: one ascending key.
-                    uint256 key = (uint256(b.dayCount) << 64) | uint256(s.ingressPackets[id].arrivedAt);
+                    uint256 key = (uint256(b.dayCount) << 64) | uint256(p.arrivedAt);
                     // Stable insertion keeps index position as the final tie-break.
                     uint256 k = live;
                     while (k != 0 && keys[k - 1] > key) {
                         ids[k] = ids[k - 1];
                         bals[k] = bals[k - 1];
+                        fRoom[k] = fRoom[k - 1];
+                        rRoom[k] = rRoom[k - 1];
                         keys[k] = keys[k - 1];
                         unchecked { --k; }
                     }
                     ids[k] = id;
                     bals[k] = bal;
+                    fRoom[k] = fr;
+                    rRoom[k] = rr;
                     keys[k] = key;
                     plan.available += bal;
                     unchecked { ++live; }
@@ -1987,45 +2027,86 @@ library LibRewardCustody {
             }
             unchecked { ++i; }
         }
-        bytes32[] memory pIds = new bytes32[](live);
-        uint256[] memory pTakes = new uint256[](live);
-        uint256 left = asked;
-        uint256 m;
-        for (uint256 k; k < live && left != 0; ) {
-            uint256 take = bals[k] < left ? bals[k] : left;
-            pIds[m] = ids[k];
-            pTakes[m] = take;
-            left -= take;
-            unchecked {
-                ++m;
-                ++k;
-            }
-        }
         assembly ("memory-safe") {
-            mstore(pIds, m)
-            mstore(pTakes, m)
+            mstore(ids, live)
+            mstore(bals, live)
+            mstore(fRoom, live)
+            mstore(rRoom, live)
         }
-        plan.ids = pIds;
-        plan.takes = pTakes;
-        plan.covered = asked - left;
+        plan.ids = ids;
+        plan.bals = bals;
+        plan.freshRoom = fRoom;
+        plan.recycledRoom = rRoom;
     }
 
-    /// @dev What the overlay records as already drawn from `id`, capped at
-    ///      `bal` so a stale overlay can never underflow a balance.
+    /// @dev An epoch's two leg rooms: the balance where its packet is
+    ///      unattested; where attested, each component cap net of the packet's
+    ///      classification of that component, the epoch's own draws of it,
+    ///      and the overlay's planned draws of it — never above the balance.
+    function _capRooms(
+        LibVaipakam.Storage storage s,
+        bytes32 id,
+        LibVaipakam.TransportBatch storage b,
+        uint256 bal,
+        uint256 ovF,
+        uint256 ovR
+    ) private view returns (uint256 fr, uint256 rr) {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[id];
+        if (!p.attested) return (bal, bal);
+        uint256 usedF = p.classifiedFresh + b.consumedFresh + ovF;
+        uint256 usedR = p.classifiedRecycled + b.consumedRecycled + ovR;
+        fr = p.freshAttested > usedF ? p.freshAttested - usedF : 0;
+        rr = p.recycledAttested > usedR ? p.recycledAttested - usedR : 0;
+        if (fr > bal) fr = bal;
+        if (rr > bal) rr = bal;
+    }
+
+    /// @notice Split a plan into per-epoch legs for the two asks: fresh first
+    ///         within each epoch's fresh room, then recycled within its
+    ///         recycled room, in the plan's order.
+    /// @dev    Pure over the plan, and IDEMPOTENT on its own result: splitting
+    ///         again for exactly the legs it covered reproduces the same
+    ///         per-epoch legs, which is what lets the settle wrapper re-derive
+    ///         the allocation's legs from the plan and the two totals alone.
+    ///         Where a tight attested room keeps a leg short, the residual
+    ///         falls to the shared sources or the day defers — never past a
+    ///         cap.
+    function splitTransportTakes(
+        TransportDrawPlan memory plan,
+        uint256 askFresh,
+        uint256 askRecycled
+    ) internal pure returns (TransportTakes memory t) {
+        uint256 n = plan.ids.length;
+        t.fresh = new uint256[](n);
+        t.recycled = new uint256[](n);
+        for (uint256 k; k < n && (askFresh != 0 || askRecycled != 0); ) {
+            uint256 bal = plan.bals[k];
+            uint256 bf = askFresh < bal ? askFresh : bal;
+            if (bf > plan.freshRoom[k]) bf = plan.freshRoom[k];
+            uint256 left = bal - bf;
+            uint256 br = askRecycled < left ? askRecycled : left;
+            if (br > plan.recycledRoom[k]) br = plan.recycledRoom[k];
+            t.fresh[k] = bf;
+            t.recycled[k] = br;
+            askFresh -= bf;
+            askRecycled -= br;
+            t.coveredFresh += bf;
+            t.coveredRecycled += br;
+            unchecked { ++k; }
+        }
+    }
+
+    /// @dev What the overlay records as already drawn from `id`, by leg.
     function _overlayOf(
         bytes32[] memory ovIds,
-        uint256[] memory ovDrawn,
-        bytes32 id,
-        uint256 bal
-    ) private pure returns (uint256 drawn) {
+        uint256[] memory ovFresh,
+        uint256[] memory ovRecycled,
+        bytes32 id
+    ) private pure returns (uint256 f, uint256 r) {
         for (uint256 j; j < ovIds.length; ) {
-            if (ovIds[j] == id) {
-                drawn = ovDrawn[j];
-                break;
-            }
+            if (ovIds[j] == id) return (ovFresh[j], ovRecycled[j]);
             unchecked { ++j; }
         }
-        if (drawn > bal) drawn = bal;
     }
 
     /// @notice What `dayId`'s epochs can fund right now, within one scan
@@ -2037,7 +2118,8 @@ library LibRewardCustody {
         uint256 dayId
     ) internal view returns (uint256 available, bool capHit) {
         if (s.transportBatchesByDay[dayId].length == 0) return (0, false);
-        TransportDrawPlan memory plan = planTransportDraw(s, dayId, 0, new bytes32[](0), new uint256[](0));
+        TransportDrawPlan memory plan =
+            planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
         return (plan.available, plan.capHit);
     }
 
@@ -2066,10 +2148,8 @@ library LibRewardCustody {
         AllocRequest memory q
     ) internal view returns (AllocResult memory r) {
         uint256 needFresh = q.needFresh > q.poolFresh ? q.poolFresh : q.needFresh;
-        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, needFresh + q.needRecycled, q.ovIds, q.ovDrawn);
+        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, q.ovIds, q.ovFresh, q.ovRecycled);
         r.capHit = plan.capHit;
-        r.planIds = plan.ids;
-        r.planTakes = plan.takes;
         uint256 avail = plan.available;
         if (avail == 0) return r;
         uint256 liveF = q.poolFresh < q.deliveredCap ? q.poolFresh : q.deliveredCap;
@@ -2084,6 +2164,13 @@ library LibRewardCustody {
             uint256 domainRecycled = q.domainRecycled == type(uint256).max ? q.needRecycled : q.domainRecycled;
             uint256 dF = domainFresh > liveF ? domainFresh - liveF : 0;
             uint256 dR = domainRecycled > q.bucket ? domainRecycled - q.bucket : 0;
+            // The deficits NET of the mandatory draws just made (Codex #2276
+            // r4 P1): those draws already relieved each leg's deficit by
+            // exactly what they took, and choosing the residual leg on the
+            // gross figures parked coverage on a leg the other could not do
+            // without.
+            dF = dF > tf ? dF - tf : 0;
+            dR = dR > tr ? dR - tr : 0;
             uint256 moreF = needFresh - tf;
             uint256 moreR = q.needRecycled - tr;
             if (dR > dF) {
@@ -2098,8 +2185,16 @@ library LibRewardCustody {
                 tr += moreR < avail ? moreR : avail;
             }
         }
-        r.transportFresh = tf;
-        r.transportRecycled = tr;
+        // The rule's totals, then the ONE split that realizes them against
+        // each epoch's rooms (Codex #2276 r4 P1): where an attested cap keeps
+        // a leg short, the covered legs are what the split could assign, and
+        // the settle wrapper re-derives exactly these legs from the same plan.
+        TransportTakes memory t = splitTransportTakes(plan, tf, tr);
+        r.transportFresh = t.coveredFresh;
+        r.transportRecycled = t.coveredRecycled;
+        r.planIds = plan.ids;
+        r.planFresh = t.fresh;
+        r.planRecycled = t.recycled;
     }
 
     /// @notice Draw `fresh + recycled` for an obligation on `dayId` out of the
@@ -2136,31 +2231,33 @@ library LibRewardCustody {
         uint256 dayId,
         uint256 fresh,
         uint256 recycled
-    ) internal {
-        uint256 left = fresh + recycled;
-        if (left != 0) {
-            TransportDrawPlan memory plan = planTransportDraw(s, dayId, left, new bytes32[](0), new uint256[](0));
-            if (plan.covered != left) {
-                revert IVaipakamErrors.TransportDrawExceedsCoverage(dayId, left, plan.covered);
+    ) internal returns (bool pruned) {
+        if (fresh + recycled != 0) {
+            TransportDrawPlan memory plan =
+                planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
+            TransportTakes memory t = splitTransportTakes(plan, fresh, recycled);
+            if (t.coveredFresh != fresh || t.coveredRecycled != recycled) {
+                revert IVaipakamErrors.TransportDrawExceedsCoverage(
+                    dayId, fresh + recycled, t.coveredFresh + t.coveredRecycled
+                );
             }
-            uint256 freshLeft = fresh;
             for (uint256 k; k < plan.ids.length; ) {
-                bytes32 batchId = plan.ids[k];
-                uint256 take = plan.takes[k];
-                LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-                uint256 bf = take < freshLeft ? take : freshLeft;
-                uint256 br = take - bf;
-                b.balance -= take;
-                b.consumedFresh += bf;
-                b.consumedRecycled += br;
-                _spendUntypedForDraw(s, batchId, take);
-                freshLeft -= bf;
-                emit TransportDrawn(batchId, dayId, bf, br);
+                uint256 bf = t.fresh[k];
+                uint256 br = t.recycled[k];
+                if (bf + br != 0) {
+                    bytes32 batchId = plan.ids[k];
+                    LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+                    b.balance -= bf + br;
+                    b.consumedFresh += bf;
+                    b.consumedRecycled += br;
+                    _spendUntypedForDraw(s, batchId, bf + br);
+                    emit TransportDrawn(batchId, dayId, bf, br);
+                }
                 unchecked { ++k; }
             }
         }
         bytes32[] storage index = s.transportBatchesByDay[dayId];
-        _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
+        pruned = _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
     }
 
     /// @dev The packet half of a draw: the batch is keyed by its packet's
@@ -2196,9 +2293,9 @@ library LibRewardCustody {
     ///         may prune any day at any time; both are idempotent. An epoch
     ///         whose membership is not yet whole is not exhausted and stops
     ///         the prune: it becomes drawable when its last page is indexed.
-    function pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) internal {
+    function pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) internal returns (bool moved) {
         bytes32[] storage index = s.transportBatchesByDay[dayId];
-        _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
+        return _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
     }
 
     function _pruneTransportDayCursor(
@@ -2207,7 +2304,7 @@ library LibRewardCustody {
         bytes32[] storage index,
         uint256 len,
         uint256 cursor
-    ) private {
+    ) private returns (bool moved) {
         uint256 i = cursor;
         uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
         if (end > len) end = len;
@@ -2217,6 +2314,7 @@ library LibRewardCustody {
         if (i != cursor) {
             s.transportDayCursor[dayId] = i;
             emit TransportDayCursorAdvanced(dayId, i);
+            moved = true;
         }
     }
 
@@ -2234,7 +2332,7 @@ library LibRewardCustody {
         if (s.transportBatchesByDay[q.dayId].length == 0) return r;
         bytes memory ret = _selfStatic(
             abi.encodeWithSignature(
-                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bytes32[],uint256[]))",
+                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bytes32[],uint256[],uint256[]))",
                 q
             )
         );
@@ -2324,9 +2422,19 @@ library LibRewardCustody {
     /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
     ///      it is the PRUNE (a cap-hit deferral); `prune` is what asks for
     ///      that, so an ordinary day with nothing to draw makes no call.
-    function callDrawTransportForDay(uint256 dayId, uint256 fresh, uint256 recycled, bool prune) internal {
-        if (fresh + recycled == 0 && !prune) return;
-        _custody(abi.encodeWithSignature("epochDrawForDay(uint256,uint256,uint256)", dayId, fresh, recycled));
+    ///      Returns whether the day's cursor MOVED — persisted progress the
+    ///      claim must keep even when it paid nothing (Codex #2276 r4 P2).
+    function callDrawTransportForDay(
+        uint256 dayId,
+        uint256 fresh,
+        uint256 recycled,
+        bool prune
+    ) internal returns (bool pruned) {
+        if (fresh + recycled == 0 && !prune) return false;
+        bytes memory ret = _custodyReturning(
+            abi.encodeWithSignature("epochDrawForDay(uint256,uint256,uint256)", dayId, fresh, recycled)
+        );
+        pruned = abi.decode(ret, (bool));
     }
 
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
@@ -2412,6 +2520,30 @@ library LibRewardCustody {
         p.recycledAttested = recycledAttested;
         p.attested = true;
         emit IngressPacketSplitAttested(h, remitter, remitId, freshAttested, recycledAttested);
+        // RECONCILE FIRST (the 3b scope's rule; Codex #2276 r4 P1): a draw
+        // that preceded this attestation typed its legs with nothing known to
+        // bound them. Now that the caps are known, a leg past its cap is
+        // re-typed into the other — the epoch's total and every settled
+        // obligation unchanged — so `classifiedFresh + consumedFresh` never
+        // exceeds `freshAttested` (nor the recycled pair its cap), and the
+        // classification allowance {authenticatedFresh} derives is the cap net
+        // of the packet's REAL fresh use. Classification cannot have run yet
+        // (it needs the attestation), so only the transport legs can exceed,
+        // and at most one of them can (they sum to at most what landed).
+        if (p.batchId != bytes32(0)) {
+            LibVaipakam.TransportBatch storage b = s.transportBatches[p.batchId];
+            if (b.consumedFresh > freshAttested) {
+                uint256 x = b.consumedFresh - freshAttested;
+                b.consumedFresh -= x;
+                b.consumedRecycled += x;
+                emit TransportLegsRetyped(p.batchId, x, 0);
+            } else if (b.consumedRecycled > recycledAttested) {
+                uint256 x = b.consumedRecycled - recycledAttested;
+                b.consumedRecycled -= x;
+                b.consumedFresh += x;
+                emit TransportLegsRetyped(p.batchId, 0, x);
+            }
+        }
     }
 
     /// @notice Record a packet as it LANDED (one record per stamp; a second

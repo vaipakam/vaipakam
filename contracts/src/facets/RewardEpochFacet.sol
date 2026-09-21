@@ -546,9 +546,9 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         1.3–2.8 KB of EIP-170 (design §5d, the 3b-ii-A note). Gated to
     ///         the Diamond itself: a draw with no settlement behind it would
     ///         spend an epoch on nothing.
-    function epochDrawForDay(uint256 dayId, uint256 fresh, uint256 recycled) external {
+    function epochDrawForDay(uint256 dayId, uint256 fresh, uint256 recycled) external returns (bool pruned) {
         _requireDiamondInternal();
-        LibRewardCustody.drawTransportForDay(LibVaipakam.storageSlot(), dayId, fresh, recycled);
+        return LibRewardCustody.drawTransportForDay(LibVaipakam.storageSlot(), dayId, fresh, recycled);
     }
 
     /// @notice Advance `dayId`'s consumption cursor past exhausted epochs at

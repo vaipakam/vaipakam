@@ -1563,7 +1563,10 @@ library LibInteractionRewards {
     ///         reward routed to the claimant; `toTreasury`, the aggregate
     ///         routed to the treasury channel; `transport`, the epoch-paid
     ///         legs of each; and `advancedAnyDay`, true when the
-    ///         ShareOfPool walk advanced at least one day. Codex #1404 P2:
+    ///         ShareOfPool walk advanced at least one day OR moved a deferred
+    ///         day's epoch cursor (3b-ii-A, Codex #2276 r4 P2: that move is
+    ///         persisted progress the facet's empty-claim revert must not
+    ///         roll back). Codex #1404 P2:
     ///         a walk can legitimately advance ZERO-PAY days (a `C == 0`
     ///         dust day, or a ceiling already consumed by an earlier
     ///         entry). That is real, persisted progress, so the facet's
@@ -1675,6 +1678,7 @@ library LibInteractionRewards {
                 domainRecycled: domainRecycled
             }),
             advanced: false,
+            pruned: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS,
             transport: TransportLegs({userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0})
         });
@@ -1690,7 +1694,8 @@ library LibInteractionRewards {
             }
             unchecked { ++sideIdx; }
         }
-        advancedAnyDay = ctx.advanced;
+        // A pruned cursor is persisted progress too (Codex #2276 r4 P2).
+        advancedAnyDay = ctx.advanced || ctx.pruned;
         // 3b-ii-A — hand the drawn legs to the caller.
         tp.userFresh += ctx.transport.userFresh;
         tp.userRecycled += ctx.transport.userRecycled;
@@ -1813,8 +1818,12 @@ library LibInteractionRewards {
             // settles terminally and still advances.
             if (!charge.advanced) {
                 // 3b-ii-A — a cap-hit deferral prunes the day's cursor so the
-                // next attempt finds a fresh window; nothing is drawn.
-                _drawAndFold(d, charge, ctx.transport);
+                // next attempt finds a fresh window; nothing is drawn. A
+                // cursor that moved is progress the claim keeps even when it
+                // pays nothing (Codex #2276 r4 P2): otherwise the facet's
+                // empty-claim revert rolled it back and every retry scanned
+                // the same exhausted window.
+                if (_drawAndFold(d, charge, ctx.transport)) ctx.pruned = true;
                 break;
             }
 
@@ -2764,13 +2773,16 @@ library LibInteractionRewards {
         uint256 n = charge.planIds.length;
         if (n == 0) return;
         bytes32[] memory ids = dry.ovIds;
-        uint256[] memory drawn = dry.ovDrawn;
+        uint256[] memory ovF = dry.ovFresh;
+        uint256[] memory ovR = dry.ovRecycled;
         uint256 fresh;
         for (uint256 k; k < n; ) {
+            if (charge.planFresh[k] + charge.planRecycled[k] == 0) { unchecked { ++k; } continue; }
             bool found;
             for (uint256 j; j < ids.length; ) {
                 if (ids[j] == charge.planIds[k]) {
-                    drawn[j] += charge.planTakes[k];
+                    ovF[j] += charge.planFresh[k];
+                    ovR[j] += charge.planRecycled[k];
                     found = true;
                     break;
                 }
@@ -2783,14 +2795,17 @@ library LibInteractionRewards {
         }
         if (fresh == 0) return;
         bytes32[] memory nIds = new bytes32[](ids.length + fresh);
-        uint256[] memory nDrawn = new uint256[](ids.length + fresh);
+        uint256[] memory nF = new uint256[](ids.length + fresh);
+        uint256[] memory nR = new uint256[](ids.length + fresh);
         for (uint256 j; j < ids.length; ) {
             nIds[j] = ids[j];
-            nDrawn[j] = drawn[j];
+            nF[j] = ovF[j];
+            nR[j] = ovR[j];
             unchecked { ++j; }
         }
         uint256 w = ids.length;
         for (uint256 k; k < n; ) {
+            if (charge.planFresh[k] + charge.planRecycled[k] == 0) { unchecked { ++k; } continue; }
             bool found;
             for (uint256 j; j < ids.length; ) {
                 if (ids[j] == charge.planIds[k]) {
@@ -2801,13 +2816,15 @@ library LibInteractionRewards {
             }
             if (!found) {
                 nIds[w] = charge.planIds[k];
-                nDrawn[w] = charge.planTakes[k];
+                nF[w] = charge.planFresh[k];
+                nR[w] = charge.planRecycled[k];
                 unchecked { ++w; }
             }
             unchecked { ++k; }
         }
         dry.ovIds = nIds;
-        dry.ovDrawn = nDrawn;
+        dry.ovFresh = nF;
+        dry.ovRecycled = nR;
     }
 
     /// @dev 3b-ii-A — a settled (or dry-run) day leaves the allocation domain:
@@ -2932,7 +2949,8 @@ library LibInteractionRewards {
         dry.loanSide = new LoanSideCarry[](work.length);
         // The overlay is the RUN's, not the side's (Codex #2276 r3 P1).
         dry.ovIds = acc.ovIds;
-        dry.ovDrawn = acc.ovDrawn;
+        dry.ovFresh = acc.ovFresh;
+        dry.ovRecycled = acc.ovRecycled;
 
         while (daysSpent < daysLeft) {
             uint256 d = _dryLowestDay(s, work, cur);
@@ -3005,7 +3023,8 @@ library LibInteractionRewards {
             unchecked { ++daysSpent; }
         }
         acc.ovIds = dry.ovIds;
-        acc.ovDrawn = dry.ovDrawn;
+        acc.ovFresh = dry.ovFresh;
+        acc.ovRecycled = dry.ovRecycled;
     }
 
     /// @dev Lowest simulated pending day; `max` when the side is done.
@@ -3396,14 +3415,14 @@ library LibInteractionRewards {
     ///      expiring entry, so its legs are the treasury's; the user legs are
     ///      folded too so a set that ever carried them could not be absorbed
     ///      as treasury value.
-    function _drawAndFold(uint256 d, DayCharge memory charge, TransportLegs memory tp) private {
+    function _drawAndFold(uint256 d, DayCharge memory charge, TransportLegs memory tp) private returns (bool pruned) {
         if (!charge.advanced) {
             // A cap-hit deferral prunes the day's cursor (a draw of nothing);
-            // any other deferral touches nothing.
-            LibRewardCustody.callDrawTransportForDay(d, 0, 0, charge.transportCapHit);
-            return;
+            // any other deferral touches nothing. Whether the cursor MOVED is
+            // reported up: it is persisted progress (Codex #2276 r4 P2).
+            return LibRewardCustody.callDrawTransportForDay(d, 0, 0, charge.transportCapHit);
         }
-        LibRewardCustody.callDrawTransportForDay(
+        pruned = LibRewardCustody.callDrawTransportForDay(
             d,
             charge.transportUser.armedFresh + charge.transportTreasury.armedFresh,
             charge.transportUser.recycled + charge.transportTreasury.recycled,
@@ -5998,10 +6017,11 @@ library LibInteractionRewards {
         ///      pre-pass summed and the domain pass accumulates.
         uint256 needFresh;
         uint256 needRecycled;
-        /// @dev The draw plan the allocation returned: what the settle wrapper
-        ///      draws, and what a dry run folds into its overlay.
+        /// @dev The per-epoch legs the allocation returned — what a dry run
+        ///      folds into its overlay, by leg (Codex #2276 r4).
         bytes32[] planIds;
-        uint256[] planTakes;
+        uint256[] planFresh;
+        uint256[] planRecycled;
         /// @dev The day was DEFERRED because the coverage read hit its scan
         ///      window with unseen epochs beyond it while a residual would
         ///      have fallen through to era/live or bucket funding — §5c's
@@ -6077,7 +6097,8 @@ library LibInteractionRewards {
         ///      second is priced — as the settle walk, whose draws are in
         ///      storage by then, sees it.
         bytes32[] ovIds;
-        uint256[] ovDrawn;
+        uint256[] ovFresh;
+        uint256[] ovRecycled;
     }
 
     /// @dev Per-claim walk state, threaded by reference through both side
@@ -6093,6 +6114,9 @@ library LibInteractionRewards {
     struct WalkCtx {
         PoolBudget pool;
         bool advanced;
+        /// @dev 3b-ii-A — a deferred day's epoch cursor moved: persisted
+        ///      progress, reported as such (Codex #2276 r4 P2).
+        bool pruned;
         uint256 daysLeft;
         /// @dev 3b-ii-A — the transport-paid legs the walk drew, folded per day.
         TransportLegs transport;
@@ -6131,7 +6155,8 @@ library LibInteractionRewards {
         ///      planned on earlier days, so a batch listing two days is not
         ///      counted for both (Codex #2276 r1 P2). Empty when not dry.
         bytes32[] ovIds;
-        uint256[] ovDrawn;
+        uint256[] ovFresh;
+        uint256[] ovRecycled;
         /// @dev #1434 — this settlement RECYCLES to the bucket rather than
         ///      paying the side, so the loan-side cap must not bind it.
         ///
@@ -6805,13 +6830,15 @@ library LibInteractionRewards {
             q.deliveredCap = charge.deliveredCapForDay;
             q.bucket = pool.recycled;
             q.ovIds = dry.ovIds;
-            q.ovDrawn = dry.ovDrawn;
+            q.ovFresh = dry.ovFresh;
+            q.ovRecycled = dry.ovRecycled;
             LibRewardCustody.AllocResult memory ar = LibRewardCustody.callTransportAllocateForDay(s, q);
             transportFresh = ar.transportFresh;
             transportRecycled = ar.transportRecycled;
             transportCapHit = ar.capHit;
             charge.planIds = ar.planIds;
-            charge.planTakes = ar.planTakes;
+            charge.planFresh = ar.planFresh;
+            charge.planRecycled = ar.planRecycled;
             if (charge.deliveredCapForDay != type(uint256).max) {
                 charge.deliveredCapForDay += transportFresh;
             }
@@ -6926,12 +6953,17 @@ library LibInteractionRewards {
         // the settle wrapper prunes the cursor (see
         // {LibRewardCustody.transportCoverageForDay}). The treasury's recycled
         // residual is a commitment release, not a funding pull, and does not
-        // count; nor does a cap trim, which nobody funds.
+        // count; nor does a cap trim, which nobody funds. The FRESH residual is
+        // measured on the day's gross need (cap-trimmed), NOT on the legs the
+        // attribution kept: a delivered bound at zero trims those to nothing
+        // and would hide the very residual the window failed to cover, so the
+        // day deferred as a delivered shortfall and nothing pruned the
+        // exhausted window (Codex #2276 r4 P2's scenario). The recycled test
+        // stays on the kept user leg, which trimming never touches.
         if (
             transportCapHit
                 && (
-                    user_.armedFresh + treas_.armedFresh
-                        > charge.transportUser.armedFresh + charge.transportTreasury.armedFresh
+                    (charge.needFresh > pool.fresh ? pool.fresh : charge.needFresh) > transportFresh
                         || user_.recycled > charge.transportUser.recycled
                 )
         ) {

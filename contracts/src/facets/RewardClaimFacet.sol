@@ -251,6 +251,8 @@ contract RewardClaimFacet is
         // entry). `_persistDay` has already written those cursors, so reverting
         // here would ROLL BACK real progress and the claimant would retry the
         // same zero-pay day forever, never reaching the payable days behind it.
+        // 3b-ii-A (Codex #2276 r4 P2) — a deferred day's epoch-cursor prune
+        // is the same kind of progress, and `advancedAnyDay` carries it.
         if (
             pending == 0 &&
             treasuryDelta == 0 &&

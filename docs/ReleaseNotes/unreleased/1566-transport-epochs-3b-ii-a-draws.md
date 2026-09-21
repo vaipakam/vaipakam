@@ -68,7 +68,13 @@ Every draw is recorded on the epoch as a fresh leg and a recycled leg, so
 the ledger's conservation identity — what was admitted equals what is
 held, plus what was parked, plus what left by classification, plus what
 the legs paid — holds after every draw, and a delivery's attested fresh
-cap is netted by the fresh leg its epoch has already paid.
+cap is netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
+within that component's remaining cap; where the split arrives after
+draws, the legs already drawn are re-typed so the caps hold, the epoch's
+total unchanged. A deferred settlement's cursor move is progress the
+claim keeps even when it paid nothing, so a retry never scans the same
+exhausted window twice. The residual leg of an epoch's coverage is chosen
+on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's epochs are read through a **bounded window**, and within it they
 are spent in an order the ledger fixes rather than the order anyone
