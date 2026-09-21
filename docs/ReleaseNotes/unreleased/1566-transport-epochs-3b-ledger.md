@@ -252,7 +252,16 @@ losing anything.
 
 The stop applies to the deployments that actually receive deliveries. A
 single-chain deployment, and one that has been detached from the mesh, receive
-none and register no receiving contract — neither is asked for one.
+none, so neither is asked for a receiving contract.
+
+Not being asked for one is not the same as not having one, and detaching does
+not by itself clear anything. Detaching changes the deployment's role; whatever
+receiving contract was registered stays registered until an administrator
+clears it in a separate, deliberate act. The refresh keeps upgrading any
+registered receiver it finds, whatever the role — so a detached deployment that
+kept its old one is still carried forward, and an operator reading the
+remaining configuration should not take the detachment as evidence that the
+pointer is gone.
 
 The refresh additionally **retires the old delivery entry points before the
 first cut**, not after the last one. Retiring them is what makes an

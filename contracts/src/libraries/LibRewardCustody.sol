@@ -1246,8 +1246,13 @@ library LibRewardCustody {
     ///         not a bound — the remitter supplies any nonempty list.
     ///
     ///         32 is a month of daily rows, which covers the lane's real
-    ///         shapes, and sizes both ends comfortably: admission pushes at
-    ///         most 32 index entries and retirement clears at most 32.
+    ///         shapes, and it sizes the operations that WALK a batch's member
+    ///         days: retirement clears at most 32, and `TRANSPORT_INDEX_PAGE`
+    ///         below mirrors this constant so one materialization call indexes
+    ///         at most 32. ADMISSION is not one of those operations and is not
+    ///         what this cap sizes — it writes the compact batch row and no
+    ///         per-day membership, for any batch, which is why every batch is
+    ///         indexed afterwards.
     ///
     ///         It is enforced at DISPATCH and NOT at ingress. A transport
     ///         payload is immutable once sent, so a receive-side refusal
