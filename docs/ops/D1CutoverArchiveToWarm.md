@@ -140,7 +140,12 @@ because step 3 below is the part of it that had to be re-learned.
    this revision exists to correct. Steps 1–5 make the window small.
    **Step 6 is what closes it.**
 
-   1. Deploy the maintenance build (no `d1_databases`) to all three Workers.
+   1. Deploy the maintenance build (no `d1_databases`) to all three
+      Workers, then **confirm it took** —
+      `check-live-d1-bindings.mjs --writers-held`, which asserts that every
+      serving version of all three carries no D1 binding at all. A deploy
+      that silently did not land leaves the barrier open while every step
+      below behaves as though it were closed.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
       **If anything changed, do not proceed — wait and repeat.** Two
       consecutive identical digests, ten minutes apart, allow the next step.
@@ -997,10 +1002,25 @@ the one that authorises restoring normal operation:
    no flags.** A serving version with no D1 binding at all is a FAILURE
    there — that is a Worker still on the maintenance build, which is what a
    failed or unfinished deploy looks like, and passing it would authorise
-   traffic to a Worker that cannot reach any database. Inside the barrier,
-   where that state is deliberate, pass `--allow-maintenance` and say so in
-   the run log. The allowance is explicit in both directions, because the
-   check is the gate that authorises restoring normal operation. It is the only check that
+   traffic to a Worker that cannot reach any database.
+
+   > **Inside the barrier, the question is different and so is the
+   > command: `--writers-held`.** It replaces a `--allow-maintenance` flag
+   > that could not answer it (#2267 r13). That flag merely *permitted* a
+   > version with no binding, so it would have passed a writer still
+   > happily serving the old database — proving nothing about the writers
+   > being stopped — and it still checked the hand-deployed backup Worker,
+   > which inside the barrier is *deliberately* still on archive, so the
+   > one command offered for confirming the barrier reported a mismatch
+   > even when the barrier was perfect.
+   >
+   > `--writers-held` asks the positive question of the three Workers the
+   > barrier is about: **does each serving version carry no D1 binding at
+   > all.** The backup Worker is out of scope there by construction, and
+   > the command says so rather than quietly skipping it.
+
+   The post-merge form is the gate that authorises restoring normal
+   operation. It is the only check that
    distinguishes "build still running" and "build failed" from "switched",
    since it reflects what is actually deployed — and the only one available at
    all if the writers have been stopped, because the write probes below go

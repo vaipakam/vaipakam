@@ -54,12 +54,24 @@ const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
  * each. The binding NAME differs by Worker — the backup Worker reads it
  * as `DB_ARCHIVE` — so the check keys on the database id, not the name.
  */
-const CONFIGS = [
+/**
+ * The WRITERS — the three Workers the barrier has to stop, and the three
+ * a merge redeploys automatically (#2237).
+ */
+const WRITERS = [
   'apps/indexer/wrangler.jsonc',
   'apps/keeper/wrangler.jsonc',
   'apps/agent/wrangler.jsonc',
-  'ops/offchain-data-warm/wrangler.jsonc',
 ];
+
+/**
+ * Deployed BY HAND, so a merge does not move it and the barrier does not
+ * stop it. It is listed separately because the two facts change what each
+ * check may assume, not because it matters less.
+ */
+const MANUAL = ['ops/offchain-data-warm/wrangler.jsonc'];
+
+const CONFIGS = [...WRITERS, ...MANUAL];
 
 /**
  * The binding NAME a Worker's code reads, taken from its own config. It
@@ -164,17 +176,79 @@ async function d1Of(script, versionId) {
   return (v?.resources?.bindings ?? []).filter((b) => b.type === 'd1');
 }
 
+/**
+ * Inside the barrier: every serving version of every WRITER must carry no
+ * D1 binding whatsoever. That is the property the maintenance build is
+ * for — capability removed, not routes closed — and this asserts it
+ * rather than tolerating it.
+ */
+async function assertWritersHeld() {
+  console.log(
+    `expecting every serving version of the three writers to carry NO D1 ` +
+      `binding.\nThe hand-deployed backup Worker is NOT checked here: the ` +
+      `barrier does not\nstop it, and it stays on the database being left ` +
+      `behind until step 5.\n`,
+  );
+  const problems = [];
+  for (const file of WRITERS) {
+    const script = cfgOf(file).name;
+    const serving = await servingVersions(script);
+    if (!serving) {
+      problems.push(`${script}: has no active deployment`);
+      continue;
+    }
+    for (const v of serving.versions) {
+      const bindings = await d1Of(script, v.id);
+      const share = v.percentage == null ? '' : ` @ ${v.percentage}%`;
+      const held = bindings.length === 0;
+      console.log(
+        `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ` +
+          (held
+            ? 'no D1 binding — HELD'
+            : `${bindings
+                .map((b) => `${b.name}=${b.id}`)
+                .join(', ')} ← STILL BOUND`),
+      );
+      if (!held) {
+        problems.push(
+          `${script} version ${v.id}${share} still carries ` +
+            `${bindings.map((b) => b.name).join(', ')}. This writer can ` +
+            `still reach a database, so the barrier is not closed and any ` +
+            `copy taken now can be overtaken.`,
+        );
+      }
+    }
+  }
+  console.log('');
+  if (problems.length > 0) {
+    console.error(
+      `[check-live-d1-bindings] ${problems.length} problem(s):\n` +
+        problems.map((p) => `  - ${p}`).join('\n') +
+        `\n\nDo not take the final carry until every writer is held.\n`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `[check-live-d1-bindings] OK — every serving version of all ` +
+      `${WRITERS.length} writers carries no D1 binding. New invocations ` +
+      `cannot obtain a handle; work already running is the residual the ` +
+      `runbook names, which the digest barrier narrows and step 6 closes.`,
+  );
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const USAGE =
-    'usage:\n  check-live-d1-bindings.mjs [--allow-maintenance] [--expect <database name>]';
+    'usage:\n' +
+    '  check-live-d1-bindings.mjs [--expect <database name>]  # after the switch\n' +
+    '  check-live-d1-bindings.mjs --writers-held              # inside the barrier';
   // Strict, for the same reason the carry tool is: a mistyped flag that is
   // silently ignored turns a deliberate allowance into an accidental one.
-  let allowMaintenance = false;
+  let writersHeld = false;
   let expectName = null;
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--allow-maintenance') {
-      allowMaintenance = true;
+    if (argv[i] === '--writers-held') {
+      writersHeld = true;
       continue;
     }
     if (argv[i] === '--expect') {
@@ -190,6 +264,26 @@ async function main() {
 
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
+  }
+
+  // `--writers-held` is a DIFFERENT QUESTION, not a relaxation of this
+  // one, and the flag it replaces could not answer it either way.
+  //
+  // `--allow-maintenance` merely PERMITTED a version with no binding: it
+  // would have passed a writer still happily serving warm, so it proved
+  // nothing about the writers being stopped. And it still checked the
+  // backup Worker, which inside the barrier is deliberately still on
+  // archive — so the one command the runbook offered for confirming the
+  // barrier reported a mismatch even when the barrier was perfect.
+  //
+  // This asks the positive question of the three Workers the barrier is
+  // about: does each serving version carry NO D1 binding at all. The
+  // hand-deployed backup Worker is out of scope here by construction,
+  // which is stated rather than worked around.
+  if (writersHeld) {
+    if (expectName) fail(`--writers-held takes no --expect\n\n${USAGE}`);
+    await assertWritersHeld();
+    return;
   }
 
   const declared = (cfgOf(DECLARING_FILE).d1_databases ?? []).find(
@@ -246,27 +340,23 @@ async function main() {
       const bindings = await d1Of(script, v.id);
       const share = v.percentage == null ? '' : ` @ ${v.percentage}%`;
       if (bindings.length === 0) {
-        // A version with NO d1 binding is the maintenance build. That IS a
-        // deliberate state — during the barrier, before the switch. It is
-        // not a deliberate state AFTER the merge, where this command is the
-        // gate that authorises restoring normal operation: a failed build
-        // that left a Worker on the maintenance version looks exactly like
-        // this, and passing it would authorise traffic to a Worker that
-        // cannot reach any database. So it fails unless the operator says
-        // they are inside that window.
-        const note = allowMaintenance
-          ? 'no D1 binding — held off its database (allowed: --allow-maintenance)'
-          : 'no D1 binding — held off its database ← NOT ACCEPTABLE HERE';
-        console.log(`  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${note}`);
-        if (!allowMaintenance) {
-          problems.push(
-            `${script} version ${v.id}${share} serves NO D1 binding. If the ` +
-              `switch is done, this is a Worker still on the maintenance ` +
-              `build — a failed or unfinished deploy, not a success. If you ` +
-              `are inside the barrier on purpose, pass --allow-maintenance ` +
-              `and say so.`,
-          );
-        }
+        // A version with NO d1 binding is the maintenance build. That is a
+        // deliberate state inside the barrier and a FAILED OR UNFINISHED
+        // DEPLOY here, where this command is the gate authorising normal
+        // operation — and the two are indistinguishable from outside, so
+        // this mode never accepts it. Confirming the barrier is a
+        // different question with its own mode: `--writers-held`, which
+        // asserts the absence rather than tolerating it.
+        console.log(
+          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  no D1 ` +
+            `binding — held off its database ← NOT ACCEPTABLE HERE`,
+        );
+        problems.push(
+          `${script} version ${v.id}${share} serves NO D1 binding. If the ` +
+            `switch is done, this is a Worker still on the maintenance ` +
+            `build — a failed or unfinished deploy, not a success. To ` +
+            `confirm the barrier itself, run --writers-held instead.`,
+        );
         continue;
       }
       // Every binding the Worker's own config declares must be PRESENT, by

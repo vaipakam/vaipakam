@@ -15,14 +15,17 @@
  * seam from a different side, are why it looks like this rather than like
  * a one-way copy:
  *
- *   - **One end of a carry is always the SHARED database.** Not "the
- *     destination is fixed" — an earlier revision fixed the destination,
- *     which made the tool unable to perform the ROLLBACK the functional
- *     spec requires (stop → carry rows → switch, in the other direction).
- *     The property that actually matters is that a carry cannot be aimed
- *     between two arbitrary databases: the shared one, as
- *     `apps/indexer/wrangler.jsonc` declares it, is always one end. Both
- *     directions are reachable; neither is reachable by accident.
+ *   - **BOTH ends are pinned** — the shared database, as
+ *     `apps/indexer/wrangler.jsonc` declares it, and its recorded
+ *     predecessor, by id as well as name. Either direction between those
+ *     two is allowed, which is what leaves the documented ROLLBACK
+ *     performable; nothing else is, in either direction. Two weaker
+ *     versions of this came first and both are worth remembering:
+ *     fixing the DESTINATION made the rollback impossible to perform,
+ *     and requiring only that the shared database be ONE end permitted an
+ *     unrelated account database to be mirrored over the live shared data
+ *     — while being described as the restriction that prevented it. See
+ *     `PREDECESSOR`.
  *
  *   - **Parents before children.** Tables are ordered by their FOREIGN
  *     KEY dependencies, not alphabetically. D1 enforces foreign keys, and
@@ -107,7 +110,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -473,7 +476,13 @@ function writeManifest(path, src, tables) {
   // off-chain data, written by a command the runbook tells an operator to
   // run from the repository root. The documented paths are gitignored for
   // the same reason; a routine `git add .` would otherwise commit it.
+  // `mode` applies only when the file is CREATED. A re-run against an
+  // existing 0644 manifest would truncate it, leave it 0644, and print
+  // "mode 0600" underneath — so the mode is set explicitly afterwards
+  // rather than requested at open. A cutover re-runs its steps; a
+  // protection that only holds the first time is not one.
   writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
   console.log(
     `manifest written to ${path} (mode 0600) — keep it until the ` +
       `reconciliation is done; it is what --since reads. It keys every row ` +
