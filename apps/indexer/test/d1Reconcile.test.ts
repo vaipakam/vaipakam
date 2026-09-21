@@ -33,21 +33,38 @@ function hashOf(row: Record<string, unknown>) {
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
+/**
+ * `held` may be given as bare ids — in which case the destination row is
+ * assumed identical to the source row with that id — or as whole rows,
+ * for the cases where the destination holds something DIFFERENT under the
+ * same key. That distinction is the point of several cases below.
+ */
 function classify(opts: {
   rows: Record<string, unknown>[];
-  held: number[];
+  held: (number | Record<string, unknown>)[];
   mirrored: Record<string, unknown>[];
+  uniques?: { name: string; columns: string[] }[];
 }) {
   const wasSeen: Record<string, string> = {};
   for (const r of opts.mirrored) wasSeen[k(r.id as number)] = hashOf(r);
+  const heldByKey = new Map<string, Record<string, unknown>>();
+  for (const h of opts.held) {
+    const row =
+      typeof h === 'number'
+        ? (opts.rows.find((r) => r.id === h) ??
+          opts.mirrored.find((r) => r.id === h) ?? { id: h, value: null })
+        : h;
+    heldByKey.set(k(row.id as number), row);
+  }
   return classifyForReconcile({
     table: 't',
     cols,
     key,
     rows: opts.rows,
     sourceKeys: new Set(opts.rows.map((r) => k(r.id as number))),
-    heldKeys: new Set(opts.held.map(k)),
+    heldByKey,
     wasSeen,
+    uniques: opts.uniques ?? [],
   });
 }
 
@@ -98,16 +115,61 @@ describe('reconciliation decision table', () => {
   });
 
   it('reports a key both sides allocated independently, and does not carry it', () => {
-    // AUTOINCREMENT on both sides after the mirror: one id, two different
+    // AUTOINCREMENT on both sides after the mirror: one id, two DIFFERENT
     // records. An insert would be a no-op and the source's record lost.
     const { insert, conflicts } = classify({
       rows: [{ id: 7, value: 'source record' }],
-      held: [7],
+      held: [{ id: 7, value: 'a different record' }],
       mirrored: [],
     });
     expect(insert).toEqual([]);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].kind).toBe('key allocated on both sides');
+  });
+
+  it('accepts a row a previous pass already carried, so the procedure converges', () => {
+    // Same shape as the case above — not in the manifest, present on both
+    // sides — but the destination row is the one the last pass inserted.
+    // Content is what tells them apart; without it, repeat-until-clean
+    // could never come clean after carrying anything.
+    const row = { id: 7, value: 'carried last pass' };
+    const { insert, conflicts } = classify({
+      rows: [row],
+      held: [row],
+      mirrored: [],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it('reports a logical row the destination already holds under a different key', () => {
+    // Absent by primary key is not the same as insertable: a secondary
+    // unique index (notifications.dedup_key) can already hold this row's
+    // tuple, and ON CONFLICT (pk) would not catch it — the insert fails
+    // with a raw constraint error and aborts the reconciliation.
+    const { insert, conflicts } = classify({
+      rows: [{ id: 9, value: 'dedup-abc' }],
+      held: [{ id: 4, value: 'dedup-abc' }],
+      mirrored: [],
+      uniques: [{ name: 'idx_value', columns: ['value'] }],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe('already present under a different key');
+  });
+
+  it('does not treat a NULL unique column as a collision', () => {
+    // SQLite treats NULLs in a unique index as distinct, so two rows with
+    // a NULL there do not collide and must still be carried.
+    const row = { id: 9, value: null };
+    const { insert, conflicts } = classify({
+      rows: [row],
+      held: [{ id: 4, value: null }],
+      mirrored: [],
+      uniques: [{ name: 'idx_value', columns: ['value'] }],
+    });
+    expect(insert).toEqual([row]);
+    expect(conflicts).toEqual([]);
   });
 
   it('reports a row the SOURCE deleted after the mirror while the destination still holds it', () => {
@@ -139,8 +201,9 @@ describe('reconciliation decision table', () => {
       key,
       rows: [{ id: 1, value: 'x' }],
       sourceKeys: new Set([k(1)]),
-      heldKeys: new Set<string>(),
+      heldByKey: new Map(),
       wasSeen: null,
+      uniques: [],
     });
     expect(insert).toEqual([]);
     expect(conflicts).toHaveLength(1);

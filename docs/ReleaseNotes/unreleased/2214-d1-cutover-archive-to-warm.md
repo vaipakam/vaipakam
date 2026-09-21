@@ -218,6 +218,37 @@ version is correct is a decision for a person, and choosing silently would be
 the same overwrite — or the same resurrection — the reconciliation exists to
 avoid.
 
+Two further distinctions turned out to matter, and both are about what
+"already there" means. A record the **previous attempt already carried** looks
+identical to two records sharing an identifier — present on both sides,
+absent from the copy's record — so the two are told apart by comparing the
+records themselves. Without that, the instruction to repeat until nothing is
+found could never be satisfied: the second attempt would object to the first
+attempt's own work. And a record can be absent under its identifier while the
+destination already holds it under a **different** one, where the same logical
+record reached both sides independently; carrying it would fail outright on a
+uniqueness rule the destination enforces, so that is recognised and reported
+rather than attempted.
+
+### Three smaller things, each about what a report should and shouldn't do
+
+**A run that cannot do everything asked of it now does nothing.** The
+procedure promised that a run finding a conflict would change nothing, and
+the implementation carried the safe records first and failed afterwards —
+leaving a live database partly changed by a command that reported failure.
+That is the hardest state to reason about later, because the operator cannot
+tell which of the records in front of them that run put there. Everything is
+now planned before anything is applied, which turns the promise into a
+property.
+
+**A conflict report names the record, not its contents.** It used to print the
+beginning of the record, and for support requests that is the user's message
+and their email address, sitting immediately after the identifier; for
+diagnostic records it is whatever a captured error carried. These reports are
+read in terminals, pasted into logs and attached to issues. Someone who needs
+to see a value now asks for it deliberately — a decision that leaves a record
+of itself.
+
 Two smaller gaps are stated rather than glossed: a write that stores the value
 already stored changes nothing observable — harmless for a copy, because the
 destination already has that value — and the reconciliation reports what it

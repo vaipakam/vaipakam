@@ -301,7 +301,28 @@ async function shapeOf(dbId, table) {
     .filter((c) => c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
     .map((c) => checked(c.name, IDENT, `key column in ${table}`));
-  return { cols, key };
+
+  // Every OTHER uniqueness the table declares. A row can be absent by
+  // primary key and still be rejected by a secondary unique index —
+  // `notifications.dedup_key` is one — and an `ON CONFLICT (pk)` clause
+  // does not cover that, so the insert fails with a raw constraint error
+  // instead of the tool recognising a logical row that is already there.
+  const uniques = [];
+  for (const idx of await query(dbId, `PRAGMA index_list("${table}")`)) {
+    if (idx.unique !== 1) continue;
+    const parts = await query(dbId, `PRAGMA index_info("${idx.name}")`);
+    const columns = [...parts]
+      .sort((a, b) => a.seqno - b.seqno)
+      .map((c) => c.name)
+      .filter((n) => typeof n === 'string');
+    if (columns.length === 0) continue;
+    if (columns.join() === key.join()) continue;
+    uniques.push({
+      name: idx.name,
+      columns: columns.map((c) => checked(c, IDENT, `unique column in ${table}`)),
+    });
+  }
+  return { cols, key, uniques };
 }
 
 /**
@@ -513,8 +534,9 @@ export function classifyForReconcile({
   key,
   rows,
   sourceKeys,
-  heldKeys,
+  heldByKey,
   wasSeen,
+  uniques = [],
 }) {
   const conflicts = [];
   const insert = [];
@@ -529,32 +551,82 @@ export function classifyForReconcile({
     return { insert, conflicts };
   }
 
+  /**
+   * Where the destination already holds each declared unique tuple. SQLite
+   * treats NULLs in a unique index as distinct, so a tuple containing one
+   * cannot collide and is not indexed here.
+   */
+  const tupleOf = (row, columns) =>
+    columns.some((c) => row[c] === null || row[c] === undefined)
+      ? null
+      : JSON.stringify(columns.map((c) => row[c]));
+  const destUnique = uniques.map((u) => {
+    const byValue = new Map();
+    for (const [k, r] of heldByKey) {
+      const t = tupleOf(r, u.columns);
+      if (t !== null) byValue.set(t, k);
+    }
+    return { ...u, byValue };
+  });
+
   for (const r of rows) {
     const k = keyOf(r, key);
     const mirrored = wasSeen[k] !== undefined;
-    const inDest = heldKeys.has(k);
-    if (!mirrored && !inDest) {
-      insert.push(r);
-    } else if (!mirrored && inDest) {
+    const destRow = heldByKey.get(k);
+    const inDest = destRow !== undefined;
+
+    if (!mirrored && inDest) {
+      // The destination has a key the mirror never carried. That is either
+      // TWO records wearing one id — both sides allocate from the same
+      // AUTOINCREMENT sequence once they run independently — or the row a
+      // PREVIOUS pass of this same reconciliation already carried. Content
+      // is what tells them apart, and without this comparison the
+      // repeat-until-clean procedure could never converge after carrying
+      // anything: pass two would flag pass one's own work.
+      if (rowHash(destRow, cols) === rowHash(r, cols)) continue;
       conflicts.push({
         table,
         key: k,
         kind: 'key allocated on both sides',
         detail:
-          'this key is new on the source since the mirror, and the ' +
-          'destination already has a row under it — two different records ' +
-          'with one id, which an insert would silently drop',
-        row: r,
-        cols,
+          'this key is new on the source since the mirror and the ' +
+          'destination holds a DIFFERENT row under it — two records with ' +
+          'one id, which an insert would silently drop',
       });
-    } else if (mirrored && inDest && wasSeen[k] !== rowHash(r, cols)) {
+      continue;
+    }
+
+    if (!mirrored && !inDest) {
+      // Absent by primary key is not the same as insertable. A secondary
+      // unique index can already hold this row's tuple under another key,
+      // and `ON CONFLICT (pk)` would not catch it — the insert would fail
+      // with a raw constraint error and abort the reconciliation.
+      const clash = destUnique
+        .map((u) => ({ u, t: tupleOf(r, u.columns) }))
+        .find(({ u, t }) => t !== null && u.byValue.has(t));
+      if (clash) {
+        conflicts.push({
+          table,
+          key: k,
+          kind: 'already present under a different key',
+          detail:
+            `the destination holds a row with the same ${clash.u.columns.join(
+              '+',
+            )} under key ${clash.u.byValue.get(clash.t)} — the same logical ` +
+            `row reached both sides and was numbered differently`,
+        });
+        continue;
+      }
+      insert.push(r);
+      continue;
+    }
+
+    if (mirrored && inDest && wasSeen[k] !== rowHash(r, cols)) {
       conflicts.push({
         table,
         key: k,
         kind: 'changed on the source after the mirror',
         detail: 'the destination already holds that row',
-        row: r,
-        cols,
       });
     } else if (mirrored && !inDest) {
       conflicts.push({
@@ -565,8 +637,6 @@ export function classifyForReconcile({
           'the mirror carried this row and the destination no longer has ' +
           'it, so it was deleted there — re-inserting it would undo that, ' +
           'and such a deletion may be a retention or privacy obligation',
-        row: r,
-        cols,
       });
     }
   }
@@ -578,7 +648,7 @@ export function classifyForReconcile({
     if (sourceKeys.has(k)) continue;
     // If the destination has dropped it too, the two agree and there is
     // nothing to decide.
-    if (!heldKeys.has(k)) continue;
+    if (!heldByKey.has(k)) continue;
     conflicts.push({
       table,
       key: k,
@@ -598,7 +668,7 @@ async function carry(src, dst, { onlyMissing, since }) {
 
   const plan = [];
   for (const table of tables) {
-    const { cols, key } = await shapeOf(src.id, table);
+    const { cols, key, uniques } = await shapeOf(src.id, table);
     if (!dstTables.has(table)) {
       plan.push({ table, refused: 'the destination has no such table' });
       continue;
@@ -703,8 +773,9 @@ async function carry(src, dst, { onlyMissing, since }) {
           key,
           rows,
           sourceKeys,
-          heldKeys,
+          heldByKey: new Map(held.map((r) => [keyOf(r, key), r])),
           wasSeen,
+          uniques,
         })
       : { insert: [], conflicts: [] };
 
@@ -722,19 +793,48 @@ async function carry(src, dst, { onlyMissing, since }) {
     });
   }
 
+  // CLASSIFY EVERYTHING, THEN ACT — and if the classification is not
+  // clean, do not act at all.
+  //
+  // The procedure promises that a conflicted run exits without applying
+  // anything. An earlier revision inserted the safe rows first and failed
+  // afterwards, which left a failed command having partially mutated a
+  // LIVE destination — the one place a half-finished write is least
+  // recoverable, because the operator now has to work out which of the
+  // rows they can see this run put there. The whole plan is built above
+  // before a single statement is sent, so honouring that promise is a
+  // matter of checking it here rather than of unwinding anything.
+  const refused = plan.filter((s) => s.refused);
+  const conflicts = plan.flatMap((s) => s.conflicts ?? []);
+  const manifestOf = () => {
+    const m = {};
+    for (const step of plan) {
+      if (step.refused) continue;
+      m[step.table] = { key: step.key, rows: step.seen };
+    }
+    return m;
+  };
+  if (refused.length > 0 || conflicts.length > 0) {
+    for (const r of refused) {
+      console.log(`  ${r.table.padEnd(32)} REFUSED — ${r.refused}`);
+    }
+    console.log(
+      `\nnothing was written: ${refused.length} refusal(s) and ` +
+        `${conflicts.length} conflict(s) were found while planning, and a ` +
+        `run that cannot do all of what it was asked does none of it.`,
+    );
+    return { written: 0, refused, conflicts, manifest: manifestOf() };
+  }
+
   // Deletes run children-first, which is the reverse of the insert order,
   // for the same foreign-key reason the insert order exists.
   for (const step of [...plan].reverse()) {
-    if (step.refused || step.surplus.length === 0) continue;
+    if (step.surplus.length === 0) continue;
     await deleteKeys(dst, step.table, step.surplus, step.key);
   }
 
   let written = 0;
   for (const step of plan) {
-    if (step.refused) {
-      console.log(`  ${step.table.padEnd(32)} REFUSED — ${step.refused}`);
-      continue;
-    }
     const rows = onlyMissing ? step.insert : step.all;
     written += await upsert(dst, step.table, rows, step.cols, step.key, onlyMissing);
     const note = onlyMissing
@@ -744,17 +844,7 @@ async function carry(src, dst, { onlyMissing, since }) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
     }
   }
-  const manifest = {};
-  for (const step of plan) {
-    if (step.refused) continue;
-    manifest[step.table] = { key: step.key, rows: step.seen };
-  }
-  return {
-    written,
-    refused: plan.filter((s) => s.refused),
-    conflicts: plan.flatMap((s) => s.conflicts ?? []),
-    manifest,
-  };
+  return { written, refused, conflicts, manifest: manifestOf() };
 }
 
 // -------------------------------------------------------------------- main
@@ -933,14 +1023,19 @@ async function main() {
 
   // Likewise a conflict: the source changed a row the destination already
   // has, and which value should win is a decision, not a default.
+  // A conflict names the TABLE and the KEY, and nothing else. It used to
+  // print the first 300 characters of the row, which for `support_tickets`
+  // is the user's message and email — the schema puts them straight after
+  // the key — and for `diag_errors` whatever a stack trace carried. A
+  // cutover's terminal output gets pasted into run logs and issues, so a
+  // routine reconciliation conflict would have copied private content into
+  // places nobody chose to put it. An operator who needs the value queries
+  // for it deliberately, which is a decision with a record.
   for (const c of conflicts) {
     problems.push(
       c.key === undefined
         ? `${c.table}: cannot be reconciled — ${c.detail}`
-        : `${c.table} ${c.key}: ${c.kind} — ${c.detail}.` +
-          (c.row
-            ? ` Current source value: ${canonical(c.row, c.cols).slice(0, 300)}`
-            : ''),
+        : `${c.table} ${c.key}: ${c.kind} — ${c.detail}.`,
     );
   }
 

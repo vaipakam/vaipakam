@@ -190,10 +190,35 @@ because step 3 below is the part of it that had to be re-learned.
       | yes | yes | **no** | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
       | yes | **no** | yes | archive deleted it after the mirror. It is not in archive's rows at all, so a loop over archive never sees it and warm keeps a row that should be gone |
 
-      The tool resolves none of the four conflict cases. It names the row,
-      prints archive's current value, and **exits non-zero without applying
-      anything**. Guessing would be the exact overwrite — or the exact
-      resurrection — this mode exists to prevent.
+      Two more cases sit underneath that table, because *absent by primary
+      key* is not the same as *insertable*, and *present under a key the
+      manifest never saw* is not always a clash:
+
+      - A row the **previous pass already carried** looks exactly like the
+        two-records-one-id case — not in the manifest, present on both
+        sides. **Content** is what tells them apart, and comparing it is
+        what lets "repeat until clean" ever come clean: without it, pass
+        two flags pass one's own work and the procedure never converges.
+      - A row absent by primary key can still be **present under a
+        secondary unique index** — `notifications.dedup_key` is one — where
+        the same logical row reached both sides and was numbered
+        differently. `ON CONFLICT (primary key)` does not cover that, so
+        the insert would fail with a raw constraint error and abort the
+        run. The tool checks every uniqueness the table declares and
+        reports the clash instead. (A tuple containing NULL cannot collide,
+        because SQLite treats those as distinct.)
+
+      **The tool resolves no conflict, and a conflicted run writes
+      nothing at all.** It classifies every table first and only then
+      acts, so a run that finds both a safe row and a conflict applies
+      neither — a failed command must not leave a live database partly
+      mutated, which is the state hardest to reason about afterwards.
+
+      **A conflict names the table and the key, and stops there.** It does
+      not print the row: `support_tickets` puts the user's message and
+      email immediately after the key, `diag_errors` carries whatever a
+      stack trace held, and cutover output gets pasted into run logs and
+      issues. An operator who needs a value queries for it deliberately.
 
    Step 6 is not a belt-and-braces precaution; it is the only part of this
    that covers work suspended across the whole barrier. It is possible
