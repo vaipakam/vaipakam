@@ -3790,6 +3790,17 @@
   },
   {
     "type": "error",
+    "name": "TransportReleaseNotYetAvailable",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportRemainderAlreadyAcknowledged",
     "inputs": [
       {

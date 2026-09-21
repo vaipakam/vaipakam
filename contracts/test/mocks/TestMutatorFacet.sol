@@ -2425,6 +2425,22 @@ contract TestMutatorFacet {
     ///         reservation it creates (every payload it builds is d5), so the
     ///         attestable set is exactly the rows that predate that field —
     ///         and a test needs a way to stand in one of them.
+    /// @notice #1566 transport epochs 3b-i test-only (#2258) — the RELEASE
+    ///         lifecycle the production facet refuses until 3b-ii. The library
+    ///         functions are the 3b-ii implementation and stay tested through
+    ///         these; nothing in production can reach them.
+    function parkTransportBatchRaw(bytes32 batchId) external returns (uint256) {
+        return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
+    }
+    function acknowledgeTransportBatchRaw(bytes32 batchId) external {
+        LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
+    }
+    function releaseTransportBatchRaw(bytes32 batchId) external returns (uint256 parked) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        parked = LibRewardCustody.parkTransportRemainder(s, batchId);
+        LibRewardCustody.acknowledgeTransportRemainder(s, batchId);
+    }
+
     function setRemitSplitOnWireRaw(uint256 remitId, bool onWire) external {
         LibVaipakam.storageSlot().remitReservations[remitId].splitOnWire = onWire;
     }

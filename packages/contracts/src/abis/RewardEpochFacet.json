@@ -287,66 +287,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "TransportBatchReleased",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "remainder",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TransportRemainderParked",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayListHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AccessControlUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "neededRole",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
     "type": "error",
     "name": "ArmedFreshPaidAlreadyRebased",
     "inputs": []
@@ -3690,6 +3630,17 @@
     "inputs": [
       {
         "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportReleaseNotYetAvailable",
+    "inputs": [
+      {
+        "name": "batchId",
         "type": "bytes32",
         "internalType": "bytes32"
       }

@@ -48,10 +48,19 @@ is then written in bounded instalments, each proved against that commitment, so
 the list a delivery is indexed under is always the list it actually claimed and
 never one supplied afterwards by a caller.
 
-Finally, what remains of such a delivery becomes available for reconciliation
-only once its epoch is closed out in two recorded steps: the remainder is
-parked under the delivery's own key, keeping the membership that binds it, and
-then acknowledged. Both are required. An operator draining an epoch does not
+Finally, what remains of such a delivery is meant to become available for
+reconciliation only once its epoch is closed out in two recorded steps: the
+remainder is parked under the delivery's own key, keeping the membership that
+binds it, and then acknowledged. Both are required — and **in this release
+neither is offered**. The close-out entries exist so the surface keeps its
+shape, but every call to them is refused, for the operator as much as for
+anyone else. The design says a delivery may be closed out only once every
+obligation on the days it listed has settled, and this release has no way to
+test that; a close-out the platform cannot check would be an earmark spent on
+the caller's say-so. The release that adds per-day obligation tracking is the
+one that opens these entries. Until then an epoch's value stays in its
+membership-bound holding, visible in the ledger, and cannot be reconciled early
+by anyone. (Owner decision, recorded on issue #2258.) An operator draining an epoch does not
 thereby make its delivery reconcilable, and a late obligation whose day is in
 the parked membership can still be funded from what was parked rather than
 finding the value in a general pool it has no claim on.
@@ -128,7 +137,7 @@ spendable before, and a valid delivery's close-out must never sit waiting on
 whoever happens to hold the operator role.
 
 Recording the acknowledgment is **an operator decision, and only the operator
-may take it**. It is the platform choosing to stop waiting on a lane that
+may take it** — the rule the entry will enforce once it is opened. It is the platform choosing to stop waiting on a lane that
 cannot prove its own closure, and it has a consequence somebody else bears:
 obligations arriving afterwards for any of that delivery's listed days are
 refused to the extent they looked to it. That is a claim written off on a

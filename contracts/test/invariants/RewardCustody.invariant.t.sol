@@ -727,8 +727,10 @@ contract RewardCustodyHandler is Test {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
         try ep.materializeTransportBatchPage(h, days_) {} catch {}
-        try ep.parkTransportBatchRemainder(h) {} catch {}
-        try ep.acknowledgeTransportBatchRemainder(h) {
+        // #2258 — the production release refuses everyone in 3b-i, so the
+        // handler reaches the release (and the debit seam the conservation
+        // invariant exists for) through the test-only raw entry.
+        try TestMutatorFacet(diamond).releaseTransportBatchRaw(h) {
             released++;
         } catch {
             refusals++;

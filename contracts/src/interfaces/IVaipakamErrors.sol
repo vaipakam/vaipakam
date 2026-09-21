@@ -607,6 +607,17 @@ interface IVaipakamErrors {
     ///         classification is what keeps it from reporting value that has
     ///         already left, and the bound falls out of the same arithmetic.
     error TransportRemainderExceeded(bytes32 batchId, uint256 requested, uint256 available);
+    /// @notice #1566 transport epochs PR 3b-i — the transport-epoch RELEASE is
+    ///         not available in this cut, to anyone. Owner decision on #2258
+    ///         (2026-09-20): §5c requires the classification entry to refuse a
+    ///         batch that still lists an outstanding obligation, and 3b-i has
+    ///         no per-day obligation figure to test — that is the unbounded
+    ///         walk 3b-ii's tracking exists for. Until it lands, a release
+    ///         followed by a classification would move a delivery's value out
+    ///         of its membership-bound earmark on nobody's authority but the
+    ///         caller's. The entries exist so the surface, the cut wiring and
+    ///         the atomic cut group keep their shape; 3b-ii replaces bodies.
+    error TransportReleaseNotYetAvailable(bytes32 batchId);
     /// @notice #1566 transport epochs PR 3b — an old-wire packet whose batch
     ///         has not been released cannot be classified. The only route by
     ///         which what remains of such a packet becomes classifiable is its

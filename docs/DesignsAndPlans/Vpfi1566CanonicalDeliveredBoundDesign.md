@@ -6781,7 +6781,7 @@ on the live era alone.
 > - **3b-i — the epoch ledger** (LANDED): the untyped per-packet balance,
 >   the per-day arrival-ordered index and cursor, the dispatch fan-out cap,
 >   the compact admission and its paged materialization, the batch-keyed
->   parked remainder and its acknowledgment, the batch gate on
+>   parked remainder and its acknowledgment (the LIBRARY of both; the facet entries refuse every caller until 3b-ii — owner decision #2258), the batch gate on
 >   classification, and the REAL bodies for 3a's two seams —
 >   `packetBatchReleased` reading the batch's released flag and
 >   `transportConsumedFresh` reading its fresh leg counter, which answers a

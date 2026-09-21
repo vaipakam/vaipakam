@@ -1185,8 +1185,9 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256[] memory one = new uint256[](1);
         one[0] = 1;
         ep.materializeTransportBatchPage(batchId, one);
-        ep.parkTransportBatchRemainder(batchId);
-        ep.acknowledgeTransportBatchRemainder(batchId);
+        // #2258 — the production release is shut in 3b-i; the classification
+        // tests here need a released batch, which only the raw entry gives.
+        _mut().releaseTransportBatchRaw(batchId);
     }
     /// The packet's authenticated fresh figure, as the transport attestation
     /// would write it (the test-only writer; production has none yet).

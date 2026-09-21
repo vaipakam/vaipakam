@@ -25,7 +25,10 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *         delivery opens one untyped balance whose listed days are its
  *         membership, an oversize delivery is admitted compactly and indexed
  *         in pages against its own commitment, and what remains becomes
- *         classifiable only once the batch is parked AND acknowledged.
+ *         classifiable only once the batch is parked AND acknowledged —
+ *         a release this cut does NOT offer (#2258): the lifecycle tests run it
+ *         through a test-only raw entry, and one test pins that no
+ *         production path can.
  *
  *         Every rule is pinned on BOTH sides: the same fixture is driven
  *         through the side the rule refuses and the side it admits, so a
@@ -502,8 +505,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         (bytes32 spent, uint256[] memory spentDays) = (bytes32(0), _days(1));
         spent = _deliver(5e18, spentDays, 64, keccak256("roll5"), false);
         _epoch().materializeTransportBatchPage(spent, spentDays);
-        _epoch().parkTransportBatchRemainder(spent);
-        _epoch().acknowledgeTransportBatchRemainder(spent);
+        _mut().parkTransportBatchRaw(spent);
+        _mut().acknowledgeTransportBatchRaw(spent);
         AdminFacet(address(diamond)).pause();
         _recon().classifyLegacyPacket(spent, 0, 5e18, keccak256("rollE2"));
         AdminFacet(address(diamond)).unpause();
@@ -527,13 +530,13 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
 
         // Parking alone is NOT the release: an operator must not be able to
         // make a packet classifiable merely by draining its batch.
-        _epoch().parkTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
         AdminFacet(address(diamond)).pause();
         vm.expectRevert(abi.encodeWithSelector(TransportBatchNotReleased.selector, h, h));
         _recon().classifyLegacyPacket(h, 0, 4e18, keccak256("e1"));
         AdminFacet(address(diamond)).unpause();
 
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().acknowledgeTransportBatchRaw(h);
         AdminFacet(address(diamond)).pause();
         _recon().classifyLegacyPacket(h, 0, 4e18, keccak256("e1"));
         AdminFacet(address(diamond)).unpause();
@@ -576,8 +579,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         // Indexed, parked, acknowledged — and the same call now lands, taking
         // its value from the parked remainder.
         _epoch().materializeTransportBatchPage(h, dayIds);
-        _epoch().parkTransportBatchRemainder(h);
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
+        _mut().acknowledgeTransportBatchRaw(h);
         AdminFacet(address(diamond)).pause();
         _recon().classifyLegacyPacket(h, 0, 3e18, keccak256("gate1c"));
         AdminFacet(address(diamond)).unpause();
@@ -612,7 +615,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         bytes32 h = _deliver(9e18, dayIds, 9, keccak256("p1"), false);
         _epoch().materializeTransportBatchPage(h, dayIds);
 
-        assertEq(_epoch().parkTransportBatchRemainder(h), 9e18, "parked what the obligations left");
+        assertEq(_mut().parkTransportBatchRaw(h), 9e18, "parked what the obligations left");
 
         (, uint256 balance, uint256 admitted, , , ) = _epoch().getTransportBatch(h);
         (uint256 amount, bytes32 dayListHash, uint32 dayCount, bool acknowledged, uint256 debited) =
@@ -636,18 +639,18 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(
             abi.encodeWithSelector(TransportBatchNotFullyIndexed.selector, h, uint32(0), uint32(cap + 2))
         );
-        _epoch().parkTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
 
         _epoch().materializeTransportBatchPage(h, dayIds);
         vm.expectRevert(
             abi.encodeWithSelector(TransportBatchNotFullyIndexed.selector, h, uint32(cap), uint32(cap + 2))
         );
-        _epoch().parkTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
 
         // Indexed whole, the same call now succeeds — so the refusal was the
         // indexing and nothing else.
         _epoch().materializeTransportBatchPage(h, dayIds);
-        assertEq(_epoch().parkTransportBatchRemainder(h), 4e18, "parks once whole");
+        assertEq(_mut().parkTransportBatchRaw(h), 4e18, "parks once whole");
     }
 
     /// Each half of the release happens exactly once, and neither can stand in
@@ -656,48 +659,17 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         bytes32 h = _untyped(6e18, 2, 11, keccak256("r1"));
 
         vm.expectRevert(abi.encodeWithSelector(TransportRemainderNotParked.selector, h));
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().acknowledgeTransportBatchRaw(h);
 
-        _epoch().parkTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
         vm.expectRevert(abi.encodeWithSelector(TransportRemainderAlreadyParked.selector, h));
-        _epoch().parkTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
 
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().acknowledgeTransportBatchRaw(h);
         vm.expectRevert(abi.encodeWithSelector(TransportRemainderAlreadyAcknowledged.selector, h));
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().acknowledgeTransportBatchRaw(h);
     }
 
-    /// PARKING is permissionless, as the specification says: attesting a
-    /// packet's split and parking what its obligations left are both open to
-    /// anyone and may happen in either order. What makes a park valid is
-    /// state, never the caller.
-    ///
-    /// The ACKNOWLEDGMENT is not, and this test straddles the line rather than
-    /// asserting one side of it (Codex #2232 r3). The design calls the
-    /// acknowledgment "a deliberate operator disposition" whose consequence is
-    /// that later obligations for the batch's listed days are refused to the
-    /// extent they looked to it — a claim forfeited on somebody else's behalf,
-    /// one-way. A stranger may do the mechanical half and may not take that
-    /// decision.
-    function test_Release_ParkIsOpenToAnyone_AcknowledgmentIsNot() public {
-        bytes32 h = _untyped(6e18, 2, 12, keccak256("perm"));
-        address stranger = makeAddr("stranger");
-
-        vm.prank(stranger);
-        assertEq(_epoch().parkTransportBatchRemainder(h), 6e18, "anyone may park");
-
-        vm.prank(stranger);
-        vm.expectRevert();
-        _epoch().acknowledgeTransportBatchRemainder(h);
-
-        ( , , , , , bool releasedByStranger) = _epoch().getTransportBatch(h);
-        assertFalse(releasedByStranger, "and a stranger's acknowledgment changes nothing");
-
-        // The operator's does. This suite runs as the admin.
-        _epoch().acknowledgeTransportBatchRemainder(h);
-        ( , , , , , bool released) = _epoch().getTransportBatch(h);
-        assertTrue(released, "the operator disposition releases it");
-    }
 
     /// Materialization is permissionless too, and for the same reason: the
     /// authority is the delivery's commitment, not the caller.
@@ -708,14 +680,6 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(_epoch().materializeTransportBatchPage(h, dayIds), 3, "anyone may index it");
     }
 
-    /// Both operations refuse an id no delivery opened, by name.
-    function test_Release_RefusesAnUnknownBatch() public {
-        bytes32 nobody = keccak256("nobody");
-        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
-        _epoch().parkTransportBatchRemainder(nobody);
-        vm.expectRevert(abi.encodeWithSelector(TransportRemainderNotParked.selector, nobody));
-        _epoch().acknowledgeTransportBatchRemainder(nobody);
-    }
 
     /// A classification DEBITS the parked remainder by what it takes, and
     /// cannot take more than the entry still holds. Without the debit the entry
@@ -724,8 +688,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// already-classified value as still parked.
     function test_Classification_DebitsTheParkedRemainder_AndIsBoundedByIt() public {
         bytes32 h = _untyped(10e18, 2, 40, keccak256("dbt"));
-        _epoch().parkTransportBatchRemainder(h);
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
+        _mut().acknowledgeTransportBatchRaw(h);
         (uint256 parked, , , , ) = _epoch().getTransportRemainder(h);
         assertEq(parked, 10e18, "the whole balance is parked");
 
@@ -750,6 +714,49 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(parked, 0, "the entry is emptied exactly");
     }
 
+    /// #2258 (owner decision 2026-09-20) — the RELEASE IS NOT AVAILABLE in
+    /// 3b-i, to anyone. §5c requires classification to refuse a batch that
+    /// still lists an outstanding obligation, and 3b-i has no per-day figure to
+    /// test that with; a release the chain cannot check is an earmark spent on
+    /// the caller's say-so. Both entries refuse FIRST — the admin, a stranger
+    /// and an unknown id all get the same answer — while the library
+    /// machinery behind them stays reachable through the test-only raw entry,
+    /// which is how every lifecycle test above still runs.
+    function test_Release_IsNotAvailableInThisCut_ForAnyone() public {
+        bytes32 h = _untyped(6e18, 2, 12, keccak256("shut"));
+        address[2] memory callers = [address(this), makeAddr("stranger")];
+        for (uint256 i; i < callers.length; ++i) {
+            vm.prank(callers[i]);
+            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
+            _epoch().parkTransportBatchRemainder(h);
+            vm.prank(callers[i]);
+            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
+            _epoch().acknowledgeTransportBatchRemainder(h);
+        }
+        // Refused before it looks: an id no delivery opened gets the same
+        // answer, not `TransportBatchUnknown`.
+        bytes32 nobody = keccak256("nobody");
+        vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, nobody));
+        _epoch().parkTransportBatchRemainder(nobody);
+        // And therefore nothing can be classified early: the gate still holds
+        // because no production path can open it.
+        ( , , , , , bool released) = _epoch().getTransportBatch(h);
+        assertFalse(released, "no production path releases a batch in 3b-i");
+        // The machinery exists and is the 3b-ii implementation — the raw entry
+        // proves it, and every lifecycle test in this suite runs through it.
+        assertEq(_mut().releaseTransportBatchRaw(h), 6e18, "the library release works, behind the door");
+    }
+
+    /// The library's own refusals, unchanged and reached raw: an unknown id is
+    /// refused by name, and an acknowledgment needs a park.
+    function test_Release_LibraryRefusesAnUnknownBatch() public {
+        bytes32 nobody = keccak256("nobody");
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
+        _mut().parkTransportBatchRaw(nobody);
+        vm.expectRevert(abi.encodeWithSelector(TransportRemainderNotParked.selector, nobody));
+        _mut().acknowledgeTransportBatchRaw(nobody);
+    }
+
     // ─── 3. the evidence seams ───────────────────────────────────────────────
 
     /// The transport LEG counters ship with the ledger and read zero: no draw
@@ -762,8 +769,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(consumedFresh, 0, "no fresh leg has been drawn");
         assertEq(consumedRecycled, 0, "nor a recycled one");
 
-        _epoch().parkTransportBatchRemainder(h);
-        _epoch().acknowledgeTransportBatchRemainder(h);
+        _mut().parkTransportBatchRaw(h);
+        _mut().acknowledgeTransportBatchRaw(h);
         (consumedFresh, consumedRecycled) = _epoch().getTransportBatchLegs(h);
         assertEq(consumedFresh, 0, "and releasing draws nothing either");
         assertEq(consumedRecycled, 0, "on either leg");

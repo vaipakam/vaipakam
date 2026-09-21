@@ -108,7 +108,17 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         nonReentrant
         returns (uint256 amount)
     {
-        return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
+        // #2258 (owner decision 2026-09-20) — NOT AVAILABLE in 3b-i, to
+        // anyone, checked before anything else so the answer is the same for
+        // an admin, a stranger and an unknown id: the release does not exist
+        // yet. The design's rule for this act — refuse a batch that still
+        // lists an outstanding obligation — cannot be tested until 3b-ii
+        // tracks obligations per day, and a release the chain cannot check is
+        // an earmark spent on the caller's say-so. The library function this
+        // will call is written and tested (through the test-only raw entry);
+        // only the door is shut.
+        amount; // the return exists for 3b-ii's shape; nothing reaches it
+        revert TransportReleaseNotYetAvailable(batchId);
     }
 
     /// @notice Record the acknowledgment that RELEASES a batch.
@@ -153,9 +163,13 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function acknowledgeTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
-        onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
+        // #2258 — as above. The `onlyRole(ADMIN_ROLE)` gate this act carries
+        // in 3b-ii (the acknowledgment is an operator disposition; parking is
+        // not) is deliberately absent here so the refusal is uniform: a
+        // stranger and the admin both learn the release does not exist yet,
+        // rather than one of them learning they lack a role for it.
+        revert TransportReleaseNotYetAvailable(batchId);
     }
 
     /// @notice A transport epoch as recorded.

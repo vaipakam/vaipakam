@@ -948,6 +948,16 @@ instead of concluding the docs were merely behind.
 
 ### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
 
+> **DECIDED — owner, 2026-09-20 (recorded on #2258): Reading B, with the
+> conservative remedy.** The release entries stay in the surface but refuse
+> every caller in 3b-i (`TransportReleaseNotYetAvailable`), so no epoch-backed
+> packet can be classified before 3b-ii tracks obligations per day and the
+> design's refusal becomes a check the chain can perform. The library
+> implementation of the release is kept and tested through a test-only raw
+> entry. #2258 stays open as the tracker for 3b-ii's obligation check. What
+> follows is the record of the divergence as it stood when the decision was
+> asked for.
+
 **This one needs a human intent-decision**, unlike entry 1. It is recorded
 here rather than resolved because the two readings below lead to materially
 different products, and picking one by myself would be resolving a fund
