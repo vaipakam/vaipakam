@@ -658,11 +658,22 @@ async function sequenceAdvances(src, since) {
     if (!isMissingSequenceTable(err)) throw err;
     return [];
   }
+  return compareSequences(now, since);
+}
+
+/**
+ * The comparison, separated from the read so it can be tested.
+ *
+ * A manifest written before this field existed has no `seq`, and a table
+ * the mirror did not carry has no entry at all. Neither is a comparison,
+ * and treating either as zero would report every allocation the source
+ * has ever made as a late one — which on the first weekly run would bury
+ * the real signal under 43 lines of noise.
+ */
+export function compareSequences(now, since) {
   const problems = [];
   for (const [table, seq] of now) {
     const then = since?.[table]?.seq;
-    // `null` means the mirror predates this record being kept; absent
-    // means the table was not carried. Neither is a comparison.
     if (then === undefined || then === null) continue;
     if (seq <= then) continue;
     problems.push(

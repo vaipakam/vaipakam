@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyForReconcile,
   collapseOutsideLiterals,
+  compareSequences,
   isMissingSequenceTable,
   makeFingerprinter,
   readAll,
@@ -907,4 +908,48 @@ describe('a fingerprint of a low-entropy secret needs a key', () => {
     }
     expect(recovered).toBeNull();
   }, 30_000);
+});
+
+/**
+ * WHY THIS TEST EXISTS. A straggler that allocates an identifier after
+ * the mirror and then deletes the row leaves the ROWS matching on both
+ * sides while the source's allocation counter has moved. Nothing else in
+ * a reconciliation looks at that, so the identifier ends up spent on one
+ * side and free on the other — the key-collision case arriving by a
+ * route the row comparison cannot see (#2267 r36).
+ */
+describe('late allocations on the source are reported', () => {
+  it('reports a table whose sequence advanced past the mirror', () => {
+    const problems = compareSequences(
+      new Map([['notifications', 52]]),
+      { notifications: { seq: 46 } },
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('up to 52');
+    expect(problems[0]).toContain('recorded 46');
+    expect(problems[0]).toContain('inserted 6 row(s)');
+  });
+
+  it('says nothing when the sequence has not moved', () => {
+    expect(
+      compareSequences(new Map([['notifications', 46]]), {
+        notifications: { seq: 46 },
+      }),
+    ).toEqual([]);
+  });
+
+  it('ignores a manifest written before the baseline was recorded', () => {
+    // `seq: null` is what an older mirror leaves. Treating it as zero
+    // would report every allocation the source has ever made as late,
+    // burying the real signal on the first weekly run.
+    expect(
+      compareSequences(new Map([['notifications', 46]]), {
+        notifications: { seq: null },
+      }),
+    ).toEqual([]);
+  });
+
+  it('ignores a table the mirror never carried', () => {
+    expect(compareSequences(new Map([['notifications', 46]]), {})).toEqual([]);
+  });
 });
