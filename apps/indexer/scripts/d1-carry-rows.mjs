@@ -108,7 +108,7 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -496,6 +496,102 @@ async function deleteKeys(dst, table, keyRows, key) {
   return keyRows.length;
 }
 
+/**
+ * The reconciliation decision table, as a pure function — no network, no
+ * database — so every branch can be exercised by a test. Two of the five
+ * cases below cannot be produced against the live pair during a rehearsal
+ * (the destination is inert, so it deletes nothing and allocates nothing),
+ * and an unexercised branch on the path that decides whether a row is
+ * resurrected is not something to leave to a live run that may never
+ * produce it.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function classifyForReconcile({
+  table,
+  cols,
+  key,
+  rows,
+  sourceKeys,
+  heldKeys,
+  wasSeen,
+}) {
+  const conflicts = [];
+  const insert = [];
+  if (wasSeen === null || wasSeen === undefined) {
+    conflicts.push({
+      table,
+      kind: 'no record',
+      detail:
+        'the manifest has no record of this table, so none of the cases ' +
+        'below can be told apart from the destination simply moving on',
+    });
+    return { insert, conflicts };
+  }
+
+  for (const r of rows) {
+    const k = keyOf(r, key);
+    const mirrored = wasSeen[k] !== undefined;
+    const inDest = heldKeys.has(k);
+    if (!mirrored && !inDest) {
+      insert.push(r);
+    } else if (!mirrored && inDest) {
+      conflicts.push({
+        table,
+        key: k,
+        kind: 'key allocated on both sides',
+        detail:
+          'this key is new on the source since the mirror, and the ' +
+          'destination already has a row under it — two different records ' +
+          'with one id, which an insert would silently drop',
+        row: r,
+        cols,
+      });
+    } else if (mirrored && inDest && wasSeen[k] !== rowHash(r, cols)) {
+      conflicts.push({
+        table,
+        key: k,
+        kind: 'changed on the source after the mirror',
+        detail: 'the destination already holds that row',
+        row: r,
+        cols,
+      });
+    } else if (mirrored && !inDest) {
+      conflicts.push({
+        table,
+        key: k,
+        kind: 'deleted on the destination',
+        detail:
+          'the mirror carried this row and the destination no longer has ' +
+          'it, so it was deleted there — re-inserting it would undo that, ' +
+          'and such a deletion may be a retention or privacy obligation',
+        row: r,
+        cols,
+      });
+    }
+  }
+
+  // Keys the mirror carried that the SOURCE no longer has. These appear in
+  // no row of the source, which is exactly why a loop over the source left
+  // the destination holding them while the run reported VERIFIED.
+  for (const k of Object.keys(wasSeen)) {
+    if (sourceKeys.has(k)) continue;
+    // If the destination has dropped it too, the two agree and there is
+    // nothing to decide.
+    if (!heldKeys.has(k)) continue;
+    conflicts.push({
+      table,
+      key: k,
+      kind: 'deleted on the source after the mirror',
+      detail:
+        'the destination still holds it, so it is stale there — but ' +
+        'whether to delete it is a decision this tool will not make on a ' +
+        'live database',
+    });
+  }
+  return { insert, conflicts };
+}
+
 async function carry(src, dst, { onlyMissing, since }) {
   const tables = await orderByDependency(src.id, await tablesOf(src.id));
   const dstTables = new Set(await tablesOf(dst.id));
@@ -600,82 +696,17 @@ async function carry(src, dst, { onlyMissing, since }) {
     //
     // The tool resolves none of the four conflict cases. It names the row.
     const wasSeen = since?.[table]?.rows ?? null;
-    const conflicts = [];
-    let insert = [];
-    if (onlyMissing) {
-      if (wasSeen === null) {
-        conflicts.push({
+    const { insert, conflicts } = onlyMissing
+      ? classifyForReconcile({
           table,
-          kind: 'no record',
-          detail:
-            'the manifest has no record of this table, so none of the ' +
-            'cases below can be told apart from the destination simply ' +
-            'moving on',
-        });
-      } else {
-        for (const r of rows) {
-          const k = keyOf(r, key);
-          const mirrored = wasSeen[k] !== undefined;
-          const inDest = heldKeys.has(k);
-          if (!mirrored && !inDest) {
-            insert.push(r);
-          } else if (!mirrored && inDest) {
-            conflicts.push({
-              table,
-              key: k,
-              kind: 'key allocated on both sides',
-              detail:
-                'this key is new on the source since the mirror, and the ' +
-                'destination already has a row under it — two different ' +
-                'records with one id, which an insert would silently drop',
-              row: r,
-              cols,
-            });
-          } else if (mirrored && inDest && wasSeen[k] !== rowHash(r, cols)) {
-            conflicts.push({
-              table,
-              key: k,
-              kind: 'changed on the source after the mirror',
-              detail: 'the destination already holds that row',
-              row: r,
-              cols,
-            });
-          } else if (mirrored && !inDest) {
-            conflicts.push({
-              table,
-              key: k,
-              kind: 'deleted on the destination',
-              detail:
-                'the mirror carried this row and the destination no longer ' +
-                'has it, so it was deleted there — re-inserting it would ' +
-                'undo that, and such a deletion may be a retention or ' +
-                'privacy obligation',
-              row: r,
-              cols,
-            });
-          }
-        }
-        // Keys the mirror carried that the SOURCE no longer has. These are
-        // invisible to any loop over the source, which is exactly why the
-        // destination was keeping them while the run reported VERIFIED.
-        for (const k of Object.keys(wasSeen)) {
-          if (sourceKeys.has(k)) continue;
-          // If the destination has dropped it too, the two agree and there
-          // is nothing to decide. Only a row the destination still holds
-          // is a divergence.
-          if (!heldKeys.has(k)) continue;
-          conflicts.push({
-            table,
-            key: k,
-            kind: 'deleted on the source after the mirror',
-            detail:
-              'the destination still holds it, so it is stale there — but ' +
-              'whether to delete it is a decision this tool will not make ' +
-              'on a live database',
-          });
-        }
-      }
-    }
+          cols,
+          key,
+          rows,
+          sourceKeys,
+          heldKeys,
+          wasSeen,
+        })
+      : { insert: [], conflicts: [] };
 
     plan.push({
       table,
@@ -943,4 +974,8 @@ async function main() {
   );
 }
 
-main().catch((err) => fail(err.stack ?? String(err)));
+// Only run when invoked as a command. A test that imports the decision
+// table must not thereby start carrying rows between live databases.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => fail(err.stack ?? String(err)));
+}
