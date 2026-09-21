@@ -117,6 +117,30 @@ const REPO = join(__dirname, '..', '..', '..');
 /** The single declaration of the shared database. */
 const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
 
+/**
+ * THE OTHER END. This tool exists for ONE move — the #2214 cutover — and
+ * both of its endpoints are named here rather than left to an argument.
+ *
+ * An earlier revision required only that the SHARED database be one end,
+ * and described that as preventing rows being moved through databases the
+ * repository does not account for. It did not: with any other
+ * schema-compatible database in the account, `--from <that> --to
+ * vaipakam-warm --mirror` would delete and overwrite live shared data from
+ * an unrelated clone, and `--from vaipakam-warm --to <that>` would copy
+ * support requests, thresholds and signed offers into an arbitrary
+ * database. Both directions passed the check while doing exactly what the
+ * check claimed to stop.
+ *
+ * So the pair is pinned, by id as well as name — a name can be reused, an
+ * id cannot — and the tool refuses anything else in either direction.
+ * When the predecessor is finally deleted, this constant and the tool go
+ * together.
+ */
+const PREDECESSOR = {
+  name: 'vaipakam-archive',
+  id: '3cffebf5-b652-4da7-953c-9e1d143ad2fe',
+};
+
 const NEVER_CARRIED = (t) =>
   t.startsWith('sqlite_') || t.startsWith('_cf_') || t === 'd1_migrations';
 
@@ -443,10 +467,18 @@ function writeManifest(path, src, tables) {
     takenAt: new Date().toISOString(),
     tables,
   };
-  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+  // 0600, because of what is in it. The manifest keys every row by its
+  // PRIMARY KEY VALUES — wallet addresses, support-ticket ids, Telegram
+  // handshake codes — so it is a complete key inventory of the platform's
+  // off-chain data, written by a command the runbook tells an operator to
+  // run from the repository root. The documented paths are gitignored for
+  // the same reason; a routine `git add .` would otherwise commit it.
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
   console.log(
-    `manifest written to ${path} — keep it; the post-switch reconciliation ` +
-      `needs it as --since`,
+    `manifest written to ${path} (mode 0600) — keep it until the ` +
+      `reconciliation is done; it is what --since reads. It keys every row ` +
+      `by its primary key, so treat it as data: do not commit it, and ` +
+      `delete it once the cutover is complete.`,
   );
 }
 
@@ -1002,20 +1034,35 @@ async function main() {
     fail(`carry needs both --from <name> and --to <name>\n\n${USAGE}`);
   }
   if (fromName === toName) fail('--from and --to name the same database');
-  // The guarantee is not "the destination is fixed" — that version of this
-  // tool could not perform the rollback the functional spec requires. It is
-  // that a carry always has the shared database at one end, so rows cannot
-  // be moved between two databases this repository does not account for.
-  if (fromName !== shared.name && toName !== shared.name) {
+  // BOTH ends are pinned, not just one. See PREDECESSOR: requiring only
+  // that the shared database be one end let an unrelated account database
+  // be mirrored OVER the live shared data, or the shared data be copied
+  // INTO one — in both cases passing a check that claimed to prevent
+  // exactly that.
+  const ends = new Set([fromName, toName]);
+  if (!ends.has(shared.name) || !ends.has(PREDECESSOR.name)) {
     fail(
-      `neither --from "${fromName}" nor --to "${toName}" is the shared ` +
-        `database (${shared.name}, per ${DECLARING_FILE}). One end of a ` +
-        `carry is always the shared database.`,
+      `this tool carries rows between exactly two databases: the shared ` +
+        `one (${shared.name}, per ${DECLARING_FILE}) and its recorded ` +
+        `predecessor (${PREDECESSOR.name}). It was asked for ` +
+        `"${fromName}" → "${toName}". Either direction between those two ` +
+        `is allowed; nothing else is, in either direction.`,
     );
   }
 
   const src = fromName === shared.name ? shared : await resolveByName(fromName);
   const dst = toName === shared.name ? shared : await resolveByName(toName);
+  // Resolved by NAME above, then checked by ID: a database name can be
+  // reused after a delete, an id cannot.
+  const other = src.name === shared.name ? dst : src;
+  if (other.id !== PREDECESSOR.id) {
+    fail(
+      `"${other.name}" resolves to ${other.id}, but the recorded ` +
+        `predecessor is ${PREDECESSOR.id}. A database carrying that name ` +
+        `today is not necessarily the one this tool was written for, and ` +
+        `it will not move rows on the strength of a name alone.`,
+    );
+  }
 
   // The mode is stated, never defaulted. Neither is an error; both is an
   // error; and the destructive one is not what a missing flag means.

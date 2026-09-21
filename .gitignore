@@ -128,3 +128,12 @@ apps/app/public/_headers
 ops/subgraph/generated/
 ops/tenderly/generated/
 ops/lz-watcher/generated/
+# D1 cutover manifests (#2214). `d1-carry-rows.mjs --mirror --manifest`
+# writes a record of every row it carried, KEYED BY PRIMARY KEY — wallet
+# addresses, support-ticket ids, Telegram handshake codes. It is data, not
+# a build artefact: the file is written 0600 and is deleted once the
+# cutover is complete. These are the paths the runbook's commands produce,
+# ignored so that a `git add .` from the repository root cannot commit a
+# complete key inventory of the off-chain data.
+/cutover-mirror.json
+/rollback-mirror.json

@@ -1088,10 +1088,34 @@ the moment the source becomes canonical again. A rollback that began inside
 the free period can leave it while it runs, and nothing after the fact undoes
 that.
 
-Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
-`apps/keeper` and `apps/agent` automatically through Workers Builds — the
-revert is a merge like any other (#2237). Then redeploy
-`ops/offchain-data-warm` by hand, since it is not built on merge.
+**Mechanically — and the ORDER is the whole of it.** An earlier revision of
+this paragraph started with "revert the binding PR", which made archive
+canonical *before* the rows that exist only on warm had been carried back —
+stranding precisely what §"Rolling back" adds the reverse carry to preserve.
+Two orders for one operation, in one section, the earlier one lossy. The
+sequence is:
+
+1. **Stop the writers** — the maintenance build, as in execution-record
+   step 3. Nothing below is safe while warm is being written to.
+2. **Observe warm still** — `digest --db vaipakam-warm` twice, ten minutes
+   apart, identical. Same barrier, same reason, same stated residual.
+3. **Carry the rows back** —
+   `carry --from vaipakam-warm --to vaipakam-archive --mirror --manifest
+   rollback-mirror.json`. This is the step the earlier wording skipped.
+4. **Revert the binding PR**, which re-deploys `apps/indexer`,
+   `apps/keeper` and `apps/agent` automatically through Workers Builds —
+   the revert is a merge like any other (#2237).
+5. **Redeploy `ops/offchain-data-warm` by hand**, since it is not built on
+   merge, and only then run the gate:
+   `check-live-d1-bindings.mjs --expect vaipakam-archive`.
+6. **Reconcile** —
+   `carry --from vaipakam-warm --to vaipakam-archive --only-missing --since
+   rollback-mirror.json` until **two consecutive** runs carry nothing and
+   report no conflicts.
+
+Steps 1–3 before step 4 is not a preference. Reverting first is the same
+defect as switching forward without a final carry, in the other direction,
+and the data it loses is the data users created while warm was canonical.
 
 **`apps/app` is conditional. `apps/www` is not a rollback step at all**
 (#2243 r4, corrected r5).
@@ -1149,10 +1173,12 @@ node apps/indexer/scripts/d1-carry-rows.mjs carry \
   --mirror --manifest rollback-mirror.json
 ```
 
-with the same barrier around it: stop the writers, observe the source still,
-mirror-carry, switch the bindings back, then reconcile in the same direction
-with `--only-missing --since rollback-mirror.json` until **two consecutive**
-runs carry nothing and report no conflicts.
+with the same barrier around it. **The ordered sequence is the numbered one
+in §4 above** — stop, observe still, carry back, revert, hand-deploy the
+backup Worker, gate, reconcile — and that list is the one to follow. This
+passage exists to explain *why the tool can go this way at all*; it is not a
+second procedure, and where the two ever appear to differ, §4's numbered
+steps are the instruction.
 
 **The binding check inverts too, and it needs telling.** During a rollback
 the Workers are meant to be back on archive, so the gate is

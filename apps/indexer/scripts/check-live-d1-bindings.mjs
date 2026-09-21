@@ -61,6 +61,19 @@ const CONFIGS = [
   'ops/offchain-data-warm/wrangler.jsonc',
 ];
 
+/**
+ * The binding NAME a Worker's code reads, taken from its own config. It
+ * matters as much as the id: a serving build can attach the right
+ * database under the wrong name — or lose `DB` while gaining some other
+ * d1 binding — and the Worker's `env.DB` is then undefined while a check
+ * that only looked at ids reported OK. This command is the gate that
+ * authorises normal operation after the switch, so "some binding somewhere
+ * points at the right database" is not the question it is asked.
+ */
+function requiredBindings(cfg) {
+  return (cfg.d1_databases ?? []).map((e) => e.binding).filter(Boolean);
+}
+
 function fail(msg) {
   console.error(`\n[check-live-d1-bindings] ${msg}\n`);
   process.exit(1);
@@ -211,6 +224,7 @@ async function main() {
   for (const file of CONFIGS) {
     const cfg = cfgOf(file);
     const script = cfg.name;
+    const needed = requiredBindings(cfg);
     if (!script) {
       problems.push(`${file}: no "name", so there is no Worker to ask about`);
       continue;
@@ -255,18 +269,47 @@ async function main() {
         }
         continue;
       }
-      for (const b of bindings) {
-        const ok = b.id === EXPECT;
+      // Every binding the Worker's own config declares must be PRESENT, by
+      // name, and pointing at the expected database. A serving build that
+      // attached the right database under a different name would leave
+      // `env.DB` undefined while every id on the version matched.
+      const served = new Map(bindings.map((b) => [b.name, b.id]));
+      for (const name of needed) {
+        const id = served.get(name);
+        if (id === undefined) {
+          console.log(
+            `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${name} ` +
+              `ABSENT ← the Worker reads env.${name}`,
+          );
+          problems.push(
+            `${script} version ${v.id}${share} has no d1 binding named ` +
+              `"${name}", which ${file} declares and the Worker's code ` +
+              `reads as env.${name}. Whatever else is attached, that ` +
+              `reference is undefined at runtime.`,
+          );
+          continue;
+        }
+        const ok = id === EXPECT;
         console.log(
-          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${b.name}=${b.id} ` +
+          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${name}=${id} ` +
             `${ok ? 'OK' : '← MISMATCH'}`,
         );
         if (!ok) {
           problems.push(
-            `${script} version ${v.id}${share} serves ${b.name}=${b.id}, ` +
-              `not ${EXPECT}`,
+            `${script} version ${v.id}${share} serves ${name}=${id}, not ` +
+              `${EXPECT}`,
           );
         }
+      }
+      // An attachment the config does not declare is reported rather than
+      // ignored: it is not a failure by itself, but on a gate authorising
+      // normal operation an unexplained database attachment is worth a line.
+      for (const b of bindings) {
+        if (needed.includes(b.name)) continue;
+        console.log(
+          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${b.name}=${b.id} ` +
+            `(not declared in ${file})`,
+        );
       }
     }
     console.log(
