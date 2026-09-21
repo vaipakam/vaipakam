@@ -6980,7 +6980,10 @@ on the live era alone.
   membership-bound restore into the epoch, the operator dispositions
   (repatriation or evidence-backed classification, keyed by the batch,
   with the refusal they leave standing), and batch-bound replacement
-  funding that clears a disposition by amount.
+  funding that clears a disposition by amount — offered only where a
+  disposition leaves a RECORDED surviving liability, which under B's
+  default closure rule none does (see the replacement paragraph in the
+  3b-ii-A blueprint).
 - **What 3b defers, and this is the question for the owner:** a CONTESTED
   allocation is REFUSED with a named reason until 3c lands, rather than
   settled immediately — where a draw is contested exactly when the batch
@@ -7055,7 +7058,8 @@ on the live era alone.
 >   batch-keyed pending remainder and its membership-bound restore, the
 >   operator dispositions (repatriation, evidence-backed classification)
 >   with the refusal they leave standing, and batch-bound replacement
->   funding that clears a disposition by amount. Lands after A: a release
+>   funding that clears a disposition by amount, offered only where a
+>   disposition leaves a recorded surviving liability. Lands after A: a release
 >   before the draws exist would close out epochs nothing has drawn from.
 >
 > **The per-day obligation figure — what the scout found, and the shape
@@ -7476,32 +7480,43 @@ on the live era alone.
 > claim's backing check reads the fresh net of the epoch-paid legs, and
 > row 13's need comes through the same netted dry run.
 >
-> *Replacement funding has its own provenance* (Codex #2274 r7 P1). B's
-> "batch-bound replacement funding that clears a disposition by amount"
-> arrives AFTER a disposition has stepped the original packet's untyped
-> remainder and the uncounted aggregates down, so a later draw backed by
-> it cannot take the packet half above: the original packet is depleted
-> by exactly the disposed amount, so the step-down would underflow, and
-> crediting that packet again would fabricate ingress under its
-> immutable `actualReceived` anchor and break the identity. B therefore
-> records EACH replacement transfer as its own packet — kind
-> `Replacement`, keyed by the batch it clears and a per-batch sequence
-> number, with its own `actualReceived` and untyped remainder, never
-> rewritten — and the batch carries a cumulative `replacementFunded`
-> beside `admitted` together with the ordered list of those packets, so a
-> disposition cleared in parts (40 units now, 60 later) has one sound
-> record per transfer and the acknowledgment clears when the sum reaches
-> the amount (Codex #2274 r8 P1: a single second packet could hold only
-> the first transfer without rewriting its anchor or replaying its key).
-> The conservation identity gains the cumulative figure on the funded
-> side: `admitted + replacementFunded == balance + parked + debited +
-> consumedFresh + consumedRecycled`. A draw spends the original packet's
-> untyped remainder first and the replacement packets' after it, in
-> sequence order, each through the same step-down function, so every unit
-> drawn debits the packet that holds it and the `Unclassified` row
-> identity holds as before. Nothing in A1 changes:
-> A1 admits no replacement, and the second packet is a B addition the
-> identity above already has room for.
+> *Replacement funding — what it is for, and how it is consumed* (Codex
+> #2274 r7, r8 and r9, resolved together). Under B's closure rule no
+> disposition precedes a day's terminal closure: parking and disposition
+> follow the proof that every entry covering the day has terminated, and
+> no entry can begin covering a past day afterwards (fact 2). A
+> disposition therefore leaves no obligation behind it, and value funded
+> "in replacement" after one would have no consumer — a draw could never
+> reach it, and the earlier drafts of this paragraph, which had draws
+> spending replacement packets after the original, described a path that
+> cannot arise (Codex r9). Replacement funding exists for exactly ONE
+> case: a disposition that leaves a SURVIVING LIABILITY on record — the
+> named exception above, an operator stamping a day closed over an entry
+> blocked only by a sanctions flag, with the write-off recorded. That is
+> an owner question; B proceeds WITHOUT the exception, and without it
+> offers no replacement funding at all. Where the exception is taken, the
+> write-off record is the consumer: it names the claimant, the day and
+> the two legs written off, and a replacement transfer "clears the
+> disposition by amount" by stepping that record's outstanding figure
+> down — never by re-entering the day draw. Each transfer is its own
+> packet (kind `Replacement`, keyed by the batch and a per-batch sequence,
+> its own `actualReceived`, never rewritten — Codex r8: one second packet
+> could hold only the first transfer), and it leaves through ONE recorded
+> exit, `liabilityFunded`, so its identity `unclassified +
+> liabilityFunded == protectedCumulative` holds per packet; the batch
+> keeps the cumulative `replacementFunded` beside `admitted`, the identity
+> gaining it on the funded side and the funded liability on the exit
+> side. No draw ever crosses a replacement packet: the hot path is the
+> liability record — O(1) per transfer, O(1) per payout — and the
+> provenance list is read only by paginated reconciliation views, so a
+> disposition refilled through many small transfers costs each transfer
+> its own record and nothing more (Codex r9). The draw's packet half
+> above is therefore always the ORIGINAL packet's, one draw source per
+> batch: the batch's leg counters and the packet's `drawn` agree by
+> construction, and `authenticatedFresh` nets the packet's own fresh
+> draws exactly (Codex r9: per-packet component counters would be needed
+> only where a second packet can be drawn from, and none can). Nothing in
+> A1 changes: A1 admits no replacement and records no write-off.
 >
 > *Hosted where.* The draw and the leg-counter writes live on
 > `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
@@ -7512,8 +7527,14 @@ on the live era alone.
 > `eraBalance(era)` read is one interface returning zero, in the middle
 > position, so PR C changes a body and not an order.
 >
-> *As built — PR #2276 through its second Codex round.* Where the code
-> departed from the paragraphs above, the code is the record: (1) the
+> *Ratified departures — PR #2276 through its second Codex round.* Each
+> item below is a decision THIS DESIGN takes, superseding the paragraph
+> above that it names; the paragraphs are read subject to it, A2, B and
+> 3c build on the ratified form, and the implementation conforms to it —
+> the list is the record, not the code (Codex #2274 r9: a note that let
+> the implementation override the design would have reversed the
+> repository's precedence rule and turned any discrepancy into a
+> specification change). (1) the
 > coverage read, the allocation, the draw and every dry run walk a day's
 > index through ONE plan (`planTransportDraw`) — fewest listed days first,
 > oldest arrival on ties, index position last — and a batch whose
