@@ -679,6 +679,28 @@ const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
  * `assertRedactionsApply`: if a declared table exists and the declared
  * column does not, the run stops rather than silently printing in
  * clear. A rename is exactly how a redaction stops applying.
+ *
+ * THE LIST WAS AUDITED, NOT GUESSED (2026-09-21). Every primary key on
+ * all 43 carried tables was read from the live schema and judged. This
+ * is the only one, and the near misses are worth recording so the
+ * boundary is legible:
+ *
+ *   - `diag_legal_holds.wallet_hash` — already a hash, so there is
+ *     nothing a fingerprint would add.
+ *   - `notify_state.wallet`, `user_thresholds.wallet`,
+ *     `reward_day_user.user` — wallet addresses are public identifiers
+ *     on a public chain, not credentials. Naming one in a report tells a
+ *     reader nothing the chain does not.
+ *   - `support_tickets.ticket_id` — random (`VPK-` + 40 bits), which
+ *     reads like a bearer token and is not one: nothing reads a ticket
+ *     by id, the only query against that table is a retention DELETE.
+ *     If a lookup-by-id surface is ever added, this becomes one.
+ *   - `signed_offers.order_hash`,
+ *     `prepay_listing_match_breadcrumbs.tx_hash` — public on-chain
+ *     values.
+ *
+ * A new table whose key is a secret has to be added here. That is the
+ * residue of a declared list and it is stated rather than implied.
  */
 const CREDENTIAL_KEY_COLUMNS = new Map([
   [
