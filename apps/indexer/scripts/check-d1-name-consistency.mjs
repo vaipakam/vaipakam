@@ -49,31 +49,16 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  MUST_NOT_SHARE,
+  SHARED_CONSUMERS,
+  WRITERS,
+  assertClassified,
+} from './lib/d1-workers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
 
-/**
- * Workers that bind the SHARED database. The binding name differs by
- * Worker (the ops backup Worker reads it as `DB_ARCHIVE`), so the entry
- * is identified by binding, not by position.
- */
-const SHARED_CONSUMERS = [
-  { file: 'apps/indexer/wrangler.jsonc', binding: 'DB' },
-  { file: 'apps/keeper/wrangler.jsonc', binding: 'DB' },
-  { file: 'apps/agent/wrangler.jsonc', binding: 'DB' },
-  { file: 'ops/offchain-data-warm/wrangler.jsonc', binding: 'DB_ARCHIVE' },
-];
-
-/** Workers that must NOT bind the shared database, and why. */
-const MUST_NOT_SHARE = [
-  {
-    file: 'ops/mesh-watcher/wrangler.jsonc',
-    reason:
-      'internal ops alerts must not co-locate with user-facing data ' +
-      '(CLAUDE.md, "Cloudflare D1 schema discipline")',
-  },
-];
 
 /**
  * Databases a `wrangler d1` command may target besides the shared one.
@@ -131,6 +116,7 @@ const COMMAND_GENERATORS = [
     file: 'apps/indexer/scripts/lib/cutover-databases.mjs',
     constant: 'SUCCESSOR',
     field: 'name',
+    idField: 'id',
     why:
       'is the one pinned pair the cutover tools read, rather than each ' +
       'reading the shared one from a Worker binding — they have to run ' +
@@ -192,7 +178,7 @@ function d1Entries(file) {
   return cfg.d1_databases ?? [];
 }
 
-const problems = [];
+const problems = [...assertClassified(REPO)];
 
 // ---------------------------------------------------------------- check 1
 //
@@ -218,12 +204,6 @@ const problems = [];
 // The writers are all-or-none. A mixed state is the barrier half-applied,
 // which is worse than either shape, because the Workers still bound keep
 // writing while the procedure believes everything has stopped.
-const WRITERS = new Set([
-  'apps/indexer/wrangler.jsonc',
-  'apps/keeper/wrangler.jsonc',
-  'apps/agent/wrangler.jsonc',
-]);
-
 const bound = [];
 const unbound = [];
 for (const { file, binding } of SHARED_CONSUMERS) {
@@ -401,7 +381,7 @@ for (const file of tracked) {
 }
 
 // ---------------------------------------------------------------- check 4
-for (const { file, constant, field, why } of COMMAND_GENERATORS) {
+for (const { file, constant, field, idField, why } of COMMAND_GENERATORS) {
   const src = readFileSync(join(REPO, file), 'utf8');
   const decl = src.match(
     field === undefined
@@ -430,6 +410,36 @@ for (const { file, constant, field, why } of COMMAND_GENERATORS) {
         `that moved the bindings but not this constant would leave an ` +
         `incident restore writing to the retired database.`,
     );
+  }
+
+  // AND THE ID, where the constant carries one. Checking the name alone
+  // is the half-check this guard exists to catch everywhere else: a
+  // database recreated under the same name has a new id, so a constant
+  // whose id was edited to any other valid uuid passed while naming the
+  // right database (#2267 r24). The carry tool uses that id DIRECTLY as
+  // its destination, so an unchecked one is a valid-but-wrong account
+  // database being overwritten and then verified as correct.
+  if (idField !== undefined) {
+    const idDecl = src.match(
+      new RegExp(
+        `const\\s+${constant}\\s*=\\s*\\{[^}]*?\\b${idField}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`,
+        's',
+      ),
+    );
+    if (idDecl === null) {
+      problems.push(
+        `${file}: \`${constant}\` has no \`${idField}\` field to check. ` +
+          `A name without an id is the half-check this guard exists to ` +
+          `catch — a name can be reissued to a different database.`,
+      );
+    } else if (idDecl[1] !== SHARED_ID) {
+      const line = src.slice(0, idDecl.index).split('\n').length;
+      problems.push(
+        `${file}:${line}: ${constant}.${idField} is "${idDecl[1]}", but ` +
+          `the shared database is "${SHARED_ID}".\n    Same name, ` +
+          `different database. That file ${why}.`,
+      );
+    }
   }
 }
 

@@ -441,3 +441,28 @@ The pair is now written down once and read by every tool that needs it,
 rather than by each separately, so the rule cannot hold in one tool and not
 another. A name that is neither of the two is refused outright, and the
 refusal says why rather than falling back to a lookup.
+
+### Two tools kept separate lists of the same services
+
+The check that confirms each service is attached to the right database, and
+the check that keeps every written reference in agreement, each carried
+their own hand-written list of which services touch the shared database.
+Nothing made the two lists grow together. Adding a fourth service and
+registering it in one list but not the other would have left the pause
+confirmation reporting success having never asked about it — while it wrote
+straight through the window the pause exists to create.
+
+There is now one list, read by both, and it is self-checking: any service
+configuration in the repository that declares an attachment to a database
+and is not classified in it — as a consumer of the shared database, as one
+the pause must hold, or as one that must not share it at all — is refused by
+name. The list still has to be written, because a service whose attachment
+is removed for the pause declares nothing and cannot be discovered; what the
+check removes is the case where the repository knows about a service and the
+tools do not.
+
+The identity rule also reached the last place that only had half of it: the
+check that keeps references in agreement compared the pinned database's name
+and not its identity, so a pinned identity edited to any other valid one
+passed while naming the right database — and the copying tool uses that
+identity directly as its destination.

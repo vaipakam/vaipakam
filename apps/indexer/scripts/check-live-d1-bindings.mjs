@@ -45,6 +45,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  SHARED_CONSUMERS,
+  WRITERS,
+  assertClassified,
+} from './lib/d1-workers.mjs';
+import {
   PREDECESSOR,
   SUCCESSOR,
   knownDatabase,
@@ -55,28 +60,26 @@ const REPO = join(__dirname, '..', '..', '..');
 
 
 /**
- * The Workers that bind the shared database, by the config that declares
- * each. The binding NAME differs by Worker — the backup Worker reads it
- * as `DB_ARCHIVE` — so the check keys on the database id, not the name.
+ * The Workers to ask about come from the shared registry
+ * (`lib/d1-workers.mjs`), not from a roster here.
+ *
+ * There used to be one in this file and another in
+ * `check-d1-name-consistency`, with nothing making them grow together
+ * (#2267 r24): add a fourth writer, register it in one and not the other,
+ * and this command exits `OK` having never asked about it while it writes
+ * straight through the barrier. The registry also refuses a tree in which
+ * a Worker declares a D1 binding and is classified in neither role, so
+ * the list cannot silently fall behind the repository.
+ *
+ * WRITERS are the three the barrier has to stop, and the three a merge
+ * redeploys automatically (#2237). The backup Worker is deployed BY HAND,
+ * so a merge does not move it and the barrier does not stop it — which
+ * changes what each check below may assume about it, not how much it
+ * matters.
  */
-/**
- * The WRITERS — the three Workers the barrier has to stop, and the three
- * a merge redeploys automatically (#2237).
- */
-const WRITERS = [
-  'apps/indexer/wrangler.jsonc',
-  'apps/keeper/wrangler.jsonc',
-  'apps/agent/wrangler.jsonc',
-];
-
-/**
- * Deployed BY HAND, so a merge does not move it and the barrier does not
- * stop it. It is listed separately because the two facts change what each
- * check may assume, not because it matters less.
- */
-const MANUAL = ['ops/offchain-data-warm/wrangler.jsonc'];
-
-const CONFIGS = [...WRITERS, ...MANUAL];
+const WRITER_FILES = [...WRITERS];
+const MANUAL = SHARED_CONSUMERS.filter((c) => !c.writer).map((c) => c.file);
+const CONFIGS = [...WRITER_FILES, ...MANUAL];
 
 /**
  * The binding NAME a Worker's code reads, taken from its own config. It
@@ -195,7 +198,7 @@ async function assertWritersHeld() {
       `behind until step 5.\n`,
   );
   const problems = [];
-  for (const file of WRITERS) {
+  for (const file of WRITER_FILES) {
     const script = cfgOf(file).name;
     const serving = await servingVersions(script);
     if (!serving) {
@@ -235,7 +238,7 @@ async function assertWritersHeld() {
   }
   console.log(
     `[check-live-d1-bindings] OK — every serving version of all ` +
-      `${WRITERS.length} writers carries no D1 binding. New invocations ` +
+      `${WRITER_FILES.length} writers carries no D1 binding. New invocations ` +
       `cannot obtain a handle; work already running is the residual the ` +
       `runbook names, which the digest barrier narrows and step 6 closes.`,
   );
@@ -269,6 +272,20 @@ async function main() {
 
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
+  }
+
+  // Refuse before asking Cloudflare anything if the repository holds a
+  // Worker that touches D1 and is classified in neither role. Every
+  // verdict below is about the Workers in CONFIGS, so an unclassified one
+  // is a Worker this command silently does not cover — and the one place
+  // that matters is the barrier, where "not covered" and "held" print the
+  // same OK.
+  const unclassified = assertClassified(REPO);
+  if (unclassified.length > 0) {
+    fail(
+      `${unclassified.length} unclassified D1 Worker(s):\n\n` +
+        unclassified.map((u) => `  - ${u}`).join('\n\n'),
+    );
   }
 
   // `--writers-held` is a DIFFERENT QUESTION, not a relaxation of this

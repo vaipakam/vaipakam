@@ -1255,10 +1255,20 @@ the one that authorises restoring normal operation:
    > **every version inside it** — a gradual deployment splits traffic, so
    > checking only the first would let a 90/10 split pass with a tenth of
    > requests still writing to the old database — then that version's own
-   > bindings. The expected id comes from `apps/indexer/wrangler.jsonc`, not
-   > from an argument. A version with no D1 binding at all is reported as the
-   > maintenance build rather than as a mismatch, since that is a deliberate
-   > state during the switch.
+   > bindings. The expected id is one of the two databases this move is
+   > between, pinned by id in `apps/indexer/scripts/lib/cutover-databases.mjs`
+   > — `--expect` selects which, and a name that is neither is refused
+   > rather than resolved against the account (#2267 r23).
+   >
+   > **A version with no D1 binding at all FAILS this check**, and that is
+   > not the same command as the barrier confirmation. Normal mode asks
+   > "is every serving version on the expected database", and a Worker
+   > attached to nothing is not; `--writers-held` asks the opposite
+   > question of the three writers and is the only mode that treats a
+   > bindingless version as correct. An earlier version of this block said
+   > normal mode reports it as the maintenance build, which would have had
+   > an operator confirm the barrier with the command that cannot confirm
+   > it (#2267 r24).
    >
    > This replaces the wording added in #2267 r1, which said to read the
    > binding id "from the control plane" without saying which reading — and
