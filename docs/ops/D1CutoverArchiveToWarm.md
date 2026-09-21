@@ -454,8 +454,9 @@ because step 3 below is the part of it that had to be re-learned.
       621 and 979 of this document, so there is one spelling of it.
    6. **Reconcile, and keep reconciling.**
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
-      cutover-mirror.json`, which **reads both sides and reports. It writes
-      nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      cutover-mirror.json` — or `--since "$MANIFEST"` if the baseline was
+      recovered under the step-6 recovery box's name — which **reads both
+      sides and reports. It writes nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
       runs report nothing at all — with one documented exception: three of
       the situations below have a resolution that changes no data and so
       report on every subsequent pass. See the #2279 box under the
@@ -525,6 +526,28 @@ because step 3 below is the part of it that had to be re-learned.
       > A refusal leaves the artifact untouched and uncovered. That is
       > still usable for finding NEW differences; what it must not do is
       > license the rollback’s reverse mirror.
+      >
+      > **CARRY THE RECOVERED PATH FORWARD — every `--since` in this
+      > document names `cutover-mirror.json`** (#2281 r10). That file is
+      > the one you just established is missing, so following this box
+      > and then resuming the procedure as written fails on the very next
+      > command. The recovered manifest is a REPLACEMENT for it, under a
+      > different name because the original must never be written over.
+      >
+      > From here to the end of the rollback window, read every
+      > `--since cutover-mirror.json` in this document as
+      > `--since cutover-mirror-reconstructed.json`. Setting it once in
+      > the shell keeps the two from drifting apart mid-procedure:
+      >
+      > ```
+      > MANIFEST=cutover-mirror-reconstructed.json   # or cutover-mirror.json
+      > ```
+      >
+      > and pass `--since "$MANIFEST"` thereafter. **Do not rename the
+      > reconstruction to `cutover-mirror.json`** to make the commands
+      > match: the name is what tells the next reader which of the two
+      > kinds of baseline they have, and the artifact says so of itself
+      > for the same reason.
       >
       >
       > Read-only; it writes no database.
@@ -1780,8 +1803,12 @@ sequence is:
 
    ```
    node apps/indexer/scripts/d1-carry-rows.mjs reconcile \
-     --from vaipakam-archive --to vaipakam-warm --since cutover-mirror.json
+     --from vaipakam-archive --to vaipakam-warm --since "${MANIFEST:-cutover-mirror.json}"
    ```
+
+   (`MANIFEST` is unset in the ordinary case and the default applies; the
+   step-6 recovery box sets it when the baseline had to be reconstructed
+   under another name.)
 
    Run it, and keep the output with the digest. It reads both databases
    and writes to neither, so it costs minutes and risks nothing.
@@ -1856,7 +1883,9 @@ sequence is:
    reverse mirror, because the mirror destroys it** (#2267 r15).
 
    `reconcile --from vaipakam-archive --to vaipakam-warm --since
-   cutover-mirror.json`, read-only, and **resolve everything it reports**.
+   cutover-mirror.json` — or `--since "$MANIFEST"` for a baseline
+   recovered under the step-6 recovery box's name — read-only, and
+   **resolve everything it reports**.
 
    > **A RECONSTRUCTED BASELINE MARKED `uncovered` DOES NOT LICENSE THIS
    > ROLLBACK, and an earlier draft called such a baseline "usable with

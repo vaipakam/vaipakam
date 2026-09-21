@@ -1795,6 +1795,29 @@ export function classifyForReconcile({
 }
 
 /**
+ * The container a manifest's tables go in — prototype-free, always.
+ *
+ * A TABLE MAY BE CALLED `__proto__` (#2281 r10). It is a legal SQLite
+ * identifier and it matches every table-name pattern in this file.
+ * Assigned onto a plain object it invokes the legacy prototype setter
+ * instead of creating an own property, so the table is read and
+ * digested and then vanishes: `Object.keys`, `Object.entries` and
+ * `JSON.stringify` all skip it, and the baseline is written without it
+ * and without a refusal naming it — a silently incomplete record of
+ * what a database held, which is the one thing this artifact must not
+ * be.
+ *
+ * It is a named function rather than two `Object.create(null)` calls so
+ * the rule has one home, and a third place that builds a manifest
+ * cannot quietly reintroduce a plain object.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function newManifestTables() {
+  return Object.create(null);
+}
+
+/**
  * ONE PER-TABLE MANIFEST ENTRY, built in one place because there are now
  * two producers of it — the mirror, and `manifest` — and a baseline whose
  * shape depends on which verb wrote it is a baseline the reconciliation
@@ -1923,6 +1946,7 @@ export function parseEvidence(text) {
   // no ordering to get wrong, and no "trailing" special case to forget.
   const enumerations = [];
   const seqReadings = [];
+  const unterminatedSeqs = [];
   let openDigests = new Map();
   let openSeqs = new Map();
   let sawAnyComplete = false;
@@ -1937,13 +1961,31 @@ export function parseEvidence(text) {
       sawAnyComplete = true;
       continue;
     }
-    // Closes a DIGEST reading, and only that. `printDigest` prints this
-    // line at the end of every run, including when the count is zero —
-    // which is why an empty enumeration is still an enumeration.
+    // Closes a DIGEST reading. `printDigest` prints this line at the end
+    // of every run, including when the count is zero — which is why an
+    // empty enumeration is still an enumeration.
+    //
+    // AND IT MARKS THE START OF A RUN'S SEQUENCE SECTION (#2281 r10).
+    // One `digest` run prints its digests, then this line, then its
+    // `seq` lines, then `seq-listing complete`. So a count line can only
+    // appear once a NEW run's output has begun — and any sequence block
+    // still open at that point belongs to a previous run whose closing
+    // marker is not in the file.
+    //
+    // Left merged, the two runs' sequence lines become one map that the
+    // NEXT marker closes as a single complete reading. A table at 5 in
+    // the first run and omitted from the second — a known zero, which is
+    // a RESET — then reads as one reading of 5, and a reconstruction
+    // sitting at 5 passes over a log that proves the sequence moved.
     const tot = /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)$/.exec(line);
     if (tot) {
       enumerations.push({ digests: openDigests, declared: Number(tot[1]) });
       openDigests = new Map();
+      if (openSeqs.size > 0) {
+        // Never closed, so it contributes its values and no zeros.
+        unterminatedSeqs.push(openSeqs);
+        openSeqs = new Map();
+      }
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
@@ -1972,7 +2014,7 @@ export function parseEvidence(text) {
   }
   // Whatever is still open was never closed, so it names tables — which
   // `mentioned` already holds — and says nothing by omission.
-  const trailingSeqs = openSeqs;
+  if (openSeqs.size > 0) unterminatedSeqs.push(openSeqs);
 
   // A declared count that does not match the lines present means the
   // block was pasted in part. It is then not a reading of the table set
@@ -2004,10 +2046,19 @@ export function parseEvidence(text) {
 
   const seqs = new Map();
   for (const table of mentioned) {
+    // ONE RULE OVER EVERY BLOCK (#2281 r10). A CLOSED reading always
+    // observes a value — no line inside one means zero. An UNTERMINATED
+    // block observes a value only where it has a line, because its
+    // silences may be a truncated paste rather than a zero. There can be
+    // several unterminated blocks now that a digest summary parks one,
+    // so this is a fold over observations rather than a closed pass with
+    // a trailing special case bolted on.
+    const seen = [
+      ...seqReadings.map((r) => (r.has(table) ? r.get(table) : 0)),
+      ...unterminatedSeqs.filter((r) => r.has(table)).map((r) => r.get(table)),
+    ];
     let agreed;
-    for (const reading of seqReadings) {
-      // Inside a CLOSED listing, no line means zero.
-      const value = reading.has(table) ? reading.get(table) : 0;
+    for (const value of seen) {
       if (agreed === undefined) {
         agreed = value;
       } else if (agreed !== value) {
@@ -2018,18 +2069,6 @@ export function parseEvidence(text) {
         );
         agreed = undefined;
         break;
-      }
-    }
-    if (trailingSeqs.has(table)) {
-      const value = trailingSeqs.get(table);
-      if (agreed === undefined && seqReadings.length === 0) agreed = value;
-      else if (agreed !== undefined && agreed !== value) {
-        conflicts.push(
-          `${table}: the evidence gives two different sequence readings — ` +
-            `${agreed} and ${value}. Something allocated between them, so ` +
-            `neither can stand for the mirror on its own`,
-        );
-        agreed = undefined;
       }
     }
     if (agreed !== undefined) seqs.set(table, agreed);
@@ -2115,7 +2154,10 @@ export function coverageProblems(tables, evidence) {
     ...evidence.digests.keys(),
     ...evidence.seqs.keys(),
   ])) {
-    if (!(table in tables)) {
+    // OWN PROPERTY, not `in` — `"__proto__" in {}` and
+    // `"toString" in {}` are both true, so `in` would read an inherited
+    // name as a table this baseline represents (#2281 r10).
+    if (!Object.hasOwn(tables, table)) {
       problems.push(
         `${table}: the evidence names it and this baseline does not`,
       );
@@ -2165,7 +2207,7 @@ async function takeManifest(db) {
 
   const before = await readSequences();
   const tables = await tablesOf(db.id);
-  const manifest = {};
+  const manifest = newManifestTables();
   const refused = [];
   const digestAtRead = new Map();
   const ddlAtRead = new Map();
@@ -3023,7 +3065,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     console.log(`  ${n.table.padEnd(32)} schema drift — ${n.detail}`);
   }
   const manifestOf = () => {
-    const m = {};
+    const m = newManifestTables();
     for (const step of plan) {
       if (step.refused) continue;
       m[step.table] = manifestEntry({
@@ -3397,7 +3439,16 @@ async function main() {
     } catch (err) {
       fail(`could not read the manifest at ${path} — ${err.message}`);
     }
-    const prov = doc?.provenance ?? {};
+    // THE SAME LEGACY DEFAULT `readManifest` USES (#2281 r10). A
+    // manifest written before provenance existed carries none, and
+    // `readManifest` reads that absence as the mirror — correctly,
+    // because the mirror was the only thing that wrote one. Reading it
+    // as `{}` here let a zero-table mirror artifact be promoted and
+    // rewritten with `interval: "covered"` and no producer, after which
+    // every later run reads the one direct observation as a
+    // reconstruction. The absence has to mean the same thing in both
+    // places or the artifact changes identity by being read.
+    const prov = doc?.provenance ?? { producer: "carry --mirror" };
     if (prov.producer === "carry --mirror") {
       fail(
         `${path} was written by the mirror. It observed the moment it ` +
@@ -3419,6 +3470,44 @@ async function main() {
     // reconstruction could never be promoted. A rollback path that
     // cannot be followed on a legitimate database state is a check that
     // can never pass, which is the shape this PR exists to remove.
+    // AND IT HAS TO CARRY A READING OF EACH KIND (#2281 r10). Warning
+    // the operator that a missing count line disables the table-set
+    // check was the wrong shape: it left a silent, unannounced downgrade
+    // reachable by a paste that drops one line, and the thing it
+    // licenses is the reverse mirror.
+    //
+    // Cropping `--expect` so that one mirror-time table's digest lines
+    // AND the count line are gone leaves a digest map that agrees, a
+    // complete sequence listing, and no name for the missing table — so
+    // `coverageProblems` has nothing to compare and promotes. If that
+    // table is naturally keyed and also absent from the reconstruction,
+    // nothing anywhere establishes that the two table sets match.
+    //
+    // So a promotion requires evidence that actually read each side:
+    // one valid enumeration of the table set, and one complete sequence
+    // listing. Refusing is cheap — re-paste the block — and the failure
+    // it prevents is not recoverable.
+    if (evidence.readings.tableSets === 0) {
+      fail(
+        `${expect} carries no complete reading of the table set, so it ` +
+          `cannot establish that the mirror held the same tables as this ` +
+          `reconstruction.\n\nPaste the whole of a "digest" run, ` +
+          `including the rule-and-count line that closes it — the ` +
+          `\`———…  (N tables)\` line. Without it the digests still ` +
+          `compare and a table missing from BOTH the evidence and the ` +
+          `reconstruction is simply never named, which is exactly what ` +
+          `coverage is supposed to rule out.`,
+      );
+    }
+    if (evidence.readings.sequences === 0) {
+      fail(
+        `${expect} carries no complete sequence listing, so a table with ` +
+          `no "seq" line cannot be read as a known zero rather than as a ` +
+          `line that was not pasted.\n\nPaste the whole of a "digest" ` +
+          `run, including the "seq-listing complete" line that closes ` +
+          `its sequence section.`,
+      );
+    }
     const saidSomething =
       evidence.digests.size > 0 ||
       evidence.seqs.size > 0 ||

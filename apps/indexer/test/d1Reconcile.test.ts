@@ -34,6 +34,7 @@ import {
   stopsBeforeVerification,
   unsupportedUniqueReason,
   verdictProblems,
+  newManifestTables,
   writeManifest,
 } from "../scripts/d1-carry-rows.mjs";
 
@@ -2469,6 +2470,142 @@ describe("a table set that changed is evidence too", () => {
       "covered",
     );
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  // #2281 r10 — a count line also marks the START of a run's sequence
+  // section, because one `digest` run prints digests, the count line,
+  // its `seq` lines, then `seq-listing complete`. A sequence block still
+  // open at a count line belongs to a run whose marker is missing.
+  it("parks an unterminated sequence block at the next count line", () => {
+    const e = parseEvidence(
+      [
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        // ← the first run's `seq-listing complete` is missing
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        // the second run omits `seq t`, which inside a closed listing
+        // is a known zero — so the sequence was reset between runs
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(
+      e.conflicts.some((c) => c.includes("two different sequence readings")),
+    ).toBe(true);
+    expect(e.seqs.has("t")).toBe(false);
+  });
+
+  // #2281 r10 — verb-level, because these guards are in `cover`.
+  const runCover = (manifestDoc: unknown, evidence: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "cover-guard-"));
+    const manifest = join(dir, "m.json");
+    const expected = join(dir, "e.txt");
+    writeFileSync(manifest, JSON.stringify(manifestDoc));
+    writeFileSync(expected, evidence);
+    try {
+      return {
+        ok: true as const,
+        out: execFileSync(
+          process.execPath,
+          [
+            new URL("../scripts/d1-carry-rows.mjs", import.meta.url).pathname,
+            "cover",
+            "--manifest",
+            manifest,
+            "--expect",
+            expected,
+          ],
+          { encoding: "utf8", stdio: "pipe" },
+        ),
+        after: readFileSync(manifest, "utf8"),
+      };
+    } catch (err: any) {
+      return {
+        ok: false as const,
+        out: `${err.stdout ?? ""}${err.stderr ?? ""}`,
+        after: readFileSync(manifest, "utf8"),
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  const reconstructed = (tables: Record<string, unknown>) => ({
+    source: { name: "vaipakam-archive", id: "abc" },
+    takenAt: new Date().toISOString(),
+    provenance: {
+      producer: "manifest (reconstructed)",
+      interval: "uncovered",
+    },
+    tables,
+  });
+
+  it("will not promote against evidence with no table-set reading", () => {
+    // The digests agree. What is missing is the count line, so a table
+    // dropped from BOTH the evidence and the reconstruction is never
+    // named and coverage would be granted without the table sets ever
+    // having been compared.
+    const r = runCover(
+      reconstructed({
+        t: {
+          key: ["id"],
+          cols: ["id"],
+          seq: 0,
+          rows: {},
+          digest: "a".repeat(16),
+        },
+      }),
+      `t ${"a".repeat(16)}\nseq-listing complete\n`,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain("no complete reading of the table set");
+    expect(JSON.parse(r.after).provenance.interval).toBe("uncovered");
+  });
+
+  it("will not promote a manifest that carries no provenance at all", () => {
+    // Written before provenance existed, so the mirror wrote it — which
+    // is what `readManifest` concludes from the same absence. Promoting
+    // it would rewrite the one direct observation as a reconstruction.
+    const r = runCover(
+      {
+        source: { name: "vaipakam-archive", id: "abc" },
+        takenAt: new Date().toISOString(),
+        tables: {},
+      },
+      `${"\u2014".repeat(8)}   0  (0 tables)\nseq-listing complete\n`,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain("written by the mirror");
+    expect(JSON.parse(r.after).provenance).toBeUndefined();
+  });
+
+  it("keeps a table called __proto__ as an own property", () => {
+    // Both manifest builders go through this, so the rule has one home
+    // and a third builder cannot reintroduce a plain object.
+    const m = newManifestTables();
+    m["__proto__"] = { key: ["id"], cols: ["id"], seq: 0, rows: {} };
+    expect(Object.keys(m)).toEqual(["__proto__"]);
+    expect(Object.entries(m)).toHaveLength(1);
+    expect(JSON.parse(JSON.stringify(m))["__proto__"]).toBeDefined();
+  });
+
+  it("does not read an inherited name as a table the baseline holds", () => {
+    // `"__proto__" in {}` and `"toString" in {}` are both true, so an
+    // `in` test reported the evidence's `__proto__` as represented by a
+    // baseline that does not hold it (#2281 r10).
+    const problems = coverageProblems(
+      {},
+      {
+        digests: new Map([["__proto__", "a".repeat(16)]]),
+        seqs: new Map([["__proto__", 0]]),
+        conflicts: [],
+        readings: { tableSets: 1, sequences: 1 },
+      },
+    );
+    expect(problems.some((p) => p.includes("this baseline does not"))).toBe(
+      true,
+    );
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {
