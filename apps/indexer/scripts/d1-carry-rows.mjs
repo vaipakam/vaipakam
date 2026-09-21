@@ -847,6 +847,33 @@ async function carry(src, dst, { onlyMissing, since }) {
   return { written, refused, conflicts, manifest: manifestOf() };
 }
 
+/**
+ * One report, one exit code, whether the run stopped at planning or after
+ * verifying. Two spellings of "here is what is wrong" drift apart, and the
+ * one an operator sees least is the one that goes stale.
+ *
+ * "problem(s)", not "table(s)": the list mixes whole-table digest
+ * differences with per-ROW conflicts, and a run reporting seventeen
+ * conflicting rows in ONE table once said "17 table(s)". A count naming
+ * the wrong unit is a small lie in a report whose whole job is not telling
+ * them.
+ */
+function reportProblems(problems, dst) {
+  console.error(
+    `\nSTOPPED — ${problems.length} problem(s):\n` +
+      problems.map((p) => `  - ${p}`).join('\n') +
+      `\n\nThese are of three kinds and they do not mean the same thing. A ` +
+      `DIGEST difference is not always a fault: a source with live writers ` +
+      `moves on while a carry runs. A REFUSED table was not carried at ` +
+      `all. A CONFLICT needs somebody to decide which value is right — and ` +
+      `where conflicts were found, NOTHING was written to ${dst.name}, so ` +
+      `re-running after resolving them is safe. Read the sequence in ` +
+      `docs/ops/D1CutoverArchiveToWarm.md before deciding which of the ` +
+      `three you are looking at.\n`,
+  );
+  process.exit(1);
+}
+
 // -------------------------------------------------------------------- main
 
 const USAGE =
@@ -989,6 +1016,25 @@ async function main() {
   if (wantMirror) writeManifest(manifestPath, src, manifest);
   console.log(`wrote ${written} row(s)`);
 
+  // A run that wrote nothing has nothing to verify, so it says what it
+  // found and stops. Digesting both databases takes minutes, and doing it
+  // here would make an operator wait through them for a conflict list that
+  // was decided before any of it started — during a cutover window, and
+  // reporting state read long after the decision it describes.
+  if (refused.length > 0 || conflicts.length > 0) {
+    reportProblems(
+      [
+        ...refused.map((r) => `${r.table}: NOT CARRIED — ${r.refused}`),
+        ...conflicts.map((c) =>
+          c.key === undefined
+            ? `${c.table}: cannot be reconciled — ${c.detail}`
+            : `${c.table} ${c.key}: ${c.kind} — ${c.detail}.`,
+        ),
+      ],
+      dst,
+    );
+  }
+
   // Verification is part of the carry, not a step someone may skip.
   const [srcD, dstD] = [await digestDatabase(src), await digestDatabase(dst)];
   printDigest(`source  ${src.name}`, srcD);
@@ -1040,24 +1086,7 @@ async function main() {
   }
 
   console.log('');
-  if (problems.length > 0) {
-    console.error(
-      // "problem(s)", not "table(s)": the list mixes whole-table digest
-      // differences with per-ROW conflicts, and a run reporting seventeen
-      // conflicting rows in ONE table said "17 table(s)". A count that
-      // names the wrong unit is a small lie in a report whose whole job is
-      // not telling them.
-      `\nVERIFICATION FAILED — ${problems.length} problem(s):\n` +
-        problems.map((p) => `  - ${p}`).join('\n') +
-        `\n\nA digest difference is not always a fault in the carry: a ` +
-        `source with live writers moves on while it runs. A REFUSED table ` +
-        `or a CONFLICT is different — the first was not carried at all, ` +
-        `the second needs somebody to decide which value is right. Read ` +
-        `the sequence in docs/ops/D1CutoverArchiveToWarm.md before ` +
-        `deciding which of the three this is.\n`,
-    );
-    process.exit(1);
-  }
+  if (problems.length > 0) reportProblems(problems, dst);
   console.log(
     onlyMissing
       ? `VERIFIED — every table the source holds is present in ${dst.name} ` +
