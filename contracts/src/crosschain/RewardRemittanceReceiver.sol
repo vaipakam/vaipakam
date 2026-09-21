@@ -370,8 +370,19 @@ contract RewardRemittanceReceiver is
             // SPLIT, which is a different question from whether the split it
             // carried was non-zero. This frame is the only place either can be
             // answered: by the time the Diamond sees the call, a d5 remittance
-            // that was wholly recycled and a legacy one that transmitted
-            // nothing both arrive as two zero components.
+            // whose components BOTH FLOORED TO ZERO and a legacy one that
+            // transmitted nothing arrive as the same two zeros.
+            //
+            // Note which d5 delivery that is, because the obvious guess is
+            // wrong (Codex #2232 r12). A WHOLLY RECYCLED one is not ambiguous:
+            // `recycledShare == declaredTotal`, and the scaling just above
+            // carries that through exactly, so the Diamond sees
+            // `(freshShare = 0, recycledShare = actualReceived)` — one zero,
+            // not two. The ambiguous case is a MIXED delivery short enough
+            // that both `mulDiv` results floor away, which
+            // {LibRewardCustody.admitLegacyTransportBatch} states precisely
+            // where it explains why the recorded-packet entry must read the
+            // shape instead of being told the wire.
             //
             // The Diamond needs the distinction because the two take different
             // ACCOUNTING PATHS. A d5 delivery's components are typed and

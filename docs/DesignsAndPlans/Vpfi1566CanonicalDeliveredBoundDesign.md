@@ -6791,8 +6791,10 @@ on the live era alone.
 >   ONE thing 3b-i had to add that this plan does not name: the wire's own
 >   fact must TRAVEL to the ingress (`splitTyped`, supplied by the receiver
 >   and appended to `onRewardBudgetReceived`). At ingress depth a d5 delivery
->   that was wholly recycled and a legacy one that transmitted nothing both
->   arrive as two zero components, so inferring the accounting path is
+>   whose components BOTH FLOORED TO ZERO and a legacy one that transmitted
+>   nothing arrive as the same two zeros — not a wholly recycled d5 delivery,
+>   which is unambiguous at `recycledShare == amount` (corrected Codex #2232
+>   r12) — so inferring the accounting path is
 >   exactly the one-delivery-spendable-twice error §5c forbids. The receiver
 >   and the Diamond must be refreshed together for it; the full refresh
 >   carries both, and a mirror on an older receiver fails closed (the

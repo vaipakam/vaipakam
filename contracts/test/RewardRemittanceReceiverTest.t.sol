@@ -66,8 +66,10 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     bytes32 public lastTransportMessageId;
     /// @dev #1566 transport epochs PR 3b — whether the receiver said the WIRE
     ///      carried the split. It is the fact the Diamond cannot recover on
-    ///      its own (a d5 remittance that was wholly recycled arrives with the
-    ///      same two zero components as a legacy one), so asserting on it here
+    ///      its own (a d5 remittance whose components both floored to zero
+    ///      arrives with the same two zeros as a legacy one - NOT a wholly
+    ///      recycled one, which arrives unambiguously as
+    ///      `recycledShare == amount`; Codex #2232 r12), so asserting on it here
     ///      pins the "the receiver decides the accounting path" rule to the
     ///      receiver, exactly as `lastFreshShare` pins the composition rule.
     bool public lastSplitTyped;

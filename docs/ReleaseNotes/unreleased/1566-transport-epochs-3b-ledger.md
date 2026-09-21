@@ -17,9 +17,11 @@ A delivery whose wire *did* carry the split takes none of this. Its components
 were credited to the shared ledgers the moment it arrived, and giving it an
 epoch as well would make one delivery spendable twice. The distinction is
 supplied by the receiving contract, which is the only party that sees which
-wire a message came off: by the time the figures reach the Diamond, a
-wholly-recycled delivery on the new wire and a legacy delivery that stated
-nothing look exactly alike.
+wire a message came off. By the time the figures reach the platform, a new-wire
+delivery small enough that both of its components round away to nothing looks
+exactly like a legacy delivery that stated nothing — both arrive as a pair of
+zeros. (A delivery that was *wholly* recycled is not one of these: it arrives
+stating its whole amount as recycled, which is unmistakable.)
 
 Each day keeps an index of the epochs that list it, and a cursor recording how
 far through that index its funding has been consumed. The index exists because
@@ -235,13 +237,22 @@ which a delivery could arrive at new Diamond code through an old receiver, be
 accepted, and silently receive no epoch — bypassing the close-out gate
 permanently. In the new order a delivery arriving in that gap is refused
 outright and re-delivered once the refresh finishes, which costs a retry and
-loses nothing. The refresh identifies that receiving contract the way every
-other step does — by asking the platform which one it actually uses, and
-treating the recorded address as a fallback — and a failure to upgrade the
-recorded one is now reported loudly and carried past rather than aborting the
-run: the live receiver is the one that must succeed, a stale record is not, and
-a receiver left behind fails closed on its next delivery rather than losing
-anything.
+loses nothing. The refresh identifies that receiving contract by asking the platform which one
+it actually uses. The separately recorded address is **not a stand-in for
+that**: it is only a second contract the refresh will try to upgrade, so that a
+changeover in progress leaves neither the outgoing nor the incoming one behind.
+A deployment that receives deliveries but has no receiving contract registered
+with the platform is stopped, and a recorded address cannot make that refresh
+complete — the recorded one is a note about which contract to upgrade, never
+evidence about which one the platform will accept deliveries from. A failure to
+upgrade the recorded one is reported loudly and carried past rather than
+aborting the run: the live receiver is the one that must succeed, a stale record
+is not, and a receiver left behind fails closed on its next delivery rather than
+losing anything.
+
+The stop applies to the deployments that actually receive deliveries. A
+single-chain deployment, and one that has been detached from the mesh, receive
+none and register no receiving contract — neither is asked for one.
 
 The refresh additionally **retires the old delivery entry points before the
 first cut**, not after the last one. Retiring them is what makes an
@@ -256,21 +267,32 @@ and re-delivered afterwards, whether or not the refresh ever identified it. The
 same retirement runs again at the end, where it is now the sweep for a run
 interrupted in between.
 
-### Keeping a funding batch inside what the destination can retire
+### Keeping a funding batch inside what a delivery can carry
 
-The destination retires a delivery's whole day list in one go and refuses a
-delivery naming more days than it can — a limit this release introduces.
+This release introduces a limit on how many days one delivery may name, and
+**the limit is enforced at the source**: both the send and the fee quote for it
+refuse a delivery whose day list runs past the bound, so an over-long batch is
+turned away before anything leaves — and the quote refuses exactly what the
+send would, so no fee is ever priced for a delivery that cannot be made.
+
+The destination does **not** apply that limit, and the distinction matters when
+recovering an old message. A transport payload is immutable, so refusing one at
+the destination would refuse the same message on every re-execution and strand
+it for good. An already-dispatched delivery naming more days than the limit
+allows is therefore accepted: it is admitted compactly, and its day list is
+written in pages afterwards, exactly as any other delivery's is. Nothing about
+the new limit makes such a delivery unrecoverable.
 
 The automated funding pass builds those deliveries, and it sized them only by
 the amount of VPFI they move. Those two limits come apart exactly when it
 matters: after an outage, or a run of delayed source reports, many days are
 owed at once, each carrying a small amount. The total sits comfortably inside
-the monetary limit while the day list runs far past what the destination
-accepts — so every attempt was refused before anything was sent, and the next
+the monetary limit while the day list runs far past the day bound — so every
+attempt was refused at the source before anything was sent, and the next
 attempt rebuilt the identical batch. A mirror in that state would have stayed
 unfunded indefinitely, with nothing in the ledger to show why.
 
-The pass now stops at the destination's limit and reports the rest as
+The pass now stops at the day bound and reports the rest as
 deferred, exactly as it already does when the monetary limit binds: the mirror
 is reported as not fully funded, and the next pass takes the next instalment,
 so the backlog drains instead of wedging.
@@ -278,7 +300,7 @@ so the backlog drains instead of wedging.
 The limit counts the days that actually carry funding. Days that are only
 being closed out are left out of what the destination receives, so they are
 outside the limit and ride along freely — the same treatment they already get
-from the monetary limit. Counting them would have refused batches the platform
+from the monetary limit. Counting them would have refused batches the send
 accepts, and would have let a plan made up mostly of close-outs fill the limit
 with them and then quietly leave funded days behind while reporting the mirror
 complete.

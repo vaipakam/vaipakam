@@ -118,9 +118,12 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      * @param splitTyped    #1566 transport epochs PR 3b — whether the WIRE
      *                      carried the fresh/recycled split, which is not the
      *                      same as whether the split it carried was non-zero:
-     *                      a d5 remittance that was wholly recycled and a
-     *                      legacy one that transmitted nothing both arrive
-     *                      here as two zero components. Supplied by the
+     *                      a d5 remittance whose components BOTH FLOORED TO
+     *                      ZERO and a legacy one that transmitted nothing
+     *                      arrive here as the same two zeros. (Not a wholly
+     *                      recycled d5 delivery, which is unambiguous — it
+     *                      arrives as `recycledShare == amount` with only
+     *                      `freshShare` zero; Codex #2232 r12.) Supplied by the
      *                      receiver rather than inferred here because the
      *                      receiver is the only party that saw the wire
      *                      generation. It decides the delivery's ACCOUNTING

@@ -658,8 +658,28 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address liveRecv =
                 RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
             address artifactRecv = _readAddrOptional(".rewardRemittanceReceiver");
-            (, , , bool isCanonicalRewardRecv, ) =
-                RewardReporterFacet(diamond).getRewardReporterConfig();
+            // THE ROLE, NOT "NOT CANONICAL" (Codex #2232 r12). A receiver is
+            // required by the chains that RECEIVE deliveries, and that is
+            // exactly `Mirror` — not the complement of `Canonical`, which also
+            // sweeps in the two roles that receive nothing:
+            //
+            //   * `Unconfigured` — a supported single-chain deploy with no
+            //     delivery, no residual and no counterparty, which therefore
+            //     registers no receiver and never will. Keying on
+            //     `!isCanonical` made its refresh IMPOSSIBLE.
+            //   * `Detached` — was in a role and no longer has one; it fails
+            //     closed on backing it cannot re-earn, so no further delivery
+            //     arrives for a receiver to accept.
+            //
+            // Safe to read here although the role BACKFILL is still ahead of
+            // us: a genuine mirror resolves `Mirror` from its configured base
+            // chain, with or without the backfill. The backfill exists only to
+            // separate `Detached` from `Unconfigured`, which are byte-identical
+            // in state and neither of which requires a receiver either way — so
+            // there is no ordering in which this read mistakes a mirror for a
+            // role that skips the requirement.
+            uint8 rewardRoleRecv = RewardReporterFacet(diamond).getRewardRole();
+            bool mirrorNeedsReceiver = rewardRoleRecv == _roleFromLabel("mirror");
 
             // Same fatality rule as the pre-cut pass, and it is the rule this
             // block's own comment above has asserted since it was written
@@ -700,10 +720,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // A MIRROR must never pass this point without that live receiver:
             // the retired selectors are Removed below, and a mirror left
             // calling an unrouted ingress fails every delivery while the
-            // marker that would make a rerun retry the upgrade is gone. Only
-            // the canonical chain legitimately has none - nothing remits to it.
+            // marker that would make a rerun retry the upgrade is gone. Every
+            // other role legitimately has none - nothing remits to it.
             require(
-                liveRecv != address(0) || isCanonicalRewardRecv,
+                liveRecv != address(0) || !mirrorNeedsReceiver,
                 "remit receiver: mirror refresh needs a live .rewardRemittanceReceiver registered on the Diamond"
             );
             if (liveRecv != address(0)) {
