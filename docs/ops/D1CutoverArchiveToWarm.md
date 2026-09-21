@@ -629,9 +629,21 @@ because step 3 below is the part of it that had to be re-learned.
       the database that would reject the insert this run's report leads
       an operator to make; one naming a column the source lacks cannot be
       evaluated at all and is named in the output rather than dropped
-      quietly. A table that exists **only on warm** — what a migration
-      creating one looks like from archive's side — is printed as drift
-      rather than failing the run: it cannot hold a late write from
+      quietly. **Warm is read as the live database it is** (#2267 r42):
+      paged by primary key, with no requirement that it hold still. The
+      stability check that makes the *mirror* trustworthy is a demand
+      that the database being read has stopped — right for archive inside
+      the barrier, impossible for warm on a Tuesday afternoon, and a busy
+      table like `activity_events` would have aborted the weekly run
+      telling the operator to close a barrier that is not supposed to
+      exist. Paging by key is what makes dropping that demand safe rather
+      than merely convenient: every row present for the whole read is
+      returned exactly once, where the offset paging it replaces loses a
+      row whenever an earlier one is deleted mid-read. A row created or
+      deleted *during* the read may or may not appear, which is a fact
+      about the question rather than an error. A table that exists
+      **only on warm** — what a migration creating one looks like from
+      archive's side — is printed as drift rather than failing the run: it cannot hold a late write from
       archive, which is the only thing the run is looking for, and
       failing on it would end the weekly check at the first schema
       change. And a reconciliation **no longer stops at the conflict

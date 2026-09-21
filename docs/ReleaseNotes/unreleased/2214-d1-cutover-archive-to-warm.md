@@ -211,6 +211,18 @@ holds it, and comparing it against the record of what was copied still answers
 the only question that matters — whether anything was written there after the
 copy. It is reported once, with counts, since there is nowhere left to apply it.
 
+**The weekly comparison reads the live database as a live database.** The check
+that makes the one-off copy trustworthy is a demand that what is being read has
+stopped changing — right for a database nothing is writing to, impossible for
+the one serving users, and a busy table would have aborted the weekly
+comparison telling the operator to stop writers the procedure never asks them to
+stop. It now reads in primary-key order instead, which is what makes dropping
+that demand safe rather than merely convenient: every record present for the
+whole read is returned exactly once, where the previous method lost one whenever
+an earlier record was deleted mid-read. A record created or deleted *during* the
+read may or may not appear, which is a fact about the question rather than an
+error.
+
 **And the rollback now compares before it migrates.** Returning to the old
 database means bringing its schema up to date first, and a migration can delete
 rows. The procedure used to say a comparison was unavailable at that point,

@@ -567,8 +567,61 @@ async function orderByDependency(dbId, tables) {
  * two pages, at a sort position the first pass has already read, and
  * asserts it is in the result.
  */
-export async function readAll(dbId, table, cols, run = query) {
+export async function readAll(dbId, table, cols, run = query, { key = null, live = false } = {}) {
   const quoted = cols.map((c) => `"${c}"`).join(', ');
+
+  // A LIVE SIDE CANNOT BE ASKED TO HOLD STILL, AND DOES NOT HAVE TO
+  // (#2267 r42).
+  //
+  // The two-pass gate below is the right instrument for the SOURCE of a
+  // mirror: it is supposed to be stopped, and a disagreement means the
+  // barrier is not closed. Pointing it at the destination of the weekly
+  // reconciliation asks a database taking writes every minute to stop —
+  // which the runbook explicitly does not do — so a busy paged table
+  // like `activity_events` would abort the run and tell the operator to
+  // close a barrier that is not supposed to exist. A check that cannot
+  // pass, once more, arrived at from the other side.
+  //
+  // What the gate is really protecting against is OFFSET paging: delete
+  // a row from an earlier page and every later row shifts up into a page
+  // already read, so a row that was there for the whole read is missed
+  // with no sign. Paging by the primary key instead removes that, which
+  // is why this is a different read rather than the same read with the
+  // check turned off. Every row present for the whole read is returned
+  // exactly once; a row created or deleted DURING it may or may not
+  // appear, which for a live destination is not an error but a fact
+  // about the question.
+  //
+  // Row-value comparison (`(a, b) > (?, ?)`) is SQLite ≥3.15 and was
+  // verified against the live D1 before being relied on.
+  if (live) {
+    if (key === null || key.length === 0) {
+      fail(
+        `readAll("${table}") was asked for a live read without a key to ` +
+          `page by. Without one the only paging available is OFFSET, ` +
+          `which a concurrent DELETE tears silently — the exact failure ` +
+          `the stability gate exists to catch, with the gate turned off.`,
+      );
+    }
+    const keyCols = key.map((c) => `"${c}"`).join(', ');
+    const lhs = key.length === 1 ? keyCols : `(${keyCols})`;
+    const rhs = key.length === 1 ? '?' : `(${key.map(() => '?').join(', ')})`;
+    const out = [];
+    let cursor = null;
+    for (;;) {
+      const where = cursor === null ? '' : `WHERE ${lhs} > ${rhs} `;
+      const rows = await run(
+        dbId,
+        `SELECT ${quoted} FROM "${table}" ${where}ORDER BY ${keyCols} LIMIT ${PAGE}`,
+        cursor ?? [],
+      );
+      out.push(...rows);
+      if (rows.length < PAGE) return out;
+      const last = rows[rows.length - 1];
+      cursor = key.map((c) => last[c]);
+    }
+  }
+
   const onePass = async () => {
     const out = [];
     for (let offset = 0; ; offset += PAGE) {
@@ -819,11 +872,28 @@ export function compareSequences(now, since, held = new Map()) {
   return problems;
 }
 
-async function digestDatabase(db) {
+/**
+ * `live` reads a database that is still taking writes — paged by key,
+ * with no demand that it hold still (#2267 r42). The weekly
+ * reconciliation's destination is exactly that, and the verdict's digest
+ * of it was asking for the same quiescence the row read was, so fixing
+ * only the row read would have moved the impossible demand rather than
+ * removed it.
+ *
+ * A digest of a moving database describes a moment, which is all the
+ * reconciliation's verdict uses it for: whether the destination holds at
+ * least as many rows as the source, and whether the SOURCE moved while
+ * the run was working. Neither claims the destination stood still.
+ */
+async function digestDatabase(db, { live = false } = {}) {
   const out = new Map();
   for (const table of await tablesOf(db.id)) {
-    const { cols } = await shapeOf(db.id, table);
-    out.set(table, digestOf(await readAll(db.id, table, cols), cols));
+    const { cols, key } = await shapeOf(db.id, table);
+    const rows = await readAll(db.id, table, cols, query, {
+      key: live && key.length > 0 ? key : null,
+      live: live && key.length > 0,
+    });
+    out.set(table, digestOf(rows, cols));
   }
   return out;
 }
@@ -1529,22 +1599,22 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // the manifest so a later reconciliation can see the source allocate
   // past them. Declared AND populated here — a map that is only ever
   // read is the inert-fix shape this PR has hit twice.
-  const sequenceAtMirror = new Map();
-  let sequenceBaselineKnown = false;
-  if (!reportOnly) {
+  const readSequences = async () => {
+    const seen = new Map();
     try {
       for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
-        if (!NEVER_CARRIED(r.name)) sequenceAtMirror.set(r.name, Number(r.seq));
+        if (!NEVER_CARRIED(r.name)) seen.set(r.name, Number(r.seq));
       }
-      sequenceBaselineKnown = true;
     } catch (err) {
       if (!isMissingSequenceTable(err)) throw err;
       // No `sqlite_sequence` at all means nothing has ever allocated,
       // which is a known baseline of zero for every table — not an
       // unknown one.
-      sequenceBaselineKnown = true;
     }
-  }
+    return seen;
+  };
+  const sequenceAtMirror = reportOnly ? new Map() : await readSequences();
+  const sequenceBaselineKnown = !reportOnly;
 
   // EVERY RETURN FROM HERE GOES THROUGH ONE CONSTRUCTOR, and that is a
   // fix for a defect rather than tidiness (#2267 r26).
@@ -1570,8 +1640,32 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // write, not merely reported afterwards. A mirror that proceeded would
   // leave the destination holding a table it had not examined while
   // claiming the two sides are identical.
+  //
+  // AND IT IS DRIFT, NOT A REFUSAL, WHEN REPORTING (#2267 r42). The r39
+  // fix stopped `verdictProblems` from failing on a destination-only
+  // table and stopped there — while this loop went on adding a REFUSAL
+  // for the same table, and a refusal becomes a fatal problem two
+  // functions later. So the trapdoor was still open by the other door:
+  // one post-cutover migration that creates a table and the weekly
+  // reconciliation exits non-zero forever.
+  //
+  // Half a fix on a convergence bug is worth recording as its own
+  // lesson. The property to check was "can this run come clean", and
+  // checking it at the verdict did not answer it for a value that enters
+  // the verdict from somewhere else.
   for (const table of dstTables) {
     if (tables.includes(table)) continue;
+    if (reportOnly) {
+      driftNotes.push({
+        table,
+        detail:
+          `only the destination has this table, which is what a migration ` +
+          `creating one looks like from the retained source's side. ` +
+          `Nothing here can hold a late write from the source, so there ` +
+          `is nothing for this run to compare`,
+      });
+      continue;
+    }
     plan.push({
       table,
       refused:
@@ -1771,7 +1865,15 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           `Check before applying one`,
       });
     }
-    const held = destTableGone ? [] : await readAll(dst.id, table, heldCols);
+    // The destination of a reconciliation is the LIVE database and is
+    // read as one: paged by key, with no demand that it hold still. For
+    // a mirror it is inert and read the same way as the source.
+    const held = destTableGone
+      ? []
+      : await readAll(dst.id, table, heldCols, query, {
+          key: reportOnly ? key : null,
+          live: reportOnly,
+        });
     // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
     // source afterwards, and in reconcile mode it only asks whether the
     // destination has at least as many rows — which an UPDATE does not
@@ -2096,6 +2198,44 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       : `${step.all.length} upserted, ${step.surplus.length} removed`;
     if (step.all.length || step.surplus.length) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
+    }
+  }
+
+  // THE BASELINE IS READ TWICE, FOR THE REASON EVERYTHING ELSE HERE IS
+  // (#2267 r42). Taken once before classification, it can be stale by
+  // the time the rows are read: a straggler that allocates in between
+  // has its row CARRIED and verified, while the manifest still records
+  // the older high-water mark — so every later reconciliation reports a
+  // permanent "allocated after the mirror" about a row that was in the
+  // mirror. A false standing finding on the one check that is supposed
+  // to mean something.
+  //
+  // Recording the later reading instead would be worse in the other
+  // direction: an identifier allocated and released after classification
+  // would be written into the baseline as though it had been accounted
+  // for, and the one thing the sequence comparison exists to catch would
+  // be hidden by the record of the catch.
+  //
+  // So: read it again and require the two to agree. A disagreement means
+  // the source moved during the mirror, which this tool already has a
+  // verdict for — re-run it. Same rule as the two-pass row read and the
+  // source re-read at the verdict: a conclusion is only as good as the
+  // reading it was drawn from.
+  const sequenceAfter = await readSequences();
+  for (const [table, seq] of sequenceAfter) {
+    const before = sequenceAtMirror.get(table) ?? 0;
+    if (seq !== before) {
+      fail(
+        `"${table}" allocated identifiers WHILE this mirror was running: ` +
+          `${before} before it started, ${seq} now.\n\nThe rows carried ` +
+          `above were classified against the earlier reading, so the ` +
+          `baseline this run would record does not describe what it ` +
+          `carried — and a reconciliation reading it would report a late ` +
+          `allocation that was never late, or miss one that was.\n\nThis ` +
+          `is what a source that has NOT stopped looks like. Close the ` +
+          `barrier (check-live-d1-bindings.mjs --writers-held) and run ` +
+          `again.`,
+      );
     }
   }
   return result(written);
@@ -2502,26 +2642,17 @@ async function main() {
   }
 
   // Verification is part of the carry, not a step someone may skip.
-  const [srcD, dstD] = [await digestDatabase(src), await digestDatabase(dst)];
+  const [srcD, dstD] = [
+    await digestDatabase(src),
+    await digestDatabase(dst, { live: reconciling }),
+  ];
   printDigest(`source  ${src.name}`, srcD);
   printDigest(`target  ${dst.name}`, dstD);
 
-  // NOT FATAL WHEN RECONCILING, AND NOT SILENT EITHER. A table only the
-  // destination has is what a post-cutover migration looks like from the
-  // retained source's side; it cannot hold a late source write, so it is
-  // drift to see rather than a difference to resolve (#2267 r39).
-  if (reconciling) {
-    const destinationOnly = [...dstD.keys()].filter((t) => !srcD.has(t));
-    if (destinationOnly.length > 0) {
-      console.log(
-        `\nDRIFT (not a finding): ${destinationOnly.length} table(s) exist ` +
-          `only on ${dst.name} — ${destinationOnly.join(', ')}.\n  Expected ` +
-          `once it has taken a migration ${src.name} never will. Nothing ` +
-          `here can hold a late write from ${src.name}, which is what this ` +
-          `run is looking for.`,
-      );
-    }
-  }
+  // (A table only the destination has is reported as schema drift by the
+  // carry itself, in the same channel as every other drift note. An
+  // ad-hoc second print here said the same thing a second time once the
+  // carry started naming it — #2267 r42.)
 
   const problems = [
     ...verdictProblems({
@@ -2565,10 +2696,18 @@ async function main() {
 
   console.log(
     reconciling
-      ? `VERIFIED — every table the source holds is present in ${dst.name} ` +
-        `with at least as many rows. This mode deliberately does not claim ` +
-        `the two sides are identical: the destination is live and its own ` +
-        `newer values are left alone.`
+      ? // SAY WHAT WAS CHECKED, NOT WHAT USED TO BE TRUE (#2267 r42).
+        // This claimed every source table is present in the destination,
+        // which stopped being something this mode requires the moment a
+        // dropped table became tolerated drift — so on exactly the run
+        // where the schemas differ, the success line contradicted the
+        // drift notes printed above it.
+        `VERIFIED — no unresolved late write from ${src.name} was found. ` +
+        `Every table the two sides share holds at least as many rows in ` +
+        `${dst.name}, and any table only one of them has is reported as ` +
+        `drift above.\n  This mode deliberately does not claim the two ` +
+        `sides are identical: the destination is live and its own newer ` +
+        `values are left alone.`
       : `VERIFIED — every table the source holds is present in ${dst.name} ` +
         `with an identical content digest.`,
   );

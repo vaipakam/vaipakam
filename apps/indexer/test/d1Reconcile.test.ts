@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 // The reconciliation decision table from the cutover tool (#2214). It is a
 // plain-Node operator script rather than Worker source, so it is imported
@@ -1431,5 +1431,77 @@ describe('an unusable index that merely restates the primary key', () => {
     expect(named.join()).toBe('id');
     expect(named.length === terms.length).toBe(false);
     expect(unsupportedUniqueReason({ partial: 0 }, terms)).toContain('EXPRESSION');
+  });
+});
+
+describe('a live side is read without being asked to hold still', () => {
+  // The two-pass gate is right for a mirror's SOURCE, which is supposed
+  // to be stopped. Pointed at the weekly reconciliation's destination it
+  // asks a database taking writes every minute to stop, which the
+  // runbook explicitly does not do — so a busy paged table would abort
+  // the run and tell the operator to close a barrier that should not
+  // exist (#2267 r42).
+  const PAGE = 500;
+  const rowsOf = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => ({ id: from + i, value: `v${from + i}` }));
+
+  it('pages by key, so a delete on an earlier page cannot hide a later row', async () => {
+    // This is the failure the gate existed to catch, and the reason the
+    // fix is a different read rather than the same read with the check
+    // switched off. Under OFFSET paging, deleting a row from page one
+    // shifts every later row up by one and the row at the page boundary
+    // is never returned.
+    const live = new Map(rowsOf(1, PAGE + 3).map((r) => [r.id as number, r]));
+    const seen: string[] = [];
+    const run = async (_db: string, sql: string, params: unknown[] = []) => {
+      seen.push(sql);
+      expect(sql).not.toContain('OFFSET');
+      const after = params.length > 0 ? Number(params[0]) : 0;
+      const rows = [...live.values()].filter((r) => (r.id as number) > after).slice(0, PAGE);
+      // A writer deletes the first row between pages, which is exactly
+      // what shifts an OFFSET window.
+      if (seen.length === 1) live.delete(1);
+      return rows;
+    };
+    const out = await readAll('db', 't', ['id', 'value'], run, { key: ['id'], live: true });
+    const ids = out.map((r: Record<string, unknown>) => r.id);
+    // Every row that was present for the whole read is returned exactly
+    // once — including the ones straddling the page boundary.
+    for (const id of [PAGE, PAGE + 1, PAGE + 2, PAGE + 3]) expect(ids).toContain(id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('does not abort when the live side keeps changing', async () => {
+    // The same input aborts the gated read after three disagreements.
+    let n = 0;
+    const run = async (_db: string, _sql: string, params: unknown[] = []) => {
+      const after = params.length > 0 ? Number(params[0]) : 0;
+      n += 1;
+      return rowsOf(after + 1, after + PAGE).slice(0, after >= PAGE * 2 ? 1 : PAGE);
+    };
+    const out = await readAll('db', 't', ['id', 'value'], run, { key: ['id'], live: true });
+    expect(out.length).toBeGreaterThan(PAGE);
+    expect(n).toBeGreaterThan(1);
+  });
+
+  it('refuses a live read with no key rather than paging by OFFSET without a gate', async () => {
+    // Without a key the only paging available is OFFSET, which a
+    // concurrent DELETE tears silently — the precise failure the gate
+    // catches, with the gate turned off. The tool reports and exits, so
+    // the assertion is on both: it stopped, and it said why.
+    const said: string[] = [];
+    const err = vi.spyOn(console, 'error').mockImplementation((m) => said.push(String(m)));
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exited');
+    }) as never);
+    try {
+      await expect(
+        readAll('db', 't', ['id'], async () => [], { key: null, live: true }),
+      ).rejects.toThrow('exited');
+      expect(said.join('\n')).toContain('without a key to page by');
+    } finally {
+      err.mockRestore();
+      exit.mockRestore();
+    }
   });
 });
