@@ -543,12 +543,16 @@ because step 3 below is the part of it that had to be re-learned.
       > | the source-side *stale row* case | decide warm's row stays as it is | the same again — archive still deleted it after the mirror |
       > | `source-changed` | apply archive's value to warm | **clean** — this one converges, because applying it is a data change |
       >
-      > So a run that reports only these is as resolved as it is going to
-      > get. **Record them in the run log by table and key with the decision
-      > taken, treat that as the clean run for the purposes of the two-run
-      > rule, and keep the weekly re-runs going** — their job is to surface
-      > anything NEW, and a fixed set of known-and-decided lines does not
-      > stop them doing it. What it does cost is the property that made
+      > So a run is as resolved as it is going to get once every line it
+      > reports is one **already recorded, by table and key, with the
+      > decision taken**. That is the test, and it is deliberately by key
+      > rather than by situation name: a second `destination-deleted` on a
+      > DIFFERENT key is a new difference that has been decided by nobody,
+      > and reading the name alone would wave it through. **Record each
+      > decision, treat a run carrying only already-recorded keys as the
+      > clean run for the two-run rule, and keep the weekly re-runs
+      > going** — their job is to surface anything NEW, and a fixed set of
+      > known-and-decided lines does not stop them doing it. What it does cost is the property that made
       > "repeat until clean" self-checking, which is why this is written
       > down rather than left for an operator to work out at 2am.
       >
