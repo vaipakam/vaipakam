@@ -1656,6 +1656,120 @@ export function classifyForReconcile({
   return { insert, conflicts };
 }
 
+/**
+ * ONE PER-TABLE MANIFEST ENTRY, built in one place because there are now
+ * two producers of it — the mirror, and `manifest` — and a baseline whose
+ * shape depends on which verb wrote it is a baseline the reconciliation
+ * cannot read (#2281).
+ *
+ * `seq` is the allocation high-water mark, so a later reconciliation can
+ * see the source allocate past it (#2267 r36). ZERO AND NULL MEAN
+ * DIFFERENT THINGS (#2267 r37): a table that has never allocated has a
+ * KNOWN baseline of zero, while `null` means the baseline is unknown and
+ * the comparison skips it. A straggler inserting and then deleting the
+ * FIRST row of `diag_legal_hold_audit` is exactly the case that
+ * distinction catches.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function manifestEntry({ key, cols, seq, rows }) {
+  return { key, cols, seq, rows };
+}
+
+/**
+ * Take a manifest from ONE database, writing to none.
+ *
+ * WHY THIS EXISTS (#2281). A manifest is a record of what a database held
+ * at a moment, and nothing about that requires a write. Until now the
+ * only thing that produced one was `carry --mirror` — so the baseline
+ * that `reconcile` refuses to run without, and that the documented
+ * rollback consumes before its reverse mirror, could only be obtained by
+ * writing to a destination. After the cutover that destination is LIVE,
+ * which makes re-taking a lost baseline strictly worse than the problem:
+ * a mirror would roll the live database's newer rows back to the retained
+ * source's stale ones.
+ *
+ * That left the baseline an irreplaceable artifact in the middle of a
+ * recovery procedure, which is the kind of thing that should not be
+ * irreplaceable. This makes it reproducible.
+ *
+ * WHAT IT DOES NOT KNOW, and says so rather than implying otherwise: it
+ * records the source AS IT IS NOW. That is a valid substitute for the
+ * mirror's baseline only if the source has not changed since the mirror —
+ * true of a retained predecessor that no Worker binds any more, and NOT
+ * something this tool can establish on its own. Establishing it is what
+ * the digest comparison is for, and the caller is told to do it.
+ *
+ * The read is the same two-pass gate the mirror uses, so a source that is
+ * still moving fails here rather than producing a baseline that describes
+ * no moment at all.
+ */
+async function takeManifest(db) {
+  const readSequences = async () => {
+    const seen = new Map();
+    try {
+      for (const r of await query(db.id, 'SELECT name, seq FROM sqlite_sequence')) {
+        if (!NEVER_CARRIED(r.name)) seen.set(r.name, Number(r.seq));
+      }
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
+    }
+    return seen;
+  };
+
+  const before = await readSequences();
+  const tables = await tablesOf(db.id);
+  const manifest = {};
+  const refused = [];
+
+  for (const table of tables) {
+    const { cols, key } = await shapeOf(db.id, table);
+    if (key.length === 0) {
+      // Same rule as the carry: without a key nothing identifies a row,
+      // so there is nothing to record it under.
+      refused.push(`${table}: no primary key, so no row here can be keyed`);
+      continue;
+    }
+    const rows = await readAll(db.id, table, cols);
+    const nullKeyed = rows.find((r) => key.some((c) => r[c] === null || r[c] === undefined));
+    if (nullKeyed) {
+      refused.push(
+        `${table}: a row carries NULL in its key (${key.join(', ')}), which ` +
+          `SQL equality never matches, so it cannot be recorded or later ` +
+          `looked up`,
+      );
+      continue;
+    }
+    const seen = {};
+    for (const r of rows) seen[keyOf(r, key)] = rowHash(r, cols);
+    manifest[table] = manifestEntry({
+      key,
+      cols,
+      seq: before.get(table) ?? 0,
+      rows: seen,
+    });
+  }
+
+  // READ TWICE AND REQUIRE AGREEMENT, for the reason the mirror does
+  // (#2267 r42): a baseline taken across a moving database describes no
+  // moment that ever existed, and the sequence is the half the row reads
+  // cannot see — an identifier allocated and released leaves no row.
+  const after = await readSequences();
+  for (const [table, seq] of after) {
+    if ((before.get(table) ?? 0) !== seq) {
+      fail(
+        `"${table}" allocated identifiers WHILE this manifest was being ` +
+          `taken: ${before.get(table) ?? 0} before, ${seq} now.\n\nA ` +
+          `baseline taken across a moving database describes no moment ` +
+          `that ever existed. This is what a source that has NOT stopped ` +
+          `looks like.`,
+      );
+    }
+  }
+
+  return { manifest, refused };
+}
+
 async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   const tables = await orderByDependency(src.id, await tablesOf(src.id));
   const dstTables = new Set(await tablesOf(dst.id));
@@ -2298,22 +2412,12 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     const m = {};
     for (const step of plan) {
       if (step.refused) continue;
-      m[step.table] = {
+      m[step.table] = manifestEntry({
         key: step.key,
         cols: step.cols,
-        // The allocation high-water mark at mirror time, so a later
-        // reconciliation can see the source allocate past it (#2267 r36).
-        //
-        // ZERO AND NULL MEAN DIFFERENT THINGS (#2267 r37). A table that
-        // has never allocated has a known baseline of zero, and writing
-        // `null` for it would be indistinguishable from a manifest taken
-        // before this field existed — which the comparison skips. A
-        // straggler inserting and deleting the FIRST row of
-        // `diag_legal_hold_audit` is exactly that case, and it would
-        // have gone unreported.
         seq: sequenceBaselineKnown ? (sequenceAtMirror.get(step.table) ?? 0) : null,
         rows: step.seen,
-      };
+      });
     }
     return m;
   };
@@ -2600,6 +2704,8 @@ function reportProblems(problems, dst) {
 const USAGE =
   'usage:\n' +
   '  d1-carry-rows.mjs digest    --db <name>\n' +
+  '  d1-carry-rows.mjs manifest  --db <name> --out <path>\n' +
+  '      READ ONLY. Takes a baseline from one database; writes no database.\n' +
   '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
   '      WRITES. Only ever against a destination nothing is writing to.\n' +
   '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
@@ -2651,6 +2757,54 @@ async function main() {
     if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
     const db = name === shared.name ? shared : await resolveByName(name);
     printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
+    return;
+  }
+
+  if (mode === 'manifest') {
+    const opts = parseArgs(rest, { flags: ['--db', '--out'], switches: [] });
+    const name = opts['--db'];
+    const out = opts['--out'];
+    if (!name || !out) fail(`manifest needs --db <name> and --out <path>\n\n${USAGE}`);
+    // Either end of the cutover, and nothing else — the same pinning the
+    // carry uses, for the same reason: a baseline is only meaningful
+    // about a database this procedure is actually between.
+    const db =
+      name === shared.name
+        ? shared
+        : name === PREDECESSOR.name
+          ? await resolveByName(name)
+          : fail(
+              `this tool takes a baseline from exactly two databases: the ` +
+                `shared one (${shared.name}) and its recorded predecessor ` +
+                `(${PREDECESSOR.name}). It was asked for "${name}".`,
+            );
+    if (db.name === PREDECESSOR.name && db.id !== PREDECESSOR.id) {
+      fail(
+        `"${db.name}" resolves to ${db.id}, but the recorded predecessor ` +
+          `is ${PREDECESSOR.id}. A database carrying that name today is ` +
+          `not necessarily the one this tool was written for.`,
+      );
+    }
+    console.log(
+      `taking a manifest of ${db.name} (${db.id})\n` +
+        `     READ ONLY — no database is written. This records ${db.name} ` +
+        `AS IT IS NOW.\n` +
+        `     That is a valid stand-in for a mirror's baseline only if ` +
+        `${db.name} has not changed since that mirror. This tool cannot ` +
+        `establish that and does not claim to: compare digests, or take ` +
+        `this only from a database nothing binds any more.`,
+    );
+    const { manifest, refused } = await takeManifest(db);
+    for (const r of refused) console.log(`  REFUSED — ${r}`);
+    writeManifest(out, db, manifest);
+    console.log(
+      `recorded ${Object.keys(manifest).length} table(s)` +
+        (refused.length > 0 ? `, refused ${refused.length}` : '') +
+        `.\n\nA baseline is only as good as the claim that the database ` +
+        `has not moved since the moment it is meant to describe. Say in ` +
+        `the run log WHICH moment this one stands for, and what ` +
+        `established it.`,
+    );
     return;
   }
 

@@ -15,6 +15,7 @@ import {
   compareSequences,
   isMissingSequenceTable,
   makeFingerprinter,
+  manifestEntry,
   readAll,
   safeKey,
   situationOf,
@@ -1732,5 +1733,37 @@ describe('the manifest survives a failed write', () => {
     expect(Object.keys(doc.tables)).toEqual(['b']);
     // 0600 holds across the rename, not only on first creation.
     expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe('one manifest shape, however it was taken', () => {
+  // There are two producers of a baseline now — the mirror, and the
+  // read-only `manifest` verb — and a baseline whose shape depends on
+  // which verb wrote it is one the reconciliation cannot read. Both go
+  // through this, so they cannot drift apart (#2281).
+  it('carries exactly the four fields the reconciliation reads', () => {
+    const e = manifestEntry({ key: ['id'], cols: ['id', 'value'], seq: 7, rows: { a: 'h' } });
+    expect(Object.keys(e).sort()).toEqual(['cols', 'key', 'rows', 'seq']);
+    expect(e).toEqual({ key: ['id'], cols: ['id', 'value'], seq: 7, rows: { a: 'h' } });
+  });
+
+  it('keeps a known-zero baseline distinct from an unknown one', () => {
+    // ZERO AND NULL MEAN DIFFERENT THINGS: a table that has never
+    // allocated has a KNOWN baseline of zero, while null means unknown
+    // and the sequence comparison skips it. A straggler inserting and
+    // then deleting the FIRST row of a table is exactly the case that
+    // distinction catches, so the entry must not normalise one to the
+    // other.
+    expect(manifestEntry({ key: ['id'], cols: ['id'], seq: 0, rows: {} }).seq).toBe(0);
+    expect(manifestEntry({ key: ['id'], cols: ['id'], seq: null, rows: {} }).seq).toBeNull();
+  });
+
+  it('is what the sequence comparison reads a baseline through', () => {
+    // A zero baseline is compared; a null one is skipped. Pinned here
+    // because it is the reason the previous case matters.
+    const known = { t: manifestEntry({ key: ['id'], cols: ['id'], seq: 0, rows: {} }) };
+    const unknown = { t: manifestEntry({ key: ['id'], cols: ['id'], seq: null, rows: {} }) };
+    expect(compareSequences(new Map([['t', 3]]), known)).toHaveLength(1);
+    expect(compareSequences(new Map([['t', 3]]), unknown)).toEqual([]);
   });
 });

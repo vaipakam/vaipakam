@@ -455,7 +455,34 @@ because step 3 below is the part of it that had to be re-learned.
    6. **Reconcile, and keep reconciling.**
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
       cutover-mirror.json`, which **reads both sides and reports. It writes
-      nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      nothing, to either database, ever.**
+
+      > **IF THE MANIFEST IS LOST, TAKE ANOTHER — DO NOT RE-RUN THE
+      > MIRROR** (#2281). `reconcile` refuses to run without `--since`,
+      > and the rollback consumes the same file, so for a while the
+      > baseline was an irreplaceable artifact in the middle of a recovery
+      > procedure: the only thing that produced one was `carry --mirror`,
+      > which writes to a destination that is now LIVE. Re-running the
+      > mirror to recover a baseline would roll warm's newer rows back to
+      > archive's stale ones — worse than the problem.
+      >
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
+      >   --db vaipakam-archive --out cutover-mirror.json
+      > ```
+      >
+      > Read-only; it writes no database. What it records is archive **as
+      > it is now**, which stands in for the mirror's baseline exactly
+      > when archive has not changed since the mirror — true of a
+      > predecessor no Worker binds any more, and **not** something the
+      > tool can establish. Establish it the same way step 3 does, with
+      > two digests, and say in the run log which moment the baseline
+      > stands for and what established it.
+      >
+      > **[run] 2026-09-21** — taken from archive after the cutover and
+      > compared against the manifest the mirror wrote at 19:56: 43
+      > tables, **zero differing entries**. The reproduced baseline is the
+      > same baseline. Repeat until **TWO CONSECUTIVE**
       runs report nothing at all — with one documented exception: three of
       the situations below have a resolution that changes no data and so
       report on every subsequent pass. See the #2279 box under the
