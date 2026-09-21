@@ -1767,3 +1767,39 @@ describe('one manifest shape, however it was taken', () => {
     expect(compareSequences(new Map([['t', 3]]), unknown)).toEqual([]);
   });
 });
+
+describe('a baseline says which kind of baseline it is', () => {
+  // A manifest the MIRROR wrote observes the moment it describes. One
+  // taken afterwards observes a LATER moment and only stands in for the
+  // earlier one — and which of the two a reader holds changes what the
+  // contents mean. Leaving that to a run log kept elsewhere is a
+  // recovery artifact making a claim about itself that may be false
+  // (#2281 r1).
+  const dir = mkdtempSync(join(tmpdir(), 'provenance-'));
+  const src = { name: 'vaipakam-archive', id: 'abc' };
+  const tables = { t: manifestEntry({ key: ['id'], cols: ['id'], seq: 0, rows: {} }) };
+
+  it('records a mirror as observing its own moment', () => {
+    const path = join(dir, 'mirror.json');
+    writeManifest(path, src, tables);
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    expect(doc.provenance.producer).toBe('carry --mirror');
+    expect(doc.provenance.standsFor).toBeNull();
+  });
+
+  it('records a reconstruction with the claim it was taken under', () => {
+    const path = join(dir, 'reconstructed.json');
+    writeManifest(path, src, tables, {
+      producer: 'manifest (reconstructed)',
+      observes: 'vaipakam-archive as read at the time below',
+      standsFor: 'the 19:56 mirror; digests at 19:40 and 19:51 identical',
+    });
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    expect(doc.provenance.producer).toBe('manifest (reconstructed)');
+    expect(doc.provenance.standsFor).toContain('19:56 mirror');
+    // The artifact carries both times: when it was read, and what it is
+    // claimed to stand for. A reader needs the pair to know what an
+    // absence of findings means.
+    expect(doc.takenAt).toBeTruthy();
+  });
+});

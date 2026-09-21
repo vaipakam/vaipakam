@@ -1098,10 +1098,22 @@ function assertRedactionsApply(table, cols) {
  * the function, and a promise the runbook makes to an operator during a
  * cutover is not one to leave unexercised.
  */
-export function writeManifest(path, src, tables) {
+export function writeManifest(path, src, tables, provenance = null) {
   const doc = {
     source: { name: src.name, id: src.id },
     takenAt: new Date().toISOString(),
+    // PROVENANCE IS PART OF THE ARTIFACT, not of a run log that can be
+    // separated from it (#2281 r1). A manifest the MIRROR wrote observes
+    // the moment it describes. A manifest taken afterwards observes a
+    // LATER moment and only stands in for the earlier one — and which of
+    // the two a reader has in front of them changes what its contents
+    // mean. Leaving that distinction to a file kept somewhere else is a
+    // recovery artifact making a claim about itself that may be false.
+    provenance: provenance ?? {
+      producer: 'carry --mirror',
+      observes: 'the moment this manifest was taken',
+      standsFor: null,
+    },
     tables,
   };
   // 0600, because of what is in it. The manifest keys every row by its
@@ -1173,7 +1185,22 @@ function readManifest(path, src) {
         `report every row as a conflict.`,
     );
   }
-  console.log(`  reconciling against the mirror of ${doc.takenAt}`);
+  // SAY WHICH KIND OF BASELINE THIS IS. Calling a reconstruction "the
+  // mirror of <date>" is the artifact's false provenance claim repeated
+  // by the tool that reads it (#2281 r1).
+  const prov = doc.provenance ?? { producer: 'carry --mirror' };
+  if (prov.producer === 'carry --mirror') {
+    console.log(`  reconciling against the mirror of ${doc.takenAt}`);
+  } else {
+    console.log(
+      `  reconciling against a RECONSTRUCTED baseline, read from ` +
+        `${doc.source?.name} at ${doc.takenAt} — NOT the record the ` +
+        `mirror wrote.\n  It stands for: ${prov.standsFor}\n  ` +
+        `A write that committed before ${doc.takenAt} is part of this ` +
+        `baseline and cannot be reported as late by any run using it. ` +
+        `That interval is covered by the evidence above or not at all.`,
+    );
+  }
   return doc.tables ?? {};
 }
 
@@ -1721,6 +1748,7 @@ async function takeManifest(db) {
   const tables = await tablesOf(db.id);
   const manifest = {};
   const refused = [];
+  const digestAtRead = new Map();
 
   for (const table of tables) {
     const { cols, key } = await shapeOf(db.id, table);
@@ -1742,6 +1770,7 @@ async function takeManifest(db) {
     }
     const seen = {};
     for (const r of rows) seen[keyOf(r, key)] = rowHash(r, cols);
+    digestAtRead.set(table, digestOf(rows, cols).digest);
     manifest[table] = manifestEntry({
       key,
       cols,
@@ -1750,10 +1779,38 @@ async function takeManifest(db) {
     });
   }
 
-  // READ TWICE AND REQUIRE AGREEMENT, for the reason the mirror does
-  // (#2267 r42): a baseline taken across a moving database describes no
-  // moment that ever existed, and the sequence is the half the row reads
-  // cannot see — an identifier allocated and released leaves no row.
+  // A SECOND READING OF EVERY TABLE, because the sequence check does not
+  // cover the rows and `readAll`'s gate does not cover the database
+  // (#2281 r1).
+  //
+  // The first version claimed a moving source would fail here, and that
+  // was wrong three ways. `readAll` repeats only tables that PAGE, so a
+  // table under one page is read once. An UPDATE, a DELETE, and an
+  // INSERT under a natural key all leave `sqlite_sequence` untouched.
+  // And the tables are read one after another, so a baseline can be
+  // assembled from moments that never coexisted even when every
+  // individual read was clean.
+  //
+  // D1 offers this tool no snapshot, so the honest substitute is to read
+  // everything again and require it to agree. Nothing here makes that a
+  // proof — two identical readings around a change and back would pass —
+  // but it is the same standard the cutover's own drain barrier uses,
+  // and it fails loudly on the ordinary case rather than quietly.
+  for (const [table, entry] of Object.entries(manifest)) {
+    const rows = await readAll(db.id, table, entry.cols);
+    const now = digestOf(rows, entry.cols).digest;
+    if (now !== digestAtRead.get(table)) {
+      fail(
+        `"${table}" CHANGED while this manifest was being taken: it read ` +
+          `${digestAtRead.get(table)} and now reads ${now}.\n\nA baseline ` +
+          `assembled from a moving database describes no moment that ever ` +
+          `existed. This is what a source that has NOT stopped looks like.`,
+      );
+    }
+  }
+
+  // AND the sequences, which the row digests cannot see: an identifier
+  // allocated and released leaves no row behind.
   const after = await readSequences();
   // THE UNION, not just the later reading (self-review). Iterating only
   // `after` asks "did anything move up", and a table present in the
@@ -2710,8 +2767,10 @@ function reportProblems(problems, dst) {
 const USAGE =
   'usage:\n' +
   '  d1-carry-rows.mjs digest    --db <name>\n' +
-  '  d1-carry-rows.mjs manifest  --db <name> --out <path>\n' +
+  '  d1-carry-rows.mjs manifest  --db <name> --out <path> --stands-for <text>\n' +
   '      READ ONLY. Takes a baseline from one database; writes no database.\n' +
+  '      --stands-for records WHICH moment it stands for and what establishes\n' +
+  '      that, in the artifact. Present stillness does not establish it.\n' +
   '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
   '      WRITES. Only ever against a destination nothing is writing to.\n' +
   '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
@@ -2767,10 +2826,55 @@ async function main() {
   }
 
   if (mode === 'manifest') {
-    const opts = parseArgs(rest, { flags: ['--db', '--out'], switches: [] });
+    const opts = parseArgs(rest, {
+      flags: ['--db', '--out', '--stands-for'],
+      switches: [],
+    });
     const name = opts['--db'];
     const out = opts['--out'];
+    const standsFor = opts['--stands-for'];
     if (!name || !out) fail(`manifest needs --db <name> and --out <path>\n\n${USAGE}`);
+    // PRESENT QUIESCENCE CANNOT SUBSTANTIATE HISTORICAL EQUALITY, and
+    // the first version of this verb implied it could (#2281 r1).
+    //
+    // Take the exact case the reconciliation exists to find: a suspended
+    // invocation commits to the source AFTER the mirror, and the source
+    // then goes inert. Every present-tense test passes — the digests are
+    // stable, nothing binds it any more — and the manifest taken now
+    // CONTAINS that late write. A reconciliation reading it then treats
+    // the write as part of the original baseline and can never report
+    // it. The check is not merely weakened; it is turned against itself.
+    //
+    // What could substantiate the claim is evidence captured AT the
+    // mirror — its recorded digests, its row counts — compared with what
+    // this reading finds. This tool cannot perform that comparison: the
+    // evidence lives in a run log it has no access to. So it does the
+    // one thing it honestly can, which is refuse to produce an
+    // unattributed baseline: the operator must state what moment this
+    // stands for and what establishes it, and that statement is written
+    // INTO the artifact, as a claim, attributed.
+    if (!standsFor) {
+      fail(
+        `manifest needs --stands-for "<which moment this baseline stands ` +
+          `for, and what establishes it>".\n\n` +
+          `This verb reads ${name} as it is NOW. That is a stand-in for a ` +
+          `mirror's baseline only if ${name} has not changed since the ` +
+          `mirror — and NOTHING observable today can establish that. A ` +
+          `write that committed after the mirror and before this reading ` +
+          `is inside this baseline, indistinguishable from what the ` +
+          `mirror saw, and no later reconciliation can report it. Present ` +
+          `stillness does not substantiate past equality; only evidence ` +
+          `recorded AT the mirror does — its digests and row counts, ` +
+          `compared with what this reading finds.\n\n` +
+          `If you have that evidence, name it. If you do not, say so ` +
+          `plainly — a baseline that admits an uncovered interval is ` +
+          `usable with care, and one that hides it is not.\n\n` +
+          `  --stands-for "archive at the 19:56 mirror; digests at ` +
+          `19:40/19:51/19:57 identical, 43 tables / 1384 rows"\n` +
+          `  --stands-for "archive as of this reading only; the interval ` +
+          `since the mirror is NOT covered"\n\n${USAGE}`,
+      );
+    }
     // Either end of the cutover, and nothing else — the same pinning the
     // carry uses, for the same reason: a baseline is only meaningful
     // about a database this procedure is actually between.
@@ -2793,21 +2897,39 @@ async function main() {
       `taking a manifest of ${db.name} (${db.id})\n` +
         `     READ ONLY — no database is written. This records ${db.name} ` +
         `AS IT IS NOW.\n` +
-        `     That is a valid stand-in for a mirror's baseline only if ` +
-        `${db.name} has not changed since that mirror. This tool cannot ` +
-        `establish that and does not claim to: compare digests, or take ` +
-        `this only from a database nothing binds any more.`,
+        `     It stands for: ${standsFor}\n` +
+        `     A write that committed before this reading is INSIDE this ` +
+        `baseline and no reconciliation using it can report the write as ` +
+        `late. That interval is covered by the statement above or it is ` +
+        `not covered at all.`,
     );
     const { manifest, refused } = await takeManifest(db);
-    for (const r of refused) console.log(`  REFUSED — ${r}`);
-    writeManifest(out, db, manifest);
+    // A PARTIAL BASELINE IS NOT A BASELINE, and writing one would also
+    // destroy whatever valid artifact was at this path (#2281 r1). The
+    // refusals are reported and nothing is written.
+    if (refused.length > 0) {
+      reportProblems(
+        [
+          ...refused,
+          `nothing was written to ${out}. A manifest missing a table is ` +
+            `a baseline that reports nothing about it forever, and ` +
+            `writing one here would have replaced whatever was at that ` +
+            `path with it.`,
+        ],
+        db,
+      );
+    }
+    writeManifest(out, db, manifest, {
+      producer: 'manifest (reconstructed)',
+      observes: `${db.name} as read at the time below`,
+      standsFor,
+    });
     console.log(
-      `recorded ${Object.keys(manifest).length} table(s)` +
-        (refused.length > 0 ? `, refused ${refused.length}` : '') +
-        `.\n\nA baseline is only as good as the claim that the database ` +
-        `has not moved since the moment it is meant to describe. Say in ` +
-        `the run log WHICH moment this one stands for, and what ` +
-        `established it.`,
+      `recorded ${Object.keys(manifest).length} table(s).\n\n` +
+        `This artifact now carries what it stands for, so a reader does ` +
+        `not have to be holding the run log to know which moment it ` +
+        `describes — and \`reconcile\` will repeat it rather than calling ` +
+        `this "the mirror".`,
     );
     return;
   }

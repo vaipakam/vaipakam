@@ -455,7 +455,12 @@ because step 3 below is the part of it that had to be re-learned.
    6. **Reconcile, and keep reconciling.**
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
       cutover-mirror.json`, which **reads both sides and reports. It writes
-      nothing, to either database, ever.**
+      nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      runs report nothing at all — with one documented exception: three of
+      the situations below have a resolution that changes no data and so
+      report on every subsequent pass. See the #2279 box under the
+      situation table before concluding that a repeating line means
+      something is unresolved.
 
       > **IF THE MANIFEST IS LOST, TAKE ANOTHER — DO NOT RE-RUN THE
       > MIRROR** (#2281). `reconcile` refuses to run without `--since`,
@@ -468,26 +473,43 @@ because step 3 below is the part of it that had to be re-learned.
       >
       > ```
       > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
-      >   --db vaipakam-archive --out cutover-mirror.json
+      >   --db vaipakam-archive --out cutover-mirror.json \
+      >   --stands-for "<which moment, and what establishes it>"
       > ```
       >
-      > Read-only; it writes no database. What it records is archive **as
-      > it is now**, which stands in for the mirror's baseline exactly
-      > when archive has not changed since the mirror — true of a
-      > predecessor no Worker binds any more, and **not** something the
-      > tool can establish. Establish it the same way step 3 does, with
-      > two digests, and say in the run log which moment the baseline
-      > stands for and what established it.
+      > Read-only; it writes no database.
+      >
+      > **PRESENT STILLNESS DOES NOT ESTABLISH PAST EQUALITY, and an
+      > earlier draft of this box implied it did** (#2281 r1). What the
+      > verb records is archive **as it is now**. Take the exact case this
+      > step exists to find — a suspended invocation commits to archive
+      > after the mirror, and archive then goes inert. Every present-tense
+      > test passes: the digests are stable, nothing binds it. And a
+      > baseline taken now **contains that late write**, so every later
+      > run treats it as original and can never report it. The check is
+      > not weakened; it is turned against itself.
+      >
+      > What could substantiate the claim is evidence recorded **at** the
+      > mirror — the digests step 2 took, and the post-carry reading in
+      > step 4 — compared with what this reading finds. The tool cannot
+      > make that comparison, because the evidence is in the run log. So
+      > it requires `--stands-for` and writes the statement **into the
+      > artifact**, where a reader has it even if the log is elsewhere;
+      > `reconcile` then says "RECONSTRUCTED baseline" and repeats the
+      > claim rather than calling it "the mirror".
+      >
+      > If the evidence exists, name it. If it does not, say that —
+      > `--stands-for "archive as of this reading only; the interval
+      > since the mirror is NOT covered"`. A baseline that admits an
+      > uncovered interval is usable with care; one that hides it is not.
       >
       > **[run] 2026-09-21** — taken from archive after the cutover and
       > compared against the manifest the mirror wrote at 19:56: 43
-      > tables, **zero differing entries**. The reproduced baseline is the
-      > same baseline. Repeat until **TWO CONSECUTIVE**
-      runs report nothing at all — with one documented exception: three of
-      the situations below have a resolution that changes no data and so
-      report on every subsequent pass. See the #2279 box under the
-      situation table before concluding that a repeating line means
-      something is unresolved.
+      > tables, **zero differing entries**, and a reconciliation against
+      > it returned VERIFIED with 0 conflicts. Here the evidence does
+      > exist — step 2's digests at 19:40 and 19:51 and step 4's reading
+      > at 19:57 are identical — so the interval is covered and the
+      > reproduced baseline is the same baseline.
 
       > **TWO CLEAN RUNS PAUSE THIS STEP. THEY DO NOT END IT** (#2267
       > r34/r35). There is no fence on archive — see the banner at the
