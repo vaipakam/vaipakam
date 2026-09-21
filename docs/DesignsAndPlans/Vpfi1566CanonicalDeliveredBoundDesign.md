@@ -7163,7 +7163,23 @@ on the live era alone.
 >   day after one clamped advance and cannot be retried, so a gap wider
 >   than one advance would leave the frontier short of a stamped day with
 >   no call able to move it — the guard would then block closure for every
->   batch listing that day. With the entry, catching a frontier up is permissionless
+>   batch listing that day. **The entry is bounded to strictly-past days**
+>   (Codex #2274 r5 P1): the advance helpers cap each call only at
+>   `frontier + 730`, so an unbounded permissionless entry would let anyone
+>   run both frontiers years into the future, after which every loan
+>   registered at `today + 1` finds its start and end writes silently
+>   dropped by `_applyDelta` and is omitted from the folded totals — false
+>   totals, false reports, false closure proofs. The entry carries the same
+>   past-day bound `closeDay` does. **And the report already published is
+>   a separate defect, not B's** (Codex #2274 r5 P1): `closeDay` stamps and
+>   dispatches after its single clamped advance, so a day closed more than
+>   730 days ahead ships a zero or partial report to Base that the
+>   catch-up can move the frontiers for but can never resend. That is a
+>   pre-existing reporter bug — filed as #2277: `closeDay` must not stamp
+>   or dispatch until both frontiers reach the day, with a recovery for
+>   days already stamped short — and B's frontier guard is sound only on
+>   top of it, which is why it is a prerequisite rather than a B
+>   deliverable. With the entry, catching a frontier up is permissionless
 >   and already chunked, so the condition is always reachable by whoever
 >   wants the day closed — it delays a proof, it cannot block one.
 > - **A walk is the STARTER's, keyed `(day, starter, nonce)`, not a shared
@@ -7198,6 +7214,18 @@ on the live era alone.
 > - `rewardClaimHorizonDays` disabled — no entry ever expires; exit: a
 >   configuration act, with the horizon activation epoch guarding the
 >   restart;
+> - **a remainder that prices to zero** (Codex #2274 r5 P1) — a closed,
+>   non-forfeited entry whose remaining window rounds to nothing (a last
+>   day that rounds away, a cap already exhausted) is marked unpriced by
+>   the pricing core, so the expiry sweep returns without processing it
+>   and the executability gate never starts its clock; unless its owner
+>   submits a zero-value claim it is never `processed`, and a proof
+>   testing `processed` would refuse the day forever over an obligation
+>   that owes nothing. Exit: **B adds a permissionless retirement for
+>   exactly this state** — a closed entry whose remainder prices to zero
+>   is marked processed, moving nothing — so the proof's termination test
+>   stays "processed, or the claim cursor past the day" and needs no
+>   second notion of done;
 > - **the entry's owner sanctioned** — the claim refuses them and the
 >   expiry clock does not advance while they are flagged, so the entry
 >   can stand for as long as the flag does, and nothing the platform
@@ -7206,8 +7234,9 @@ on the live era alone.
 > While any of these holds, every batch listing that day is unparkable,
 > and therefore unclassifiable and unrepatriable: the value stays
 > protected and visible in `Unclassified`. That is the conservative side
-> the owner chose (#2258, Reading B). The first four have exits the
-> platform or its operator already holds. The fifth does not, and it is
+> the owner chose (#2258, Reading B). Five of these have exits the
+> platform or its operator already holds, or that B adds. The sanctioned
+> owner does not, and it is
 > recorded here as an OWNER QUESTION for 3b-ii-B rather than decided: a
 > single flagged claimant on one listed day holds a whole batch's
 > release indefinitely. The two answers are to accept that (the
