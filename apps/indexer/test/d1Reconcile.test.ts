@@ -15,7 +15,9 @@ import {
   compareSequences,
   isMissingSequenceTable,
   makeFingerprinter,
+  coverageProblems,
   manifestEntry,
+  parseEvidence,
   readAll,
   safeKey,
   situationOf,
@@ -1842,5 +1844,75 @@ describe('a reconstructed baseline says whether it covers the gap', () => {
     const doc = JSON.parse(readFileSync(path, 'utf8'));
     expect(doc.provenance.producer).toBe('carry --mirror');
     expect(doc.provenance.interval).toBeUndefined();
+  });
+});
+
+describe('coverage is checked, not asserted', () => {
+  // An earlier revision took `--interval covered` on the command that
+  // TAKES the baseline — persisting the claim before printing the
+  // digests meant to substantiate it, so no operator could have compared
+  // anything at the moment the artifact said "covered" (#2281 r3).
+  // Reconstructions are now always written uncovered and promoted only
+  // by a comparison.
+  const entry = (digest: string, seq: number) =>
+    manifestEntry({ key: ['id'], cols: ['id'], seq, rows: {}, digest });
+
+  it('reads the digest command own output as evidence', () => {
+    const e = parseEvidence(
+      [
+        '  notifications                        38  8f7df07287a4c8e3',
+        '  telegram_links                        0  e3b0c44298fc1c14',
+        '  seq notifications                46',
+        '  seq-listing complete',
+      ].join('\n'),
+    );
+    expect(e.digests.get('notifications')).toBe('8f7df07287a4c8e3');
+    expect(e.seqs.get('notifications')).toBe(46);
+    expect(e.seqListingComplete).toBe(true);
+  });
+
+  it('promotes nothing when the rows agree but the sequence moved', () => {
+    // THE CASE THAT MAKES ROWS INSUFFICIENT: a straggler inserts an
+    // AUTOINCREMENT row after the mirror and deletes it again. Every row
+    // digest and count still matches, and the high-water mark has moved
+    // — so a reconstruction absorbs the moved value, and promoting on
+    // row evidence alone would make the sequence check treat the late
+    // allocation as original.
+    const tables = { notifications: entry('8f7df07287a4c8e3', 47) };
+    const evidence = parseEvidence(
+      'notifications 8f7df07287a4c8e3\nseq notifications 46\nseq-listing complete',
+    );
+    const problems = coverageProblems(tables, evidence);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('sequence 46');
+    expect(problems[0]).toContain('allocated in between');
+  });
+
+  it('will not read a missing sequence line as zero unless the listing says it is whole', () => {
+    // Absence is ambiguous — "never allocated" and "not pasted in" look
+    // identical — and `cover` must not guess between them.
+    const tables = { t: entry('aaaaaaaaaaaaaaaa', 0) };
+    const partial = parseEvidence('t aaaaaaaaaaaaaaaa');
+    expect(coverageProblems(tables, partial)[0]).toContain('does not say the listing is complete');
+
+    const whole = parseEvidence('t aaaaaaaaaaaaaaaa\nseq-listing complete');
+    expect(coverageProblems(tables, whole)).toEqual([]);
+  });
+
+  it('refuses a table the evidence never mentions, in either direction', () => {
+    const tables = { a: entry('aaaaaaaaaaaaaaaa', 0), b: entry('bbbbbbbbbbbbbbbb', 0) };
+    const evidence = parseEvidence('a aaaaaaaaaaaaaaaa\nseq-listing complete');
+    expect(coverageProblems(tables, evidence)[0]).toContain('records no digest');
+
+    const extra = parseEvidence(
+      'a aaaaaaaaaaaaaaaa\nb bbbbbbbbbbbbbbbb\nc cccccccccccccccc\nseq-listing complete',
+    );
+    expect(coverageProblems(tables, extra)[0]).toContain('and this baseline does not');
+  });
+
+  it('cannot promote a baseline that recorded no digest of its own', () => {
+    const tables = { t: manifestEntry({ key: ['id'], cols: ['id'], seq: 0, rows: {} }) };
+    const evidence = parseEvidence('t aaaaaaaaaaaaaaaa\nseq-listing complete');
+    expect(coverageProblems(tables, evidence)[0]).toContain('records no digest');
   });
 });

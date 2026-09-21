@@ -474,27 +474,45 @@ because step 3 below is the part of it that had to be re-learned.
       > ```
       > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
       >   --db vaipakam-archive --out cutover-mirror-reconstructed.json \
-      >   --stands-for "<which moment, and what establishes it>" \
-      >   --interval covered|uncovered
+      >   --stands-for "<which moment, and what establishes it>"
       > ```
       >
       > **A NEW PATH, not the one the mirror used.** The verb refuses an
-      > existing `--out`, and that refusal is the point: replacing a
-      > manifest the mirror wrote with a reconstruction destroys the only
-      > baseline that was ever a direct observation, and no error is
-      > needed to do it (#2281 r2).
+      > existing `--out`. Replacing a manifest the mirror wrote with a
+      > reconstruction destroys the only baseline that was ever a direct
+      > observation, and no error is needed to do it (#2281 r2).
       >
-      > **`--interval` is a separate flag because prose cannot gate
-      > anything.** `covered` means evidence recorded at the mirror has
-      > been compared with this reading and agrees; `uncovered` means it
-      > has not. An `uncovered` baseline still surfaces NEW differences
-      > and **must not license the rollback’s reverse mirror** — see the
-      > box at rollback step 2b for the sequence that destroys data.
+      > **IT IS ALWAYS WRITTEN UNCOVERED, and it cannot be otherwise**
+      > (#2281 r3). An earlier revision took the coverage verdict as a
+      > flag here — which recorded the claim BEFORE printing the digests
+      > meant to substantiate it, so no operator could have compared
+      > anything at the moment the artifact said "covered". Promotion is
+      > a separate step that actually checks:
       >
-      > **The verb prints the per-table digest of the reading it
-      > accepted**, which is the evidence this comparison needs. Running
-      > `digest` separately afterwards observes a different interval and
-      > says nothing about the rows in the artifact.
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs cover \
+      >   --manifest cutover-mirror-reconstructed.json \
+      >   --expect mirror-time-digests.txt
+      > ```
+      >
+      > `--expect` holds what step 2 recorded AT the mirror. The `digest`
+      > command’s own output pastes in as-is: per-table digests, the
+      > `seq <table> <n>` high-water marks, and the `seq-listing complete`
+      > line that says the sequence listing is whole.
+      >
+      > **Rows alone cannot cover an interval.** A straggler that inserts
+      > an AUTOINCREMENT row after the mirror and deletes it again leaves
+      > every row digest and count identical while the high-water mark
+      > moves. A reconstruction absorbs the moved value, and promoting on
+      > row evidence alone would make the sequence comparison treat that
+      > late allocation as original — switching off the one check written
+      > for exactly that case. So `cover` requires BOTH, per table, and
+      > refuses the whole promotion if any table is short of either.
+      >
+      > A refusal leaves the artifact untouched and uncovered. That is
+      > still usable for finding NEW differences; what it must not do is
+      > license the rollback’s reverse mirror.
+      >
       >
       > Read-only; it writes no database.
       >

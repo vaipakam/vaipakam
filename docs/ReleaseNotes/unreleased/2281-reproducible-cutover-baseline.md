@@ -25,12 +25,25 @@ changing, nothing is connected to it — and a record taken now *contains that
 late write*, so every future comparison treats it as original and can never
 report it. Stillness now says nothing about what happened earlier.
 
-So taking a record this way requires the operator to state, in one line, which
-moment it stands for and what establishes that — the figures recorded at the
-time of the move, or an honest admission that the interval is not covered. That
-statement is written **into the record itself**, not into a log that can be
-separated from it, and the comparison repeats it back rather than describing a
-reconstruction as the original.
+So a record taken this way is always marked **not covering** the gap since the
+move, and nothing about the command that takes it can say otherwise. A separate
+step promotes it, and only by actually comparing it against the figures
+recorded at the time — both the content of each table and the counters that
+hand out new identifiers. Those counters matter on their own: a record created
+and deleted again after the move leaves every table's content identical while
+the counter has moved on, so content alone can never establish that nothing
+happened.
+
+The promotion is refused outright, and the file left untouched, if any table is
+short of either kind of evidence. A record that stays un-promoted is still
+useful for spotting new differences; what it must not do is authorise the step
+that copies the new database back over the old one, because a late change
+absorbed into it would read as ordinary progress and be overwritten with
+everything reporting success.
+
+The statement of what a record stands for is written **into the record itself**,
+not into a log that can be separated from it, and the comparison repeats it back
+rather than describing a reconstruction as the original.
 
 Verified against the real thing: a record taken this way after the move was
 compared against the one the copy produced during it — 43 tables, **no

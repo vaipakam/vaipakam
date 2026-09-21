@@ -470,8 +470,8 @@ export function collapseOutsideLiterals(sql) {
  * `sqlite_master` holds it. Indexes are sorted by name so the comparison
  * does not depend on creation order.
  */
-async function declarationOf(dbId, table) {
-  const all = await declarations(dbId);
+async function declarationOf(dbId, table, { fresh = false } = {}) {
+  const all = await declarations(dbId, { fresh });
   return all.get(table) ?? '';
 }
 
@@ -485,9 +485,18 @@ async function declarationOf(dbId, table) {
  * and the window is the scarce thing.
  */
 const _declCache = new Map();
-async function declarations(dbId) {
+/**
+ * `fresh` bypasses the cache, and a stability pass MUST pass it (#2281
+ * r3). The cache is right for a window where the writers are stopped and
+ * the same declaration is asked for repeatedly. It is exactly wrong for
+ * a second reading taken to detect a change: the "second" read returned
+ * the first read's answer, so the revalidation added a round earlier
+ * could not fail — an inert check, of precisely the kind this PR has
+ * been catching elsewhere, in my own fix for it.
+ */
+async function declarations(dbId, { fresh = false } = {}) {
   const hit = _declCache.get(dbId);
-  if (hit) return hit;
+  if (hit && !fresh) return hit;
   const rows = await query(
     dbId,
     `SELECT type, name, tbl_name, sql FROM sqlite_master ` +
@@ -1717,8 +1726,13 @@ export function classifyForReconcile({
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
-export function manifestEntry({ key, cols, seq, rows }) {
-  return { key, cols, seq, rows };
+export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
+  // `digest` is the content digest of the reading this entry was built
+  // from. The mirror does not record one (its own verification covers
+  // it); a reconstruction does, because promoting it to "covered" means
+  // comparing it with what was recorded at the mirror, and that
+  // comparison has to be possible from the artifact alone (#2281 r3).
+  return digest === undefined ? { key, cols, seq, rows } : { key, cols, seq, rows, digest };
 }
 
 /**
@@ -1749,6 +1763,105 @@ export function manifestEntry({ key, cols, seq, rows }) {
  * still moving fails here rather than producing a baseline that describes
  * no moment at all.
  */
+/**
+ * Parse the evidence file `cover` checks a reconstruction against.
+ *
+ * It is whatever the operator recorded AT the mirror, pasted in: lines of
+ * `<table> <digest>` and lines of `seq <table> <n>`. Anything else — row
+ * counts, prose, the run log's own headings — is ignored, because the
+ * file people actually have is a copy-paste of a terminal, not a format
+ * anyone designed.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function parseEvidence(text) {
+  const digests = new Map();
+  const seqs = new Map();
+  let seqListingComplete = false;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('seq-listing complete')) {
+      seqListingComplete = true;
+      continue;
+    }
+    const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
+    if (seq) {
+      seqs.set(seq[1], Number(seq[2]));
+      continue;
+    }
+    // `<table> [rowcount] <16-hex>` — the digest command prints a count
+    // between them, and a hand-kept note may not.
+    const dig = /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})$/.exec(line);
+    if (dig) digests.set(dig[1], dig[2]);
+  }
+  return { digests, seqs, seqListingComplete };
+}
+
+/**
+ * Does this evidence substantiate this reconstruction?
+ *
+ * BOTH DIMENSIONS OR NEITHER (#2281 r3). Row digests alone are not
+ * enough: a straggler that inserts an AUTOINCREMENT row after the mirror
+ * and deletes it again leaves every row digest and count identical while
+ * `sqlite_sequence` has advanced. A reconstruction absorbs that advanced
+ * value, and promoting it on row evidence alone would make
+ * `compareSequences` treat the late allocation as original — switching
+ * off the one check written for exactly that case.
+ *
+ * So a table with no sequence evidence is not covered, even when its
+ * rows agree. Saying "the rows match, so it is fine" is the whole
+ * mistake this function exists to prevent.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function coverageProblems(tables, evidence) {
+  const problems = [];
+  for (const [table, entry] of Object.entries(tables)) {
+    const expectedDigest = evidence.digests.get(table);
+    if (expectedDigest === undefined) {
+      problems.push(`${table}: the evidence records no digest for it`);
+    } else if (entry.digest === undefined) {
+      problems.push(
+        `${table}: this artifact records no digest, so nothing can be ` +
+          `compared — it predates the field and cannot be promoted`,
+      );
+    } else if (entry.digest !== expectedDigest) {
+      problems.push(
+        `${table}: the evidence says ${expectedDigest}, this baseline ` +
+          `read ${entry.digest} — the source CHANGED between the two`,
+      );
+    }
+    // A table that never allocated has no line in the listing at all, so
+    // absence reads as zero ONLY when the listing says it is whole.
+    // Otherwise it means "not recorded", and that is not coverage.
+    const expectedSeq = evidence.seqs.has(table)
+      ? evidence.seqs.get(table)
+      : evidence.seqListingComplete
+        ? 0
+        : undefined;
+    if (expectedSeq === undefined) {
+      problems.push(
+        `${table}: the evidence records no sequence high-water mark, and ` +
+          `does not say the listing is complete. An identifier allocated ` +
+          `and released after the mirror leaves every row identical, so ` +
+          `rows alone cannot cover it`,
+      );
+    } else if ((entry.seq ?? 0) !== expectedSeq) {
+      problems.push(
+        `${table}: the evidence says sequence ${expectedSeq}, this ` +
+          `baseline read ${entry.seq ?? 0} — something allocated in ` +
+          `between`,
+      );
+    }
+  }
+  for (const table of evidence.digests.keys()) {
+    if (!(table in tables)) {
+      problems.push(`${table}: the evidence names it and this baseline does not`);
+    }
+  }
+  return problems;
+}
+
 async function takeManifest(db) {
   const readSequences = async () => {
     const seen = new Map();
@@ -1797,6 +1910,7 @@ async function takeManifest(db) {
       cols,
       seq: before.get(table) ?? 0,
       rows: seen,
+      digest: digestOf(rows, cols).digest,
     });
   }
 
@@ -1826,6 +1940,10 @@ async function takeManifest(db) {
   // forever while every run reports VERIFIED. Comparing the stored
   // declaration is what catches it, the same instrument the carry uses
   // for the same reason.
+  // A FRESH declaration read, not the cached one the first pass filled
+  // (#2281 r3). Taken once for the whole database, so the per-table
+  // comparisons below all read the same new snapshot.
+  await declarations(db.id, { fresh: true });
   const tablesNow = await tablesOf(db.id);
   if (JSON.stringify([...tablesNow].sort()) !== JSON.stringify([...tables].sort())) {
     fail(
@@ -2827,12 +2945,12 @@ function reportProblems(problems, dst) {
 const USAGE =
   'usage:\n' +
   '  d1-carry-rows.mjs digest    --db <name>\n' +
-  '  d1-carry-rows.mjs manifest  --db <name> --out <path>\n' +
-  '                              --stands-for <text> --interval covered|uncovered\n' +
+  '  d1-carry-rows.mjs manifest  --db <name> --out <path> --stands-for <text>\n' +
   '      READ ONLY. Takes a baseline from one database; writes no database.\n' +
-  '      --stands-for records WHICH moment it stands for and what establishes\n' +
-  '      that. --interval says whether that evidence COVERS the gap since the\n' +
-  '      mirror; an uncovered baseline must not license a reverse mirror.\n' +
+  '      Always written UNCOVERED: it cannot know what happened before it ran.\n' +
+  '  d1-carry-rows.mjs cover     --manifest <path> --expect <path>\n' +
+  '      Promotes a reconstruction to covered, and ONLY by comparing its\n' +
+  '      recorded digests AND sequences with evidence from the mirror.\n' +
   '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
   '      WRITES. Only ever against a destination nothing is writing to.\n' +
   '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
@@ -2884,18 +3002,41 @@ async function main() {
     if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
     const db = name === shared.name ? shared : await resolveByName(name);
     printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
+    // THE SEQUENCES TOO, so a run log made from this output carries the
+    // evidence `cover` requires (#2281 r3). Rows alone cannot cover an
+    // interval: an identifier allocated and released after a mirror
+    // leaves every row digest identical while the high-water mark moves,
+    // and a later reconstruction would absorb the moved value. This
+    // output is what an operator pastes into the record at barrier time,
+    // so it is where the missing half belongs.
+    try {
+      const seqs = await query(db.id, 'SELECT name, seq FROM sqlite_sequence');
+      const usable = seqs.filter((r) => !NEVER_CARRIED(r.name));
+      console.log('');
+      for (const r of [...usable].sort((a, b) => String(a.name).localeCompare(b.name))) {
+        console.log(`  seq ${String(r.name).padEnd(28)} ${Number(r.seq)}`);
+      }
+      // ABSENCE HAS TO BE READABLE. A table that has never allocated has
+      // no row here at all, so a missing line means either "never
+      // allocated" — a known zero — or "the operator pasted only part of
+      // this". Those are different facts, and `cover` must not guess
+      // between them, so the listing says of itself that it is whole.
+      console.log('  seq-listing complete');
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
+      console.log('\n  seq-listing complete   (nothing has ever allocated here)');
+    }
     return;
   }
 
   if (mode === 'manifest') {
     const opts = parseArgs(rest, {
-      flags: ['--db', '--out', '--stands-for', '--interval'],
+      flags: ['--db', '--out', '--stands-for'],
       switches: [],
     });
     const name = opts['--db'];
     const out = opts['--out'];
     const standsFor = opts['--stands-for'];
-    const interval = opts['--interval'];
     if (!name || !out) fail(`manifest needs --db <name> and --out <path>\n\n${USAGE}`);
     // PRESENT QUIESCENCE CANNOT SUBSTANTIATE HISTORICAL EQUALITY, and
     // the first version of this verb implied it could (#2281 r1).
@@ -2938,27 +3079,17 @@ async function main() {
           `since the mirror is NOT covered"\n\n${USAGE}`,
       );
     }
-    // AND WHETHER THAT EVIDENCE COVERS THE INTERVAL, as a value this
-    // tool can read (#2281 r2). `--stands-for` is prose for a human;
-    // prose cannot gate anything. The distinction it carries decides
-    // whether a clean reconciliation may license the ROLLBACK's reverse
-    // mirror, and that is not a judgement to leave in a sentence.
-    if (interval !== 'covered' && interval !== 'uncovered') {
-      fail(
-        `manifest needs --interval covered|uncovered.\n\n` +
-          `  covered    — evidence recorded AT the mirror has been ` +
-          `compared with this reading and agrees. Name it in ` +
-          `--stands-for.\n` +
-          `  uncovered  — no such evidence. The baseline is still useful ` +
-          `for spotting NEW differences, and it must NOT be used to ` +
-          `license the rollback's reverse mirror: a late write absorbed ` +
-          `into it reads as \`destination-moved\`, reports no conflict, ` +
-          `and the reverse mirror then destroys the only copy.\n\n` +
-          `This is a separate flag from --stands-for because prose cannot ` +
-          `gate anything, and this distinction decides whether a clean ` +
-          `run means the rollback is safe.\n\n${USAGE}`,
-      );
-    }
+    // WHETHER THE INTERVAL IS COVERED IS NOT THIS COMMAND'S TO RECORD
+    // (#2281 r3). An earlier revision took `--interval covered` here and
+    // wrote it BEFORE printing the digests that are supposed to
+    // substantiate it — so the artifact asserted coverage at a moment
+    // when no operator could yet have compared anything, and a
+    // comparison that later failed, or never happened, left a baseline
+    // claiming to license the destructive reverse mirror.
+    //
+    // So every reconstruction is written UNCOVERED, and `cover` is a
+    // separate command that promotes it only by actually checking the
+    // recorded readings against evidence from the mirror.
     // Either end of the cutover, and nothing else — the same pinning the
     // carry uses, for the same reason: a baseline is only meaningful
     // about a database this procedure is actually between.
@@ -2999,7 +3130,8 @@ async function main() {
         `     READ ONLY — no database is written. This records ${db.name} ` +
         `AS IT IS NOW.\n` +
         `     It stands for: ${standsFor}\n` +
-        `     Interval since the mirror: ${interval.toUpperCase()}\n` +
+        `     Interval since the mirror: UNCOVERED until \`cover\` says ` +
+        `otherwise\n` +
         `     A write that committed before this reading is INSIDE this ` +
         `baseline and no reconciliation using it can report the write as ` +
         `late.`,
@@ -3032,7 +3164,7 @@ async function main() {
       readCompletedAt,
       observes: `${db.name} as read between the two times above`,
       standsFor,
-      interval,
+      interval: 'uncovered',
     });
     // THE EVIDENCE THE PROCEDURE ASKS FOR, from the reading that was
     // actually accepted. Running `digest` afterwards observes a
@@ -3043,16 +3175,98 @@ async function main() {
     }
     console.log(
       `\nrecorded ${Object.keys(manifest).length} table(s), read between ` +
-        `${readStartedAt} and ${readCompletedAt}.\n` +
-        `Compare the digests above with what was recorded AT the mirror. ` +
-        `That comparison is what the word "${interval}" above is ` +
-        `answerable for.` +
-        (interval === 'uncovered'
-          ? `\n\nThis baseline is marked UNCOVERED. It will still surface ` +
-            `NEW differences, and it must NOT license the rollback's ` +
-            `reverse mirror — see the rollback section of ` +
-            `docs/ops/D1CutoverArchiveToWarm.md.`
-          : ''),
+        `${readStartedAt} and ${readCompletedAt}.\n\n` +
+        `WRITTEN UNCOVERED, and only \`cover\` can change that. It will ` +
+        `surface NEW differences as it stands, and it must NOT license ` +
+        `the rollback's reverse mirror until the interval since the ` +
+        `mirror has been accounted for:\n\n` +
+        `  d1-carry-rows.mjs cover --manifest ${out} --expect <file>\n\n` +
+        `where <file> holds what was recorded AT the mirror — the ` +
+        `per-table digests AND the sequence high-water marks. \`cover\` ` +
+        `compares them with the readings in the artifact and promotes it ` +
+        `only on exact agreement. An assertion made here instead would be ` +
+        `made before the evidence existed.`,
+    );
+    return;
+  }
+
+  if (mode === 'cover') {
+    const opts = parseArgs(rest, {
+      flags: ['--manifest', '--expect'],
+      switches: [],
+    });
+    const path = opts['--manifest'];
+    const expect = opts['--expect'];
+    if (!path || !expect) {
+      fail(`cover needs --manifest <path> and --expect <path>\n\n${USAGE}`);
+    }
+    let doc;
+    try {
+      doc = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (err) {
+      fail(`could not read the manifest at ${path} — ${err.message}`);
+    }
+    const prov = doc?.provenance ?? {};
+    if (prov.producer === 'carry --mirror') {
+      fail(
+        `${path} was written by the mirror. It observed the moment it ` +
+          `describes, so there is no interval to cover and nothing here ` +
+          `to promote.`,
+      );
+    }
+    if (prov.interval === 'covered') {
+      fail(`${path} is already marked covered.`);
+    }
+    const evidence = parseEvidence(readFileSync(expect, 'utf8'));
+    if (evidence.digests.size === 0 && evidence.seqs.size === 0) {
+      fail(
+        `nothing usable was found in ${expect}. It should hold what was ` +
+          `recorded AT the mirror: lines of "<table> <digest>" — the ` +
+          `digest command's own output pastes in as-is — and lines of ` +
+          `"seq <table> <n>" for the allocation high-water marks.`,
+      );
+    }
+    const problems = coverageProblems(doc.tables ?? {}, evidence);
+    if (problems.length > 0) {
+      // NOT `reportProblems`, whose trailer explains digests, refusals
+      // and conflicts against a DESTINATION — the carry's vocabulary,
+      // and none of it true here. Borrowing it would have this command
+      // say things it does not mean, which is the defect this whole PR
+      // keeps being about.
+      console.error(`\n[d1-carry-rows] coverage REFUSED — ${problems.length} problem(s):`);
+      for (const line of problems) console.error(`  - ${line}`);
+      console.error(
+        `\n${path} is UNCHANGED and remains uncovered. Coverage is the ` +
+          `claim that this reconstruction equals what the mirror saw; the ` +
+          `evidence above does not support it, so the claim is not ` +
+          `recorded.\n\nA baseline that stays uncovered is still useful ` +
+          `for finding NEW differences. What it must not do is license ` +
+          `the rollback's reverse mirror.\n`,
+      );
+      process.exit(1);
+    }
+    // Promoted only here, with the comparison that licenses it recorded
+    // alongside — so the artifact says what was checked, not merely that
+    // something was.
+    doc.provenance = {
+      ...prov,
+      interval: 'covered',
+      coveredAt: new Date().toISOString(),
+      coveredBy: `${Object.keys(doc.tables ?? {}).length} table(s) matched ` +
+        `on digest and sequence against ${expect}`,
+    };
+    writeFileSync(`${path}.tmp-${process.pid}`, `${JSON.stringify(doc, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    chmodSync(`${path}.tmp-${process.pid}`, 0o600);
+    renameSync(`${path}.tmp-${process.pid}`, path);
+    console.log(
+      `${path} is now COVERED: every table in it matches ${expect} on ` +
+        `both the content digest and the allocation high-water mark.\n\n` +
+        `That is what licenses the rollback's reverse mirror. Record in ` +
+        `the run log where the evidence came from — this artifact now ` +
+        `says WHAT was compared, and only you know where it was written ` +
+        `down.`,
     );
     return;
   }
