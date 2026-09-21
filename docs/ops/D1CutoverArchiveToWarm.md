@@ -174,10 +174,19 @@ because step 3 below is the part of it that had to be re-learned.
 
       > **THE MAINTENANCE BUILD IS DEPLOYED BY MERGING IT, not by
       > `wrangler deploy` from an operator's shell.** All three writers
-      > deploy through Workers Builds when a merge to `main` touches their
-      > watched paths, and a config-only change is such a touch. So step 1
-      > is: merge a commit that removes `d1_databases` from the three
-      > writers, and confirm with `--writers-held`.
+      > are on the automatic path (§3 Step 2). So step 1 is: merge a
+      > commit that removes `d1_databases` from the three writers, and
+      > confirm with `--writers-held`.
+      >
+      > **The merge is how you ASK; `--writers-held` is what establishes
+      > it.** §3 Step 2 measured both ways this misleads: `apps/app`'s
+      > build reported success on `06d657b9f` while that Worker's
+      > deployment stayed weeks older, and which commits trigger which
+      > builds is not recoverable from the diff — a root-level file
+      > change built all five Workers, a `docs/`-only change built none.
+      > So neither "a check appeared" nor "the diff touched that Worker"
+      > is evidence the barrier closed. Only reading back what the
+      > Workers are SERVING is.
       >
       > **Cut that commit from `main` BEFORE the cutover PR, not after.**
       > In the barrier state the three writers declare nothing, so the
@@ -245,10 +254,9 @@ because step 3 below is the part of it that had to be re-learned.
       > `Workers Builds: vaipakam-{indexer,keeper,agent}`, all `success`,
       > completing at `11:30:59Z` / `11:32:02Z` / `11:33:01Z`; the three
       > live Workers' latest deployments are `11:30:55Z` / `11:31:57Z` /
-      > `11:32:56Z`. A merge whose diff misses those paths gets no build
-      > and no deploy — `37f0d9809` changed only `apps/app/e2e/` and
-      > produced neither — which is why the confirmation step is not
-      > optional.
+      > `11:32:56Z` — within seconds, all three. That establishes these
+      > three DID deploy from that merge. It does not establish that a
+      > green build is sufficient, which is the trap stated above.
       >
       > **A direct `wrangler deploy` needs a credential the session token
       > does not have, and it fails after the decision to begin.** All
