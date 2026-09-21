@@ -1325,34 +1325,39 @@ Two practical consequences:
   memory at all (the `x.slot := position` idiom) needs nothing — see the
   measurement below.
 
-  **The test is the ALLOCATION BOUND, not read-vs-write.** Every access — read
-  included — must stay inside memory Solidity owns for that block: its own
-  allocations, the scratch space, the zero slot, or memory past the free
-  pointer that the block allocates itself. Read-only is *not* a licence: once
-  the mover is enabled, an arbitrary read can observe the very slots it spilled
-  there, which is how a "harmless" block becomes optimizer-dependent. The
-  rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
-  allocated `bytes memory` the block already holds and `add(err, 0x20)` /
-  `mload(err)` stay within it — not because it only reads (#2253 r7).
+  **What counts as memory-safe is SOLIDITY'S SPECIFICATION, and this document
+  deliberately does not restate it.** Read it in the Solidity docs under
+  Assembly → Memory Safety, and audit the block against that text. This
+  paragraph used to carry a prose summary of the rule, rewritten in four
+  successive review rounds; **two of those revisions were P1 defects that would
+  have blessed an unsafe annotation** — one treated the bound for a pointer the
+  block EXPORTS as the same bound that governs what it may TOUCH, which makes
+  `b := 0x00` (scratch space, not valid past the block) read as compliant. A
+  wrong summary here is worse than no summary: the failure it licenses is
+  silent memory corruption in a fund-moving contract, not a build error, and
+  every wrong version looked reasonable. The rule is compiler-defined and
+  belongs where it is normative.
 
-  **A block can be in scope for that audit with no `mload` or `mstore`
-  anywhere in sight:** assigning to a Solidity variable of memory-reference
-  type — handing a `bytes memory` or a `struct` a pointer the block computed —
-  puts a value into the memory model without going through it. **That does not
-  make the block unsafe; it makes it un-assumable.** The pointer still has to
-  be audited against the same allocation bound, and one that satisfies it —
-  aliasing an existing allocation, say — is memory-safe and SHOULD carry the
-  annotation. Withholding it there leaves the guard down for the whole
-  contract, which is the failure this section exists to prevent, arrived at
-  from the cautious direction.
+  What this document can say is repo-specific and verified:
 
-  So read "touches memory" throughout this section as shorthand for **needs
-  the audit** — never as "contains a memory opcode", and never as a verdict.
-  The verdict is the audit's. The `x.slot := position` idiom is outside it on
-  both counts precisely because the pointer it assigns is a STORAGE pointer:
-  nothing about the memory model is asserted or disturbed, so there is nothing
-  to audit. A block that computes a MEMORY offset and assigns it out is inside
-  it however few opcodes it has — and may well come out annotated.
+  - **`("memory-safe")` is an AUDIT, not a find-and-replace.** The annotation
+    licenses the mover to relocate stack slots into memory, so an incorrect
+    one invites optimizer-dependent corruption — a far worse failure than the
+    build error you were trying to fix.
+  - **It cuts both ways.** Withholding the annotation from a block that is in
+    fact memory-safe leaves the guard down for the WHOLE contract, which is the
+    stack failure this section exists to diagnose. Neither direction is the
+    safe default; the spec decides.
+  - **A worked example, as an example and not as the rule.** The rethrow in
+    `Deployments.finalizeArtifact` is annotated because `err` is a `bytes
+    memory` the block already holds and `add(err, 0x20)` / `mload(err)` stay
+    inside it. Read-only-ness is NOT what qualifies it (#2253 r7) — once the
+    mover is on, an arbitrary read can observe the slots it spilled.
+  - **A block need not contain a memory opcode to require the audit.**
+    Assigning a computed pointer to a Solidity memory-reference variable is
+    enough. The `x.slot := position` storage-pointer idiom is the one shape
+    this document does claim is outside it, and that claim is measured rather
+    than argued — see the three-point comparison below.
 - **Retrofitting an existing bare block is a TRADE, and it can be expensive.**
   Turning the guard on lets solc emit the stack-to-memory mover, and the mover
   *is code*. MEASURED (#2268): a sweep of 24 blocks took `OfferCreateFacet`
@@ -1378,11 +1383,20 @@ Two practical consequences:
   point is what carries it. On `OfferCreateFacet`: bare = 21,720; all 24
   annotated = 33,026; 18 annotated with the 6 storage-pointer blocks left bare
   = **33,026**. The guard is contract-wide — one unannotated blocker and solc
-  emits no mover anywhere in the contract — so if those 6 were blockers the
-  third build would have landed near 21,720. It landed on the annotated figure
-  exactly. The mover was emitted with 6 bare blocks present, which is the claim.
-  Two-point equality would indeed prove nothing; equality against a third point
-  that differs by 52% is a different argument.
+  emits no mover anywhere in the contract — so if the bare blocks IN THIS
+  CONTRACT'S compilation unit were blockers, the third build would have landed
+  near 21,720. It landed on the annotated figure exactly. Two-point equality
+  would indeed prove nothing; equality against a third point that differs by
+  52% is a different argument.
+
+  **The conclusion reaches only the blocks in that unit, and not all six are.**
+  `GuardianPausable._getGuardianStorage` belongs to the standalone cross-chain
+  hierarchy and is absent from `OfferCreateFacet`'s 125 compilation sources —
+  checked, not assumed — so leaving it bare could not have affected this
+  artifact either way, and this measurement says nothing about it. The claim
+  is: the storage-pointer blocks reachable from the facets measured did not
+  withhold the guard. Extending it to every such block in the tree needs a
+  representative contract compiled for each, which has not been done.
 
   **Do not work out which blocks gate a contract by reading.** The context is
   transitive through inheritance, modifiers and libraries.
@@ -1421,15 +1435,38 @@ Two practical consequences:
   two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet` only
   (`FacetSizeLimitTest.t.sol:75-84`), so a **non-facet deployable**
   (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
-  size-checked by it at all. For a change touching one of those, read its
-  `deployedBytecode` length out of `out/<Name>.sol/<Name>.json` and check it
-  **against 24,576 — the absolute EIP-170 ceiling — not only against the
-  pre-change build.** The before/after delta tells you the annotation moved
-  size and by how much; it does not tell you whether the result deploys, and a
-  contract that crosses the ceiling does so on some particular change whose
-  delta looks no different from a harmless one. Compare both ways: the ceiling
-  for deployability, the delta for how much headroom the change spent. The
-  suite is not a substitute there.
+  size-checked by it at all. For a change touching one of those — measure it
+  yourself, with these two steps, **in this order**:
+
+  ```bash
+  # 1. REBUILD. `--match-path "test/deploy/*"` compiles only that sparse
+  #    closure, and a standalone cross-chain deployable is outside it
+  #    (VPFIMirrorToken and VpfiPoolRateGovernor come in via
+  #    DeployCrosschain.s.sol, which no deploy test imports). Skip this and
+  #    step 2 reads a STALE artifact from an earlier build and approves a
+  #    contract that is now oversized.
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 forge build --skip test
+
+  # 2. EXTRACT `.deployedBytecode.object` and convert hex chars to bytes.
+  jq -r '.deployedBytecode.object | (length - 2) / 2' \
+    out/<Name>.sol/<Name>.json
+  ```
+
+  **`.deployedBytecode` is an OBJECT, not a hex string** — `{object,
+  sourceMap, linkReferences, immutableReferences}` — so `.deployedBytecode |
+  length` returns **4**, which is under 24,576 for every contract that will
+  ever exist. That is not a wrong number, it is a check that always passes.
+  And `.object` is hex text: two characters per byte plus the `0x`, so its
+  raw length overstates by ~2×. (Verified on `VPFIMirrorToken`: naive `length`
+  = 4, `.object` length = 12,294 chars, actual = **6,146 bytes**.)
+
+  Then compare **against 24,576 — the absolute EIP-170 ceiling — and not only
+  against the pre-change build.** The before/after delta tells you the change
+  moved size and by how much; it does not tell you whether the result deploys,
+  and a contract that crosses the ceiling does so on some particular change
+  whose delta looks no different from a harmless one. Both readings: the
+  ceiling for deployability, the delta for headroom spent. The suite is not a
+  substitute here.
 - **An annotation under `test/` needs a THIRD command — neither of the two
   above compiles it.** `forge build --skip test` excludes `test/` by
   definition, and `--match-path "test/deploy/*"` compiles only the matched
