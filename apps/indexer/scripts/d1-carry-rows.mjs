@@ -1755,7 +1755,13 @@ async function takeManifest(db) {
   // moment that ever existed, and the sequence is the half the row reads
   // cannot see — an identifier allocated and released leaves no row.
   const after = await readSequences();
-  for (const [table, seq] of after) {
+  // THE UNION, not just the later reading (self-review). Iterating only
+  // `after` asks "did anything move up", and a table present in the
+  // first reading and absent from the second would answer that with
+  // silence — the one direction a check written as a loop over the new
+  // values cannot see.
+  for (const table of new Set([...before.keys(), ...after.keys()])) {
+    const seq = after.get(table) ?? 0;
     if ((before.get(table) ?? 0) !== seq) {
       fail(
         `"${table}" allocated identifiers WHILE this manifest was being ` +
@@ -2768,16 +2774,14 @@ async function main() {
     // Either end of the cutover, and nothing else — the same pinning the
     // carry uses, for the same reason: a baseline is only meaningful
     // about a database this procedure is actually between.
-    const db =
-      name === shared.name
-        ? shared
-        : name === PREDECESSOR.name
-          ? await resolveByName(name)
-          : fail(
-              `this tool takes a baseline from exactly two databases: the ` +
-                `shared one (${shared.name}) and its recorded predecessor ` +
-                `(${PREDECESSOR.name}). It was asked for "${name}".`,
-            );
+    if (name !== shared.name && name !== PREDECESSOR.name) {
+      fail(
+        `this tool takes a baseline from exactly two databases: the ` +
+          `shared one (${shared.name}) and its recorded predecessor ` +
+          `(${PREDECESSOR.name}). It was asked for "${name}".`,
+      );
+    }
+    const db = name === shared.name ? shared : await resolveByName(name);
     if (db.name === PREDECESSOR.name && db.id !== PREDECESSOR.id) {
       fail(
         `"${db.name}" resolves to ${db.id}, but the recorded predecessor ` +
