@@ -1316,11 +1316,13 @@ were all plausible and all wrong.
 
 Two practical consequences:
 
-- **Annotate new inline assembly `("memory-safe")` — but only when it is.** The
-  annotation licenses the mover to relocate stack slots into memory, so a block
-  that steps outside Solidity's memory model invites corruption or
-  optimizer-dependent behaviour — a far worse failure than a build error. It is
-  an audit, not a find-and-replace.
+- **Annotate new MEMORY-TOUCHING inline assembly `("memory-safe")` — but only
+  when it is.** The annotation licenses the mover to relocate stack slots into
+  memory, so a block that steps outside Solidity's memory model invites
+  corruption or optimizer-dependent behaviour — a far worse failure than a
+  build error. It is an audit, not a find-and-replace. A block that touches no
+  memory at all (the `x.slot := position` idiom) needs nothing — see the
+  measurement below.
 
   **The test is the ALLOCATION BOUND, not read-vs-write.** Every access — read
   included — must stay inside memory Solidity owns for that block: its own
@@ -1331,132 +1333,77 @@ Two practical consequences:
   rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
   allocated `bytes memory` the block already holds and `add(err, 0x20)` /
   `mload(err)` stay within it — not because it only reads (#2253 r7).
-- **The annotation is a TRADE, not a free improvement — it costs BYTECODE**
-  (#2260, measured in #2268). Enabling the guard is what lets solc emit the
-  stack-to-memory mover, and the mover *is code*. Measured on this tree,
-  `main` vs a sweep of 24 verified-safe blocks: `OfferCreateFacet`
-  21,720 → **33,026** (+11,306, a 52% growth, over EIP-170 by 8,450) and
-  `OfferAcceptFacet` 22,042 → **26,381** (+4,339, over by 1,805). Both had
-  been comfortably under. 51 contracts changed size; a few *shrank*, so it is
-  not uniformly additive.
+- **Retrofitting an existing bare block is a TRADE, and it can be expensive.**
+  Turning the guard on lets solc emit the stack-to-memory mover, and the mover
+  *is code*. MEASURED (#2268): a sweep of 24 blocks took `OfferCreateFacet`
+  from 21,720 to 33,026 bytes (+52%, over EIP-170 by 8,450) and
+  `OfferAcceptFacet` from 22,042 to 26,381 (over by 1,805). Both had been
+  comfortably under. 51 contracts changed size; a few shrank.
 
-  **Two consequences.** An `internal` library helper is inlined into every
-  caller, so annotating a memory-touching one is not a local change — the
-  revert forwarders in `LibRevert` / `LibVPFIDiscount` reach most of the
-  Diamond, which is where the sweep's cost above came from. And the trade
-  bites hardest exactly where the benefit is greatest: the facets most
-  likely to hit the stack ceiling are the big ones, which are the ones with
-  no room (this file records `OfferAcceptFacet` shipping at 24,412 — 164
-  bytes clear — and #1835/#1780 exist because of that squeeze).
+  The cost lands hardest where the benefit is greatest — the facets most
+  likely to hit the stack ceiling are the big ones, which are the ones with no
+  room (`OfferAcceptFacet` shipped 164 bytes clear; #1835/#1780 exist because
+  of that squeeze). **So do not sweep.** Retrofit a contract when it actually
+  needs the guard, and check its headroom in the same change. #2260 tracks the
+  remaining blocks.
 
-  **A block that touches NO memory is already memory-safe and needs no
-  annotation** — MEASURED, #2260 r4. The storage-pointer idiom
-  (`x.slot := position` in `LibVaipakam.storageSlot`,
-  `LibAccessControl`, `LibPausable`, `LibReentrancyGuard`, `LibERC721`,
-  `GuardianPausable`) assigns a slot and reads and writes nothing, so solc
-  does not withhold the guard for it. Single-variable proof: annotating only
-  the 18 memory-touching blocks and leaving those 6 bare produces
-  **byte-identical** output to annotating all 24 — `OfferCreateFacet` 33,026,
-  `OfferAcceptFacet` 26,381, `OfferMatchFacet` 24,557, `RiskFacet` 24,298,
-  every one matching the full sweep exactly. **Do not annotate them**, and do
-  not count them when looking for what is holding a guard down.
+  **A block that touches no memory needs no annotation.** The storage-pointer
+  idiom (`x.slot := position`) does not withhold the guard: annotating only
+  the 18 memory-touching blocks, leaving 6 storage-pointer blocks bare,
+  produced deployed-bytecode of **identical length** to annotating all 24, on
+  every facet measured (#2260 r4). Equal length is not byte equality — solc's
+  metadata hash moves when sources change — but it is enough to say those 6
+  changed no code generation, and they are not what holds a guard down.
 
-  **The guard stays down while ANY memory-touching block in a contract's
-  COMPILATION CONTEXT is unannotated** — its own blocks plus every one
-  reachable through inheritance, modifiers, libraries and internal calls. So
-  a partial retrofit can be INERT, and **"it got no bigger" does not mean "it
-  was safe to annotate"** (#2260 r2).
+  **Do not try to work out which blocks gate a given contract by reading.**
+  The context is transitive through inheritance, modifiers and libraries, and
+  compiler behaviour decides what counts. `OfferMatchFacet`'s blocker count
+  was successively called ONE, THREE, FIVE and TWO across four review rounds;
+  every count came from careful reading and only the measured one was right.
+  Compile and diff instead — and note what that shows: a size change is
+  evidence code generation changed, while no change is not proof the guard is
+  still down (a contract whose stack already fits needs no spill code).
 
-  **DO NOT try to enumerate a compilation context by reading the source.**
-  `OfferMatchFacet` is the cautionary example, and the history is the
-  argument: this note said **ONE** block, review made it **THREE** (its own
-  `:588`/`:701` plus `LibVaipakam.storageSlot`), then at least **FIVE** (it
-  is `DiamondReentrancyGuard, DiamondPausable`, so `nonReentrant` /
-  `whenNotPaused` pull in two more `_storage` helpers) — and the measurement
-  above says the real answer is **TWO**, its own revert blocks, because every
-  storage-pointer helper in that chain was auto-safe all along. Four counts
-  from careful reading, four wrong, in both directions. The predicate is
-  unbounded in prose (#1995 / #2066) **and** it rests on compiler behaviour
-  that reading cannot settle (#2260 r3–r4).
-
-  **MEASURE instead — and know what the measurement does and does not say.**
-  Compile and diff `deployedBytecode`, the way every number in this section
-  was produced. A size change is evidence that **code generation changed**.
-  The converse does NOT hold: a contract whose stack already fits needs no
-  spill code, so the guard can become available with the size unmoved. Read
-  no change as "nothing observable happened here", never as proof the guard
-  is still down (#2260 r4) — if the distinction matters for a decision,
-  inspect the IR rather than inferring from size.
-
-  **This does NOT contradict the annotate-new-blocks rule above, because the
-  two directions are not symmetric.** Writing a NEW block into a contract
-  that had none *removes* a guard that contract already had, so annotating it
-  restores the status quo — **neutral with respect to GUARD AVAILABILITY**,
-  which is the comparison that matters here; the block's own instructions
-  still change runtime size like any other code. Keep annotating new safe
-  blocks, always. RETROFITTING is the direction that can flip a contract
-  off→on and summon the mover, subject to the last-block rule above. **"Do
-  not sweep" applies to the retrofit direction only**; there, annotate where
-  a contract NEEDS the guard, take its whole compilation context in one
-  change, and check headroom in the same change.
-- **A clean compile is NOT evidence for an annotation change — EIP-170 is a
-  TEST, not a compiler error.** `forge build --skip test` reported "Compiler
-  run successful" on the sweep above while two facets sat over the limit.
-  For anything that moves bytecode size — which explicitly includes adding or
-  removing a `("memory-safe")` annotation, not just adding selectors — run:
+- **Verify with the deploy-sanity suite, not with a clean compile.** EIP-170 is
+  enforced by `FacetSizeLimitTest`, not by solc — `forge build --skip test`
+  reported "Compiler run successful" on the #2268 sweep while two facets sat
+  over the limit. For anything that moves bytecode size, which includes adding
+  or removing an annotation:
 
   ```bash
   FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
     forge test --match-path "test/deploy/*" -vv
-  # or, same two requirements, through the gate:
+  # or through the gate, which shells out to bare forge and so needs the
+  # prefix on the wrapper:
   FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
     bash script/predeploy-check.sh
   ```
 
-  **The wrapper needs the prefix too** (#2260 r4). `predeploy-check.sh`
-  shells out to bare `forge build` / `forge test` (`:88`, `:130`), so
-  priority is inherited from the wrapper process — invoke it under plain
-  `bash` and neither child gets the scheduling posture the rule requires.
+  `FOUNDRY_PROFILE=default` is **correctness**: an inner loop leaves `quick`
+  exported, quick skips `test/**`, and discovery then empties and the run goes
+  green having executed nothing. `nice`/`ionice` is the separate **performance**
+  policy the "Executing forge" rule sets; omitting it still runs the suite, just
+  2–3× slower. `-vv` is also correctness-adjacent: the HEADROOM figures live in
+  `test_ReportFacetsNearSizeLimit`, which always passes by design, and Foundry
+  hides logs from passing tests below `-vv`.
 
-  **Both prefixes are required, and each closes a way this check can pass
-  without checking anything** (#2260 r3). `FOUNDRY_PROFILE=default` because an
-  inner loop leaves `quick` EXPORTED, and quick skips `test/**` — the note at
-  "Do NOT use `FOUNDRY_PROFILE=quick` with `forge test`" above is about
-  exactly this: discovery empties and the run goes green having executed no
-  test. `run-regression.sh` forces the profile for the same reason. And the
-  `nice`/`ionice` prefix because the "Executing forge" rule requires it on
-  every build/test/script; a 5–15 minute viaIR run at default priority is the
-  2–3× slowdown that rule exists to prevent.
-
-  **`-vv` is load-bearing, not verbosity.** `FacetSizeLimitTest` enforces the
-  limit in `test_EveryFacetUnderEip170SizeLimit`, but the HEADROOM figures
-  live in `test_ReportFacetsNearSizeLimit`, which **always passes by design**
-  — and Foundry hides logs from passing tests below `-vv`. Without it the
-  report is invisible in exactly the green run it exists to inform, so an
-  annotation that lands a facet at 19 bytes clear looks identical to one that
-  changed nothing.
-
-  **Two limits on what a green suite proves.** The enforcement test stops at
-  the FIRST violation, so its message understates the damage — it named one
-  facet when the #2268 sweep had put two over. And it iterates
-  `cutFacetNames()` plus `DiamondCutFacet` only, so a **non-facet deployable**
-  (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
-  size-checked by it at all; for a change touching one of those, measure its
-  `deployedBytecode` directly rather than reading a green suite as coverage.
+  Two limits on what a green suite proves: it stops at the FIRST violation, so
+  its message understates the damage (it named one facet when #2268 had put two
+  over), and it iterates `cutFacetNames()` plus `DiamondCutFacet` only — a
+  non-facet deployable (`VaipakamVaultImplementation`, `crosschain/`) is not
+  size-checked at all.
 - **`forge build --skip test` cannot see a test contract doing this.** A probe
   or helper under `test/` that inherits a script and carries an unannotated
   block fails only in the test build, which is the failure mode that cost #2253
   those five revisions.
 
-**Scope of what is actually left** (#2260, re-measured r4). `src/` carries 25
-bare blocks, but **6 are the auto-safe storage-pointer idiom and need nothing**
-— proven byte-identical above. The real remainder is **19**: 18 memory-touching
-blocks plus the `VaipakamDiamond` fallback, which `calldatacopy(0, 0, …)`
-clobbers memory from offset 0 and so wants its own verification rather than a
-bulk annotation. `test/` holds 9 more, the class `forge build --skip test`
-cannot see. They are LATENT, not broken — those contracts compile today — and
-#2268 showed a blanket sweep is not the remedy, since it put two facets over
-EIP-170.
+**Scope of what is actually left** (#2260, re-measured). `src/` carries 25 bare
+blocks, but **6 are the no-memory storage-pointer idiom and need nothing**. The
+real remainder is **19** — 18 memory-touching blocks plus the `VaipakamDiamond`
+fallback, whose `calldatacopy(0, 0, …)` clobbers memory from offset 0 and wants
+its own verification rather than a bulk annotation — plus 9 under `test/`. They
+are LATENT, not broken: those contracts compile today, and #2268 showed a
+blanket sweep is not the remedy.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
