@@ -198,6 +198,24 @@ then deploy.
    - `apps/agent/wrangler.jsonc`       → vaipakam-warm
    - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
 
+   **And one place that is not a `wrangler.jsonc`** (#2267): the cutover
+   tooling pins the database by **id** as well as name, in
+   `apps/indexer/scripts/lib/cutover-databases.mjs`. A fresh account gives
+   `vaipakam-warm` a NEW uuid, so `SUCCESSOR.id` there is left pointing at
+   a database that no longer exists — and because the Workers come up fine
+   from their own configs, nothing fails until later: the live-binding gate
+   expects the dead uuid, `check-d1-name-consistency` rejects the restored
+   tree, and the carry and digest tools address a database that is not in
+   this account.
+
+   Set `SUCCESSOR.id` to the new uuid. **`PREDECESSOR` in that file is a
+   different matter** — `vaipakam-archive` is not restored by this runbook
+   and will not exist in the new account, so the cutover tooling has no
+   second endpoint and is simply not usable there. That is correct: there
+   is nothing to cut over to or roll back from after a full-account
+   restore. Delete the module and its two callers, or leave them knowing
+   they will refuse.
+
    > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
    > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not
    > back up, and the Worker is undeployed — so there is nothing here to

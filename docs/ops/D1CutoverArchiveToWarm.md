@@ -343,6 +343,15 @@ because step 3 below is the part of it that had to be re-learned.
       without it, and the tool refuses to run step 6 without one rather than
       reporting a reconciliation it did not perform.
 
+      **Keep it until the ROLLBACK window closes, not until the cutover
+      finishes** (#2267). §4's step 2b reconciles against this same
+      manifest before its reverse mirror, and `reconcile` will not run
+      without `--since`. Deleting it when the cutover completes therefore
+      removes the only baseline the documented rollback needs — while
+      archive is still being retained for precisely that rollback. The
+      window closes when the predecessor is deleted (§5, which does not
+      authorise that on its own); the manifest goes then, with it.
+
       **[run] 2026-09-21 — the schemas agree today, so step 3 will not
       refuse on shape.** The carry refuses any table whose declaration
       differs between the two sides, which would stop the cutover dead

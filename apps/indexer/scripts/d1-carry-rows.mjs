@@ -660,6 +660,85 @@ function printDigest(label, map) {
 const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
 
 /**
+ * A PRIMARY KEY CAN ITSELF BE A CREDENTIAL, and this tool prints keys.
+ *
+ * Conflict reports deliberately name the row and not its contents,
+ * because these get pasted into run logs and issues. That reasoning
+ * missed one case: `telegram_links` is keyed BY the six-digit handshake
+ * code, which is live for ten minutes and is the only thing stopping
+ * another Telegram caller from redirecting a wallet's alerts
+ * (#2267 r26-missed). Withholding the row while printing the key
+ * published the secret and kept the harmless part.
+ *
+ * So the key is fingerprinted for declared columns: a reader can still
+ * tell two conflicts apart, correlate across runs, and ask for the row
+ * deliberately — which is the same trade the contents rule makes.
+ *
+ * This is a DECLARED list because "is this value a secret" is semantic
+ * and nothing in the schema says it. What keeps it honest is
+ * `assertRedactionsApply`: if a declared table exists and the declared
+ * column does not, the run stops rather than silently printing in
+ * clear. A rename is exactly how a redaction stops applying.
+ */
+const CREDENTIAL_KEY_COLUMNS = new Map([
+  [
+    'telegram_links',
+    {
+      columns: ['code'],
+      why:
+        'the primary key IS the six-digit handshake code, live for ten ' +
+        'minutes, and whoever holds it can bind that wallet to their own ' +
+        'Telegram chat',
+    },
+  ],
+]);
+
+/** Short, non-reversible, and stable across runs so reports correlate. */
+const fingerprint = (v) =>
+  `fp:${createHash('sha256').update(String(v)).digest('hex').slice(0, 12)}`;
+
+/**
+ * The key as it may be PRINTED. Values in declared credential columns
+ * become fingerprints; everything else is unchanged.
+ */
+export function safeKey(table, keyCols, k) {
+  const declared = CREDENTIAL_KEY_COLUMNS.get(table);
+  if (!declared) return k;
+  let values;
+  try {
+    values = JSON.parse(k);
+  } catch {
+    return `fp:unparseable-key`;
+  }
+  return JSON.stringify(
+    values.map((v, i) =>
+      declared.columns.includes(keyCols[i]) && v !== null ? fingerprint(v) : v,
+    ),
+  );
+}
+
+/**
+ * A declared redaction that no longer matches the schema is a redaction
+ * that has stopped happening. Checked against the table's real columns
+ * rather than assumed.
+ */
+function assertRedactionsApply(table, cols) {
+  const declared = CREDENTIAL_KEY_COLUMNS.get(table);
+  if (!declared) return;
+  const missing = declared.columns.filter((c) => !cols.includes(c));
+  if (missing.length === 0) return;
+  fail(
+    `"${table}" is declared as having credential-bearing key column(s) ` +
+      `${missing.map((c) => `"${c}"`).join(', ')}, and the table does not ` +
+      `have ${missing.length > 1 ? 'them' : 'it'} any more.\n\n` +
+      `${declared.why}.\n\nA renamed or dropped column means the ` +
+      `redaction silently stopped applying, and this tool prints keys. ` +
+      `Update CREDENTIAL_KEY_COLUMNS in this file to match the schema.`,
+  );
+}
+
+
+/**
  * THE MANIFEST — what the mirror carry saw, so the reconciliation after
  * the switch has something to compare against.
  *
@@ -701,10 +780,16 @@ function writeManifest(path, src, tables) {
   writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
   console.log(
-    `manifest written to ${path} (mode 0600) — keep it until the ` +
-      `reconciliation is done; it is what --since reads. It keys every row ` +
-      `by its primary key, so treat it as data: do not commit it, and ` +
-      `delete it once the cutover is complete.`,
+    `manifest written to ${path} (mode 0600) — it is what --since reads, ` +
+      `and it keys every row by its primary key, so treat it as data: do ` +
+      `not commit it.\n\nKEEP IT UNTIL THE ROLLBACK WINDOW CLOSES, not ` +
+      `until the cutover finishes. The rollback reconciles against this ` +
+      `same manifest BEFORE its reverse mirror, and reconcile refuses to ` +
+      `run without --since — so deleting it at the end of the cutover ` +
+      `removes the only baseline the documented rollback needs while the ` +
+      `predecessor is still being retained for exactly that purpose. The ` +
+      `window closes when the predecessor is deleted; the manifest goes ` +
+      `then, with it.`,
   );
 }
 
@@ -905,7 +990,7 @@ export function classifyForReconcile({
         if (clash) {
           conflicts.push({
             table,
-            key: k,
+            key: safeKey(table, key, k),
             kind: 'already present under a different key',
             detail:
               `the destination holds a row with the same ${clash.u.columns.join(
@@ -922,7 +1007,7 @@ export function classifyForReconcile({
       case 'key-collision':
         conflicts.push({
           table,
-          key: k,
+          key: safeKey(table, key, k),
           kind: 'key allocated on both sides',
           detail:
             'this key is new on the source since the mirror and the ' +
@@ -934,7 +1019,7 @@ export function classifyForReconcile({
       case 'source-changed':
         conflicts.push({
           table,
-          key: k,
+          key: safeKey(table, key, k),
           kind: 'changed on the source after the mirror',
           detail:
             'the destination holds a different row under that key. ' +
@@ -946,7 +1031,7 @@ export function classifyForReconcile({
       case 'destination-deleted':
         conflicts.push({
           table,
-          key: k,
+          key: safeKey(table, key, k),
           kind: 'deleted on the destination',
           detail:
             'the mirror carried this row and the destination no longer ' +
@@ -959,7 +1044,7 @@ export function classifyForReconcile({
       case 'destination-deleted-source-changed':
         conflicts.push({
           table,
-          key: k,
+          key: safeKey(table, key, k),
           kind: 'deleted on the destination, and CHANGED on the source',
           detail:
             'the destination deleted this row — which may be a retention ' +
@@ -1009,7 +1094,7 @@ export function classifyForReconcile({
     const unchangedSinceMirror = rowHash(held, cols) === wasSeen[k];
     conflicts.push({
       table,
-      key: k,
+      key: safeKey(table, key, k),
       kind: unchangedSinceMirror
         ? 'deleted on the source after the mirror'
         : 'deleted on the source, and CHANGED on the destination',
@@ -1071,6 +1156,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
 
   for (const table of tables) {
     const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
+    assertRedactionsApply(table, cols);
     if (!dstTables.has(table)) {
       plan.push({ table, refused: 'the destination has no such table' });
       continue;
@@ -1197,10 +1283,50 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     //
     // The tool resolves none of the four conflict cases. It names the row.
     const wasSeen = since?.[table]?.rows ?? null;
+
+    // THE MANIFEST'S HASHES WERE COMPUTED OVER THE COLUMNS THAT EXISTED
+    // AT THE MIRROR, and comparing them against hashes over today's
+    // columns compares two different functions (#2267 r26-missed).
+    //
+    // The rollback makes this concrete: its step 0 applies pending
+    // migrations to the rollback target, and step 2b then consumes this
+    // manifest. A migration that touched columns would make every row
+    // whose value never changed hash differently, so `source-changed`
+    // would be reported for the whole table and the mandatory pre-mirror
+    // gate could never come clean.
+    //
+    // Columns ADDED since the mirror are recoverable — they cannot have
+    // altered what the old columns held — so the comparison is made over
+    // the RECORDED projection. Columns removed or renamed are not: the
+    // old value is simply gone, and inventing one would be the tool
+    // guessing at a migration.
+    const mirroredCols = since?.[table]?.cols ?? null;
+    let hashCols = cols;
+    if (wasSeen !== null && mirroredCols !== null) {
+      const lost = mirroredCols.filter((c) => !cols.includes(c));
+      if (lost.length > 0) {
+        plan.push({
+          table,
+          key,
+          cols,
+          refused:
+            `the manifest recorded ${mirroredCols.length} column(s) and ` +
+            `${lost.map((c) => `"${c}"`).join(', ')} no longer exist(s).\n` +
+            `      Its row hashes were computed over columns this table ` +
+            `does not have, so every row would compare as changed. Take a ` +
+            `fresh mirror as the baseline before reconciling across a ` +
+            `schema change — that is a migration decision, not a copy`,
+        });
+        continue;
+      }
+      hashCols = mirroredCols;
+    }
     const { insert, conflicts } = onlyMissing
       ? classifyForReconcile({
           table,
-          cols,
+          // The projection the manifest's hashes were taken over, which
+          // is today's columns unless a migration added some since.
+          cols: hashCols,
           key,
           rows,
           sourceKeys,
@@ -1241,7 +1367,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     const m = {};
     for (const step of plan) {
       if (step.refused) continue;
-      m[step.table] = { key: step.key, rows: step.seen };
+      m[step.table] = { key: step.key, cols: step.cols, rows: step.seen };
     }
     return m;
   };
