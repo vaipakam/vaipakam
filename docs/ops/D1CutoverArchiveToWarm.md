@@ -1594,9 +1594,18 @@ sequence is:
    could have observed it. A rollback begun before the forward
    reconciliation finished is the likeliest way to be in that state.
 
-   If this reports nothing, step 3 is safe. If it reports anything, deal
-   with it first; do not reach for the mirror to "sort it out", because the
-   mirror is what loses it.
+   **If this reports nothing, step 3 is not safe — it is merely not known
+   to be unsafe** (#2267 r35). A clean result here describes the instant
+   it read, and the banner at the head of this section says why that is
+   not a fence: an invocation holding an archive handle from before the
+   cutover can commit after this read and before the mirror, and step 3
+   overwrites or deletes what it wrote. This step narrows the window; it
+   does not close it, and it never will, because closing it is #2278.
+
+   So a clean result is the signal to PROCEED KNOWING THAT, and to record
+   in the run log that the reverse mirror ran without a fence. If it
+   reports anything, deal with it first; do not reach for the mirror to
+   "sort it out", because the mirror is what loses it.
 
 3. **Carry the rows back** —
    `carry --from vaipakam-warm --to vaipakam-archive --mirror --manifest
@@ -1766,9 +1775,23 @@ Order matters here, and this plan does not own all of it:
       An earlier revision of this checklist said "retired first" while
       listing the target's nightly verification two entries below, which
       inverted #1551's own sequence.
-- [ ] **Step 6's reconciliation COMPLETED** — two consecutive
-      `reconcile` runs reporting nothing, and every difference an earlier
-      run reported actually resolved.
+- [ ] **Step 6's reconciliation is CURRENT** — the two consecutive clean
+      runs happened, every difference an earlier run reported was actually
+      resolved, AND the periodic re-run has been kept up since (#2267
+      r35).
+
+      **It is never "completed" while archive is retained**, and this box
+      said so until now. Two clean runs describe two moments; a suspended
+      invocation can commit after both. The re-run is what would find
+      that, so a checklist item that treats the pair as final is a
+      checklist that stops looking at the only place a late record can be.
+
+      **Cadence and owner, since "periodically" is not a schedule:**
+      weekly, by whoever holds the cutover runbook, from the switch until
+      the predecessor is deleted. It is a read against both databases that
+      writes to neither, so it costs minutes. Record each run's result in
+      the run log — including the clean ones, because the value of the
+      record is that a gap in it is visible.
 
       **This is the prerequisite that makes the rest of the list safe, and
       it was missing** (#2267 r15). The whole reconciliation procedure

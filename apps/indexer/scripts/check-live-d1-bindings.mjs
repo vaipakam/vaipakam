@@ -164,6 +164,23 @@ async function cf(subpath) {
 }
 
 /** The versions currently serving traffic, with their traffic share. */
+/**
+ * A VERSION EXPLICITLY SERVING 0% SERVES NOTHING, and checking it is a
+ * false failure rather than caution (#2267 r35).
+ *
+ * An active deployment can retain an old version at `0%` while the
+ * replacement takes `100%` — wrangler's `--percentage` accepts the whole
+ * `0-100` range, so this is a representable deployment and not malformed
+ * data. An archive-bound build left there would fail `--writers-held`
+ * while serving no requests, which blocks a barrier that is in fact
+ * closed. A gate that refuses a correct state is a gate that gets
+ * disabled.
+ *
+ * An UNSPECIFIED share is not zero and is still checked: a single-version
+ * deployment reports no percentage at all and serves everything.
+ */
+const servesTraffic = (v) => v.percentage !== 0;
+
 async function servingVersions(script) {
   const result = await cf(`/workers/scripts/${script}/deployments`);
   const list = Array.isArray(result) ? result : (result?.deployments ?? []);
@@ -205,7 +222,7 @@ async function assertWritersHeld() {
       problems.push(`${script}: has no active deployment`);
       continue;
     }
-    for (const v of serving.versions) {
+    for (const v of serving.versions.filter(servesTraffic)) {
       const bindings = await d1Of(script, v.id);
       const share = v.percentage == null ? '' : ` @ ${v.percentage}%`;
       const held = bindings.length === 0;
@@ -368,7 +385,7 @@ async function main() {
       continue;
     }
 
-    for (const v of serving.versions) {
+    for (const v of serving.versions.filter(servesTraffic)) {
       const bindings = await d1Of(script, v.id);
       const share = v.percentage == null ? '' : ` @ ${v.percentage}%`;
       if (bindings.length === 0) {
