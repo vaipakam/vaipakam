@@ -381,9 +381,18 @@ async function shapeOf(dbId, table) {
     const why = unsupportedUniqueReason(idx, terms);
     const columns = terms.map((c) => c.name).filter((n) => typeof n === 'string');
     if (why !== null) {
-      // A primary key reproduced elsewhere is already how rows are
-      // matched, so an unusable duplicate of it is not a loss.
-      if (columns.join() !== key.join()) unsupportedUniques.push({ name: idx.name, why });
+      // A PRIMARY KEY RESTATED ELSEWHERE is already how rows are
+      // matched, so an unusable duplicate of it is not a loss and is not
+      // worth reporting. The test is only sound when every term has a
+      // name: for an expression index `columns` is the NAMED subset, and
+      // `UNIQUE(id, lower(email))` on a table keyed by `id` would reduce
+      // to exactly the key and be dropped silently — the same
+      // partial-list mistake this whole change is about, one level up
+      // (self-review, #2267 r41).
+      const fullyNamed = columns.length === terms.length;
+      if (!fullyNamed || columns.join() !== key.join()) {
+        unsupportedUniques.push({ name: idx.name, why });
+      }
       continue;
     }
     if (columns.length === 0) continue;
@@ -1573,7 +1582,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   }
 
   for (const table of tables) {
-    const { cols, key, uniques, unsupportedUniques, ddl } = await shapeOf(src.id, table);
+    const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
     assertRedactionsApply(table, cols);
     // A TABLE THE DESTINATION NO LONGER HAS STILL HAS A QUESTION TO
     // ANSWER, and refusing it threw the question away (#2267 r40).
@@ -1732,7 +1741,15 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // Uniqueness the tuple comparison cannot honestly reproduce —
     // collated, partial or over an expression. Named rather than
     // silently simplified, on whichever side judges the insert.
-    const unsupported = heldShape ? heldShape.unsupportedUniques : unsupportedUniques;
+    //
+    // REPORTED WHERE IT CHANGES AN ANSWER, which is the reconciliation
+    // (self-review, #2267 r41). A mirror matches rows by primary key and
+    // makes the destination identical; it never consults a secondary
+    // index to decide anything, so noting one it cannot model would be
+    // noise in the window where output is read most carefully. It would
+    // also have been sourced from the SOURCE's shape while the sentence
+    // said "the destination".
+    const unsupported = heldShape ? heldShape.unsupportedUniques : [];
     if (unsupported.length > 0) {
       driftNotes.push({
         table,

@@ -1413,3 +1413,23 @@ describe('a uniqueness this tool cannot reproduce is named, not simplified', () 
     expect(unsupportedUniqueReason({ partial: 0 }, [term('x', 'binary')])).toBeNull();
   });
 });
+
+describe('an unusable index that merely restates the primary key', () => {
+  // Not worth reporting: the primary key is already how rows are
+  // matched. But the test for "restates the key" has to look at EVERY
+  // term, and `columns` is the named subset — so an expression index
+  // whose named part happens to equal the key would be dropped on a
+  // partial list, which is the same mistake this change exists to fix
+  // (self-review, #2267 r41).
+  const term = (name: string | null, coll = 'BINARY') => ({ name, coll, key: 1 });
+
+  it('is still reported when one of its terms is an expression', () => {
+    // UNIQUE(id, lower(email)) on a table keyed by id: the named subset
+    // is exactly ['id'], but the index is not the key.
+    const terms = [term('id'), term(null)];
+    const named = terms.map((t) => t.name).filter((n) => typeof n === 'string');
+    expect(named.join()).toBe('id');
+    expect(named.length === terms.length).toBe(false);
+    expect(unsupportedUniqueReason({ partial: 0 }, terms)).toContain('EXPRESSION');
+  });
+});
