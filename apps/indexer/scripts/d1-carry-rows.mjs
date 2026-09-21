@@ -381,18 +381,38 @@ async function shapeOf(dbId, table) {
  * does not depend on creation order.
  */
 async function declarationOf(dbId, table) {
+  const all = await declarations(dbId);
+  return all.get(table) ?? '';
+}
+
+/**
+ * Every table's declaration, in ONE query per database, cached.
+ *
+ * It was one query PER TABLE, and per side — 43 tables × 2 databases is
+ * 86 round trips added to a step that runs inside the cutover window with
+ * the writers stopped. The whole of `sqlite_master` is a few kilobytes
+ * here; asking for it once is the same information at 1/86th the latency,
+ * and the window is the scarce thing.
+ */
+const _declCache = new Map();
+async function declarations(dbId) {
+  const hit = _declCache.get(dbId);
+  if (hit) return hit;
   const rows = await query(
     dbId,
-    `SELECT type, name, sql FROM sqlite_master ` +
-      `WHERE (type = 'table' AND name = ?1) OR (tbl_name = ?1 AND sql IS NOT NULL) ` +
-      `ORDER BY type, name`,
-    [table],
+    `SELECT type, name, tbl_name, sql FROM sqlite_master ` +
+      `WHERE sql IS NOT NULL ORDER BY type, name`,
   );
-  return rows
-    .filter((r) => typeof r.sql === 'string')
-    .map((r) => `${r.type} ${r.name}: ${r.sql.replace(/\s+/g, ' ').trim()}`)
-    .sort()
-    .join('\n');
+  const byTable = new Map();
+  for (const r of rows) {
+    if (typeof r.sql !== 'string' || typeof r.tbl_name !== 'string') continue;
+    const line = `${r.type} ${r.name}: ${r.sql.replace(/\s+/g, ' ').trim()}`;
+    byTable.set(r.tbl_name, [...(byTable.get(r.tbl_name) ?? []), line]);
+  }
+  const out = new Map();
+  for (const [t, lines] of byTable) out.set(t, lines.sort().join('\n'));
+  _declCache.set(dbId, out);
+  return out;
 }
 
 /**
@@ -841,21 +861,26 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       });
       continue;
     }
-    // The two sides must agree on the table's SHAPE before its rows are
-    // compared. Reading the destination with the source's column list
-    // would otherwise either fail obscurely or, where the destination has
-    // columns the source lacks, quietly carry rows that leave those
-    // columns at their defaults while reporting the tables identical.
-    const dstShape = await shapeOf(dst.id, table);
-    // Column names and primary key are not the whole shape. A destination
+    // THE DECLARATION IS THE SHAPE, so comparing declarations is the
+    // whole comparison — and it is one lookup per side rather than a
+    // fistful of PRAGMAs.
+    //
+    // Column names and primary key are not the whole shape: a destination
     // with the same columns but MISSING `notifications`' deduplication
     // index, or `notify_state`'s cascading foreign key, would pass a
-    // name-only comparison and then permit duplicate notifications or
-    // retain child rows the source would have cascaded away — while the
-    // digest reported the two sides identical. The runbook says a schema
-    // difference is a migration decision, so the constraints are part of
-    // what is compared.
-    if (dstShape.ddl !== ddl) {
+    // name-only check and then permit duplicate notifications or retain
+    // child rows the source would have cascaded away — while the digest
+    // reported the two sides identical. Comparing the stored CREATE text
+    // for the table and every index on it covers that, and covers types,
+    // nullability, defaults, CHECK constraints and triggers with it,
+    // without anyone having to enumerate which features matter.
+    //
+    // It also means the destination's own PRAGMAs are redundant: equal
+    // declarations imply equal columns, key and unique indexes, so the
+    // source's are used for both sides. That is 43 fewer round trips per
+    // run, inside the window where the writers are stopped.
+    const dstDdl = (await declarations(dst.id)).get(table) ?? '';
+    if (dstDdl !== ddl) {
       plan.push({
         table,
         refused:
@@ -865,7 +890,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           `foreign-key semantics and triggers, not a list of features ` +
           `someone remembered to check.\n` +
           `      source:      ${ddl.replace(/\n/g, '\n                   ')}\n` +
-          `      destination: ${dstShape.ddl.replace(/\n/g, '\n                   ')}\n` +
+          `      destination: ${dstDdl.replace(/\n/g, '\n                   ')}\n` +
           `      Carrying rows across a schema difference is a migration ` +
           `decision, not a copy`,
       });
