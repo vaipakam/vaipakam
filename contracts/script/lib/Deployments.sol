@@ -713,7 +713,9 @@ library Deployments {
             // viaIR rescues a deep frame with a stack-to-memory mover, and solc
             // emits that mover only behind a `memoryguard`, which it withholds
             // from the WHOLE contract if an inline-assembly block in it that
-            // TOUCHES MEMORY is unannotated. So one such unannotated block here
+            // solc cannot treat as safe by itself — one that ACCESSES MEMORY,
+            // or one that EXPORTS a computed pointer to a memory-reference
+            // variable — is unannotated. So one such unannotated block here
             // un-rescues every frame that inlines this library, and the error
             // names the frame that overflowed rather than the block that caused
             // it. solc does say so, on the last line of its own output: "No

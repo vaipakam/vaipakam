@@ -18,18 +18,19 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
  *
  *         What actually happened: the failing probe carried a bare
  *         `assembly { revert(add(err, 0x20), mload(err)) }` to rethrow a caught
- *         revert. That block READS MEMORY, and an unannotated MEMORY-TOUCHING
- *         assembly block withdraws viaIR's stack-to-memory mover for the WHOLE
- *         contract — and these contracts inherit `runWith`, whose ~80 live
- *         facet addresses depend on it. solc then reports `Variable … is 1 too
- *         deep in the stack` naming `runWith`, a function the assembly block is
- *         nowhere near, and adds the real diagnosis on its last line: "No
- *         memoryguard was present."
+ *         revert. That block READS MEMORY, and an unannotated block solc cannot
+ *         treat as safe by itself — one that accesses memory, or one that
+ *         exports a computed pointer to a memory-reference variable — withdraws
+ *         viaIR's stack-to-memory mover for the WHOLE contract. These contracts
+ *         inherit `runWith`, whose ~80 live facet addresses depend on it. solc
+ *         then reports `Variable … is 1 too deep in the stack` naming
+ *         `runWith`, a function the assembly block is nowhere near, and adds
+ *         the real diagnosis on its last line: "No memoryguard was present."
  *
- *         The memory-touching qualifier is the whole rule, not a detail: a
- *         block that touches no memory does not withhold the guard, and
- *         annotating one anyway is NOISE — a false signal about what the block
- *         does — rather than a bytecode cost. The bytecode cost comes from
+ *         The qualifier is the whole rule, not a detail: a block of neither
+ *         shape does not withhold the guard, and annotating one anyway is
+ *         NOISE — a false signal about what the block does — rather than a
+ *         bytecode cost. The bytecode cost comes from
  *         ENABLING THE MOVER on a contract that has a real blocker, since the
  *         mover is code; that is what put two facets over EIP-170 in #2268. Do
  *         not restate the rule without the qualifier here — see the

@@ -1300,11 +1300,15 @@ somewhere else in the same contract.
 
 viaIR rescues a deep frame with a **stack-to-memory mover**, which solc emits
 only behind a `memoryguard` — and it withholds that guard from the **whole
-contract** when an inline-assembly block in it that TOUCHES MEMORY is
-unannotated. So a single such `assembly { … }` without `("memory-safe")`
-un-rescues every frame in that contract, and solc reports the frame that
-overflowed rather than the block that caused it. (A block that touches no
-memory is not a blocker — see below.) The two can be far apart: in #2253 the
+contract** when an unannotated inline-assembly block in it is one solc cannot
+treat as safe by itself. **TWO shapes do that, and the second has no memory
+opcode in it at all:** a block that accesses memory, and a block that assigns a
+computed pointer to a Solidity memory-reference variable. So a single such
+`assembly { … }` without `("memory-safe")` un-rescues every frame in that
+contract, and solc reports the frame that overflowed rather than the block that
+caused it. (The `x.slot := position` storage-pointer idiom is neither shape and
+is not a blocker — see below. Whether an in-scope block is ACTUALLY memory-safe
+is the spec's call, not this document's.) The two can be far apart: in #2253 the
 block was in a `catch` inside a library, and the named frame was
 `DeployDiamond.runWith`, which neither contains nor calls it.
 
@@ -1317,8 +1321,9 @@ were all plausible and all wrong.
 
 Two practical consequences:
 
-- **Annotate new MEMORY-TOUCHING inline assembly `("memory-safe")` — but only
-  when it is.** The annotation licenses the mover to relocate stack slots into
+- **Annotate a new inline-assembly block `("memory-safe")` when it IS — and
+  only then.** (Either shape above puts it in scope: a memory access, or an
+  exported pointer.) The annotation licenses the mover to relocate stack slots into
   memory, so a block that steps outside Solidity's memory model invites
   corruption or optimizer-dependent behaviour — a far worse failure than a
   build error. It is an audit, not a find-and-replace. A block that touches no
