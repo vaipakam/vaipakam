@@ -376,3 +376,25 @@ Retiring the old database is a separate, later decision, to be taken when
 somebody is confident it is no longer needed.
 
 Closes #2214.
+
+### The procedure's own first step could not be carried out
+
+The move pauses the three services by publishing them with no database
+attached — that is what makes the copy safe, and everything after it depends
+on that pause being real. Publishing them is done by merging the change:
+these services have no other route to production.
+
+The consistency check added by this same change refused that state. It
+required one nominated service to name the database and compared everything
+else against it, so removing the attachments removed the thing it compared
+against, and it reported there was nothing to check. The pause step was
+therefore unmergeable, which made it unperformable, which made the whole
+procedure undeliverable — found by trying it rather than by reading it.
+
+The rule it was really there to enforce never needed a nominated service:
+**everything that names the shared database names the same one.** That holds
+with no nomination, and it states the failure it exists to catch — two
+services naming different databases — directly rather than as a comparison
+against a privileged file. The three services are additionally all-attached
+or all-detached, because one left attached while the others are paused keeps
+writing through a window every later step treats as closed.

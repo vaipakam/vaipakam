@@ -179,6 +179,38 @@ because step 3 below is the part of it that had to be re-learned.
       > is: merge a commit that removes `d1_databases` from the three
       > writers, and confirm with `--writers-held`.
       >
+      > **Cut that commit from `main` BEFORE the cutover PR, not after.**
+      > In the barrier state the three writers declare nothing, so the
+      > shared database is named only by `ops/offchain-data-warm` and by
+      > the `wrangler d1` commands — and those must agree. Before the
+      > cutover PR they all say `vaipakam-archive` and they do. After it
+      > they all say `vaipakam-warm` and they would too, but by then the
+      > switch has already happened and the barrier is pointless.
+      >
+      > **`check-d1-name-consistency` permits exactly this shape and only
+      > this shape** (#2267 r21). It used to anchor on the indexer's
+      > binding as the single declaration, which made the barrier
+      > unrepresentable: strip the writers and the anchor is gone, and the
+      > check reported there was nothing to compare against — so the
+      > barrier commit could not be merged, and merging is its only deploy
+      > route. The anchor is gone; the rule is that every consumer which
+      > binds the shared database binds the same one, and the three
+      > writers are ALL bound or ALL unbound.
+      >
+      > **[run] 2026-09-21** — the three shapes, against the live tree:
+      >
+      > ```
+      > normal          OK — vaipakam-warm agreed by 4 of 4 bindings          exit 0
+      > barrier         CUTOVER BARRIER — all 3 writers declare no D1 binding
+      >                 OK — agreed by 1 of 4 bindings (writers held)         exit 0
+      > half-applied    2 problem(s): … this is not the cutover barrier —
+      >                 that shape needs ALL of them unbound                  exit 1
+      > ```
+      >
+      > The half-applied case is the one worth having: a writer left bound
+      > while the others are held keeps writing through a window every
+      > later step believes is closed.
+      >
       > **[evidence] 2026-09-21** — `cab26d24a` (#2252) carries
       > `Workers Builds: vaipakam-{indexer,keeper,agent}`, all `success`,
       > completing at `11:30:59Z` / `11:32:02Z` / `11:33:01Z`; the three

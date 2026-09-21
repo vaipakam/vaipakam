@@ -15,11 +15,14 @@
  * That is what this catches — each check aimed at a different way the
  * halves come apart:
  *
- *   1. Every consumer of the shared database agrees with the indexer's
- *      declaration on BOTH name and id. Matching on one field only is the
+ *   1. Every consumer that binds the shared database binds the SAME one,
+ *      on BOTH name and id. Matching on one field only is the
  *      partial-cutover signature — a name change without an id change
  *      points at the old data under a new label; an id change without a
- *      name change points at new data under the old label.
+ *      name change points at new data under the old label. The three
+ *      writers may instead be collectively unbound: that is the cutover
+ *      barrier, a deliberate state this check must permit because merging
+ *      it is the only way to deploy it. All three, or none.
  *
  *   2. Every `wrangler d1` command in a script or runbook targets a
  *      database this repo actually knows about. A command naming a
@@ -49,9 +52,6 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
-
-/** The single declaration. Every other consumer is checked against this. */
-const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
 
 /**
  * Workers that bind the SHARED database. The binding name differs by
@@ -186,29 +186,102 @@ function d1Entries(file) {
 const problems = [];
 
 // ---------------------------------------------------------------- check 1
-const declared = d1Entries(DECLARING_FILE).find((e) => e.binding === 'DB');
-if (!declared?.database_name || !declared?.database_id) {
+//
+// THERE ARE TWO LEGITIMATE SHAPES, and this check used to know only one.
+//
+// The normal shape is every consumer bound to one database. The other is
+// the CUTOVER BARRIER: the three writers deploy with no `d1_databases` at
+// all, so no invocation can obtain a handle while the data is copied
+// (`docs/ops/D1CutoverArchiveToWarm.md`). That build reaches production by
+// being merged — Workers Builds is the only deploy route these Workers
+// have — so a check that refuses it refuses the barrier itself, and the
+// documented procedure cannot be carried out. It did, and that is what
+// this rewrite fixes.
+//
+// Anchoring on one privileged file is what made the second shape
+// unrepresentable: strip the writers' bindings and the anchor is gone,
+// and the check reports there is nothing to compare against. So the
+// anchor is gone too. The invariant was never "the indexer declares it" —
+// it is **every consumer that binds the shared database binds the same
+// one**, which needs no privileged file and states the half-applied
+// cutover directly: two distinct databases among the consumers.
+//
+// The writers are all-or-none. A mixed state is the barrier half-applied,
+// which is worse than either shape, because the Workers still bound keep
+// writing while the procedure believes everything has stopped.
+const WRITERS = new Set([
+  'apps/indexer/wrangler.jsonc',
+  'apps/keeper/wrangler.jsonc',
+  'apps/agent/wrangler.jsonc',
+]);
+
+const bound = [];
+const unbound = [];
+for (const { file, binding } of SHARED_CONSUMERS) {
+  const entry = d1Entries(file).find((e) => e.binding === binding);
+  if (entry?.database_name && entry?.database_id) bound.push({ file, binding, entry });
+  else unbound.push({ file, binding, entry });
+}
+
+const unboundWriters = unbound.filter((c) => WRITERS.has(c.file));
+const heldForCutover = unboundWriters.length === WRITERS.size;
+
+for (const { file, binding, entry } of unbound) {
+  if (heldForCutover && WRITERS.has(file)) continue;
+  problems.push(
+    entry === undefined
+      ? `${file}: no d1 binding named "${binding}"` +
+        (WRITERS.has(file)
+          ? `.\n    ${unboundWriters.length} of ${WRITERS.size} writers are ` +
+            `unbound, so this is not the cutover barrier — that shape needs ` +
+            `ALL of them unbound. A writer left bound while the others are ` +
+            `held keeps writing through a window the procedure believes is ` +
+            `closed.`
+          : '')
+      : `${file} (binding ${binding}) declares an incomplete d1 binding: ` +
+        `name ${entry.database_name ?? '(missing)'}, id ` +
+        `${entry.database_id ?? '(missing)'}. Half a binding names no database.`,
+  );
+}
+
+if (bound.length === 0) {
   console.error(
-    `[check-d1-name-consistency] ${DECLARING_FILE} has no complete "DB" ` +
-      `d1 binding — that file is the single declaration of the shared ` +
-      `database, so there is nothing to check against.`,
+    `[check-d1-name-consistency] no consumer binds the shared database — ` +
+      `not even ${SHARED_CONSUMERS.map((c) => c.file).find((f) => !WRITERS.has(f))}, ` +
+      `which is not part of the cutover barrier. There is nothing to check ` +
+      `against.`,
   );
   process.exit(1);
 }
-const SHARED_NAME = declared.database_name;
-const SHARED_ID = declared.database_id;
 
-for (const { file, binding } of SHARED_CONSUMERS) {
-  const entry = d1Entries(file).find((e) => e.binding === binding);
-  if (!entry) {
-    problems.push(`${file}: no d1 binding named "${binding}"`);
-    continue;
-  }
+// The shared database is whatever the bound consumers agree on. Two
+// distinct pairs IS the half-applied cutover, reported below per consumer
+// against the majority so the message names which file to move.
+const pairs = new Map();
+for (const c of bound) {
+  const k = `${c.entry.database_name}\u0000${c.entry.database_id}`;
+  pairs.set(k, [...(pairs.get(k) ?? []), c]);
+}
+const [agreed] = [...pairs.values()].sort((a, b) => b.length - a.length);
+const SHARED_NAME = agreed[0].entry.database_name;
+const SHARED_ID = agreed[0].entry.database_id;
+
+if (heldForCutover) {
+  console.log(
+    `[check-d1-name-consistency] CUTOVER BARRIER — all ${WRITERS.size} ` +
+      `writers declare no D1 binding. This tree deploys Workers that ` +
+      `cannot reach ${SHARED_NAME} at all. That is a deliberate, ` +
+      `temporary state (docs/ops/D1CutoverArchiveToWarm.md); if you did ` +
+      `not mean to be in it, the bindings are missing.`,
+  );
+}
+
+for (const { file, binding, entry } of bound) {
   const nameOk = entry.database_name === SHARED_NAME;
   const idOk = entry.database_id === SHARED_ID;
   if (nameOk && idOk) continue;
   problems.push(
-    `${file} (binding ${binding}) disagrees with ${DECLARING_FILE}:\n` +
+    `${file} (binding ${binding}) disagrees with the other consumers:\n` +
       `    name: ${entry.database_name} ${nameOk ? '(ok)' : `!= ${SHARED_NAME}`}\n` +
       `    id:   ${entry.database_id} ${idOk ? '(ok)' : `!= ${SHARED_ID}`}\n` +
       `    ${
@@ -323,9 +396,9 @@ if (problems.length > 0) {
   console.error(
     `\n[check-d1-name-consistency] ${problems.length} problem(s):\n\n` +
       problems.map((p) => `  - ${p}`).join('\n\n') +
-      `\n\nThe shared database is declared once, in ${DECLARING_FILE}. ` +
-      `Every\nbinding and every \`wrangler d1\` command must agree with ` +
-      `it. Changing\nwhich database the platform uses is a cutover, not a ` +
+      `\n\nEvery consumer that binds the shared database binds the SAME ` +
+      `one, and\nevery \`wrangler d1\` command agrees with it. Changing ` +
+      `which database the\nplatform uses is a cutover, not a ` +
       `rename: the\nbindings, the deploy scripts and the runbooks move in ` +
       `one step, and the\ndata is copied after the last writer has ` +
       `stopped.\n`,
@@ -335,7 +408,9 @@ if (problems.length > 0) {
 
 console.log(
   `[check-d1-name-consistency] OK — ${SHARED_NAME} agreed by ` +
-    `${SHARED_CONSUMERS.length} bindings, ${commandCount} \`wrangler d1\` ` +
+    `${bound.length} of ${SHARED_CONSUMERS.length} bindings` +
+    `${heldForCutover ? ' (writers held for cutover)' : ''}, ` +
+    `${commandCount} \`wrangler d1\` ` +
     `command(s) and ${COMMAND_GENERATORS.length} generator constant(s); ` +
     `${MUST_NOT_SHARE.length} Worker(s) verified separate.`,
 );
