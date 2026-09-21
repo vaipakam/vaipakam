@@ -1347,16 +1347,40 @@ Two practical consequences:
   the benefit is greatest: the facets most likely to hit the stack ceiling
   are the big ones, which are the ones with no room (this file records
   `OfferAcceptFacet` shipping at 24,412 — 164 bytes clear — and #1835/#1780
-  exist because of that squeeze). So annotate where a contract NEEDS the
-  guard, checking headroom in the same change; do not sweep.
+  exist because of that squeeze).
+
+  **This does NOT contradict the annotate-new-blocks rule above, because the
+  two directions are not symmetric.** Writing a NEW block into a contract
+  that had none *removes* a guard that contract already had, so annotating it
+  restores the status quo and is bytecode-neutral against the state before
+  the block existed — keep annotating new safe blocks, always.
+  RETROFITTING an existing bare block flips its contract off→on, which is
+  what summons the mover and the bytecode. **"Do not sweep" applies to the
+  retrofit direction only**; there, annotate where a contract NEEDS the
+  guard and check headroom in the same change.
 - **A clean compile is NOT evidence for an annotation change — EIP-170 is a
   TEST, not a compiler error.** `forge build --skip test` reported "Compiler
-  run successful" on the sweep above while two facets sat over the limit;
-  `FacetSizeLimitTest` in the deploy-sanity suite is what catches it, and it
-  stops at the FIRST violation, so its message understates the damage. Run
-  `forge test --match-path "test/deploy/*"` for anything that moves bytecode
-  size — which now explicitly includes adding or removing a `("memory-safe")`
-  annotation, not just adding selectors.
+  run successful" on the sweep above while two facets sat over the limit.
+  Run **`forge test --match-path "test/deploy/*" -vv`** (or
+  `bash script/predeploy-check.sh`, which passes `-vv` for this reason) for
+  anything that moves bytecode size — which explicitly includes adding or
+  removing a `("memory-safe")` annotation, not just adding selectors.
+
+  **`-vv` is load-bearing, not verbosity.** `FacetSizeLimitTest` enforces the
+  limit in `test_EveryFacetUnderEip170SizeLimit`, but the HEADROOM figures
+  live in `test_ReportFacetsNearSizeLimit`, which **always passes by design**
+  — and Foundry hides logs from passing tests below `-vv`. Without it the
+  report is invisible in exactly the green run it exists to inform, so an
+  annotation that lands a facet at 19 bytes clear looks identical to one that
+  changed nothing.
+
+  **Two limits on what a green suite proves.** The enforcement test stops at
+  the FIRST violation, so its message understates the damage — it named one
+  facet when the #2268 sweep had put two over. And it iterates
+  `cutFacetNames()` plus `DiamondCutFacet` only, so a **non-facet deployable**
+  (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
+  size-checked by it at all; for a change touching one of those, measure its
+  `deployedBytecode` directly rather than reading a green suite as coverage.
 - **`forge build --skip test` cannot see a test contract doing this.** A probe
   or helper under `test/` that inherits a script and carries an unannotated
   block fails only in the test build, which is the failure mode that cost #2253
