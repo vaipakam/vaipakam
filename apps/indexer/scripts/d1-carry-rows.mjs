@@ -885,13 +885,30 @@ export function compareSequences(now, since, held = new Map()) {
  * least as many rows as the source, and whether the SOURCE moved while
  * the run was working. Neither claims the destination stood still.
  */
-async function digestDatabase(db, { live = false } = {}) {
+async function digestDatabase(db, { live = false, only = null, skipped = null } = {}) {
   const out = new Map();
   for (const table of await tablesOf(db.id)) {
+    // `only` is the source's table list: digesting a table the verdict
+    // will not look at costs a full read of a live database and can
+    // only raise new ways to fail (#2267 r43). The reconciliation's
+    // verdict ignores destination-only tables entirely — they cannot
+    // hold a late write from the source — so it does not ask for them.
+    if (only !== null && !only.has(table)) continue;
     const { cols, key } = await shapeOf(db.id, table);
+    if (live && key.length === 0) {
+      // NOT SILENTLY DEGRADED TO THE GATED READ. Turning `live` off here
+      // would put the quiescence demand back on a database that is not
+      // going to stop — the abort this whole change removed, reachable
+      // through a keyless table. It is skipped and named instead; the
+      // verdict treats an absent destination digest as nothing to say
+      // when reconciling, which is exactly right for a table it cannot
+      // read coherently.
+      if (skipped !== null) skipped.push(table);
+      continue;
+    }
     const rows = await readAll(db.id, table, cols, query, {
-      key: live && key.length > 0 ? key : null,
-      live: live && key.length > 0,
+      key: live ? key : null,
+      live,
     });
     out.set(table, digestOf(rows, cols));
   }
@@ -1868,10 +1885,44 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // The destination of a reconciliation is the LIVE database and is
     // read as one: paged by key, with no demand that it hold still. For
     // a mirror it is inert and read the same way as the source.
+    //
+    // PAGED BY THE DESTINATION'S OWN KEY, MAPPED BY THE SOURCE'S
+    // (#2267 r43). Those are two different jobs and this was using one
+    // key for both. The cursor has to be unique in the database being
+    // READ or paging skips rows — and the source's key is exactly what a
+    // re-keying migration may have stopped being unique there. Two rows
+    // sharing an old key across a page boundary would then be read as
+    // one, so the duplicate check below — which exists to catch that
+    // very migration — would see nothing to catch. A guard defeated by
+    // the read that feeds it.
+    //
+    // The destination's own key is unique by construction, so every row
+    // is read and the duplicates become visible. Matching rows to the
+    // source still uses the source's key, unchanged.
+    const heldPagingKey = heldShape ? heldShape.key : key;
+    if (reportOnly && !destTableGone && heldPagingKey.length === 0) {
+      // NO KEY ON THE LIVE SIDE IS A BLIND SPOT, AND IT IS NAMED AS ONE.
+      // Without a unique cursor there, the only paging left is OFFSET,
+      // which a concurrent write tears silently; the alternative — the
+      // stability gate — asks a live database to stop, which is the
+      // demand r42 removed. Neither is acceptable, so the table is
+      // reported as uncomparable rather than compared badly or made to
+      // abort the run.
+      driftNotes.push({
+        table,
+        detail:
+          `the destination has no primary key here, so there is no unique ` +
+          `cursor to read it by while it is live. Rows in this table are ` +
+          `NOT compared by this run — a late write to it would not be ` +
+          `reported. Restoring a key on the destination is what closes ` +
+          `this`,
+      });
+      continue;
+    }
     const held = destTableGone
       ? []
       : await readAll(dst.id, table, heldCols, query, {
-          key: reportOnly ? key : null,
+          key: reportOnly ? heldPagingKey : null,
           live: reportOnly,
         });
     // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
@@ -2642,10 +2693,20 @@ async function main() {
   }
 
   // Verification is part of the carry, not a step someone may skip.
-  const [srcD, dstD] = [
-    await digestDatabase(src),
-    await digestDatabase(dst, { live: reconciling }),
-  ];
+  const srcD = await digestDatabase(src);
+  const unreadableLive = [];
+  const dstD = await digestDatabase(dst, {
+    live: reconciling,
+    only: reconciling ? new Set(srcD.keys()) : null,
+    skipped: unreadableLive,
+  });
+  for (const table of unreadableLive) {
+    console.log(
+      `  ${table.padEnd(32)} NOT DIGESTED — the destination has no primary ` +
+        `key here, so there is no unique cursor to read it by while it is ` +
+        `live. Nothing in this run's verdict covers it`,
+    );
+  }
   printDigest(`source  ${src.name}`, srcD);
   printDigest(`target  ${dst.name}`, dstD);
 

@@ -1505,3 +1505,47 @@ describe('a live side is read without being asked to hold still', () => {
     }
   });
 });
+
+describe('the cursor must be unique in the database being READ', () => {
+  // Paging and matching are two different jobs, and one key was doing
+  // both. The cursor has to be unique where it is used to page, or rows
+  // are skipped — and the source's key is exactly what a re-keying
+  // migration may have stopped being unique on the destination. Two rows
+  // sharing an old key across a page boundary would be read as one, so
+  // the duplicate check that exists to catch that migration would have
+  // nothing to catch (#2267 r43).
+  const PAGE = 500;
+
+  it('reads both duplicates when paging by a key that is unique there', async () => {
+    // The destination was re-keyed: `old_key` now repeats, `id` does not.
+    // Rows 500 and 501 share old_key 500, straddling the page boundary.
+    const rows = Array.from({ length: PAGE + 2 }, (_, i) => ({
+      id: i + 1,
+      old_key: i + 1 === PAGE + 1 ? PAGE : i + 1,
+    }));
+    const byOldKey = async (_db: string, _sql: string, params: unknown[] = []) => {
+      const after = params.length > 0 ? Number(params[0]) : 0;
+      return rows.filter((r) => r.old_key > after).slice(0, PAGE);
+    };
+    const byId = async (_db: string, _sql: string, params: unknown[] = []) => {
+      const after = params.length > 0 ? Number(params[0]) : 0;
+      return rows.filter((r) => r.id > after).slice(0, PAGE);
+    };
+    const viaOldKey = await readAll('db', 't', ['id', 'old_key'], byOldKey, {
+      key: ['old_key'],
+      live: true,
+    });
+    const viaId = await readAll('db', 't', ['id', 'old_key'], byId, {
+      key: ['id'],
+      live: true,
+    });
+    // Paging by the non-unique key loses the second duplicate: the
+    // cursor moves past 500 and `> 500` never returns the other row.
+    expect(viaOldKey.length).toBeLessThan(rows.length);
+    expect(viaOldKey.filter((r: Record<string, unknown>) => r.old_key === PAGE)).toHaveLength(1);
+    // Paging by the destination's own key returns both, so the
+    // duplicate check downstream can see them.
+    expect(viaId).toHaveLength(rows.length);
+    expect(viaId.filter((r: Record<string, unknown>) => r.old_key === PAGE)).toHaveLength(2);
+  });
+});
