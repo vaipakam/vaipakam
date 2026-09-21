@@ -1681,21 +1681,33 @@ library LibRewardCustody {
         }
         uint256 end = uint256(done) + TRANSPORT_INDEX_PAGE;
         if (end > dayIds.length) end = dayIds.length;
+        // A day's index is kept in ARRIVAL order BY CONSTRUCTION, whoever
+        // indexes it and in whatever order (Codex #2276 r5 P1). Materialization
+        // is permissionless and asynchronous, so an append order would be the
+        // caller's — which is why an append never was an ordering (Codex #2232
+        // r3) and why the draw's bounded window could not be trusted to hold
+        // the highest-priority epochs: a window is a PREFIX of the index, and
+        // a prefix of a caller-ordered index is the caller's choice. The key
+        // is the delivery's own arrival, `ingressPackets[batchId].arrivedAt`
+        // — written once by the ingress that received it, immutable, correct
+        // for a retrospective admission too (a rollout packet is admitted long
+        // after it arrived, and its true arrival is what the record holds).
+        // An epoch indexed late is inserted at its place by arrival, and never
+        // behind the day's cursor: the cursor counts leading EXHAUSTED epochs,
+        // so a live epoch placed behind it would be invisible to every draw.
+        // The shift is bounded by how many newer epochs a day already lists,
+        // which prompt indexing keeps near zero.
+        uint64 arrived = s.ingressPackets[batchId].arrivedAt;
         for (uint256 i = done; i < end; ++i) {
-            // A day's index is a MEMBERSHIP SET, and a batch's POSITION in it
-            // carries no meaning (Codex #2232 r3). Materialization is
-            // permissionless and asynchronous, so which batch reaches a day
-            // first is decided by caller timing; an append therefore cannot
-            // be, and never was, an ordering. The order a preparer's
-            // "oldest on ties" default needs is the delivery's own arrival —
-            // `ingressPackets[batchId].arrivedAt`, written once by the ingress
-            // that received it, immutable, and returned alongside every entry
-            // by {RewardEpochFacet.getTransportDayBatches} so it is read
-            // rather than inferred. That key is correct for a RETROSPECTIVE
-            // admission too, which an append order could not be: a rollout
-            // packet is admitted long after it arrived, and its true arrival
-            // is what the record holds.
-            s.transportBatchesByDay[dayIds[i]].push(batchId);
+            bytes32[] storage idx = s.transportBatchesByDay[dayIds[i]];
+            uint256 j = idx.length;
+            idx.push(batchId);
+            uint256 floor_ = s.transportDayCursor[dayIds[i]];
+            while (j > floor_ && s.ingressPackets[idx[j - 1]].arrivedAt > arrived) {
+                idx[j] = idx[j - 1];
+                unchecked { --j; }
+            }
+            idx[j] = batchId;
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
@@ -1942,15 +1954,19 @@ library LibRewardCustody {
     ///         against, what is drawn, and what a dry run assumes are one
     ///         computation and cannot disagree.
     ///
-    ///         ORDER (Codex #2276 r1): not index position — materialization is
-    ///         permissionless and its order is the caller's, and the design
-    ///         says so (§5c correction (a)). The rule is the design's own
-    ///         default: FEWEST LISTED DAYS FIRST, oldest arrival on ties, index
-    ///         position last as a total order. A batch listing fewer days has
-    ///         fewer other obligations that could need it, so it is spent
-    ///         first and the wider one is kept for the days only it can fund.
-    ///         The window is at most `TRANSPORT_DRAW_SCAN_CAP` entries, so the
-    ///         sort is bounded.
+    ///         ORDER (Codex #2276 r1, r5): the day's index is kept in ARRIVAL
+    ///         order by construction ({materializeTransportBatchPage}), so the
+    ///         window — a prefix of the index from the cursor — always holds
+    ///         the day's OLDEST live epochs, whoever indexed them and in
+    ///         whatever order (r5 P1: a caller-ordered prefix would let a
+    ///         materializer decide what a bounded window sees). Within the
+    ///         window the design's own default applies: FEWEST LISTED DAYS
+    ///         FIRST, oldest arrival on ties, index position last. A batch
+    ///         listing fewer days has fewer other obligations that could need
+    ///         it, so it is spent first and the wider one is kept for the days
+    ///         only it can fund. The window is at most
+    ///         `TRANSPORT_DRAW_SCAN_CAP` entries, so the sort is bounded, and
+    ///         everything beyond it is newer than everything in it.
     ///
     ///         SKIPPED, and not counted as coverage: exhausted batches, and
     ///         batches whose membership is not yet whole (`indexedDays !=
@@ -2040,9 +2056,16 @@ library LibRewardCustody {
     }
 
     /// @dev An epoch's two leg rooms: the balance where its packet is
-    ///      unattested; where attested, each component cap net of the packet's
-    ///      classification of that component, the epoch's own draws of it,
-    ///      and the overlay's planned draws of it — never above the balance.
+    ///      unattested; where attested, each component's cap net of the
+    ///      packet's classification of that component, the epoch's own draws
+    ///      of it, and the overlay's planned draws of it — never above the
+    ///      balance. The RECYCLED cap is what landed net of the fresh cap, not
+    ///      the floored recycled figure (Codex #2276 r5 P2): the two attested
+    ///      figures are floored independently and can sum to one unit less
+    ///      than what landed, and a unit outside both caps could be drawn and
+    ///      then fit neither at reconciliation. The evidence rule's direction
+    ///      decides where the residual counts: absent evidence, value is
+    ///      recycled.
     function _capRooms(
         LibVaipakam.Storage storage s,
         bytes32 id,
@@ -2056,21 +2079,32 @@ library LibRewardCustody {
         uint256 usedF = p.classifiedFresh + b.consumedFresh + ovF;
         uint256 usedR = p.classifiedRecycled + b.consumedRecycled + ovR;
         fr = p.freshAttested > usedF ? p.freshAttested - usedF : 0;
-        rr = p.recycledAttested > usedR ? p.recycledAttested - usedR : 0;
+        uint256 rCap = p.actualReceived > p.freshAttested ? p.actualReceived - p.freshAttested : 0;
+        rr = rCap > usedR ? rCap - usedR : 0;
         if (fr > bal) fr = bal;
         if (rr > bal) rr = bal;
     }
 
-    /// @notice Split a plan into per-epoch legs for the two asks: fresh first
-    ///         within each epoch's fresh room, then recycled within its
-    ///         recycled room, in the plan's order.
-    /// @dev    Pure over the plan, and IDEMPOTENT on its own result: splitting
-    ///         again for exactly the legs it covered reproduces the same
-    ///         per-epoch legs, which is what lets the settle wrapper re-derive
-    ///         the allocation's legs from the plan and the two totals alone.
-    ///         Where a tight attested room keeps a leg short, the residual
-    ///         falls to the shared sources or the day defers — never past a
-    ///         cap.
+    /// @notice Split a plan into per-epoch legs for the two asks, each leg
+    ///         served first from the epochs LEAST able to serve the other.
+    /// @dev    Two passes over the plan (Codex #2276 r5 P1: a fresh-first
+    ///         pass in plan order spent a flexible epoch on fresh and then
+    ///         found the recycled ask unservable by a fresh-only epoch behind
+    ///         it, although the reverse assignment covered both). Fresh is
+    ///         assigned in ascending order of recycled room — an epoch that
+    ///         cannot serve recycled serves fresh before one that could serve
+    ///         either — then recycled in ascending order of fresh room, each
+    ///         within the epoch's own room and remaining balance; plan order
+    ///         (the priority) breaks ties. Both orders depend only on the
+    ///         plan, never on the asks, so the split is IDEMPOTENT on its own
+    ///         result: splitting again for exactly the legs it covered
+    ///         reproduces the same per-epoch legs, which is what lets the
+    ///         settle wrapper re-derive the allocation's legs from the plan
+    ///         and the two totals alone. An unattested epoch's rooms are its
+    ///         balance, so a plan of unattested epochs is spent in plan
+    ///         order, fresh first, as before. Where a tight attested room
+    ///         keeps a leg short, the residual falls to the shared sources or
+    ///         the day defers — never past a cap.
     function splitTransportTakes(
         TransportDrawPlan memory plan,
         uint256 askFresh,
@@ -2079,20 +2113,42 @@ library LibRewardCustody {
         uint256 n = plan.ids.length;
         t.fresh = new uint256[](n);
         t.recycled = new uint256[](n);
-        for (uint256 k; k < n && (askFresh != 0 || askRecycled != 0); ) {
-            uint256 bal = plan.bals[k];
-            uint256 bf = askFresh < bal ? askFresh : bal;
+        uint256[] memory order = _orderByRoom(plan.recycledRoom);
+        for (uint256 i; i < n && askFresh != 0; ) {
+            uint256 k = order[i];
+            uint256 bf = askFresh < plan.bals[k] ? askFresh : plan.bals[k];
             if (bf > plan.freshRoom[k]) bf = plan.freshRoom[k];
-            uint256 left = bal - bf;
+            t.fresh[k] = bf;
+            askFresh -= bf;
+            t.coveredFresh += bf;
+            unchecked { ++i; }
+        }
+        order = _orderByRoom(plan.freshRoom);
+        for (uint256 i; i < n && askRecycled != 0; ) {
+            uint256 k = order[i];
+            uint256 left = plan.bals[k] - t.fresh[k];
             uint256 br = askRecycled < left ? askRecycled : left;
             if (br > plan.recycledRoom[k]) br = plan.recycledRoom[k];
-            t.fresh[k] = bf;
             t.recycled[k] = br;
-            askFresh -= bf;
             askRecycled -= br;
-            t.coveredFresh += bf;
             t.coveredRecycled += br;
-            unchecked { ++k; }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Plan positions in ascending order of `room`, ties in plan order
+    ///      (stable insertion over at most one scan window).
+    function _orderByRoom(uint256[] memory room) private pure returns (uint256[] memory order) {
+        uint256 n = room.length;
+        order = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            uint256 j = i;
+            while (j != 0 && room[order[j - 1]] > room[i]) {
+                order[j] = order[j - 1];
+                unchecked { --j; }
+            }
+            order[j] = i;
+            unchecked { ++i; }
         }
     }
 
@@ -2529,16 +2585,21 @@ library LibRewardCustody {
         // classification allowance {authenticatedFresh} derives is the cap net
         // of the packet's REAL fresh use. Classification cannot have run yet
         // (it needs the attestation), so only the transport legs can exceed,
-        // and at most one of them can (they sum to at most what landed).
+        // and at most one of them can: the recycled cap is what landed net of
+        // the fresh cap (Codex #2276 r5 P2 — the two floored figures can sum
+        // to a unit less than what landed, and that unit must have a cap to
+        // fit), so the two caps sum to exactly what landed and the legs, which
+        // sum to at most that, always fit after one move.
         if (p.batchId != bytes32(0)) {
             LibVaipakam.TransportBatch storage b = s.transportBatches[p.batchId];
+            uint256 rCap = actual > freshAttested ? actual - freshAttested : 0;
             if (b.consumedFresh > freshAttested) {
                 uint256 x = b.consumedFresh - freshAttested;
                 b.consumedFresh -= x;
                 b.consumedRecycled += x;
                 emit TransportLegsRetyped(p.batchId, x, 0);
-            } else if (b.consumedRecycled > recycledAttested) {
-                uint256 x = b.consumedRecycled - recycledAttested;
+            } else if (b.consumedRecycled > rCap) {
+                uint256 x = b.consumedRecycled - rCap;
                 b.consumedRecycled -= x;
                 b.consumedFresh += x;
                 emit TransportLegsRetyped(p.batchId, 0, x);

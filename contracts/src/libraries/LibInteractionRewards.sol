@@ -6814,7 +6814,14 @@ library LibInteractionRewards {
                 // is at the viaIR ceiling, so it cannot share a helper).
                 uint256 amt = amounts[i];
                 uint256 r = cEff[i] == 0 ? 0 : ((cEff[i] - freshCap[i]) * amt) / cEff[i];
-                needRecycled += r;
+                // Only a USER slice's recycled leg is a funding pull the bucket
+                // must cover; a forfeit's or an expiry's (not loan-side
+                // chargeable, the loop's treasury pass) is a commitment release
+                // that moves nothing, so it needs no epoch either (Codex #2276
+                // r5 P1: counting it parked an epoch on a release while the
+                // fresh leg beside it drained the live delivery a later day
+                // needed). Fresh is a pull for both destinations.
+                if (slices[i].loanSideChargeable) needRecycled += r;
                 needFresh += amt - r;
                 unchecked { ++i; }
             }

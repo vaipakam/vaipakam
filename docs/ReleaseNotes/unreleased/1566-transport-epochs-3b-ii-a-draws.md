@@ -76,10 +76,19 @@ claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice. The residual leg of an epoch's coverage is chosen
 on each leg's deficit net of what the day's own shortfalls already drew.
 
-A day's epochs are read through a **bounded window**, and within it they
-are spent in an order the ledger fixes rather than the order anyone
-indexed them: the epoch listing the **fewest days first**, the oldest
-arrival on ties. An epoch that lists fewer days has fewer other
+A day's index is kept in **arrival order** whoever indexes it — an epoch
+indexed late takes its place by arrival, never behind the day's cursor —
+so the **bounded window** a day is read through always holds its oldest
+epochs, and within the window they are spent in an order the ledger
+fixes rather than the order anyone indexed them: the epoch listing the
+**fewest days first**, the oldest arrival on ties. Each leg is served
+first from the epochs least able to serve the other leg, so a flexible
+epoch is not spent on a leg a constrained one could have paid; the
+recycled bound of an attested epoch is what landed net of its fresh cap,
+so a scaling residual can never strand a unit outside both caps; and a
+forfeit's or an expiry's recycled slice is a commitment release, not a
+funding pull, so it draws no epoch value — the epoch's coverage goes to
+the legs that need funding. An epoch that lists fewer days has fewer other
 obligations that could need it, so it is spent first and the wider one is
 kept for the days only it can fund — the design's own default, applied on
 chain because indexing is open to anyone and its order would otherwise

@@ -869,17 +869,20 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         }
     }
 
-    /// The ORDER a day's index is read by is each delivery's own recorded
-    /// arrival — NOT its position, which only records which caller
-    /// materialized it first.
+    /// A day's index is ARRIVAL-ORDERED BY CONSTRUCTION, whoever materializes
+    /// first (3b-ii-A, Codex #2276 r5 P1). This test used to pin the
+    /// opposite — that position carried no meaning and a reader had to sort
+    /// by the arrival key — which held until the draws read the index through
+    /// a bounded WINDOW: a window is a prefix of the index, and a prefix of a
+    /// caller-ordered index is the caller's choice of what a day may draw
+    /// from. So materialization now inserts each epoch at its place by
+    /// arrival (never behind the day's cursor), and the array's order IS the
+    /// arrival order.
     ///
     /// Materialization is permissionless and asynchronous, so a later
-    /// delivery can be indexed before an earlier one that lists the same day.
-    /// This drives exactly that: B arrives second and is materialized FIRST,
-    /// so it sits at position 0 while its arrival key is the larger one. A
-    /// reader taking the array's order would have them backwards; one reading
-    /// the key has them right, and the key is what design §5c's preparer
-    /// default ("oldest on ties") is specified to use.
+    /// delivery can still be indexed before an earlier one that lists the
+    /// same day. This drives exactly that: B arrives second and is
+    /// materialized FIRST — and A still leads the index.
     function test_DayIndex_OrdersByArrival_NotByWhoMaterializedFirst() public {
         uint256[] memory dayIds = _days(1);
         bytes32 a = _deliver(4e18, dayIds, 41, keccak256("aEarly"), false);
@@ -896,11 +899,11 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         (bytes32[] memory page, uint64[] memory arrivals, uint256 total, ) =
             _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(total, 2, "both list the day");
-        assertEq(page[0], b, "position 0 is whoever was materialized first");
-        assertEq(page[1], a, "and position 1 the other - position is not an order");
-        assertEq(arrivals[0], 2000, "but the key at position 0 is the LATER arrival");
-        assertEq(arrivals[1], 1000, "and the key at position 1 the earlier one");
-        assertTrue(arrivals[0] > arrivals[1], "so the array's order and the arrival order disagree");
+        assertEq(page[0], a, "position 0 is the EARLIER arrival, although it was materialized second");
+        assertEq(page[1], b, "and position 1 the later one");
+        assertEq(arrivals[0], 1000, "the key at position 0 is the earlier arrival");
+        assertEq(arrivals[1], 2000, "and the key at position 1 the later one");
+        assertTrue(arrivals[0] < arrivals[1], "so the array's order and the arrival order agree, by construction");
     }
 
     // ─── 5. the fourth door, and why it cannot reach an epoch ────────────────

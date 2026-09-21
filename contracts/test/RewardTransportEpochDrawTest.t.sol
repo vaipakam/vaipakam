@@ -560,9 +560,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
             swept = RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
         }
         assertEq(swept, NEED, "expired: the clock accrued with an empty bucket");
-        (, uint256 lr) = _legs(h);
-        assertEq(lr, needR, "the epoch paid the recycled leg of the expiry");
-        assertEq(_cfg().getRecycleBucket() - bucketBefore, NEED, "both legs recycled in place");
+        (uint256 lf, uint256 lr) = _legs(h);
+        // Codex #2276 r5 P1 — an expiry's recycled slice is a commitment
+        // release, not a funding pull: the epoch pays none of it, and goes to
+        // the fresh leg ahead of the live delivery instead.
+        assertEq(lf, needF, "the epoch paid the expiry's fresh leg, transport first");
+        assertEq(lr, 0, "and none of its recycled slice, which is a release");
+        assertEq(_cfg().getRecycleBucket() - bucketBefore, needF, "the epoch-paid fresh recycled in place; the release moved nothing");
     }
 
     /// @dev Within one preview an epoch listing two days is not counted for
@@ -703,6 +707,79 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), 0, "deferred on the window, not reverted");
         assertEq(_cursor(1), 64, "the prune persisted");
         assertEq(_claim(), NEED, "the next attempt sees the funded epoch");
+    }
+
+    /// @dev The day's index is arrival-ordered whoever indexes it (Codex #2276
+    ///      r5 P1): the newer epoch is indexed first, and the older one still
+    ///      leads the index.
+    function test_TheIndex_IsArrivalOrdered_WhoeverIndexesFirst() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 11, REMITTER, 0, 0, keccak256("old"), false);
+        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("old")));
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 12, REMITTER, 0, 0, keccak256("new"), false);
+        bytes32 hNew = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("new")));
+        _epoch().materializeTransportBatchPage(hNew, d1);
+        _epoch().materializeTransportBatchPage(hOld, d1);
+        (bytes32[] memory page, , , ) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(page.length, 2);
+        assertEq(page[0], hOld, "the older arrival leads, whoever indexed first");
+        assertEq(page[1], hNew);
+    }
+
+    /// @dev Each leg is served first from the epochs least able to serve the
+    ///      other (Codex #2276 r5 P1): a flexible epoch ahead of a fresh-only
+    ///      one, a 5F/5R ask — the fresh-only epoch pays fresh, the flexible
+    ///      one recycled, and both legs are covered.
+    function test_TheSplit_ServesEachLegFromTheLeastFlexibleEpoch() public {
+        _epochOf(5e18, _one(1), 41, keccak256("flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(5e18, _one(1), 42, keccak256("fresh-only"));
+        _attest(42, 5e18, 0);
+        (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 5e18, "fresh from the epoch that can serve nothing else");
+        assertEq(tr, 5e18, "recycled from the flexible one");
+    }
+
+    /// @dev A scaling residual never strands a unit (Codex #2276 r5 P2): a
+    ///      1F/2R split lands on 1e18, floors to F + R = 1e18 - 1 wei, and an
+    ///      epoch that drew the whole 1e18 fresh re-types to exactly F fresh
+    ///      and (landed - F) recycled — the recycled bound is what landed net
+    ///      of the fresh cap, so the residual wei has a cap to fit.
+    function test_ALateAttestation_NeverStrandsTheScalingResidual() public {
+        _scene(1e18);
+        bytes32 h = _epochOf(1e18, _one(1), 21, keccak256("dust"));
+        assertEq(_claim(), 1e18, "the whole epoch drawn fresh");
+        _attest(21, 1, 2);
+        uint256 f = uint256(1e18) / 3;
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, f, "the fresh leg fits the attested fresh");
+        assertEq(lr, 1e18 - f, "the rest is recycled, the residual wei included");
+        assertEq(lf + lr, 1e18, "nothing stranded");
+    }
+
+    /// @dev A forfeit's recycled slice is a commitment release and draws no
+    ///      epoch value (Codex #2276 r5 P1), on Codex's shape: forfeited day A
+    ///      (fresh + recycled) with an A-only epoch, live day B, live delivery
+    ///      just enough for one day, bucket empty. The epoch pays A's fresh, A's
+    ///      recycled is released, and the live delivery is left for B.
+    function test_AForfeitsRecycledSlice_DrawsNoEpoch() public {
+        _twoLegDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        uint256 a = _entry(1, 2);
+        _mut().setRewardEntryForfeitedRaw(a);
+        _entry(2, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        bytes32 h = _epochOf(NEED / 2, _one(1), 31, keccak256("a-only"));
+        _liveOf(NEED, _two(1, 2), 32, keccak256("live"));
+        assertEq(_cfg().getRecycleBucket(), 0, "fixture: the bucket is empty");
+        assertEq(_claim(), NEED, "day B paid from the live delivery the forfeit did not consume");
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, NEED / 2, "the epoch paid the forfeit's fresh slice");
+        assertEq(lr, 0, "and none of its recycled slice, which is a release");
     }
 
     /// @dev A draw records its exit on the PACKET too, so the packet's own
