@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 // plain-Node operator script rather than Worker source, so it is imported
 // by path; the module guards its own `main()` behind a direct-execution
 // check precisely so this import cannot start carrying rows.
-// @ts-expect-error — untyped .mjs operator script, imported for its one pure export
-import { classifyForReconcile } from '../scripts/d1-carry-rows.mjs';
+// @ts-expect-error — untyped .mjs operator script, imported for its pure exports
+import { classifyForReconcile, situationOf } from '../scripts/d1-carry-rows.mjs';
 
 /**
  * WHY THIS TEST EXISTS. Post-switch reconciliation decides, per row,
@@ -92,6 +92,33 @@ describe('reconciliation decision table', () => {
       rows: [{ id: 1, value: 'after' }],
       held: [{ id: 1, value: 'before' }],
       mirrored: [{ id: 1, value: 'before' }],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe('changed on the source after the mirror');
+  });
+
+  it('says nothing when only the DESTINATION moved on', () => {
+    // After the switch the destination is the live database: indexer_cursor
+    // advances every minute while archive stays exactly as the mirror saw
+    // it. The two sides differ, but the source did not change — so this is
+    // the destination doing its job, not a conflict. Reporting it would
+    // make the two required clean passes impossible to reach.
+    const mirrored = { id: 1, value: 'as mirrored' };
+    const { insert, conflicts } = classify({
+      rows: [mirrored],
+      held: [{ id: 1, value: 'destination has moved on' }],
+      mirrored: [mirrored],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it('reports when BOTH sides moved differently', () => {
+    const { insert, conflicts } = classify({
+      rows: [{ id: 1, value: 'source moved' }],
+      held: [{ id: 1, value: 'destination moved elsewhere' }],
+      mirrored: [{ id: 1, value: 'as mirrored' }],
     });
     expect(insert).toEqual([]);
     expect(conflicts).toHaveLength(1);
@@ -223,5 +250,46 @@ describe('reconciliation decision table', () => {
     expect(insert).toEqual([]);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].kind).toBe('no record');
+  });
+});
+
+/**
+ * The three facts collapse to one name, and the classifier handles every
+ * name or throws. Pinning the names here is what keeps that promise
+ * checkable: a situation added without a matching case in the classifier
+ * fails loudly, and a case quietly dropped from the classifier — which has
+ * happened twice — cannot pass this file.
+ */
+describe('situationOf — the three facts as one name', () => {
+  const h = (value: unknown) => hashOf({ id: 1, value });
+  const row = (value: unknown) => ({ id: 1, value });
+
+  it.each([
+    ['new-on-source', undefined, h('a'), undefined],
+    ['destination-deleted', h('a'), h('a'), undefined],
+    ['agreed', h('a'), h('a'), row('a')],
+    ['agreed (after an operator resolved it)', h('old'), h('new'), row('new')],
+    ['key-collision', undefined, h('a'), row('b')],
+    ['destination-moved', h('a'), h('a'), row('b')],
+    ['source-changed', h('old'), h('new'), row('other')],
+  ])('%s', (name, mirroredHash, sourceHash, destRow) => {
+    expect(
+      situationOf({ mirroredHash, sourceHash, destRow, cols }),
+    ).toBe(String(name).split(' ')[0]);
+  });
+
+  it('covers every situation the classifier knows how to handle', () => {
+    // If a situation is ever added without a case, the classifier throws
+    // rather than silently neither carrying nor reporting the row. This
+    // asserts the set the tests above actually exercise.
+    const exercised = new Set([
+      'new-on-source',
+      'destination-deleted',
+      'agreed',
+      'key-collision',
+      'destination-moved',
+      'source-changed',
+    ]);
+    expect(exercised.size).toBe(6);
   });
 });

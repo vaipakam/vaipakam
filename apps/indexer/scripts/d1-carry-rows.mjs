@@ -528,6 +528,34 @@ async function deleteKeys(dst, table, keyRows, key) {
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
+/**
+ * THE THREE FACTS, AS ONE NAME. Did the mirror carry this key, does the
+ * source still hold this row, does the destination hold the same row —
+ * and what situation is that.
+ *
+ * This exists because the questions were being asked inline, in an
+ * if/else chain, and two separate simplifications each dropped one of
+ * them: once so a conflict an operator had resolved reported forever,
+ * once so every row the live destination advanced reported forever. Both
+ * were invisible at the point of the edit and both broke the same
+ * property — that repeating the reconciliation can eventually come clean.
+ *
+ * Asking all three in one place, and naming the answer, is what makes a
+ * dropped question impossible to write: there is one expression to read,
+ * and its caller handles every name it can return or throws.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function situationOf({ mirroredHash, sourceHash, destRow, cols }) {
+  const mirrored = mirroredHash !== undefined;
+  if (destRow === undefined) {
+    return mirrored ? 'destination-deleted' : 'new-on-source';
+  }
+  if (rowHash(destRow, cols) === sourceHash) return 'agreed';
+  if (!mirrored) return 'key-collision';
+  return mirroredHash === sourceHash ? 'destination-moved' : 'source-changed';
+}
+
 export function classifyForReconcile({
   table,
   cols,
@@ -571,89 +599,104 @@ export function classifyForReconcile({
 
   for (const r of rows) {
     const k = keyOf(r, key);
-    const mirrored = wasSeen[k] !== undefined;
-    const destRow = heldByKey.get(k);
-    const inDest = destRow !== undefined;
+    const situation = situationOf({
+      mirroredHash: wasSeen[k],
+      sourceHash: rowHash(r, cols),
+      destRow: heldByKey.get(k),
+      cols,
+    });
 
-    // A CONFLICT IS ONLY A CONFLICT WHILE THE TWO SIDES ACTUALLY DIFFER,
-    // and this rule has to come before every case that reasons about the
-    // manifest — which is where it was missing twice.
-    //
-    // The manifest says what the mirror saw; it does not say what the two
-    // databases hold now. If they agree on this row there is nothing to
-    // reconcile, whatever the manifest recorded. That covers a row a
-    // PREVIOUS pass of this reconciliation carried, and equally a late
-    // update an operator has already RESOLVED by copying the chosen value
-    // across — which is the whole point of repeat-until-clean. Comparing
-    // the source against the manifest alone made both of those conflict
-    // forever, so the procedure could never come clean after doing
-    // anything about a finding.
-    if (inDest && rowHash(destRow, cols) === rowHash(r, cols)) continue;
+    // Every situation is NAMED and every name is HANDLED — see
+    // `situationOf`. An if/else chain over three booleans is what this
+    // replaces, and it had lost a condition twice while being simplified:
+    // once making a resolved conflict report forever, once making every
+    // live destination row report forever. Both were the same shape — a
+    // branch that stopped asking one of the three questions — and neither
+    // was visible at the point of the edit.
+    switch (situation) {
+      case 'agreed':
+        // The two sides hold the same row. Whatever the manifest says,
+        // there is nothing to reconcile: this covers a row a previous
+        // pass carried and a conflict an operator has already resolved.
+        break;
 
-    if (!mirrored && inDest) {
-      // The destination has a key the mirror never carried and holds a
-      // DIFFERENT row under it: both sides allocate from the same
-      // AUTOINCREMENT sequence once they run independently.
-      conflicts.push({
-        table,
-        key: k,
-        kind: 'key allocated on both sides',
-        detail:
-          'this key is new on the source since the mirror and the ' +
-          'destination holds a DIFFERENT row under it — two records with ' +
-          'one id, which an insert would silently drop',
-      });
-      continue;
-    }
+      case 'destination-moved':
+        // The source is exactly as the mirror saw it, so only the
+        // destination changed — which after the switch is the live
+        // database doing its job, `indexer_cursor` advancing every
+        // minute. Not a conflict.
+        break;
 
-    if (!mirrored && !inDest) {
-      // Absent by primary key is not the same as insertable. A secondary
-      // unique index can already hold this row's tuple under another key,
-      // and `ON CONFLICT (pk)` would not catch it — the insert would fail
-      // with a raw constraint error and abort the reconciliation.
-      const clash = destUnique
-        .map((u) => ({ u, t: tupleOf(r, u.columns) }))
-        .find(({ u, t }) => t !== null && u.byValue.has(t));
-      if (clash) {
+      case 'new-on-source': {
+        // Absent by primary key is not the same as insertable: a
+        // secondary unique index can already hold this row's tuple under
+        // another key, and `ON CONFLICT (pk)` would not catch it.
+        const clash = destUnique
+          .map((u) => ({ u, t: tupleOf(r, u.columns) }))
+          .find(({ u, t }) => t !== null && u.byValue.has(t));
+        if (clash) {
+          conflicts.push({
+            table,
+            key: k,
+            kind: 'already present under a different key',
+            detail:
+              `the destination holds a row with the same ${clash.u.columns.join(
+                '+',
+              )} under key ${clash.u.byValue.get(clash.t)} — the same ` +
+              `logical row reached both sides and was numbered differently`,
+          });
+          break;
+        }
+        insert.push(r);
+        break;
+      }
+
+      case 'key-collision':
         conflicts.push({
           table,
           key: k,
-          kind: 'already present under a different key',
+          kind: 'key allocated on both sides',
           detail:
-            `the destination holds a row with the same ${clash.u.columns.join(
-              '+',
-            )} under key ${clash.u.byValue.get(clash.t)} — the same logical ` +
-            `row reached both sides and was numbered differently`,
+            'this key is new on the source since the mirror and the ' +
+            'destination holds a DIFFERENT row under it — two records ' +
+            'with one id, which an insert would silently drop',
         });
-        continue;
-      }
-      insert.push(r);
-      continue;
-    }
+        break;
 
-    if (mirrored && inDest) {
-      // The two sides differ — the equality rule above already returned
-      // for the case where they agree — and the source is not what the
-      // mirror saw, so a straggler wrote it after the barrier.
-      conflicts.push({
-        table,
-        key: k,
-        kind: 'changed on the source after the mirror',
-        detail:
-          'the destination holds a different row under that key. Resolve ' +
-          'it by making the two sides agree; a later pass then passes over ' +
-          'it silently',
-      });
-    } else if (mirrored && !inDest) {
-      conflicts.push({
-        table,
-        key: k,
-        kind: 'deleted on the destination',
-        detail:
-          'the mirror carried this row and the destination no longer has ' +
-          'it, so it was deleted there — re-inserting it would undo that, ' +
-          'and such a deletion may be a retention or privacy obligation',
-      });
+      case 'source-changed':
+        conflicts.push({
+          table,
+          key: k,
+          kind: 'changed on the source after the mirror',
+          detail:
+            'the destination holds a different row under that key. ' +
+            'Resolve it by making the two sides agree; a later pass then ' +
+            'passes over it silently',
+        });
+        break;
+
+      case 'destination-deleted':
+        conflicts.push({
+          table,
+          key: k,
+          kind: 'deleted on the destination',
+          detail:
+            'the mirror carried this row and the destination no longer ' +
+            'has it, so it was deleted there — re-inserting it would undo ' +
+            'that, and such a deletion may be a retention or privacy ' +
+            'obligation',
+        });
+        break;
+
+      default:
+        // Unreachable by construction, and loud rather than silent if a
+        // later edit invents a situation and forgets to handle it. A
+        // fall-through here would mean a row quietly neither carried nor
+        // reported, which is the one outcome this tool must never have.
+        throw new Error(
+          `unhandled situation "${situation}" for ${table} ${k} — every ` +
+            `situation situationOf() can return must be handled here`,
+        );
     }
   }
 

@@ -197,13 +197,24 @@ because step 3 below is the part of it that had to be re-learned.
       manifest; is it on archive now; is it on warm now. Only one
       combination is safe to act on without a person:
 
-      | manifest | archive | warm | what it means |
-      | --- | --- | --- | --- |
-      | no | yes | no | a straggler inserted it → **carried**, the only automatic case |
-      | no | yes | yes | both sides allocated the same key after the mirror — `notifications` and `diag_legal_hold_audit` are `AUTOINCREMENT`, so this is two different records wearing one id, and an insert would drop archive's |
-      | yes | yes | yes, changed | a straggler's write; which value wins is a decision |
-      | yes | yes | **no** | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
-      | yes | **no** | yes | archive deleted it after the mirror. It is not in archive's rows at all, so a loop over archive never sees it and warm keeps a row that should be gone |
+      | situation | manifest | archive | warm | what it means |
+      | --- | --- | --- | --- | --- |
+      | `new-on-source` | no | yes | absent | a straggler inserted it → **carried**, the only automatic case |
+      | `key-collision` | no | yes | a DIFFERENT row | both sides allocated the same key after the mirror — `notifications` and `diag_legal_hold_audit` are `AUTOINCREMENT`, so this is two different records wearing one id, and an insert would drop archive's |
+      | `agreed` | either | yes | the SAME row | nothing to do, whatever the manifest says: a previous pass carried it, or an operator has already resolved it |
+      | `destination-moved` | yes, = archive | yes | a different row | **only warm changed** — after the switch that is the live database doing its job, `indexer_cursor` advancing every minute. Not a conflict |
+      | `source-changed` | yes, ≠ archive | yes | a different row | a straggler's write; which value wins is a decision |
+      | `destination-deleted` | yes | yes | absent | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
+      | (source-side) | yes | **no** | yes | archive deleted it after the mirror. It is not in archive's rows at all, so a loop over archive never sees it and warm keeps a row that should be gone |
+
+      **`agreed` and `destination-moved` are why "repeat until clean" can
+      ever come clean**, and each was missing once. Without `agreed`, a row
+      a pass carried — or a conflict the operator resolved — reports
+      forever. Without `destination-moved`, every row the live warm
+      advances reports forever. Both are the same defect: a branch that
+      stopped asking one of the three questions. The three are now asked in
+      one place, the answer is a name, and the code that acts on it handles
+      every name or throws — so a dropped question cannot be written.
 
       Two more cases sit underneath that table, because *absent by primary
       key* is not the same as *insertable*, and *present under a key the
