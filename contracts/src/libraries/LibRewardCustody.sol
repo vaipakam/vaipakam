@@ -1612,8 +1612,6 @@ library LibRewardCustody {
         // wrong, and a truncated `dayCount` would then quietly declare an
         // oversize batch fully indexed.
         b.dayCount = SafeCast.toUint32(count);
-        // 3b-ii-A — the global short-circuit the draw reads (see the field).
-        s.transportBatchesAdmitted += 1;
         p.batchId = batchId;
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
@@ -2177,6 +2175,11 @@ library LibRewardCustody {
             revert IVaipakamErrors.ReconciliationExceedsPacketRemainder(batchId, amount, have);
         }
         p.unclassified = have - amount;
+        // The PACKET-level exit (Codex #2274 r8 P1): with it the packet's
+        // identity `unclassified + classifiedFresh + classifiedRecycled +
+        // disposed + drawn == protectedCumulative` holds after the draw, as
+        // the batch's conservation identity does.
+        p.drawn += amount;
         _stepDownUncounted(s, p.kind, amount);
     }
 
@@ -2241,41 +2244,52 @@ library LibRewardCustody {
     /// @dev The preview's dry run of `user`'s ShareOfPool days, through the
     ///      epoch facet ({RewardEpochFacet.getDryRunShareOfPoolDays}); see
     ///      {LibInteractionRewards.dryRunShareOfPoolDaysView} for why it is
-    ///      hosted there. The last two are the walk's own readings for the
-    ///      expiry gates (Codex #2276 r1): the chunk's draw on the recycle
-    ///      bucket net of the epoch-paid share, a deferred day included, and
-    ///      whether a day was deferred on the transport scan window.
+    ///      hosted there ({RewardEpochViewFacet} since Codex #2276 r2). `armedTotal` is the FULL capped armed fresh the
+    ///      chunk charges the emission cap and the armed commitment, the
+    ///      epoch-paid fresh included (the public armed need, Codex #2276 r2
+    ///      P2); `liveArmed` is the part the live delivery must fund — what
+    ///      the delivered and backing gates test. The last two are the
+    ///      walk's own readings for the expiry gates (Codex #2276 r1): the
+    ///      chunk's draw on the recycle bucket net of the epoch-paid share,
+    ///      a deferred day included, and whether a day was deferred on the
+    ///      transport scan window.
     function callDryRunShareOfPoolDays(
         address user,
         uint256 deliveredCap,
         uint256 freshBudget
-    ) internal view returns (uint256 userTotal, uint256 armedTotal, uint256 bucketRecycled, bool capHit) {
+    )
+        internal
+        view
+        returns (uint256 userTotal, uint256 armedTotal, uint256 liveArmed, uint256 bucketRecycled, bool capHit)
+    {
         bytes memory ret = _selfStatic(
             abi.encodeWithSignature(
                 "getDryRunShareOfPoolDays(address,uint256,uint256)", user, deliveredCap, freshBudget
             )
         );
-        (userTotal, armedTotal, bucketRecycled, capHit) =
-            abi.decode(ret, (uint256, uint256, uint256, bool));
+        (userTotal, armedTotal, liveArmed, bucketRecycled, capHit) =
+            abi.decode(ret, (uint256, uint256, uint256, uint256, bool));
     }
 
     /// @dev The allocation DOMAIN's gross needs for `user`'s next claim call,
     ///      through the epoch facet ({RewardEpochFacet.getObligationDomainNeeds}).
-    ///      `max` — "the day is the domain" — where no epoch has been admitted
-    ///      since this counter existed, and no call is made. The counter is
-    ///      APPENDED storage, so on an in-place upgrade from a ledger that
-    ///      already holds batches it reads zero until the first admission
-    ///      after the upgrade: until then the domain REFINEMENT of the split
-    ///      is dormant on that chain — the day's own shortfalls and the local
-    ///      fresh-first tie rule still apply — while every DRAW is unaffected,
-    ///      because the per-day read above keys on the day's own index and
-    ///      not on this counter (Codex #2276 r1).
-    function callDomainNeeds(
-        LibVaipakam.Storage storage s,
-        address user
-    ) internal view returns (uint256 domainFresh, uint256 domainRecycled) {
-        if (s.transportBatchesAdmitted == 0) return (type(uint256).max, type(uint256).max);
-        bytes memory ret = _selfStatic(abi.encodeWithSignature("getObligationDomainNeeds(address)", user));
+    ///      `max` — "the day is the domain" — when no day that call could
+    ///      price has an epoch listed. That is decided by the view itself,
+    ///      from the LEDGER: it enumerates the chunk's days without pricing
+    ///      them and reads each day's index length — the slots the walk's
+    ///      per-day short-circuit reads anyway — so a chain with no epochs
+    ///      pays the call and the enumeration and no pricing, and a ledger
+    ///      that already held epochs before this release is read exactly
+    ///      right from its first block, with no counter to backfill and no
+    ///      migration (Codex #2276 r2 P1: a counter appended here read zero
+    ///      over pre-existing batches until the next admission, and on a
+    ///      chain the old wire no longer fed it stayed zero for good).
+    ///      Two reads through {RewardEpochViewFacet}: the probe first, the
+    ///      pricing only where it says a listed day is in reach.
+    function callDomainNeeds(address user) internal view returns (uint256 domainFresh, uint256 domainRecycled) {
+        bytes memory ret = _selfStatic(abi.encodeWithSignature("getObligationDomainListsAnEpoch(address)", user));
+        if (!abi.decode(ret, (bool))) return (type(uint256).max, type(uint256).max);
+        ret = _selfStatic(abi.encodeWithSignature("getObligationDomainNeeds(address)", user));
         (domainFresh, domainRecycled) = abi.decode(ret, (uint256, uint256));
     }
 

@@ -90,6 +90,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -227,7 +228,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 81;
+    uint256 public constant EXPECTED_FACETS = 82;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1551,6 +1552,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // them: one refresh moves both halves.
         items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
         items[80] = Item("rewardEpochFacet", address(new RewardEpochFacet()), _getRewardEpochSelectors());
+        // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, read-only.
+        items[81] = Item("rewardEpochViewFacet", address(new RewardEpochViewFacet()), _getRewardEpochViewSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

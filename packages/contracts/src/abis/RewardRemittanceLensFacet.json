@@ -387,6 +387,11 @@
             "name": "batchId",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "drawn",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

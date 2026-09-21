@@ -94,6 +94,8 @@ export interface DeploymentFacets {
   rewardIngressFacet?: HexAddress;
   /** #1566 transport epochs PR 3b — the transport epochs' ledger. */
   rewardEpochFacet?: HexAddress;
+  /** #1566 transport epochs PR 3b-ii-A — the epochs' engine-inlining reads (dry run, domain needs, domain probe). */
+  rewardEpochViewFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

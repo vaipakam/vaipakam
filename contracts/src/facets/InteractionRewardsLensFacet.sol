@@ -918,28 +918,53 @@ contract InteractionRewardsLensFacet {
      *         Additive on purpose: {getUserArmedFreshNeed} keeps its selector
      *         and its callers, so no routed selector is retired here.
      * @param  user The claimant.
-     * @return need The claimant's aggregate need as the claim's own walk
-     *              measures it ({LibInteractionRewards.ArmedNeed}): the capped
-     *              armed fresh; the legacy legs by destination (both
-     *              reserve); the FRESH part of both legacy legs plus the
-     *              legacy window the claim settles first (#1566 closure 2 —
-     *              the predicate and the sweeps measure the aggregate
-     *              VINTAGE-BLIND fresh need, `armed + legacyFresh` capped at
-     *              the pool, against the delivered bound, because the claim's
-     *              delivery chokepoint refuses on the TOTAL fresh component:
-     *              a predicate that measured only `armed` would read a
-     *              legacy-only claimant executable while their claim reverts,
-     *              and run their expiry clock); the chunk's draw on the
-     *              recycle bucket net of what the epochs pay, a deferred day
-     *              included; and whether a day would defer on the transport
-     *              scan window (3b-ii-A, Codex #2276 r1 — one struct, so every
-     *              gate decodes one shape).
+     *         The shape stays FLAT and the first four outputs stay where they
+     *         were (Codex #2276 r2 P2): the three readings 3b-ii-A added are
+     *         appended, so a caller regenerated against the package keeps
+     *         `armed` / `userLegs` / `treasuryLegs` / `legacyFresh` by name
+     *         and by position. The library reads the same words as one
+     *         struct ({LibInteractionRewards.ArmedNeed}, whose members are in
+     *         this order), so the gates decode one shape.
+     * @param  user The claimant.
+     * @return armed        Capped armed fresh the user's open claim would
+     *                      consume — the FULL figure, epoch-paid fresh
+     *                      included (what the emission cap and the armed
+     *                      commitment are charged).
+     * @return userLegs     Legacy legs bound for the user.
+     * @return treasuryLegs Legacy legs bound for treasury (they reserve too).
+     * @return legacyFresh  #1566 closure 2 — the FRESH part of both legacy
+     *                      legs PLUS the legacy window the claim settles
+     *                      first. The executability predicate and the sweeps
+     *                      measure the claimant's aggregate VINTAGE-BLIND fresh
+     *                      need (the live-funded armed part plus this, capped
+     *                      at the pool) against the delivered bound, because
+     *                      the claim's delivery chokepoint refuses on the
+     *                      TOTAL fresh component: a predicate that measured
+     *                      only the armed part would read a legacy-only
+     *                      claimant executable while their claim reverts, and
+     *                      run their expiry clock.
+     * @return bucketRecycled 3b-ii-A — the chunk's draw on the recycle
+     *                      bucket, net of what the epochs pay, a day the walk
+     *                      would defer included.
+     * @return capHit       3b-ii-A — a day would defer on the transport scan
+     *                      window.
+     * @return liveArmed    3b-ii-A — the part of `armed` the live delivery
+     *                      must fund; the delivered and backing gates' figure.
      */
     function getUserArmedFreshNeedWithLegs(address user)
         external
         view
-        returns (LibInteractionRewards.ArmedNeed memory need)
+        returns (
+            uint256 armed,
+            uint256 userLegs,
+            uint256 treasuryLegs,
+            uint256 legacyFresh,
+            uint256 bucketRecycled,
+            bool capHit,
+            uint256 liveArmed
+        )
     {
-        return LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
+        LibInteractionRewards.ArmedNeed memory n = LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
+        return (n.armed, n.userLegs, n.treasuryLegs, n.legacyFresh, n.bucketRecycled, n.capHit, n.liveArmed);
     }
 }

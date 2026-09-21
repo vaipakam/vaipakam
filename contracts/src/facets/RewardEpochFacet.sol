@@ -3,7 +3,6 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
-import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -506,29 +505,9 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return LibRewardCustody.transportAllocateForDay(LibVaipakam.storageSlot(), q);
     }
 
-    /// @notice The preview's dry run of `user`'s ShareOfPool days against the
-    ///         given delivered cap and fresh budget — what a claim would pay,
-    ///         the armed fresh it would charge, its draw on the recycle bucket
-    ///         net of what the epochs pay (a deferred day included), and
-    ///         whether it would defer a day on the transport scan window.
-    /// @dev    Hosted here: see {LibInteractionRewards.dryRunShareOfPoolDaysView}.
-    function getDryRunShareOfPoolDays(
-        address user,
-        uint256 deliveredCap,
-        uint256 freshBudget
-    ) external view returns (uint256 userTotal, uint256 armedTotal, uint256 bucketRecycled, bool capHit) {
-        return LibInteractionRewards.dryRunShareOfPoolDaysView(user, deliveredCap, freshBudget);
-    }
-
-    /// @notice The allocation DOMAIN's gross needs for `user`'s next claim
-    ///         call — the fresh and recycled the days it would settle need
-    ///         before any source is applied.
-    /// @dev    Hosted here because the dry run it runs is the preview's whole
-    ///         pricing walk, which the claim and lens facets cannot inline
-    ///         again; see {LibInteractionRewards.userDomainNeedsView}.
-    function getObligationDomainNeeds(address user) external view returns (uint256 needFresh, uint256 needRecycled) {
-        return LibInteractionRewards.userDomainNeedsView(user);
-    }
+    // The claim's dry run, the domain needs and the domain probe live on
+    // {RewardEpochViewFacet} (Codex #2276 r2): they inline the day-pricing
+    // engine, and this ledger facet went over EIP-170 carrying it.
 
     /// @notice Diamond-internal: settle a claim's or a forfeit sweep's
     ///         treasury and epoch legs — the live-funded fresh absorbed

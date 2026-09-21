@@ -14,7 +14,6 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -327,8 +326,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
         assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
         uint256 perEntry = needLiveOnly - earmark;
-        LibInteractionRewards.ArmedNeed memory needLive = _lens().getUserArmedFreshNeedWithLegs(alice);
-        (uint256 userLegsLive, uint256 treasuryLegsLive) = (needLive.userLegs, needLive.treasuryLegs);
+        (, uint256 userLegsLive, uint256 treasuryLegsLive, , , , ) = _lens().getUserArmedFreshNeedWithLegs(alice);
 
         // An identical sibling, FORFEITED. Its value still has to be funded —
         // the forfeit-credit path spends it — so it enters the same formula.
@@ -340,8 +338,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // leg. The combined total alone is unchanged if the preview ignored
         // the `forfeited` bit and priced both siblings as live `userLegs`, so
         // the arithmetic could be satisfied by a classification regression.
-        LibInteractionRewards.ArmedNeed memory needAfter = _lens().getUserArmedFreshNeedWithLegs(alice);
-        (uint256 userLegsAfter, uint256 treasuryLegsAfter) = (needAfter.userLegs, needAfter.treasuryLegs);
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter, , , , ) = _lens().getUserArmedFreshNeedWithLegs(alice);
         assertEq(
             treasuryLegsLive,
             0,

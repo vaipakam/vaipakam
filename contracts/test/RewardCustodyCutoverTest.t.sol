@@ -1209,10 +1209,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         view
         returns (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed)
     {
-        (, protectedIn, unclassified, cf, cr, disposed, ) = _recon().getPacketReconciliation(h);
+        (, protectedIn, unclassified, cf, cr, disposed, , ) = _recon().getPacketReconciliation(h);
     }
     function _authenticated(bytes32 h) internal view returns (uint256 a) {
-        (, , , , , , a) = _recon().getPacketReconciliation(h);
+        (, , , , , , a, ) = _recon().getPacketReconciliation(h);
     }
     /// The fresh queue of era 0: frontier, unspent, spent, paid, what its
     /// pending takes still hold unwritten, and the live row.
@@ -2393,11 +2393,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _activatedMirror();
         _seedDiamond(10e18);
         _untyped(10e18, 76, keccak256("legacy-view"));
-        (uint64 arrivedAt, uint256 protectedIn, , , , , ) =
+        (uint64 arrivedAt, uint256 protectedIn, , , , , , ) =
             _recon().getPacketReconciliation(_packetHash(keccak256("legacy-view")));
         assertGt(arrivedAt, 0, "recorded");
         assertEq(protectedIn, 10e18);
-        (arrivedAt, protectedIn, , , , , ) = _recon().getPacketReconciliation(keccak256("nope"));
+        (arrivedAt, protectedIn, , , , , , ) = _recon().getPacketReconciliation(keccak256("nope"));
         assertEq(arrivedAt, 0, "unrecorded");
         assertEq(protectedIn, 0);
     }

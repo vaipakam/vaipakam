@@ -1665,7 +1665,7 @@ library LibInteractionRewards {
         uint256 reserved = legacyFreshReserved + windowFreshReserved; // entry legs AND the window (r1 P1)
         deliveredLeft = deliveredLeft > reserved ? deliveredLeft - reserved : 0;
         // 3b-ii-A — the allocation domain: this call's gross needs, read once.
-        (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(s, user);
+        (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(user);
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
@@ -2249,12 +2249,16 @@ library LibInteractionRewards {
     /// @dev The claimant's aggregate need as the claim's OWN walk measures it
     ///      — the one shape every executability gate reads, decoded once from
     ///      the lens facet's hosting of {userArmedFreshNeedWithLegsView}
-    ///      (Codex #2276 r1: a struct, so a sixth reading did not cost the
-    ///      sweep's frame a sixth stack slot, and the gates cannot destructure
-    ///      one tuple in two orders).
+    ///      (Codex #2276 r1: a struct, so added readings do not cost the
+    ///      sweep's frame a stack slot each, and the gates cannot destructure
+    ///      one tuple in two orders). Its members are all static and in the
+    ///      ORDER of the lens's flat outputs — the lens keeps its flat shape,
+    ///      the first four words where they always were (Codex #2276 r2 P2)
+    ///      — so the decode is the tuple itself.
     struct ArmedNeed {
-        /// @dev Grouped, D1-capped armed fresh the chunk charges the live
-        ///      schedule — the claim's own number, net of the epoch-paid fresh.
+        /// @dev Grouped, D1-capped armed fresh the chunk consumes — the
+        ///      claim's own number, the FULL figure the emission cap and the
+        ///      armed commitment are charged, epoch-paid fresh included.
         uint256 armed;
         /// @dev The entry-path legacy legs by destination (both reserve).
         uint256 userLegs;
@@ -2270,6 +2274,10 @@ library LibInteractionRewards {
         /// @dev A day the walk would defer on the transport scan window — a
         ///      refusal no figure above carries.
         bool capHit;
+        /// @dev The part of `armed` the LIVE delivery must fund — net of the
+        ///      epoch-paid fresh — which the delivered bound and the backing
+        ///      rows are tested against (Codex #2276 r2 P2).
+        uint256 liveArmed;
     }
 
     function userArmedFreshNeedWithLegsView(
@@ -2303,7 +2311,7 @@ library LibInteractionRewards {
         // day (r8: the walk's first day draws the bucket even where the
         // window-capped split reads zero) — the two properties the bound was
         // kept for, without the slack.
-        (, need.armed, need.bucketRecycled, need.capHit) = LibRewardCustody.callDryRunShareOfPoolDays(
+        (, need.armed, need.liveArmed, need.bucketRecycled, need.capHit) = LibRewardCustody.callDryRunShareOfPoolDays(
             user,
             type(uint256).max,
             _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs)
@@ -2352,10 +2360,10 @@ library LibInteractionRewards {
         // Fail CLOSED on an unrouted selector (a partially-refreshed Diamond):
         // a zero need would read as "nothing required" and let an entry expire
         // while unpayable, which is the defect this gate exists to prevent.
-        // Six words since 3b-ii-A — {ArmedNeed}, whose members are all
-        // static, so it encodes as the flat tuple the lens returns; five
-        // before it, four since #1566 closure 2.
-        require(ok && ret.length == 192, "armed-need view unavailable");
+        // Seven words since 3b-ii-A — {ArmedNeed}, whose members are all
+        // static and in the lens's output order, so it decodes from the flat
+        // tuple the lens returns; four since #1566 closure 2.
+        require(ok && ret.length == 224, "armed-need view unavailable");
         need = abi.decode(ret, (ArmedNeed));
     }
 
@@ -2465,7 +2473,7 @@ library LibInteractionRewards {
         // from the full `poolRemaining()` previewed 0.8 for a claim that
         // pays 0.5, and — worse — let the armed-need figure demand
         // delivered allowance for headroom the earlier legs consume.
-        (uint256 dryTotal, , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
+        (uint256 dryTotal, , , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
             user,
             deliveredLeft,
             _userWalkFreshBudget(s, user, userTotal + treasuryLegs)
@@ -2644,6 +2652,11 @@ library LibInteractionRewards {
     ///         grouped and D1-capped exactly as the claim computes it, because
     ///         it IS the claim's computation. Summing per-entry prices instead
     ///         overstates any `(user, side, day)` group that shares a ceiling.
+    ///         The FULL figure, epoch-paid fresh included: it is what the
+    ///         claim charges the emission cap and the armed commitment for.
+    /// @return liveArmed   The part of `armedTotal` the live delivery must
+    ///         fund — net of the epoch-paid fresh — which is what the
+    ///         delivered and backing gates test (Codex #2276 r2 P2).
     /// @return bucketRecycled The chunk's draw on the recycle bucket — the
     ///         user's recycled legs net of the share the epochs pay, a day
     ///         the walk would defer INCLUDED — so a need measurement compares
@@ -2661,9 +2674,13 @@ library LibInteractionRewards {
         address user,
         uint256 deliveredCap,
         uint256 freshBudget
-    ) internal view returns (uint256 userTotal, uint256 armedTotal, uint256 bucketRecycled, bool capHit) {
+    )
+        internal
+        view
+        returns (uint256 userTotal, uint256 armedTotal, uint256 liveArmed, uint256 bucketRecycled, bool capHit)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.governorCommitArmedFromDay == 0) return (0, 0, 0, false);
+        if (s.governorCommitArmedFromDay == 0) return (0, 0, 0, 0, false);
         uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
         // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
         // across both sides and depleted per day exactly as the live walk's
@@ -2707,7 +2724,7 @@ library LibInteractionRewards {
         // two-legs-own-the-same-headroom defect it exists to prevent.
         // 3b-ii-A — the same domain pass the settle walk runs, so the
         // preview splits each day as the claim will.
-        (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(s, user);
+        (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(user);
         PoolBudget memory pool = PoolBudget({
             fresh: freshBudget,
             recycled: s.recycleBucket,
@@ -2731,6 +2748,7 @@ library LibInteractionRewards {
             }
             unchecked { ++sideIdx; }
         }
+        liveArmed = acc.liveArmed;
         bucketRecycled = acc.bucketRecycled;
         capHit = acc.capHit;
     }
@@ -2848,6 +2866,50 @@ library LibInteractionRewards {
         return (acc.fresh, acc.recycled);
     }
 
+    /// @dev Whether any day the next claim call could price for `user` has an
+    ///      epoch listed: the domain's own days, enumerated without pricing
+    ///      them — the same worklists and lowest-day rule the pass walks,
+    ///      the same `MAX_INTERACTION_CLAIM_DAYS` bound — with one
+    ///      index-length read per day. Those are the slots the walk's
+    ///      per-day short-circuit reads for every day it prices, so on a
+    ///      chain with no epochs the probe costs the enumeration and
+    ///      nothing the call would not have paid. A superset of the days the
+    ///      pass reaches (a day the pass would stop on is enumerated past),
+    ///      which only ever runs the pass where it is not needed, never
+    ///      skips it where it is. Derived from the ledger, not from a
+    ///      counter: exact over epochs that predate this release, on an
+    ///      in-place upgrade, with nothing to backfill (Codex #2276 r2 P1).
+    ///      Its own view ({RewardEpochViewFacet.getObligationDomainListsAnEpoch})
+    ///      so {userDomainNeedsView} stays a pure pricing view.
+    function chunkListsAnEpochView(address user) internal view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.governorCommitArmedFromDay == 0) return false;
+        uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        for (uint8 sideIdx; sideIdx < 2 && daysLeft != 0; ) {
+            LibVaipakam.RewardSide side = sideIdx == 0
+                ? LibVaipakam.RewardSide.Lender
+                : LibVaipakam.RewardSide.Borrower;
+            uint256[] memory work = _shareOfPoolWorklist(s, user, side, true);
+            uint256[] memory cur = new uint256[](work.length);
+            for (uint256 i; i < work.length; ) {
+                cur[i] = _shareOfPoolCursorDay(s, work[i], s.rewardEntries[work[i]]);
+                unchecked { ++i; }
+            }
+            while (daysLeft != 0) {
+                uint256 d = _dryLowestDay(s, work, cur);
+                if (d == type(uint256).max) break;
+                if (s.transportBatchesByDay[d].length != 0) return true;
+                for (uint256 i; i < work.length; ) {
+                    if (cur[i] == d) cur[i] = d + 1;
+                    unchecked { ++i; }
+                }
+                unchecked { --daysLeft; }
+            }
+            unchecked { ++sideIdx; }
+        }
+        return false;
+    }
+
     function _dryRunSideDays(
         LibVaipakam.Storage storage s,
         address user,
@@ -2917,7 +2979,11 @@ library LibInteractionRewards {
                 // only, exactly as the settle walk's does.
                 uint256 liveSpent =
                     spent - charge.transportUser.armedFresh - charge.transportTreasury.armedFresh;
-                armedTotal += liveSpent;
+                // The FULL capped figure is the armed need (the emission cap
+                // and the commitment are charged for the epoch-paid fresh
+                // too); the live-funded part is the gates' (Codex #2276 r2).
+                armedTotal += spent;
+                acc.liveArmed += liveSpent;
                 uint256 db = pool.deliveredFresh;
                 pool.deliveredFresh = db > liveSpent ? db - liveSpent : 0;
             }
@@ -3048,9 +3114,13 @@ library LibInteractionRewards {
     ///      funding lands) instead of r2's whole-sweep revert; the guarantee
     ///      is unchanged — no unbacked armed spend — enforced per day by
     ///      the bound the engine applies. A backing-bound fresh trim defers
-    ///      too (`freshRecoverable`, the same per-source rule as expiry); a
-    ///      69M-cap trim truncates terminally — a forfeit has no claimant
-    ///      whose open claim a defer would protect.
+    ///      too — since 3b-ii-A backing rides in the delivered allowance, so
+    ///      the engine sees it as a delivered shortfall and defers it by its
+    ///      own rule; `freshHeadroom` is the 69M cap alone, and a trim
+    ///      against it truncates terminally — a forfeit has no claimant
+    ///      whose open claim a defer would protect (Codex #2276 r2 P2: the
+    ///      per-batch flag that once said which bound made a folded
+    ///      headroom went stale the moment the two moved apart).
     /// @return freshCredited    Fresh that actually moves this call.
     /// @return recycledReleased Recycled commitment released this call.
     /// @return armedOwed        Armed commitment to retire (cappedOff incl.).
@@ -3059,7 +3129,6 @@ library LibInteractionRewards {
         uint256 loanId,
         uint256 freshHeadroom,
         uint256 deliveredAllowance,
-        bool freshRecoverable,
         TransportLegs memory tp
     )
         internal
@@ -3078,7 +3147,7 @@ library LibInteractionRewards {
             (uint256 f, uint256 r, uint256 o, uint256 d) =
                 _forfeitEntryChunk(
                     s, lenderId, freshHeadroom, deliveredAllowance,
-                    freshRecoverable, tp
+                    tp
                 );
             freshCredited += f; recycledReleased += r;
             armedOwed += o; armedDelivered += d;
@@ -3095,7 +3164,7 @@ library LibInteractionRewards {
             (uint256 f, uint256 r, uint256 o, uint256 d) =
                 _forfeitEntryChunk(
                     s, borrowerId, freshHeadroom, deliveredAllowance,
-                    freshRecoverable, tp
+                    tp
                 );
             freshCredited += f; recycledReleased += r;
             armedOwed += o; armedDelivered += d;
@@ -3116,7 +3185,7 @@ library LibInteractionRewards {
                 (uint256 f, uint256 r, uint256 o, uint256 d) =
                     _forfeitEntryChunk(
                         s, orphaned[i], freshHeadroom, deliveredAllowance,
-                        freshRecoverable, tp
+                        tp
                     );
                 freshCredited += f; recycledReleased += r;
                 armedOwed += o; armedDelivered += d;
@@ -3142,7 +3211,6 @@ library LibInteractionRewards {
         uint256 id,
         uint256 freshHeadroom,
         uint256 deliveredAllowance,
-        bool freshRecoverable,
         TransportLegs memory tp
     )
         private
@@ -3190,9 +3258,6 @@ library LibInteractionRewards {
                 // window still proceeds (it settles to zero harmlessly).
                 if (!pst.priced && !pst.emptyWindow) return (0, 0, 0, 0);
                 uint256 preFresh = pre.total - pre.recycled;
-                if (preFresh > freshHeadroom && freshRecoverable) {
-                    return (0, 0, 0, 0);
-                }
                 // #1566 closure 2 — what this forfeit would credit (the
                 // pool-trimmed fresh) must fit the delivered allowance, or
                 // the reward-absorption operation refuses it; decided BEFORE
@@ -3239,12 +3304,10 @@ library LibInteractionRewards {
                 tSplit.total - tSplit.recycled - tSplit.armedFresh;
             if (legacyFresh > freshHeadroom) {
                 // #1699 r19 P1 — the per-source rule, here too: a
-                // BACKING-bound shortfall DEFERS with the cursor untouched
-                // (stamping would strand the unbacked remainder forever,
-                // despite that budget refilling with the next inflow); only
-                // the monotone 69M cap terminally trims — credit what fits,
-                // write off the rest.
-                if (freshRecoverable) return (0, 0, 0, 0);
+                // The monotone 69M cap terminally trims — credit what fits,
+                // write off the rest. A BACKING-bound shortfall is the
+                // delivered allowance's (3b-ii-A) and defers just below,
+                // with the cursor untouched.
                 legacyFresh = freshHeadroom;
             }
             // #1566 closure 2 — bounded by the delivered allowance like every
@@ -3298,13 +3361,11 @@ library LibInteractionRewards {
             _drawAndFold(d, charge, tp); // 3b-ii-A — a cap-hit deferral prunes
             return (0, 0, 0, 0);
         }
-        // A BACKING-bound fresh trim defers: that budget refills with any
-        // custody inflow, so truncating on it would discard value one block
-        // of patience recovers — the per-source rule expiry applies. Only
-        // the 69M cap truncates terminally, natively via `cappedOff`.
-        if (charge.freshShortfall != 0 && freshRecoverable) {
-            return (0, 0, 0, 0);
-        }
+        // A BACKING-bound fresh trim defers inside the day primitive: that
+        // budget rides in the delivered allowance since 3b-ii-A, so the
+        // primitive reports it as a delivered shortfall and the day is
+        // deferred above. What reaches here as `freshShortfall` is the 69M
+        // cap's trim alone, which truncates terminally via `cappedOff`.
         _persistDay(s, e.user, e.side, d, set, slices);
         // 3b-ii-A — draw the transport-paid legs in the same transaction as
         // the read, and report them so the facet absorbs them from the
@@ -3410,20 +3471,21 @@ library LibInteractionRewards {
     ///        per entry let several entries in one batch each measure against
     ///        the same untouched allowance and collectively over-credit.
     ///        `type(uint256).max` off-mirror, where the bound does not apply.
-    /// @param freshRecoverable True when `freshHeadroom` is bound by the
-    ///        recycle bucket's BACKING room rather than the 69M pool cap.
-    ///        The two recover oppositely: the pool cap is monotone (a
-    ///        shortfall against it can never be funded later, so a removed
-    ///        entry truncates-and-terminates), while backing refills with any
-    ///        custody inflow (so the same shortfall DEFERS — even after
-    ///        removal — exactly as a recycled-bucket shortfall does under the
-    ///        #1351 slice 2d-0 per-source rule). Without this bit a transient
-    ///        balance dip was terminal.
+    ///        `freshHeadroom` is the 69M pool cap ALONE — monotone, so a
+    ///        shortfall against it can never be funded later and a removed
+    ///        entry truncates-and-terminates on it. The recycle bucket's
+    ///        BACKING room, which refills with any custody inflow and so
+    ///        must DEFER (the #1351 slice 2d-0 per-source rule), rides in
+    ///        `deliveredAllowance` since 3b-ii-A: the two bounds reach the
+    ///        engine separately and each shortfall is attributed to its own
+    ///        bound per day. A per-batch flag saying which bound made a
+    ///        folded headroom is therefore gone (Codex #2276 r2 P2): computed
+    ///        once, it went stale as soon as an epoch-paid entry moved the
+    ///        pool headroom without moving the backing allowance.
     function sweepExpiredEntry(
         uint256 id,
         uint256 freshHeadroom,
         uint256 deliveredAllowance,
-        bool freshRecoverable,
         TransportLegs memory tp
     )
         internal
@@ -3594,7 +3656,7 @@ library LibInteractionRewards {
             // fresh, capped at the pool exactly as the claim truncates it) —
             // a legacy-only claimant no longer reads executable on `armed == 0`
             // while their claim reverts, which would run their expiry clock.
-            uint256 freshNeed = _cappedFreshNeed(need.armed + need.legacyFresh);
+            uint256 freshNeed = _cappedFreshNeed(need.liveArmed + need.legacyFresh);
             bool deliveredPayable = freshNeed == 0
                 || freshNeed <= deliveredFreshBound(s);
             // 3b-ii-A — a chunk the walk would defer on the transport scan
@@ -3941,15 +4003,13 @@ library LibInteractionRewards {
         // shape, which the ratified per-source rule (#1351 slice 2d-0)
         // DEFERS. Truncating on it let a permissionless sweep timed to a
         // momentary balance dip destroy a removed entry's remainder that one
-        // block of patience recovered in full. So a removed entry truncates
-        // only when the pool cap alone is binding (`!freshRecoverable`);
-        // while backing binds, the day defers and retries — the entry stays
-        // removed (its claim closed at the removal point), only the
-        // settlement waits.
-        if (
-            charge.freshShortfall != 0
-                && (!e.expiryBegun || freshRecoverable)
-        ) {
+        // block of patience recovered in full. Since 3b-ii-A backing rides in
+        // the delivered allowance, so the day primitive defers a backing
+        // shortfall itself (above, as delivered-caused) and `freshShortfall`
+        // is the 69M cap's trim alone: a removed entry truncates on it, a
+        // live one is blocked from observation (Codex #2276 r2 P2 retired
+        // the per-batch flag that used to say which bound was binding).
+        if (charge.freshShortfall != 0 && !e.expiryBegun) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0, 0);
         }
@@ -4145,7 +4205,7 @@ library LibInteractionRewards {
         // (design row 13): a predicate narrower than what `_deliverReward`
         // spends would disagree with the claim, and the expiry clock is the
         // one that runs silently.
-        uint256 freshNeed = _cappedFreshNeed(need.armed + need.legacyFresh);
+        uint256 freshNeed = _cappedFreshNeed(need.liveArmed + need.legacyFresh);
         if (freshNeed != 0 && freshNeed > deliveredFreshBound(s)) {
             return false;
         }
@@ -4175,7 +4235,7 @@ library LibInteractionRewards {
     ) private view returns (bool) {
         if (LibRewardCustody.active(s)) {
             uint256 freshTotal =
-                _userFreshTotalCapped(s, user, need.armed, need.userLegs, need.treasuryLegs);
+                _userFreshTotalCapped(s, user, need.liveArmed, need.userLegs, need.treasuryLegs);
             return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh] >= freshTotal
                 && s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled] >= need.bucketRecycled;
         }
@@ -4343,7 +4403,7 @@ library LibInteractionRewards {
         // construction, so the cap is a NO-OP whenever the walk is budgeted and
         // binds only where the window/legacy portion alone exceeds headroom.
         uint256 freshTotal =
-            _userFreshTotalCapped(s, user, need.armed, need.userLegs, need.treasuryLegs);
+            _userFreshTotalCapped(s, user, need.liveArmed, need.userLegs, need.treasuryLegs);
 
         // ONE predicate, no forfeit branch. Forfeit value enters as
         // `treasuryLegs` — a TERM, not a second formula with its own
@@ -5999,6 +6059,11 @@ library LibInteractionRewards {
         uint256 recycled;
         uint256 bucketRecycled;
         bool capHit;
+        /// @dev The armed fresh the LIVE delivery must fund — `armedTotal`
+        ///      net of the epoch-paid fresh — for the delivered and backing
+        ///      gates; `armedTotal` itself stays the full capped figure the
+        ///      public armed need reports (Codex #2276 r2 P2).
+        uint256 liveArmed;
     }
 
     /// @dev Per-claim walk state, threaded by reference through both side

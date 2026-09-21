@@ -455,9 +455,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         (`arrivedAt == 0` is an UNRECORDED hash — never a recorded
     ///         packet with nothing to reconcile; Codex #2206 r4), what it
     ///         put into the row, what it still holds there, its exits by
-    ///         kind, and its authenticated fresh figure (the bound on its
-    ///         fresh side). Identity: `unclassified + classifiedFresh +
-    ///         classifiedRecycled + disposed == protectedCumulative`.
+    ///         kind, its authenticated fresh figure (the bound on its
+    ///         fresh side), and what the day draws have spent of it (3b-ii-A,
+    ///         appended). Identity: `unclassified + classifiedFresh +
+    ///         classifiedRecycled + disposed + drawn == protectedCumulative`.
     function getPacketReconciliation(
         bytes32 packetHash
     )
@@ -470,7 +471,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             uint256 classifiedFresh,
             uint256 classifiedRecycled,
             uint256 disposed,
-            uint256 freshAuthenticated
+            uint256 freshAuthenticated,
+            uint256 drawn
         )
     {
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
@@ -481,7 +483,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             p.classifiedFresh,
             p.classifiedRecycled,
             p.disposed,
-            LibRewardCustody.authenticatedFresh(p)
+            LibRewardCustody.authenticatedFresh(p),
+            p.drawn
         );
     }
 

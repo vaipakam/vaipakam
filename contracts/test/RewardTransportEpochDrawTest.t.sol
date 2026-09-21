@@ -8,6 +8,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -17,6 +18,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
@@ -82,6 +84,10 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     function _epoch() internal view returns (RewardEpochFacet) {
         return RewardEpochFacet(address(diamond));
+    }
+
+    function _epochView() internal view returns (RewardEpochViewFacet) {
+        return RewardEpochViewFacet(address(diamond));
     }
 
     function _ingress() internal view returns (RewardIngressFacet) {
@@ -487,7 +493,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _entry(1, 2);
         _mut().setArmedFreshLedgerRaw(0, 0);
         _mut().userClaimFundingNeedRaw(alice);
-        (uint256 needF, uint256 needR) = _epoch().getObligationDomainNeeds(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
         assertGt(needR, 0, "fixture: a recycled leg");
         _liveOf(needF, _one(1), 1, keccak256("live"));
         bytes32 h = _epochOf(needR, _one(1), 2, keccak256("e"));
@@ -529,7 +535,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         uint256 id = _entry(1, 2);
         _mut().setArmedFreshLedgerRaw(0, 0);
         _mut().userClaimFundingNeedRaw(alice);
-        (uint256 needF, uint256 needR) = _epoch().getObligationDomainNeeds(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
         assertGt(needR, 0, "fixture: a recycled leg");
         assertEq(_cfg().getRecycleBucket(), 0, "fixture: the bucket is empty");
         _liveOf(needF, _one(1), 1, keccak256("live"));
@@ -577,14 +583,49 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     /// @dev The draws need no migration on an in-place upgrade (Codex #2276
     ///      r1 P1): with the appended admission counter forced to zero over a
     ///      ledger that holds an epoch, the day still draws from it.
-    function test_TheDraw_NeedsNoCounter_OnAnUpgradedLedger() public {
+    function test_TheDomainPass_IsOnlyRunWhereAListedDayIsInReach() public {
         _scene(NEED);
-        bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("e1"));
-        _mut().setTransportBatchesAdmittedRaw(0);
-        assertEq(_claim(), NEED, "drawn with the counter at zero");
-        (uint256 lf, ) = _legs(h);
-        assertEq(lf, NEED);
-        assertEq(_mut().getArmedFreshPaidRaw(), 0, "the ledger untouched");
+        RewardEpochViewFacet v = _epochView();
+        assertFalse(v.getObligationDomainListsAnEpoch(alice), "no listed day: the day is the domain");
+        (uint256 f, uint256 r) = v.getObligationDomainNeeds(alice);
+        assertEq(f + r, NEED, "the needs view prices regardless");
+        // An epoch listing a day OUTSIDE the chunk changes nothing.
+        _epochOf(1e18, _one(40), 1, keccak256("far"));
+        assertFalse(v.getObligationDomainListsAnEpoch(alice), "a day this call cannot price does not count");
+        // One listing the chunk's day switches the pass on — read from the
+        // ledger, nothing else (no counter, nothing to backfill).
+        _epochOf(1e18, _one(1), 2, keccak256("near"));
+        assertTrue(v.getObligationDomainListsAnEpoch(alice), "a listed day in reach");
+    }
+
+    /// @dev The public armed need is the FULL capped figure — what the claim
+    ///      charges the emission cap and the commitment — epoch-paid fresh
+    ///      included; the live-funded part is reported beside it (Codex #2276
+    ///      r2 P2).
+    function test_ThePublicArmedNeed_CountsTheEpochPaidFresh() public {
+        _scene(NEED);
+        (uint256 needF, ) = _epochView().getObligationDomainNeeds(alice);
+        assertGt(needF, 0, "fixture: a fresh leg");
+        _epochOf(10e18, _one(1), 1, keccak256("e"));
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        assertEq(lens.getUserArmedFreshNeed(alice), needF, "the requirement counts the epoch-paid fresh");
+        (uint256 armed, , , , , , uint256 liveArmed) = lens.getUserArmedFreshNeedWithLegs(alice);
+        assertEq(armed, needF, "same figure, flat shape");
+        assertEq(liveArmed, 0, "and the live delivery must fund none of it");
+    }
+
+    /// @dev A draw records its exit on the PACKET too, so the packet's own
+    ///      identity holds after it (Codex #2274 r8 P1).
+    function test_ADraw_KeepsThePacketIdentity() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("e"));
+        assertEq(_claim(), NEED);
+        (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, , uint256 drawn) =
+            RewardReconciliationFacet(address(diamond)).getPacketReconciliation(h);
+        assertEq(drawn, NEED, "the draw is the packet's exit");
+        assertEq(unclassified + cf + cr + disposed + drawn, protectedIn, "packet identity after a draw");
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf + lr, drawn, "and equals the epoch's two legs");
     }
 
     /// @dev The order is the ledger's, not the indexer's (Codex #2276 r1 P1):
@@ -679,7 +720,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
         // Discover the fixture's per-day split under unbounded funding first,
         // so the assertions below are about the RULE and not about pricing.
-        (uint256 needF, uint256 needR) = _epoch().getObligationDomainNeeds(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
         assertEq(needF + needR, 2 * cap, "fixture: two capped days");
         assertGt(needR, 0, "fixture: the days carry a recycled leg");
         uint256 dayR = needR / 2;

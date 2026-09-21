@@ -7553,16 +7553,6 @@ library LibVaipakam {
         mapping(uint256 => bytes32[]) transportBatchesByDay;
         mapping(uint256 => uint256) transportDayCursor;
         mapping(bytes32 => TransportRemainder) transportRemainders;
-        /// @dev #1566 transport epochs PR 3b-ii-A — how many transport epochs
-        ///      this chain has ever admitted. The draw's global SHORT-CIRCUIT:
-        ///      a chain that never received an old-wire delivery has no epoch
-        ///      any day could draw from, and the day primitive that reads a
-        ///      day's coverage is on every claim's and sweep's hot path on
-        ///      every chain — so the read costs one storage load here, and
-        ///      nothing else, until the legacy lane actually delivers. Never
-        ///      decremented: an admitted epoch stays one through its close-out.
-        ///      APPENDED at the end of the struct, as every field must be.
-        uint256 transportBatchesAdmitted;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7671,7 +7661,8 @@ library LibVaipakam {
         ///      component (the total is derived, never kept alone — design
         ///      §5c); `disposed` its NON-classification exits (the R4 return).
         ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
-        ///      + disposed == protectedCumulative`. `freshAuthenticated` is
+        ///      + disposed + drawn == protectedCumulative` (`drawn` is the
+        ///      3b-ii-A field appended below). `freshAuthenticated` is
         ///      the EVIDENCE bounding the packet's fresh side (design §5c: a
         ///      fresh share requires authenticated source evidence; absent
         ///      it, value classifies recycled or stays): what the source
@@ -7765,6 +7756,13 @@ library LibVaipakam {
         ///      `authenticatedFresh`, and `RewardReconciliationFacet` has
         ///      under 2 KB of EIP-170 headroom left.
         bytes32 batchId;
+        /// @dev #1566 transport epochs PR 3b-ii-A, appended — what the day
+        ///      draws have spent of this packet's untyped remainder on
+        ///      obligations: the packet-level EXIT a draw records beside its
+        ///      step-down of `unclassified`, so the packet's own identity
+        ///      holds after every draw exactly as its epoch's does (Codex
+        ///      #2274 r8 P1). Equals the epoch's two consumed legs together.
+        uint256 drawn;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one

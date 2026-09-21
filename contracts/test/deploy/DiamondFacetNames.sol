@@ -69,7 +69,7 @@ abstract contract DiamondFacetNames {
     ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
     ///      of EIP-170 headroom — far less than one cross-facet call, the
     ///      same condition as #1780 at 30 and #1835 at 164).
-    function cutFacetNames() internal pure returns (string[81] memory) {
+    function cutFacetNames() internal pure returns (string[82] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -162,6 +162,8 @@ abstract contract DiamondFacetNames {
             "RewardIngressFacet",
             // #1566 transport epochs PR 3b — the transport epochs' ledger.
             "RewardEpochFacet",
+            // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads.
+            "RewardEpochViewFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

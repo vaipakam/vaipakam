@@ -101,7 +101,6 @@ contract RewardHorizonSweepFacet is
         // boundary entry is partially credited, then the rest defer.
         uint256 paidOut = s.interactionPoolPaidOut;
         uint256 headroom;
-        bool freshRecoverable;
         uint256 backingCap;
         {
         // Block-scoped so `reserved` and `backingRoom` die before the loop —
@@ -129,23 +128,21 @@ contract RewardHorizonSweepFacet is
         // case cannot reach the helper's own revert — this function's
         // {VPFITokenNotSet} guard has already rejected it.
         uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
-        // Pre-merge adversarial review (2026-08-17) P1 — remember WHICH bound
-        // is binding, because the two have opposite recovery semantics. The
-        // pool-cap room is MONOTONE (only ever shrinks; waiting on it
-        // livelocks), but the backing room is a HELD-BALANCE constraint that
-        // recovers with any custody inflow — the recycled-bucket shape, not
-        // the 69M shape. Folding both into one number made the settlement
-        // attribute a transient backing dip to `freshShortfall`, the quantity
-        // the post-removal rule truncates PERMANENTLY: a keeper (or griefer)
-        // timing a sweep to a momentary balance dip destroyed value that one
-        // block of patience recovered in full. The min still caps what a
-        // chunk may CREDIT (a `credit` past backing would revert and poison
-        // the batch); `freshRecoverable` tells the settlement to DEFER, not
-        // terminate, when the binding bound is the one that refills.
-        // Depletion keeps the comparison exact: both candidate ceilings
-        // shrink by the same `freshCredited`, so the batch-start minimum
-        // stays the minimum throughout the loop.
-        freshRecoverable = backingRoom < headroom;
+        // Pre-merge adversarial review (2026-08-17) P1 — the two bounds have
+        // opposite recovery semantics: the pool-cap room is MONOTONE (only
+        // ever shrinks; waiting on it livelocks), the backing room is a
+        // HELD-BALANCE constraint that recovers with any custody inflow.
+        // Folding both into one number once made the settlement attribute a
+        // transient backing dip to `freshShortfall`, the quantity the
+        // post-removal rule truncates PERMANENTLY. They are therefore carried
+        // to the engine SEPARATELY — the pool cap as `headroom`, backing
+        // inside the delivered allowance below — and the engine attributes
+        // each day's shortfall to its own bound. The per-batch flag that used
+        // to say which bound made a folded minimum is gone (Codex #2276 r2
+        // P2): computed once at batch start, it went stale as soon as an
+        // epoch-paid entry depleted `headroom` without touching the backing
+        // allowance, and a later pool-trimmed removed entry deferred on a
+        // bound that cannot recover.
         // 3b-ii-A — backing bounds the LIVE-paid fresh only, so it rides the
         // delivered term below rather than the pool budget: an epoch-paid
         // expiry is backed by the epoch's own custody and must be able to
@@ -181,7 +178,7 @@ contract RewardHorizonSweepFacet is
                 /* armedDelivered — the engine's per-day attribution; the
                    allowance depletes by the fresh credited (#1566 closure 2) */
             ) = LibInteractionRewards.sweepExpiredEntry(
-                entryIds[i], headroom, allowance, freshRecoverable, tp
+                entryIds[i], headroom, allowance, tp
             );
             headroom -= freshCredited;
             // #1566 closure 2 — the allowance depletes by the FRESH credited,

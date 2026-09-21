@@ -1630,12 +1630,6 @@ contract TestMutatorFacet {
     /// @notice Set the per-loan active lender entry pointer so a test can then
     ///         drive {callTransferLenderEntry} (production sets it in
     ///         {LibInteractionRewards.registerLoan} at loan init).
-    /// @dev 3b-ii-A — the upgrade case: a ledger that already holds epochs
-    ///      while the appended admission counter reads zero.
-    function setTransportBatchesAdmittedRaw(uint256 n) external {
-        LibVaipakam.storageSlot().transportBatchesAdmitted = n;
-    }
-
     function setLoanActiveLenderEntryId(uint256 loanId, uint256 entryId) external {
         LibVaipakam.storageSlot().loanActiveLenderEntryId[loanId] = entryId;
     }

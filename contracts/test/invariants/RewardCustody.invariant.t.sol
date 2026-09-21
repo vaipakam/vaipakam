@@ -158,14 +158,16 @@ contract RewardCustodyInvariant is SetupTest {
     /// #1566 closure 2 cutover PR 2 — every packet's identity holds under
     /// every interleaving of protection, classification, reclassification
     /// and the other flows: `unclassified + classifiedFresh +
-    /// classifiedRecycled + disposed == protectedCumulative`.
+    /// classifiedRecycled + disposed + drawn == protectedCumulative` (the
+    /// `drawn` exit is 3b-ii-A's; this handler never draws, so the term is
+    /// zero here and the draw suite's identity cell is where it is exercised).
     function invariant_PacketIdentityHolds() public view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
-            (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
+            (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, , uint256 drawn) =
                 recon.getPacketReconciliation(handler.packetAt(i));
-            assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
+            assertEq(unclassified + cf + cr + disposed + drawn, protectedIn, "packet identity");
         }
     }
 
@@ -432,7 +434,7 @@ contract RewardCustodyInvariant is SetupTest {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         handler.untypedIngress(7);
         bytes32 h = handler.packetAt(0);
-        (, , uint256 remainder, , , , ) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, , , , , ) = recon.getPacketReconciliation(h);
         // The whole remainder evidenced, so whichever way the handler splits
         // its entry, one direction of a later correction is always open.
         TestMutatorFacet(address(diamond)).setPacketFreshAuthenticatedRaw(h, remainder);
@@ -638,7 +640,7 @@ contract RewardCustodyHandler is Test {
         if (packetHashes.length == 0) return;
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
-        (, , uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated, ) = recon.getPacketReconciliation(h);
         if (remainder == 0) return;
         if (authenticated == 0) {
             authenticated = bound(uint256(keccak256(abi.encode(seed, "evidence"))), 0, remainder + cf + cr);

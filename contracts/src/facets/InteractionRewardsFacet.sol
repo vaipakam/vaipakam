@@ -89,7 +89,6 @@ contract InteractionRewardsFacet is
         // truncates only against the monotone 69M cap.
         uint256 paidOut = s.interactionPoolPaidOut;
         uint256 headroom;
-        bool freshRecoverable;
         uint256 backingCap;
         {
             uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
@@ -97,7 +96,10 @@ contract InteractionRewardsFacet is
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
                 : 0;
             uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
-            freshRecoverable = backingRoom < headroom;
+            // The two bounds reach the engine separately (the pool cap as
+            // `headroom`, backing in the delivered allowance), so no per-batch
+            // flag says which is binding — see the expiry sweep's note
+            // (Codex #2276 r2 P2).
             // 3b-ii-A — backing bounds the LIVE-paid fresh only, so it rides
             // the delivered term below rather than the pool budget: an
             // epoch-paid forfeit is backed by the epoch's own custody and
@@ -127,7 +129,7 @@ contract InteractionRewardsFacet is
                with the fresh share that actually moves, so this facet has no
                use for it */
         ) = LibInteractionRewards.sweepForfeitedByLoanId(
-            loanId, headroom, allowance, freshRecoverable, tp
+            loanId, headroom, allowance, tp
         );
         // r18 P2 — NO unconditional exhaustion revert: a zero-liability
         // forfeit (dust cap, zero-flooring days) must still retire at pool

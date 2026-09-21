@@ -89,13 +89,18 @@ next attempt sees a fresh window. Anyone may run that cursor maintenance
 for a day at any time. The follow-up release adds the staging that lets a
 day wider than one window make progress; until then such a day waits,
 with its value protected in its epochs. A day no epoch lists costs one
-storage read and no call, on every chain — which also means the draws are
-right from the first block of an in-place upgrade, with no migration of
-the ledger that already holds epochs. (One refinement of the split — the
-domain rule above — keys on a counter this release adds, so on an
-upgraded chain it activates with the first delivery admitted afterwards;
-until then that chain splits by the day's own shortfalls and fresh first,
-and no draw is affected.)
+storage read and no call, on every chain, and the domain rule's own pass
+first reads, without pricing anything, whether any day the call could
+price has an epoch listed — the same reads the pricing makes — so both
+are decided from the ledger itself: the draws and the split are right
+from the first block of an in-place upgrade over a ledger that already
+holds epochs, with nothing to count and nothing to migrate. Every draw is
+also recorded on the delivery's own packet as an exit, so the packet's
+identity — what it put in equals its untyped remainder plus every exit —
+holds after each draw as the epoch's conservation identity does. The
+claimant's armed-need reading keeps its shape; it counts the epoch-paid
+fresh in the requirement it reports and says, beside it, how much of that
+the live delivery must fund.
 
 The preview a claimant sees simulates the draws it predicts: within one
 preview, an epoch listing two days is not counted for both, so the figure
