@@ -214,16 +214,41 @@ because step 3 below is the part of it that had to be re-learned.
       > that exists before it meets the OLD, anchored guard and is
       > rejected: *"apps/indexer/wrangler.jsonc has no complete `DB` d1
       > binding … there is nothing to check against."* Verified against
-      > `6c0c0125a`. So the barrier commit contains BOTH the config strip
-      > and the guard rewrite, minus the `SUCCESSOR` generator entry,
-      > which names a file that branch does not have. Verified in a
-      > worktree cut from `main`:
+      > `6c0c0125a`. So the barrier commit contains the config strip, the
+      > guard rewrite, **and the two modules the rewritten guard imports**
+      > — `apps/indexer/scripts/lib/d1-workers.mjs` and
+      > `apps/indexer/scripts/lib/cutover-databases.mjs`, neither of which
+      > exists on `main` — minus the `SUCCESSOR` entry in
+      > `COMMAND_GENERATORS`.
+      >
+      > **Three files, not two, and the third is not optional** (#2267
+      > r41). An earlier version of this recipe said "the config strip and
+      > the guard rewrite, minus the `SUCCESSOR` generator entry, which
+      > names a file that branch does not have". That was right when the
+      > guard's only use of the pinned pair was through that entry; it
+      > stopped being right at r39, when the ops-separation check began
+      > importing `SUCCESSOR` and `PREDECESSOR` directly. Dropping the
+      > entry no longer drops the dependency — following the two-file
+      > recipe gets `ERR_MODULE_NOT_FOUND` from a guard that cannot even
+      > start, inside the window, with the writers already held.
+      >
+      > The entry itself still comes out, for its original reason and not
+      > that one: it would compare `SUCCESSOR.name` — `vaipakam-warm` —
+      > against the name the barrier tree actually agrees on, which is
+      > still `vaipakam-archive`. Hence one generator constant below
+      > rather than two.
+      >
+      > Re-verified in a worktree cut from `origin/main` with exactly
+      > those three files applied and the three writers' `d1_databases`
+      > removed:
       >
       > ```
       > CUTOVER BARRIER — all 3 writers declare no D1 binding
       > OK — vaipakam-archive agreed by 1 of 4 bindings (writers held),
-      >      43 `wrangler d1` command(s), 1 generator constant(s)   exit 0
-      > check-keep-vars / migration-prefixes / table-classification   OK
+      >      43 `wrangler d1` command(s), 1 generator constant(s),
+      >      1 Worker verified separate                            exit 0
+      > check-keep-vars / migration-prefixes / table-classification /
+      > event-coverage                                             OK
       > ```
       >
       > The cutover PR then carries the same guard rewrite, so expect to

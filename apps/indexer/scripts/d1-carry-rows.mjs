@@ -314,14 +314,54 @@ async function shapeOf(dbId, table) {
   // `notifications.dedup_key` is one — and an `ON CONFLICT (pk)` clause
   // does not cover that, so the insert fails with a raw constraint error
   // instead of the tool recognising a logical row that is already there.
+  //
+  // A UNIQUENESS THIS TOOL CANNOT REPRODUCE IS NAMED, NOT SIMPLIFIED
+  // (#2267 r41). `PRAGMA index_info` answers with bare column names,
+  // which quietly discards three things that change what the index
+  // actually rejects:
+  //
+  //   - a COLLATION. `UNIQUE(name COLLATE NOCASE)` makes `ALICE` and
+  //     `alice` the same row to the destination and different rows to a
+  //     comparison over raw values, so a row would be reported as
+  //     plainly missing and then rejected on insert.
+  //   - a PARTIAL predicate. `UNIQUE(x) WHERE archived = 0` constrains
+  //     only some rows, so treating it as total invents collisions that
+  //     the destination would not raise — the inverse error.
+  //   - an EXPRESSION term. `UNIQUE(lower(email))` has no column name at
+  //     all, and the old filter dropped those terms and kept the rest,
+  //     which is worse than dropping the index: a two-term index became
+  //     a one-term index and reported collisions on the wrong tuple.
+  //
+  // `index_xinfo` gives the collation per term and `index_list` gives
+  // `partial`, both verified against the live D1, so this is a reading
+  // rather than a parse of the declaration. Anything outside what the
+  // tuple comparison can honestly reproduce is returned with a reason
+  // and reported by the caller.
   const uniques = [];
+  const unsupportedUniques = [];
   for (const idx of await query(dbId, `PRAGMA index_list("${table}")`)) {
     if (idx.unique !== 1) continue;
-    const parts = await query(dbId, `PRAGMA index_info("${idx.name}")`);
-    const columns = [...parts]
-      .sort((a, b) => a.seqno - b.seqno)
-      .map((c) => c.name)
-      .filter((n) => typeof n === 'string');
+    const parts = await query(dbId, `PRAGMA index_xinfo("${idx.name}")`);
+    // `key: 0` rows are the rowid/auxiliary terms every index carries,
+    // not part of the constraint.
+    const terms = [...parts].filter((c) => c.key === 1).sort((a, b) => a.seqno - b.seqno);
+    const why =
+      idx.partial === 1
+        ? 'it is a PARTIAL index, so it constrains only some rows'
+        : terms.some((c) => typeof c.name !== 'string')
+          ? 'it indexes an EXPRESSION, which has no column to compare'
+          : terms.some((c) => typeof c.coll === 'string' && c.coll.toUpperCase() !== 'BINARY')
+            ? `it uses collation(s) ` +
+              `${[...new Set(terms.map((c) => c.coll))].join(', ')}, under ` +
+              `which values this tool would read as different are the same row`
+            : null;
+    const columns = terms.map((c) => c.name).filter((n) => typeof n === 'string');
+    if (why !== null) {
+      // A primary key reproduced elsewhere is already how rows are
+      // matched, so an unusable duplicate of it is not a loss.
+      if (columns.join() !== key.join()) unsupportedUniques.push({ name: idx.name, why });
+      continue;
+    }
     if (columns.length === 0) continue;
     if (columns.join() === key.join()) continue;
     uniques.push({
@@ -343,7 +383,7 @@ async function shapeOf(dbId, table) {
   // because it is not semantic; nothing else is. Anything the two sides
   // declare differently shows up, including things nobody thought of.
   const ddl = await declarationOf(dbId, table);
-  return { cols, key, uniques, ddl };
+  return { cols, key, uniques, unsupportedUniques, ddl };
 }
 
 /**
@@ -1311,11 +1351,18 @@ export function classifyForReconcile({
             table,
             key: safeKey(table, key, k),
             kind: 'already present under a different key',
+            // THE OTHER KEY IS A KEY TOO (#2267 r41). It was interpolated
+            // raw while this finding's own key went through `safeKey`,
+            // which is the same defect the redaction exists to prevent,
+            // one field along: `telegram_links` is keyed by the live
+            // handshake code, so a collision there printed a working
+            // credential into output that gets pasted into run logs.
             detail:
               `the destination holds a row with the same ${clash.u.columns.join(
                 '+',
-              )} under key ${clash.u.byValue.get(clash.t)} — the same ` +
-              `logical row reached both sides and was numbered differently`,
+              )} under key ${safeKey(table, key, clash.u.byValue.get(clash.t))} — ` +
+              `the same logical row reached both sides and was numbered ` +
+              `differently`,
           });
           break;
         }
@@ -1502,7 +1549,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   }
 
   for (const table of tables) {
-    const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
+    const { cols, key, uniques, unsupportedUniques, ddl } = await shapeOf(src.id, table);
     assertRedactionsApply(table, cols);
     // A TABLE THE DESTINATION NO LONGER HAS STILL HAS A QUESTION TO
     // ANSWER, and refusing it threw the question away (#2267 r40).
@@ -1658,6 +1705,20 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       heldShape ? heldShape.uniques : uniques,
       cols,
     );
+    // Uniqueness the tuple comparison cannot honestly reproduce —
+    // collated, partial or over an expression. Named rather than
+    // silently simplified, on whichever side judges the insert.
+    const unsupported = heldShape ? heldShape.unsupportedUniques : unsupportedUniques;
+    if (unsupported.length > 0) {
+      driftNotes.push({
+        table,
+        detail:
+          `the destination declares uniqueness this run cannot check — ` +
+          unsupported.map((u) => `"${u.name}" (${u.why})`).join('; ') +
+          `. A row reported as missing here may still be rejected, or ` +
+          `accepted, by a rule this comparison does not reproduce`,
+      });
+    }
     if (unevaluable.length > 0) {
       driftNotes.push({
         table,
@@ -1701,6 +1762,23 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     }
     const sourceKeys = new Set(rows.map((r) => keyOf(r, key)));
     const heldKeys = new Set(held.map((r) => keyOf(r, key)));
+
+    // TWO DESTINATION ROWS UNDER ONE SOURCE KEY IS NOT SOMETHING TO
+    // OVERWRITE QUIETLY (#2267 r41). Destination rows are indexed by the
+    // SOURCE's key so the two sides can be matched at all. If a
+    // post-cutover migration re-keyed the table and left the old columns
+    // without a uniqueness constraint, that mapping is no longer a
+    // function: building it with a Map keeps whichever row came last,
+    // and the run then reports agreement about a row while another row
+    // with the same source identity sits beside it, unexamined.
+    //
+    // Proven by OBSERVATION rather than by comparing declared keys. The
+    // declaration changing is not the problem — values staying unique
+    // under the old key is perfectly possible, and refusing on the
+    // declaration alone would stop the weekly run permanently at a
+    // migration that broke nothing.
+    const duplicateHeldKeys = held.length - heldKeys.size;
+    const heldByKey = new Map(held.map((r) => [keyOf(r, key), r]));
 
     // What this carry saw, for the manifest a later reconciliation reads.
     const seen = {};
@@ -1820,6 +1898,23 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // happened is that a migration dropped the table. So the table is
     // reported ONCE, with counts, and the counts are what an operator
     // needs to decide whether anything was lost (#2267 r40).
+    if (duplicateHeldKeys > 0) {
+      plan.push({
+        table,
+        key,
+        cols,
+        refused:
+          `${duplicateHeldKeys} destination row(s) share a key with ` +
+          `another under the source's key (${key.join(', ')}), so that ` +
+          `key no longer identifies a single row there.\n      Every ` +
+          `comparison this tool makes matches rows by it, so anything ` +
+          `said about this table would be about whichever duplicate was ` +
+          `read last. A re-keying migration that leaves the old columns ` +
+          `non-unique is a migration decision, not something to resolve ` +
+          `by picking one`,
+      });
+      continue;
+    }
     const { insert, conflicts } = destTableGone
       ? classifyAgainstManifestOnly({ table, cols: hashCols, key, rows, wasSeen })
       : onlyMissing
@@ -1831,7 +1926,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           key,
           rows,
           sourceKeys,
-          heldByKey: new Map(held.map((r) => [keyOf(r, key), r])),
+          heldByKey: heldByKey,
           wasSeen,
           // THE UNIQUENESS THAT WOULD ACTUALLY JUDGE THE INSERT IS THE
           // DESTINATION'S (#2267 r39). The source's list is the right one
