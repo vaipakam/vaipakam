@@ -34,16 +34,26 @@ and deleted again after the move leaves every table's content identical while
 the counter has moved on, so content alone can never establish that nothing
 happened.
 
-A record is also refused outright if the database moves while it is being read.
-Reading a database table by table takes time, and a record assembled across a
-database that is still changing describes no moment that ever existed — it would
-hold one table as it was at the start and another as it was at the end. So
-everything it reads is read twice and has to agree: the set of tables, each
-table's contents, the counters that hand out new identifiers, and the shape of
-each table, which is checked both before its rows are read and again afterwards.
-A column added and filled in between those two readings would otherwise leave
-the contents looking identical, because the new column is simply not in what was
+A record is also refused if it catches the database moving while it is being
+read. Reading a database table by table takes time, and a record assembled
+across a database that is still changing describes no moment that ever existed —
+it would hold one table as it was at the start and another as it was at the end.
+So everything is read twice and has to agree: the set of tables, each table's
+contents, the counters that hand out new identifiers, and the shape of each
+table, which is checked both before its rows are read and again afterwards. A
+column added and filled in between those two readings would otherwise leave the
+contents looking identical, because the new column is simply not in what was
 read.
+
+**That is change detection, not a single instant's photograph of the whole
+database, and the difference is worth stating plainly.** There is no way here to
+freeze everything at one moment, so a change confined to a table that has
+already been read twice — made while later tables are still being read — would
+not be caught. What the checks do cover is broad: anything touching the table
+set, any table's shape, the identifier counters, or any table not yet finished
+is seen, and the interval spans the whole read. But the procedure's real
+protection is that it is run against a database nothing is writing to. These
+checks exist to catch that precondition having failed, not to stand in for it.
 
 The same care applies to the figures recorded at the time of the move, which may
 be several runs' worth of output. Two runs that disagree are not a later reading

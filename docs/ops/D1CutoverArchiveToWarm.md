@@ -500,6 +500,19 @@ because step 3 below is the part of it that had to be re-learned.
       > `seq <table> <n>` high-water marks, and the `seq-listing complete`
       > line that says the sequence listing is whole.
       >
+      > **PASTE THE RULE-AND-COUNT LINE TOO** — the
+      > `————…  1384  (43 tables)` line that closes the digest block
+      > (#2281 r8). It looks like formatting and is not: it is how a
+      > reading says it enumerated the whole table set, and it is what
+      > lets `cover` treat a table missing from one recorded run and
+      > present in another as proof the database gained a table in
+      > between. Strip it and the digests still compare — the table-set
+      > check simply stops applying, with nothing to show that it did.
+      > The same holds for `seq-listing complete` on the sequence side.
+      > If the count and the number of digest lines disagree, `cover`
+      > says so and refuses rather than reading a part-pasted block as a
+      > complete reading.
+      >
       > **Rows alone cannot cover an interval.** A straggler that inserts
       > an AUTOINCREMENT row after the mirror and deletes it again leaves
       > every row digest and count identical while the high-water mark
