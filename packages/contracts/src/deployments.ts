@@ -92,6 +92,8 @@ export interface DeploymentFacets {
   rewardReconciliationFacet?: HexAddress;
   /** #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet. */
   rewardIngressFacet?: HexAddress;
+  /** #1566 transport epochs PR 3b — the transport epochs' ledger. */
+  rewardEpochFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

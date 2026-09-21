@@ -156,6 +156,12 @@ recoverable back-pressure — not a fund-loss event.
    covering the CCIP fee (overpay is refunded). Size `perRemittanceCap` **and**
    the `dayIds` batch so the total stays under the live reward-budget CCIP lane
    bucket — early-schedule days are large; use `quoteRewardBudget` to confirm.
+   **A remittance also funds at most 32 days** (`TRANSPORT_DAY_FANOUT_CAP`):
+   the send refuses a list that would fund more, and so does
+   `quoteRemittanceFee`, the strict dry run. `quoteRewardBudget` stays
+   tolerant for discovery — count its non-zero per-day entries to see how many
+   days a list would fund, and chunk at 32. All three read one plan, so a
+   figure the budget quote shows per day is the slice the send would fund.
 2. Sends are **idempotent at the source**: if the Base tx itself reverts
    (e.g. it never reached `sendMessage`), the `(chain, day)` marks roll back with
    it, so re-running the batch remits fresh. If some days in the batch were

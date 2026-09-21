@@ -874,3 +874,137 @@ cost, and folding it into a correction fix would have made it silently.
 Recorded because the temptation, twice now, has been to resolve the asymmetry
 by restating the retracted claim — that the scan self-corrects — and thereby
 closing the whole entry. It does not, and the retraction above stands.
+
+## The transport epochs: two divergences the 3b-i ledger resolved (#2232)
+
+Both were found during Codex review of #2232 and both are **RESOLVED in code**
+— recorded here because the audit file is where a reader later checks whether
+a spec sentence was changed to match an implementation, and the first of these
+looks exactly like that and is not.
+
+### 1. The day index's order — a contradiction INSIDE the design, not code drift
+
+| Intent, as the design states it | What the code did | Resolution |
+| --- | --- | --- |
+| A day's batch index is read oldest-first, so a preparer's "oldest on ties" default has an order to use. | Membership is written by `materializeTransportBatchPage`, which is permissionless and asynchronous, so a batch's POSITION in a day's list recorded only which caller got there first. | Position now carries no order and **the order is data**: each entry is returned with its own packet's immutable `arrivedAt`. |
+
+This is the case the file's standing rule is least able to handle on its own.
+`Vpfi1566CanonicalDeliveredBoundDesign.md` asked for an ordering that its OWN
+compact-admission requirement makes unbuildable on-chain: admission is compact
+because a transport payload is immutable and a receive-side refusal would
+refuse the same message on every re-execution, so the membership must be
+written afterwards by whoever supplies the committed list — and that is a
+property of caller timing, not of arrival.
+
+So the divergence was **document-internal**, and resolving it did not weaken
+the spec toward the code. The intent — *a preparer can order deliveries by
+when they arrived* — is now met more directly than the original wording asked
+for, since `arrivedAt` is the delivery's own stamp rather than a proxy for it.
+The alternative considered and rejected was serializing materialization behind
+a global frontier, which would make position carry arrival at the cost of a
+strictly worse failure: one batch whose list nobody re-supplies would stall
+every other batch's indexing indefinitely.
+
+**No human intent-decision is required for this one**, and that is the point
+of recording it: a later reader who finds the ordering sentence rewritten
+should find this entry rather than assume the spec was bent.
+
+### 2. The 3a-to-3b window — spec promised an index nothing could provide
+
+| Intent, as the spec states it | Where the code fell short | Resolution |
+| --- | --- | --- |
+| Design §5c records a day-list commitment on every arrival on a wire older than d6 *precisely so* "a packet landing between 3a and 3b carries authenticated membership 3b can index". | 3b-i reached `admitTransportBatch` only from the ingress. For the whole 3a-to-3b window those packets held untyped value with no epoch bounding it, their committed list was refused as an unknown batch, and their zero `batchId` made classification skip the gate entirely. | `RewardEpochFacet.admitLegacyTransportBatch` — permissionless, every figure read from the packet's own record. |
+
+A straightforward spec-said / code-didn't, resolved in the direction the rule
+requires: the code moved to meet the spec.
+
+**One residue is intrinsic and is stated rather than hidden.** A d5 delivery
+short enough that BOTH stated components floored to zero is indistinguishable,
+from the record alone, from a delivery that stated nothing. It is admitted —
+binding it to the days its own delivery named is a stricter gate on the same
+money, never a second claim on it. Recorded in the entry's NatSpec, in
+`TokenomicsTechSpec.md`, and in the design note.
+
+**A second-order defect this entry's fix introduced, its resolution, and the
+justification that resolution later outlived.** The admission originally took
+only the packet hash. It sets `p.batchId`, and at the time that CLOSED the
+classification gate on a packet ungated until that moment, while the only route
+back through the gate (`materializeTransportBatchPage`) proves the day list
+against the packet's commitment — so anyone could close a gate only a holder of
+the committed list could reopen, on the oldest deliveries, whose list survives
+only in long-past event data this programme has an open blocker on reading
+(#2095). The admission takes the committed list and proves it. The list is not
+stored; admission stays compact.
+
+**That symmetry argument is now retired and must not be repeated** (Codex #2232
+r5/r7). Once `rolloutAdmissionStatus` became the classification gate's rule as
+well, an owed packet is gated by its own SHAPE from the moment it lands, so the
+admission closes nothing. The requirement stays for the reason that does hold:
+it is the one call that fixes an immutable anchor over the protected row, and an
+anchor bounding a membership nobody can exhibit describes a set nobody can
+enumerate. The retired reason is recorded rather than deleted because it stood
+in seven places at once, and a reader who remembers it should find this note
+instead of concluding the docs were merely behind.
+
+### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
+
+> **DECIDED — owner, 2026-09-20 (recorded on #2258): Reading B, with the
+> conservative remedy.** The release entries stay in the surface but refuse
+> every caller in 3b-i (`TransportReleaseNotYetAvailable`), so no epoch-backed
+> packet can be classified before 3b-ii tracks obligations per day and the
+> design's refusal becomes a check the chain can perform. The library
+> implementation of the release is kept and tested through a test-only raw
+> entry. #2258 stays open as the tracker for 3b-ii's obligation check. What
+> follows is the record of the divergence as it stood when the decision was
+> asked for.
+
+**This one needs a human intent-decision**, unlike entry 1. It is recorded
+here rather than resolved because the two readings below lead to materially
+different products, and picking one by myself would be resolving a fund
+guarantee by preference.
+
+| Intent, as the design states it | Where the code stands | Status |
+| --- | --- | --- |
+| "The cutover's classification entry **refuses a packet whose batch still lists an outstanding obligation** and admits it once the remainder is parked with its acknowledgment" (design §5c). And: any remainder goes to the pending position "after the currently-known targeted obligations terminate". | 3b-i refuses classification unless the batch is released, and nothing tests whether a listed day still carries an unsettled obligation. Parking is permissionless; the acknowledgment is the administrator's. | **Open — owner decision.** Raised by Codex on #2232 r6. |
+
+**The fact that decides which remedy is even possible.** There is no per-day
+outstanding-obligation figure in 3b-i's state to test. Obligations live per
+ENTRY (`rewardEntries`, keyed by entry id); `DayPoolStamp` carries a day's
+schedule floor, recycled budget and finalize-time figures, and
+`dayClosedByRemitId` marks a day FUNDED by a remittance, which is not the same
+claim as "every obligation on this day has terminated". Answering the design's
+question for a batch's listed days therefore means walking entries — the
+unbounded work the design itself defers to 3b-ii's staging and reference
+tracking. So "add the check" is not available to 3b-i at any price; only the
+two options below are.
+
+**Reading A — the acknowledgment IS the check, performed by a person.** §5c
+calls the acknowledgment "a deliberate operator disposition carrying a recorded
+acknowledgment" and says the lane "cannot prove a per-target closure", so
+choosing to stop waiting is an owner decision with its consequence written
+down (later obligations for those days are refused to the extent they looked to
+that batch). On this reading the code already implements the rule, with a human
+supplying the judgement the chain cannot, and the divergence is that the design
+ALSO describes it as an automatic refusal in a second passage.
+
+**Reading B — the machine check is load-bearing and its absence is a defect.**
+Until 3b-ii there is no way for a listed day's obligation to draw from an
+epoch. So an operator who acknowledges early, and a classification that follows,
+move the delivery's value out of the membership-bound holding and into the
+general live/recycled backing any day can draw. Nothing is lost from the
+holder and no obligation becomes unpayable — but the earmark that is the whole
+purpose of the epoch is gone, and it cannot be reinstated.
+
+**Recommendation, if the decision falls to whoever reads this first:** Reading B,
+and the conservative remedy — withhold classification of epoch-backed packets
+until 3b-ii lands the tracking, by not shipping the release entries in 3b-i.
+The cost is narrow: such a packet's value simply stays protected and visible in
+`Unclassified`, which is where it already is, and becomes classifiable when the
+machinery that lets its days draw exists. The cost of the other direction is an
+earmark that cannot be restored once spent. That is the direction §5c takes
+everywhere else it is forced to choose.
+
+**Do not resolve this by rewriting the design to match the code.** The rule in
+`CLAUDE.md` applies with full force here: the design states the stricter of the
+two behaviours, and softening it to "the operator decides" would retire a fund
+guarantee by edit.

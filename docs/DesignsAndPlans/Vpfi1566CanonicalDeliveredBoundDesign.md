@@ -2675,7 +2675,11 @@ revision unimplementable:
      forced to traverse that whole history exceeds the gas limit,
      permanently blocking the obligation and its era's terminalization
      behind backing that exists. Each day keeps an arrival-ordered batch
-     index and a consumption cursor; allocation resumes at the cursor,
+     index and a consumption cursor — **"arrival-ordered" here is this
+     plan's original wording and was NOT built that way; see correction (a)
+     in the 3b-i landed note, which keeps the array a membership set and
+     returns arrival as data. Do not read cursor position as oldest-first.**
+     Allocation resumes at the cursor,
      and **exhausting a WITHIN-CAP batch updates EVERY member day's index
      in that act — the atomic rule holds ONLY under the ingress fan-out
      cap; an admitted OVERSIZE packet takes the resumable `RETIRING`
@@ -6762,9 +6766,135 @@ old-wire packet exists on a refreshed chain until the legacy lane delivers
 one) and exercised, until PR C unfreezes role changes, by old-wire packets
 on the live era alone.
 
+> **SPLIT INTO 3b-i AND 3b-ii, on measured size evidence this plan did not
+> have.** Scouting 3b before writing it measured the EIP-170 headroom of
+> every facet the allocation pass must reach: `InteractionRewardsLensFacet`
+> 1,318 bytes, `InteractionRewardsFacet` 1,734, `RewardClaimFacet` 1,870,
+> `RewardReconciliationFacet` 1,969, `RewardHorizonSweepFacet` 2,804. An
+> `internal` library function is inlined into every contract that reaches
+> it, so writing the pass as a library grows all of them at once, and the
+> pass is larger than the reconciliation walks that forced #2206's facet
+> split. The pass is therefore HOSTED on its own facet (`RewardEpochFacet`)
+> with each consumer carrying only the call. Deciding that seam per consumer
+> instead would meet the limit five separate times and turn the remedy into
+> a patch per path — the failure mode the owner's re-scout rule exists to
+> stop, and the one #1780, #1835 and #2206 each paid for.
+>
+> The split falls at the EVIDENCE/SPEND seam, so each half is whole:
+>
+> - **3b-i — the epoch ledger** (LANDED): the untyped per-packet balance,
+>   the per-day MEMBERSHIP SET and cursor — each entry carrying its packet's
+>   own immutable `arrivedAt` as DATA, never as its position; see correction
+>   (a) below, which this summary restated the rejected wording of until
+>   Codex #2232 r14. A 3b-ii implementer must not read cursor position as
+>   oldest-first: `materializeTransportBatchPage` appends in caller-controlled
+>   materialization order. Then the dispatch fan-out cap,
+>   the compact admission and its paged materialization, the batch-keyed
+>   parked remainder and its acknowledgment (the LIBRARY of both; the facet entries refuse every caller until 3b-ii — owner decision #2258), the batch gate on
+>   classification, and the REAL bodies for 3a's two seams —
+>   `packetBatchReleased` reading the batch's released flag and
+>   `transportConsumedFresh` reading its fresh leg counter, which answers a
+>   real zero until 3b-ii writes one. `RewardEpochFacet` is created here, so
+>   3b-ii adds the pass to an existing facet rather than paying the
+>   registration cost alongside the harder change.
+>   ONE thing 3b-i had to add that this plan does not name: the wire's own
+>   fact must TRAVEL to the ingress (`splitTyped`, supplied by the receiver
+>   and appended to `onRewardBudgetReceived`). At ingress depth a d5 delivery
+>   whose components BOTH FLOORED TO ZERO and a legacy one that transmitted
+>   nothing arrive as the same two zeros — not a wholly recycled d5 delivery,
+>   which is unambiguous at `recycledShare == amount` (corrected Codex #2232
+>   r12) — so inferring the accounting path is
+>   exactly the one-delivery-spendable-twice error §5c forbids. The receiver
+>   and the Diamond must be refreshed together for it; the full refresh
+>   carries both, and a mirror on an older receiver fails closed (the
+>   transport records the failure; an operator re-executes the message by hand
+>   after the upgrade — CCIP does not redeliver it, per `CcipMessenger`'s own
+>   header and the cutover runbook. Corrected Codex #2232 r14).
+>
+>   TWO corrections this plan's own wording invited, both found in review
+>   (Codex #2232 r3) and both recorded here rather than edited into the
+>   paragraphs above, which stand as written.
+>
+>   **(a) "the per-day ARRIVAL-ORDERED index" describes a representation the
+>   implementation cannot deliver, and does not need.** Materialization is
+>   permissionless and asynchronous by design — the commitment is the
+>   authority, not the caller — so which batch reaches a day's array first is
+>   decided by caller timing. Making POSITION carry arrival would require
+>   serializing every batch's indexing behind one global frontier, whose jam
+>   (one batch whose committed list nobody re-supplies stalls the index for
+>   every other batch) is a worse failure than the thing it fixes. What
+>   arrival order is actually FOR here is this section's own preparer default
+>   — fewest-remaining-member-days-first, *oldest on ties* — and the chain
+>   never allocates by position in any case: §5c has the preparer compute the
+>   assignment off-chain and the chain verify VALIDITY, precisely because "no
+>   local greedy survives overlapping memberships". So 3b-i keeps the array as
+>   a MEMBERSHIP SET and makes the order DATA: each entry is returned with its
+>   packet's own `arrivedAt`, written once by the ingress that received it and
+>   immutable. That key is also the only one correct for (b), which an append
+>   order could never be.
+>
+>   **(b) the 3a-to-3b ROLLOUT POPULATION needed an admission, and this plan
+>   implies one without naming it.** §5c records a day-list commitment on
+>   every pre-d6 arrival "so a packet landing between 3a and 3b carries
+>   authenticated membership 3b can index" — but 3b-i's only admission is the
+>   ingress's, so those packets held untyped value with no epoch bounding it,
+>   had their committed list refused as an unknown batch, and skipped the
+>   classification gate entirely on a zero `batchId`. `admitLegacyTransportBatch`
+>   is that entry: permissionless, with every figure read from the packet's
+>   own record. One ambiguity is intrinsic and is resolved conservatively —
+>   at ingress the wire's fact is TOLD to the Diamond, while a recorded
+>   packet carries no such statement, so a d5 delivery short enough to floor
+>   BOTH components away is admitted where the live ingress would not. That
+>   direction binds the value to the days its own delivery named, a stricter
+>   gate on the same funds and never a second claim on them; the opposite
+>   default would leave genuine old-wire value permanently ungated.
+>
+>   **Corrected at review r5: that entry is the LIVENESS half, and alone it
+>   does not close the gate.** The paragraph above treats
+>   `admitLegacyTransportBatch` as the whole remedy for the rollout
+>   population. It is not, because the entry is permissionless and therefore
+>   OPTIONAL: nothing obliges anyone to call it, so a rollout packet rests at
+>   `batchId == 0` indefinitely and the gate — which tested that field — kept
+>   exempting exactly the population the entry exists to rescue, for however
+>   long nobody acted. The ambiguity that made this hard to see is that a zero
+>   `batchId` answers two different questions with one value: "is this packet
+>   owed an epoch" and "has one been opened".
+>
+>   So the gate asks the PACKET, not the ledger. Whether an epoch is owed is
+>   decided by the packet's own recorded shape — a 3a day-list commitment, an
+>   untyped wire record, something still protected-and-unclassified — which the
+>   ingress writes and which depends on nobody acting. One predicate
+>   (`rolloutAdmissionStatus`), read by this admission and by the
+>   classification gate alike, so the two can never disagree about which
+>   packets are in scope. `batchId` reverts to what it always should have been:
+>   the STATE of an epoch, never the test for whether one is owed.
+>
+>   The residue is stated rather than implied: a packet owed an epoch whose
+>   committed day list cannot be EXHIBITED is no longer classifiable. Nothing
+>   is lost — the value stays protected in `Unclassified`, where it already is
+>   — but it stays there until the list is produced. That is §5c's own position
+>   (the commitment is the authority) applied consistently, and it is the
+>   conservative direction; the alternative is classifying value while the days
+>   the delivery named can still draw on it.
+> - **3b-ii — the uncontested draws**: the deterministic per-day allocation
+>   pass, the `transportPaid / eraPaid / livePaid` split at rows 1, 5, 13 and
+>   settlement, staging with references and deadlines and priority mode, the
+>   dispositions and batch-bound replacement funding, the leg counters as
+>   written quantities, the `eraBalance(era)` term, and the refusal of a
+>   CONTESTED allocation until 3c.
+>
+> Row 13 does NOT run the pass, and the row-13 entry in §5d's matrix already
+> says so: the predicate is a view and cannot run the bounded scan, so
+> discovery is a separate permissionless stateful PREPARATION operation and
+> the predicate reads an O(1) staged result. Read "run identically by rows
+> 1/5/13 and settlement" below as the same allocation RULE applied to each
+> caller's figures, not the same scan executed four times.
+
 - One UNTYPED balance per old-wire packet, bounded by `actualReceived`,
   the listed `dayIds` as its membership filter; the per-day arrival-ordered
-  batch index and consumption cursor; the `dayIds` fan-out cap enforced at
+  batch index and consumption cursor (same caveat as §5c — "arrival-ordered"
+  is this plan's wording, superseded by correction (a) in the 3b-i landed
+  note: a membership set, with arrival returned as data); the `dayIds` fan-out cap enforced at
   dispatch — **and the compact admission for an old-wire packet whose list
   exceeds it** (review r1: a packet dispatched before the cap existed
   stays transport-executable, so 3b can neither index it by writing every

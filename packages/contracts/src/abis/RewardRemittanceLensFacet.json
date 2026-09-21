@@ -382,6 +382,11 @@
             "name": "attested",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "batchId",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }

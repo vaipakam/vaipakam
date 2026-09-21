@@ -60,6 +60,126 @@ const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
  * completes. Matches the commitment pass's backscan horizon.
  */
 const ARMED_BACKSCAN_DAYS = 90;
+/**
+ * Codex #2232 r4 — the per-remittance DAY-COUNT bound, mirroring
+ * `LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP`.
+ *
+ * The destination retires an old-wire delivery's day list in one go, so the
+ * send and its fee quote both refuse a batch naming more days than that. This
+ * is a SECOND, independent ceiling beside `laneCap`: the lane cap bounds the
+ * VPFI a batch moves, and says nothing about how many days it spans. Those
+ * come apart in exactly the situation that matters — a keeper outage or a
+ * run of delayed commitment reports leaves many days owed, each carrying a
+ * small slice, so the whole window fits comfortably under the monetary cap
+ * while naming far more than 32 days. Before this bound the keeper built that
+ * batch every tick, `quoteRemittanceFee` reverted before anything was sent,
+ * and the next tick rebuilt the identical batch: a mirror unfunded
+ * indefinitely, with no figure in the ledger to show it and nothing draining
+ * the backlog.
+ *
+ * Days beyond the cap are DEFERRED, not dropped — they are counted into the
+ * same `deferred` total the lane cap's overflow feeds, so the coverage signal
+ * reports the mirror as not settled and the next tick takes the next 32.
+ *
+ * It bounds FUNDED days only (Codex #2232 r5). The send and its quote trim the
+ * payload to the days that actually carry VPFI and apply the bound to that
+ * count, so a close-only day never reaches the destination list and is free of
+ * this cap exactly as it is free of `laneCap`.
+ *
+ * `rewardBudgetRemitFanoutCap.test.ts` pins BOTH halves against the contract
+ * source: the figure against `TRANSPORT_DAY_FANOUT_CAP`, and the population
+ * against the argument every `requireRemittableFanout` call site passes. The
+ * figure alone would not have caught this — the first revision had the right
+ * number and the wrong subject.
+ */
+const TRANSPORT_DAY_FANOUT_CAP = 32;
+
+/**
+ * The batch a tick sends, and what it leaves behind.
+ *
+ * EXPORTED AND PURE (Codex #2232 r4). It was an inline loop inside the pass,
+ * which meant the only way to test the rule was to restate it in the test —
+ * and a restated rule is the drift this programme keeps paying for. The pass
+ * calls this; the suite calls this; there is one rule.
+ *
+ * @param window    The planned day ids, in the order they are offered.
+ * @param perDay    Each day's VPFI slice, positionally.
+ * @param closeable Whether a zero-slice day can still be closed.
+ * @param laneCap   The per-send VPFI ceiling.
+ * @param deferredIn Days already known to be owed (dropped while replanning).
+ */
+export function planRemitBatch(
+  window: readonly bigint[],
+  perDay: readonly bigint[],
+  closeable: readonly boolean[],
+  laneCap: bigint,
+  deferredIn = 0,
+): { batch: bigint[]; total: bigint; deferred: number } {
+  // Greedily batch the un-remitted days, keeping the total under the lane
+  // cap. Close-only days (closeable, zero amount) ride along for free.
+  const batch: bigint[] = [];
+  let total = 0n;
+  // Days that are ACTIONABLE but did not make this tick's batch. This is the
+  // discriminator the coverage signal turns on, and getting it wrong has now
+  // gone both ways: r19 treated an empty batch as always-unsettled, which made
+  // the steady state (every day already remitted, so every entry comes back
+  // amount=0 / closeable=false) report 0/A forever and put the stand-down
+  // permanently out of reach. An empty batch is settled ONLY when nothing was
+  // left behind (Codex #1924 r20).
+  let deferred = deferredIn;
+  // FUNDED days in the batch, which is the population the destination bound
+  // counts — NOT `batch.length` (Codex #2232 r5). The send and its quote both
+  // trim the payload to the funded days and call `requireRemittableFanout` on
+  // that count, so a close-only day never reaches the destination list and
+  // never occupies a place in it.
+  //
+  // Counting the whole batch was wrong twice over. It refused batches the
+  // chain would have accepted; and because the cap was checked before the
+  // close-only branch, a plan with more than 32 closeable zero-slice days
+  // filled the cap with free riders and then left every later day behind —
+  // dropping close-only ones silently, since the deferral count only ever
+  // counts positive slices. `remitToMirror` would then have reported the
+  // mirror settled with days still open and their commitments unretired,
+  // which is the stand-down signal reading a truncation as completeness.
+  //
+  // The error was inferring the cap's subject from the list this function
+  // builds instead of reading which population the contract counts. The test
+  // pins that subject now, not only the figure.
+  let fundedInBatch = 0;
+  for (let i = 0; i < window.length; i++) {
+    const slice = perDay[i] ?? 0n;
+    if (slice === 0n) {
+      // Zero-amount and not closeable = nothing to do for this day. Already
+      // remitted, or otherwise not eligible; NOT a deferral. Closeable ones
+      // ride along free of BOTH caps: they move no VPFI and reach no
+      // destination list.
+      if (closeable[i]) batch.push(window[i]);
+      continue;
+    }
+    if (slice > laneCap) {
+      deferred += 1; // appeared oversized on the final pass
+      continue;
+    }
+    if (fundedInBatch >= TRANSPORT_DAY_FANOUT_CAP || total + slice > laneCap) {
+      // A cap is reached — the destination's day fan-out, or the lane's VPFI
+      // ceiling. Either way this day and EVERY later actionable one wait for a
+      // later tick. Counting only this one would under-report (r20).
+      //
+      // Reached only on a FUNDED day, so `deferred` is always at least one
+      // here and the tick reports the mirror unsettled. That is what stops a
+      // truncated plan from being read as a complete one.
+      for (let k = i; k < window.length; k++) {
+        const rest = perDay[k] ?? 0n;
+        if (rest > 0n) deferred += 1;
+      }
+      break;
+    }
+    batch.push(window[i]);
+    total += slice;
+    fundedInBatch += 1;
+  }
+  return { batch, total, deferred };
+}
 
 function readNumber(env: Env, key: string, fallback: number): number {
   const raw = (env as unknown as Record<string, string | undefined>)[key];
@@ -282,42 +402,7 @@ async function remitToMirror(
     return false;
   }
 
-  // Greedily batch the un-remitted days, keeping the total under the lane
-  // cap. Close-only days (closeable, zero amount) ride along for free.
-  const batch: bigint[] = [];
-  let total = 0n;
-  // Days that are ACTIONABLE but did not make this tick's batch. This is the
-  // discriminator the coverage signal turns on, and getting it wrong has now
-  // gone both ways: r19 treated an empty batch as always-unsettled, which made
-  // the steady state (every day already remitted, so every entry comes back
-  // amount=0 / closeable=false) report 0/A forever and put the stand-down
-  // permanently out of reach. An empty batch is settled ONLY when nothing was
-  // left behind (Codex #1924 r20).
-  let deferred = droppedInReplan;
-  for (let i = 0; i < planWindow.length; i++) {
-    const slice = perDay[i] ?? 0n;
-    if (slice === 0n) {
-      // Zero-amount and not closeable = nothing to do for this day. Already
-      // remitted, or otherwise not eligible; NOT a deferral.
-      if (closeable[i]) batch.push(planWindow[i]);
-      continue;
-    }
-    if (slice > laneCap) {
-      deferred += 1; // appeared oversized on the final pass
-      continue;
-    }
-    if (total + slice > laneCap) {
-      // Cap reached: this day and EVERY later actionable one wait for a
-      // later tick. Counting only this one would under-report (r20).
-      for (let k = i; k < planWindow.length; k++) {
-        const rest = perDay[k] ?? 0n;
-        if (rest > 0n) deferred += 1;
-      }
-      break;
-    }
-    batch.push(planWindow[i]);
-    total += slice;
-  }
+  const { batch, total, deferred } = planRemitBatch(planWindow, perDay, closeable, laneCap, droppedInReplan);
   // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
   // returns exactly that both for a day already remitted AND for one that is
   // still owed but gated — an armed day awaiting its commitment report, or a
@@ -471,9 +556,10 @@ async function remitToMirror(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );
   if (deferred > 0) {
-    // The send succeeded, but only for a PREFIX of the plan — the cap cut the
-    // rest, and those finalized obligations are still unfunded. A successful
-    // tx is not the same as a settled destination (Codex #1924 r20).
+    // The send succeeded, but only for a PREFIX of the plan — a cap cut the
+    // rest (the lane's VPFI ceiling, or the destination's day fan-out), and
+    // those finalized obligations are still unfunded. A successful tx is not
+    // the same as a settled destination (Codex #1924 r20).
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} partial: ${deferred} actionable day(s) deferred to a later tick`,
     );

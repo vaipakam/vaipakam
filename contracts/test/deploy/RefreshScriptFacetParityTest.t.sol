@@ -87,13 +87,28 @@ contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function retired() external pure returns (bytes4[] memory) {
         return _retiredSelectors();
     }
-    /// #1566 transport epochs PR 3a — expose the hoist so the ordering
-    /// guarantee it provides can be asserted rather than trusted.
-    function hoist(Item[] memory items, string memory key) external pure returns (Item[] memory) {
-        _hoistFirst(items, key);
-        return items;
+    /// #1566 transport epochs PR 3b — expose the group hoist and the group
+    /// itself so the atomicity guarantee they provide can be asserted rather
+    /// than trusted.
+    function hoistGroup(Item[] memory items, string[] memory keys)
+        external
+        pure
+        returns (Item[] memory, uint256)
+    {
+        uint256 n = _hoistGroupFirst(items, keys);
+        return (items, n);
     }
 
+    function atomicGroup() external pure returns (string[] memory) {
+        return _atomicCutGroup();
+    }
+
+    /// The budget is `internal constant` on the script; surfaced here rather
+    /// than widened there, so the test reads the same figure `refresh()` does
+    /// without changing the script's API.
+    function selectorBudget() external pure returns (uint256) {
+        return SELECTOR_BUDGET;
+    }
 }
 
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
@@ -124,42 +139,110 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
         );
     }
 
-    /// @notice #1566 transport epochs PR 3a (Codex #2224 r5) — the refresh
-    ///         cuts the MIRROR-SIDE INGRESS first, because the value-bearing
-    ///         receive entries skip the Diamond pause on purpose: a delivery
-    ///         arriving mid-refresh must not execute the old implementation
-    ///         and record a packet with no day-list commitment. The run hoists
-    ///         it; this pins that the hoist finds the key, puts it at the
-    ///         front, and loses nothing.
-    function test_Hoist_PutsTheIngressFacetInTheFirstCut() public {
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the ATOMIC CUT
+    ///         GROUP's MEMBERSHIP, pinned.
+    ///
+    /// @dev    The rule the script states: a facet belongs to the group when
+    ///         its replacement changes how the transport-epoch ledger is
+    ///         written or read, such that running it against another member's
+    ///         previous bytecode would make two surfaces disagree about one
+    ///         amount. Three review rounds each found a different instance of
+    ///         that one defect and each was answered by hoisting one more name,
+    ///         which is why the list is now a declared set with a test on it
+    ///         rather than a sequence of remembered special cases.
+    ///
+    ///         Pinned by exact content, not by `length >= 3`: the failure this
+    ///         guards is a member being DROPPED or RENAMED, which a loose
+    ///         assertion would pass. A deliberate change to the lifecycle's
+    ///         membership updates this list and says why in the PR.
+    function test_AtomicCutGroup_MembershipIsPinned() public {
+        string[] memory keys = new RefreshItemsProbe().atomicGroup();
+        assertEq(keys.length, 3, "the transport-epoch lifecycle has three participants");
+        assertEq(keys[0], "rewardIngressFacet", "the ingress OPENS an epoch");
+        assertEq(keys[1], "rewardReconciliationFacet", "classifyLegacyPacket SPENDS from it");
+        assertEq(keys[2], "rewardEpochFacet", "and the epoch facet carries the lifecycle between");
+    }
+
+    /// @notice The group is hoisted WHOLE and to the FRONT, and the hoist
+    ///         loses nothing.
+    /// @dev    The contiguity is the load-bearing part: `refresh()` records the
+    ///         batch boundary at `i + 1 == groupLen`, so a hoist that left a
+    ///         member behind would put the boundary in the wrong place and cut
+    ///         a partial group as the first transaction — the mixed-version
+    ///         window, reopened by the very machinery meant to close it.
+    function test_AtomicCutGroup_IsHoistedWholeAndContiguous() public {
         RefreshItemsProbe probe = new RefreshItemsProbe();
         RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
+        string[] memory keys = probe.atomicGroup();
         uint256 before = items.length;
-        bytes32 headKey = keccak256(bytes(items[0].key));
-        RefreshAllFacetsInPlace.Item[] memory hoisted = probe.hoist(items, "rewardIngressFacet");
+
+        (RefreshAllFacetsInPlace.Item[] memory hoisted, uint256 groupLen) =
+            probe.hoistGroup(items, keys);
+
         assertEq(hoisted.length, before, "nothing added or dropped");
-        assertEq(
-            keccak256(bytes(hoisted[0].key)),
-            keccak256(bytes("rewardIngressFacet")),
-            "the ingress is cut first"
-        );
-        uint256 seenOldHead;
-        uint256 seenIngress;
-        for (uint256 i; i < hoisted.length; ++i) {
-            if (keccak256(bytes(hoisted[i].key)) == headKey) ++seenOldHead;
-            if (keccak256(bytes(hoisted[i].key)) == keccak256(bytes("rewardIngressFacet"))) ++seenIngress;
+        assertEq(groupLen, keys.length, "every member was placed");
+        for (uint256 k; k < keys.length; ++k) {
+            assertEq(hoisted[k].key, keys[k], "the group leads, in order");
         }
-        assertEq(seenOldHead, 1, "the displaced item is still there, exactly once");
-        assertEq(seenIngress, 1, "and the hoisted one is not duplicated");
+        // No member appears twice, and nothing else was lost: every key in the
+        // hoisted array occurs exactly as often as it did before.
+        for (uint256 k; k < keys.length; ++k) {
+            uint256 seen;
+            for (uint256 i; i < hoisted.length; ++i) {
+                if (keccak256(bytes(hoisted[i].key)) == keccak256(bytes(keys[k]))) ++seen;
+            }
+            assertEq(seen, 1, "a group member appears exactly once");
+        }
     }
 
     /// @notice A rename must not silently leave the order unchanged and
-    ///         reopen the window the hoist exists to close.
-    function test_Hoist_RevertsOnAnUnknownKey() public {
+    ///         reopen the window the group exists to close.
+    function test_AtomicCutGroup_RevertsOnAnUnknownKey() public {
         RefreshItemsProbe probe = new RefreshItemsProbe();
         RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
-        vm.expectRevert(bytes("RefreshAllFacetsInPlace: _hoistFirst key not found"));
-        probe.hoist(items, "rewardIngressFacetRenamed");
+        string[] memory keys = new string[](1);
+        keys[0] = "rewardIngressFacetRenamed";
+        vm.expectRevert(bytes("RefreshAllFacetsInPlace: atomic cut group key not found"));
+        probe.hoistGroup(items, keys);
+    }
+
+    /// @notice A DUPLICATE key is refused, because it would swap a member back
+    ///         out of the group it had just been placed in and leave `groupLen`
+    ///         reporting a group larger than the one actually built — the
+    ///         boundary then falls past the group's end and the first
+    ///         transaction carries an unrelated facet.
+    function test_AtomicCutGroup_RevertsOnADuplicateKey() public {
+        RefreshItemsProbe probe = new RefreshItemsProbe();
+        RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
+        string[] memory keys = new string[](2);
+        keys[0] = "rewardIngressFacet";
+        keys[1] = "rewardIngressFacet";
+        vm.expectRevert(bytes("RefreshAllFacetsInPlace: duplicate atomic cut group key"));
+        probe.hoistGroup(items, keys);
+    }
+
+    /// @notice The whole group fits in ONE diamondCut transaction.
+    /// @dev    `refresh()` requires this at run time; asserting it here means
+    ///         a group that outgrows the budget fails a test rather than a
+    ///         live refresh. Growth is the realistic way it breaks: the group
+    ///         holds `rewardReconciliationFacet`, whose surface has grown in
+    ///         several PRs of this programme.
+    function test_AtomicCutGroup_FitsOneSelectorBudget() public {
+        RefreshItemsProbe probe = new RefreshItemsProbe();
+        RefreshAllFacetsInPlace.Item[] memory items = probe.deployItemsForTest();
+        string[] memory keys = probe.atomicGroup();
+        (RefreshAllFacetsInPlace.Item[] memory hoisted, uint256 groupLen) =
+            probe.hoistGroup(items, keys);
+
+        uint256 total;
+        for (uint256 i; i < groupLen; ++i) total += hoisted[i].selectors.length;
+        assertLe(
+            total,
+            probe.selectorBudget(),
+            "the atomic cut group no longer fits one transaction - it cannot be "
+            "split without reopening the mixed-version window, so raise "
+            "SELECTOR_BUDGET or move a surface off a group member"
+        );
     }
 
     /// @notice Every slot `_deployItems()` allocates must actually be FILLED.
