@@ -585,7 +585,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         );
         if (!ok) {
             if (res.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     revert(add(res, 0x20), mload(res))
                 }
             }
@@ -698,7 +698,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         );
         if (!ok) {
             if (res.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     revert(add(res, 0x20), mload(res))
                 }
             }

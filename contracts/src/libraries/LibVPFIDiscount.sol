@@ -275,7 +275,7 @@ library LibVPFIDiscount {
             // testnet — any revert IS a real bug) or a non-selector
             // revert raced through unconfigured paths. Bubble in
             // both cases.
-            assembly {
+            assembly ("memory-safe") {
                 revert(add(32, returnData), mload(returnData))
             }
         }
@@ -327,7 +327,7 @@ library LibVPFIDiscount {
             ) {
                 return;
             }
-            assembly {
+            assembly ("memory-safe") {
                 revert(add(32, returnData), mload(returnData))
             }
         }

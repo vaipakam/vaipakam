@@ -60,7 +60,7 @@ abstract contract GuardianPausable is
         pure
         returns (GuardianStorage storage $)
     {
-        assembly {
+        assembly ("memory-safe") {
             $.slot := GUARDIAN_STORAGE_LOCATION
         }
     }

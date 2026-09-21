@@ -278,7 +278,7 @@ library LibKeeperReward {
         returns (uint256 bal)
     {
         bytes memory data = abi.encodeWithSelector(IERC20.balanceOf.selector, who);
-        assembly {
+        assembly ("memory-safe") {
             // staticcall with returnSize=32 — caps the copy
             // regardless of the callee's actual returndatasize().
             // Write the (at most 32 bytes) return to scratch slot 0.
@@ -306,7 +306,7 @@ library LibKeeperReward {
         returns (bool ok)
     {
         bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
-        assembly {
+        assembly ("memory-safe") {
             ok := call(
                 gas(),
                 token,

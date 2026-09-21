@@ -75,7 +75,7 @@ library LibPausable {
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
-        assembly {
+        assembly ("memory-safe") {
             ps.slot := position
         }
     }

@@ -112,7 +112,7 @@ library LibAccessControl {
 
     function _storage() private pure returns (AccessControlStorage storage acs) {
         bytes32 position = ACCESS_CONTROL_STORAGE_POSITION;
-        assembly {
+        assembly ("memory-safe") {
             acs.slot := position
         }
     }

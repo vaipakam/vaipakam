@@ -31,7 +31,7 @@ library LibRevert {
         if (returnData.length == 0) {
             revert CrossFacetCallFailed(context);
         }
-        assembly {
+        assembly ("memory-safe") {
             revert(add(returnData, 0x20), mload(returnData))
         }
     }
@@ -52,13 +52,13 @@ library LibRevert {
     ) internal pure {
         if (success) return;
         if (returnData.length == 0) {
-            assembly {
+            assembly ("memory-safe") {
                 let ptr := mload(0x40)
                 mstore(ptr, fallbackSelector)
                 revert(ptr, 0x04)
             }
         }
-        assembly {
+        assembly ("memory-safe") {
             revert(add(returnData, 0x20), mload(returnData))
         }
     }

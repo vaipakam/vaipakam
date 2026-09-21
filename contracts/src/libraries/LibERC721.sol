@@ -155,7 +155,7 @@ library LibERC721 {
 
     function _storage() internal pure returns (ERC721Storage storage es) {
         bytes32 position = ERC721_STORAGE_POSITION;
-        assembly {
+        assembly ("memory-safe") {
             es.slot := position
         }
     }
@@ -509,7 +509,7 @@ library LibERC721 {
                 if (reason.length == 0) {
                     revert ERC721InvalidReceiver(to);
                 } else {
-                    assembly {
+                    assembly ("memory-safe") {
                         revert(add(32, reason), mload(reason))
                     }
                 }

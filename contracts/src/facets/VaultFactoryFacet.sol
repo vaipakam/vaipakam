@@ -1282,7 +1282,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (!success) {
             // Decode revert reason if available
             if (returnData.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     let returndata_size := mload(returnData)
                     revert(add(32, returnData), returndata_size)
                 }
@@ -1508,7 +1508,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         );
         if (!success) {
             if (returnData.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     let returndata_size := mload(returnData)
                     revert(add(32, returnData), returndata_size)
                 }

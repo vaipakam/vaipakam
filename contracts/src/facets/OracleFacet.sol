@@ -1060,7 +1060,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // Detect by checking the offset is exactly 32.
         if (ret.length >= 64) {
             uint256 off;
-            assembly { off := mload(add(ret, 32)) }
+            assembly ("memory-safe") { off := mload(add(ret, 32)) }
             if (off == 32) {
                 string memory s = abi.decode(ret, (string));
                 if (bytes(s).length == 0) return ("", false);
@@ -1071,7 +1071,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // trailing zeros and convert.
         if (ret.length == 32) {
             bytes32 raw;
-            assembly { raw := mload(add(ret, 32)) }
+            assembly ("memory-safe") { raw := mload(add(ret, 32)) }
             uint256 len = 0;
             while (len < 32 && raw[len] != 0) {
                 ++len;

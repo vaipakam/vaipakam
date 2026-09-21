@@ -1265,7 +1265,7 @@ contract EarlyWithdrawalFacet is
         (bool ok, bytes memory ret) = address(this).call(data);
         if (!ok) {
             if (ret.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     revert(add(32, ret), mload(ret))
                 }
             }

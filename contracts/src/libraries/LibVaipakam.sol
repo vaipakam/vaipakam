@@ -8518,7 +8518,7 @@ library LibVaipakam {
      */
     function storageSlot() internal pure returns (Storage storage s) {
         bytes32 position = VANGKI_STORAGE_POSITION;
-        assembly {
+        assembly ("memory-safe") {
             s.slot := position
         }
     }

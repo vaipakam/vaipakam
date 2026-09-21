@@ -92,7 +92,7 @@ contract VPFIDiscountAccumulatorFacet {
                 )
             );
             if (!ok) {
-                assembly {
+                assembly ("memory-safe") {
                     revert(add(32, returnData), mload(returnData))
                 }
             }

@@ -28,7 +28,7 @@ library LibReentrancyGuard {
 
     function _storage() private pure returns (ReentrancyGuardStorage storage rs) {
         bytes32 position = REENTRANCY_GUARD_STORAGE_POSITION;
-        assembly {
+        assembly ("memory-safe") {
             rs.slot := position
         }
     }

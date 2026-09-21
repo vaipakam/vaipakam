@@ -312,7 +312,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         (bool ok, bytes memory res) = address(this).call(cd);
         if (!ok) {
             if (res.length > 0) {
-                assembly {
+                assembly ("memory-safe") {
                     revert(add(res, 0x20), mload(res))
                 }
             }
