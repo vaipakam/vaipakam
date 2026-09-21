@@ -719,16 +719,22 @@ library Deployments {
             // it. solc does say so, on the last line of its own output: "No
             // memoryguard was present."
             //
-            // The qualifier is load-bearing, not hedging: a block that touches
-            // no memory — the `x.slot := position` storage-pointer idiom — does
-            // NOT withhold the guard and needs no annotation. An earlier
-            // revision of this comment said "any inline-assembly block", which
-            // sends a maintainer off annotating blocks that neither need it nor
-            // benefit, and the annotation is not free (it enables the mover,
-            // and the mover is code — #2268 put two facets over EIP-170 that
-            // way). CLAUDE.md's "1 too deep in the stack" section is the
-            // canonical treatment; keep this scoped the same way if you edit
-            // either.
+            // The qualifier is load-bearing, not hedging: the `x.slot :=
+            // position` storage-pointer idiom does NOT withhold the guard and
+            // needs no annotation. An earlier revision of this comment said
+            // "any inline-assembly block", which sends a maintainer off
+            // annotating blocks that neither need it nor benefit.
+            //
+            // The cost of a needless annotation is borne by RETROFITTING A REAL
+            // BLOCKER, not by annotating one of these: enabling the mover emits
+            // spill code, and #2268 put two facets over EIP-170 that way.
+            // Annotating the storage-pointer blocks specifically added nothing
+            // — that is what the measurement showed. So the reason to leave
+            // them bare is that the annotation would be noise and a false
+            // signal about what this block does, not that it would cost bytes.
+            //
+            // CLAUDE.md's "1 too deep in the stack" section is the canonical
+            // treatment; keep this scoped the same way if you edit either.
             // Five revisions of this PR moved a call around chasing the frame
             // and never read that line.
             //

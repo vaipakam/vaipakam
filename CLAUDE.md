@@ -1334,6 +1334,18 @@ Two practical consequences:
   rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
   allocated `bytes memory` the block already holds and `add(err, 0x20)` /
   `mload(err)` stay within it — not because it only reads (#2253 r7).
+
+  **There is a SECOND condition, and a block can fail it with no `mload` or
+  `mstore` anywhere in sight:** assigning to a Solidity variable of
+  memory-reference type — handing a `bytes memory` or a `struct` a pointer the
+  block computed — puts a value into the memory model without going through
+  it, so such a block is not memory-safe either. Read "touches memory"
+  throughout this section as shorthand for **fails either condition**, never as
+  "contains a memory opcode". The `x.slot := position` idiom is exempt on both
+  counts precisely because the pointer it assigns is a STORAGE pointer: nothing
+  about the memory model is asserted or disturbed. A block that computes a
+  memory offset and assigns it out is the opposite case and needs the audit,
+  however few opcodes it has.
 - **Retrofitting an existing bare block is a TRADE, and it can be expensive.**
   Turning the guard on lets solc emit the stack-to-memory mover, and the mover
   *is code*. MEASURED (#2268): a sweep of 24 blocks took `OfferCreateFacet`
@@ -1351,11 +1363,19 @@ Two practical consequences:
   **A block that touches no memory needs no annotation** — the storage-pointer
   idiom (`x.slot := position`). Solidity does not require the annotation for
   assembly that cannot affect memory safety; that is the compiler's rule, not
-  an inference from this repo (established in #2260 r4 review). Corroborating
-  but weaker: leaving those 6 bare while annotating the 18 memory-touching
-  blocks produced **no size change at all** against annotating all 24. That is
-  a length comparison and supports only what it says — equal size, not equal
-  bytes and not a statement about code generation.
+  an inference from this repo (established in #2260 r4 review).
+
+  **The measurement corroborates it decisively, and an earlier revision of this
+  paragraph under-sold that while correcting a different overclaim.** The
+  argument is a THREE-point comparison, not a two-point one, and the third
+  point is what carries it. On `OfferCreateFacet`: bare = 21,720; all 24
+  annotated = 33,026; 18 annotated with the 6 storage-pointer blocks left bare
+  = **33,026**. The guard is contract-wide — one unannotated blocker and solc
+  emits no mover anywhere in the contract — so if those 6 were blockers the
+  third build would have landed near 21,720. It landed on the annotated figure
+  exactly. The mover was emitted with 6 bare blocks present, which is the claim.
+  Two-point equality would indeed prove nothing; equality against a third point
+  that differs by 52% is a different argument.
 
   **Do not work out which blocks gate a contract by reading.** The context is
   transitive through inheritance, modifiers and libraries.
@@ -1416,8 +1436,11 @@ Two practical consequences:
   FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
     forge test --match-path "test/SignedOfferBook.t.sol"
   # or, when the block is in a widely-inherited helper and you want the
-  # whole closure compiled, the chunked regression:
-  FOUNDRY_PROFILE=default bash script/run-regression.sh
+  # whole closure compiled, the chunked regression — another wrapper that
+  # shells out to bare forge, so the prefix goes on the wrapper here too
+  # (the script raises only IO priority internally and deliberately omits
+  # `nice`, which needs privileges it cannot assume):
+  nice -n -10 ionice -c 2 -n 0 bash script/run-regression.sh
   ```
 
   This is the same trap in a second form: a probe or helper under `test/` that
