@@ -7293,13 +7293,25 @@ on the live era alone.
 > `MAX_INTERACTION_CLAIM_DAYS` and resumable. So the per-day two-leg need
 > the allocation rule wants is ALREADY computed per day, and a day settles
 > atomically inside the call that priced it. The transport term therefore
-> enters as a PER-DAY allowance on the day primitive's budget: `PoolBudget`
-> gains `transportFresh` / `transportRecycled`, set for the day being
-> priced from that day's cursor-visible epoch coverage, and
-> `_attributeLegs` draws them per component BEFORE the delivered-ledger
-> and bucket bounds it applies today, reporting `DayCharge.transportPaid`
-> as two legs — but **AFTER the `PoolBudget.fresh` term, which binds the
-> FULL fresh entitlement** (Codex #2274 r2, P1). `fresh` is not a funding
+> enters PER DAY, inside the day primitive: once the pre-pass has summed
+> the day's two gross needs, the primitive asks the epoch facet for the
+> day's allocation (`getTransportAllocationForDay` — the plan through the
+> one shared index walk, split by §5c's rule) and applies it by INFLATING
+> the attribution loop's local bounds — the transport fresh is added to
+> the delivered bound and the transport recycled to the bucket, the loop
+> itself untouched — so the attribution keeps exactly the fresh a
+> transport-first pass would. What the epochs paid is then read off the
+> aggregates BY DESTINATION AND BY SOURCE: `DayCharge.transportUser` and
+> `DayCharge.transportTreasury`, each a fresh leg and a recycled leg, the
+> user's legs filled first as the loop's user pass is. Four figures, not
+> the two an earlier draft of this paragraph named (Codex #2274 r8 P1): a
+> single two-leg total could not say whether an epoch-paid fresh unit
+> leaves `Unclassified` for the claimant's wallet or is reattributed to
+> `Recycled` for an absorption, nor yield the two residual operands the
+> facet charges; as built, every payout, absorption, delivered charge and
+> bucket operation reads its own leg. All of it comes **AFTER the
+> `PoolBudget.fresh` term, which binds the FULL fresh entitlement** (Codex
+> #2274 r2, P1). `fresh` is not a funding
 > ledger: it carries the 69M lifetime emission cap and the D1 ceiling
 > (`LibInteractionRewards.sol:5690-5708`, which says so and explains why
 > the delivered bound is kept out of it), and a transport-funded payout
@@ -7312,9 +7324,17 @@ on the live era alone.
 > entitlement before transport is attributed, and only the delivered
 > ledger and the bucket operate on residuals.
 >
-> The primitive stays a view (the preview shares it); the
-> settle wrapper then DRAWS exactly `transportPaid` from the batches — the
-> read and the debit are one transaction, so a claim needs no staging.
+> The primitive stays a view (the preview shares it); the settle wrapper
+> then DRAWS exactly the four legs' sum from the batches, in the plan the
+> read returned — the read and the debit are one transaction, so a claim
+> needs no staging. The preview's dry run carries a SHADOW balance per
+> scanned batch through the whole domain pass (Codex #2274 r8 P1): each
+> day's planned draw is folded into an overlay the next day's coverage
+> read subtracts, so a batch listing two days is counted once across a
+> preview, the expiry gate's reading and the settlement alike — as built,
+> `ovIds` / `ovDrawn` on the dry-run state, pinned by the preview's
+> two-day cell; the settle path passes an empty overlay, since the storage
+> the draw just wrote is its truth.
 > `_persistDay` persists the FULL slices — the entitlement paid, whatever
 > funded it, so the D1 allowance, the loan-side lifetime allowance, the
 > rewarded-day counts and the entry cursors all record it (Codex #2274 r4
@@ -7435,7 +7455,14 @@ on the live era alone.
 > `rewardBudgetFreshUncounted` down through the SAME function a
 > classification's take uses — extracted so the two exits cannot drift —
 > and touches none of the classified figures: a draw spends untyped value
-> on an obligation, it does not type it. The `Unclassified` row identity
+> on an obligation, it does not type it. It records the same amount as the
+> packet's own `drawn` exit (appended), so the packet's declared identity
+> `unclassified + classifiedFresh + classifiedRecycled + disposed + drawn
+> == protectedCumulative` holds after every draw (Codex #2274 r8 P1: the
+> first cut stepped the remainder down alone and the packet identity, as
+> distinct from the batch's, stopped balancing on the first draw; the
+> invariant suite's packet cell and the draw suite now state it with the
+> term). The `Unclassified` row identity
 > (row == uncounted held + returned held) therefore holds after every
 > draw, and the batch's conservation identity is `admitted == balance +
 > parked + debited + consumedFresh + consumedRecycled`, which the
@@ -7457,27 +7484,58 @@ on the live era alone.
 > by exactly the disposed amount, so the step-down would underflow, and
 > crediting that packet again would fabricate ingress under its
 > immutable `actualReceived` anchor and break the identity. B therefore
-> records replacement value as a SECOND packet bound to the batch — its
-> own `IngressPacket`, kind `Replacement`, keyed by the batch it clears,
-> with its own `actualReceived` and untyped remainder — and the batch
-> carries `replacementFunded` beside `admitted`. The conservation
-> identity gains it on the funded side: `admitted + replacementFunded ==
-> balance + parked + debited + consumedFresh + consumedRecycled`. A draw
-> spends the original packet's untyped remainder first and the
-> replacement packet's after it, each through the same step-down
-> function, so every unit drawn debits the packet that holds it and the
-> `Unclassified` row identity holds as before. Nothing in A1 changes:
+> records EACH replacement transfer as its own packet — kind
+> `Replacement`, keyed by the batch it clears and a per-batch sequence
+> number, with its own `actualReceived` and untyped remainder, never
+> rewritten — and the batch carries a cumulative `replacementFunded`
+> beside `admitted` together with the ordered list of those packets, so a
+> disposition cleared in parts (40 units now, 60 later) has one sound
+> record per transfer and the acknowledgment clears when the sum reaches
+> the amount (Codex #2274 r8 P1: a single second packet could hold only
+> the first transfer without rewriting its anchor or replaying its key).
+> The conservation identity gains the cumulative figure on the funded
+> side: `admitted + replacementFunded == balance + parked + debited +
+> consumedFresh + consumedRecycled`. A draw spends the original packet's
+> untyped remainder first and the replacement packets' after it, in
+> sequence order, each through the same step-down function, so every unit
+> drawn debits the packet that holds it and the `Unclassified` row
+> identity holds as before. Nothing in A1 changes:
 > A1 admits no replacement, and the second packet is a B addition the
 > identity above already has room for.
 >
 > *Hosted where.* The draw and the leg-counter writes live on
 > `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
-> `LibInteractionRewards` carries the coverage read in the day primitive,
-> the `_attributeLegs` ordering, the two-leg `transportPaid` figure on
-> `DayCharge`, and one cross-facet draw call in each of the three settle
-> wrappers. The
+> `LibInteractionRewards` carries the allocation call in the day primitive,
+> the `_attributeLegs` ordering, the four-leg `transportUser` /
+> `transportTreasury` figures on `DayCharge`, and one cross-facet draw call
+> in each of the three settle wrappers. The
 > `eraBalance(era)` read is one interface returning zero, in the middle
 > position, so PR C changes a body and not an order.
+>
+> *As built — PR #2276 through its second Codex round.* Where the code
+> departed from the paragraphs above, the code is the record: (1) the
+> coverage read, the allocation, the draw and every dry run walk a day's
+> index through ONE plan (`planTransportDraw`) — fewest listed days first,
+> oldest arrival on ties, index position last — and a batch whose
+> membership is still being paged is invisible until whole; (2) the
+> claim's dry run, the domain pass and the domain probe are hosted on a
+> read-only `RewardEpochViewFacet` (the ledger facet went over EIP-170
+> carrying them) and reached by staticcall, the wallet-or-vault delivery of an epoch-paid
+> claim on the custody facet, and the sweeps' epoch-paid legs are absorbed
+> through the hosted settle — the lens facet fell from 25 KB to 13 KB and
+> the settle facets keep only a few hundred bytes of EIP-170 headroom, so
+> A2 adds its reads beside the view facet's, never on a settle facet;
+> (3) row 13 reads the walk's OWN draw on the bucket (a deferred day
+> included) and a scan-window flag, delivered as one `ArmedNeed` struct
+> the three gates decode once, and the lens keeps its flat shape with
+> three outputs appended; the public armed need counts the epoch-paid
+> fresh and reports the live-funded part beside it; (4) the domain pass
+> decides from the ledger — the chunk's own days, enumerated without
+> pricing — whether any listed epoch is in reach, so there is no admission
+> counter and nothing to backfill on an in-place upgrade; (5) the draw
+> records `drawn` on the packet, so the packet identity above holds;
+> (6) the two sweeps carry the pool cap and the backing room to the engine
+> separately, and the per-batch "which bound binds" flag is gone.
 >
 > **Two decisions the plan's wording leaves open, and how A takes them.**
 >
