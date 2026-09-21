@@ -27,11 +27,14 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
  *         memoryguard was present."
  *
  *         The memory-touching qualifier is the whole rule, not a detail: a
- *         block that touches no memory does not withhold the guard. Do not
- *         restate the rule without it here — see the `memoryguard` note on
- *         `Deployments.finalizeArtifact`, and CLAUDE.md's "1 too deep in the
- *         stack" section for the canonical treatment and the cost of
- *         annotating a block that did not need it.
+ *         block that touches no memory does not withhold the guard, and
+ *         annotating one anyway is NOISE — a false signal about what the block
+ *         does — rather than a bytecode cost. The bytecode cost comes from
+ *         ENABLING THE MOVER on a contract that has a real blocker, since the
+ *         mover is code; that is what put two facets over EIP-170 in #2268. Do
+ *         not restate the rule without the qualifier here — see the
+ *         `memoryguard` note on `Deployments.finalizeArtifact`, and CLAUDE.md's
+ *         "1 too deep in the stack" section for the canonical treatment.
  *
  *         So the probes failed on their own assembly, not on the seam, and five
  *         revisions were spent moving a call that was never the cause. Neither
