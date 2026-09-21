@@ -251,6 +251,90 @@ describe('reconciliation decision table', () => {
     expect(conflicts).toEqual([]);
   });
 
+  // THREE REPORTED SITUATIONS HAVE NO RESOLUTION THAT MAKES THE NEXT RUN
+  // CLEAN, and the runbook now says so where it asserts the two-clean-runs
+  // rule. The reason is structural rather than a missing branch: the
+  // classifier compares DATA, and the legitimate resolution of each of
+  // these is a DECISION to leave the data as it is. Nothing either database
+  // holds records a decision, so the next pass sees the same two rows.
+  //
+  // These are pinned as tests because the limitation is easier to
+  // re-introduce as a bug than to remember as prose, and because #2279's
+  // fix — recording ratified decisions in the manifest — is exactly the
+  // change that should flip them. A failure here after that work is the
+  // test doing its job; update it with the new expectation rather than
+  // deleting it.
+  it('key-collision does not converge when the operator keeps BOTH records', () => {
+    // The operator applies the source record under a new id, leaving the
+    // destination's own record where it is. Both are now preserved, which
+    // is the right outcome — and the contested id is still allocated on
+    // both sides to different records, so the next pass reports it again.
+    const before = classify({
+      rows: [{ id: 7, value: 'source record' }],
+      held: [{ id: 7, value: 'a different record' }],
+      mirrored: [],
+    });
+    const after = classify({
+      rows: [{ id: 7, value: 'source record' }],
+      held: [
+        { id: 7, value: 'a different record' },
+        { id: 99, value: 'source record' },
+      ],
+      mirrored: [],
+    });
+    expect(before.conflicts[0].kind).toBe('key allocated on both sides');
+    expect(after.conflicts.map((c) => c.kind)).toEqual(['key allocated on both sides']);
+  });
+
+  it('destination-deleted does not converge when the deletion is allowed to stand', () => {
+    // The operator confirms the retention prune was correct. Acting on that
+    // decision means changing nothing, so the row is still on the source
+    // and still absent from the destination next week.
+    const args = {
+      rows: [{ id: 1, value: 'pruned there' }],
+      held: [] as number[],
+      mirrored: [{ id: 1, value: 'pruned there' }],
+    };
+    expect(classify(args).conflicts[0].kind).toBe('deleted on the destination');
+    expect(classify(args).conflicts.map((c) => c.kind)).toEqual(['deleted on the destination']);
+  });
+
+  it('source-deleted does not converge when the destination row is kept', () => {
+    // The mirror image of the case above. Deleting the destination's row to
+    // silence the report would discard a setting a user may since have
+    // changed, which is why the tool never does it — and why keeping the
+    // row, the safe answer, leaves the difference in place.
+    const args = {
+      rows: [] as Record<string, unknown>[],
+      held: [1],
+      mirrored: [{ id: 1, value: 'gone from source' }],
+    };
+    expect(classify(args).conflicts[0].kind).toBe('deleted on the source after the mirror');
+    expect(classify(args).conflicts.map((c) => c.kind)).toEqual([
+      'deleted on the source after the mirror',
+    ]);
+  });
+
+  it('source-changed DOES converge, which is what makes the other three a limitation', () => {
+    // The contrast is the whole argument. Here the resolution — apply the
+    // source's value — is itself a data change, so the next pass is clean.
+    // If every situation behaved like this one there would be nothing to
+    // document; if none did, "repeat until clean" would simply be wrong.
+    const before = classify({
+      rows: [{ id: 3, value: 'late value' }],
+      held: [{ id: 3, value: 'as mirrored' }],
+      mirrored: [{ id: 3, value: 'as mirrored' }],
+    });
+    const after = classify({
+      rows: [{ id: 3, value: 'late value' }],
+      held: [{ id: 3, value: 'late value' }],
+      mirrored: [{ id: 3, value: 'as mirrored' }],
+    });
+    expect(before.conflicts[0].kind).toBe('changed on the source after the mirror');
+    expect(after.conflicts).toEqual([]);
+    expect(after.insert).toEqual([]);
+  });
+
   it('refuses to reconcile a table the manifest has no record of', () => {
     const { insert, conflicts } = classifyForReconcile({
       table: 't',
