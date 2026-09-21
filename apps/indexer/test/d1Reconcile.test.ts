@@ -285,19 +285,55 @@ describe('situationOf — the three facts as one name', () => {
     ).toBe(String(name).split(' ')[0]);
   });
 
-  it('covers every situation the classifier knows how to handle', () => {
-    // If a situation is ever added without a case, the classifier throws
-    // rather than silently neither carrying nor reporting the row. This
-    // asserts the set the tests above actually exercise.
-    const exercised = new Set([
-      'new-on-source',
-      'destination-deleted',
+  it('handles every situation reachable from any input, with no list to keep', () => {
+    // THIS USED TO BE A HAND-WRITTEN SET COMPARED WITH ITS OWN SIZE, which
+    // is the enumeration trap the rest of this change exists to remove:
+    // it read as coverage, checked nothing, and stayed green while a
+    // seventh situation was added (#2267 r27).
+    //
+    // What actually matters is that no input can produce a situation the
+    // classifier does not handle. So the situations are DERIVED by driving
+    // `situationOf` across its whole input space — the manifest holding
+    // nothing / the source's row / a different row, crossed with the
+    // destination holding nothing / the source's row / a different row —
+    // and each combination is then run through the classifier, whose
+    // `default` throws on an unhandled name. Add a situation without a
+    // case and this fails; add one WITH a case and it passes untouched.
+    const rowA = { id: 1, value: 'a' };
+    const rowB = { id: 1, value: 'b' };
+    const manifests = { nothing: [], theSourceRow: [rowA], aDifferentRow: [rowB] };
+    const destinations = { nothing: [], theSourceRow: [rowA], aDifferentRow: [rowB] };
+
+    const reached = new Set<string>();
+    for (const [mName, mirrored] of Object.entries(manifests)) {
+      for (const [dName, held] of Object.entries(destinations)) {
+        reached.add(
+          situationOf({
+            mirroredHash: mirrored.length ? hashOf(mirrored[0]) : undefined,
+            sourceHash: hashOf(rowA),
+            destRow: held.length ? held[0] : undefined,
+            cols,
+          }),
+        );
+        expect(
+          () => classify({ rows: [rowA], held, mirrored }),
+          `manifest=${mName} destination=${dName}`,
+        ).not.toThrow();
+      }
+    }
+
+    // Every name the input space can produce was handled above. The count
+    // is asserted only to catch a situation becoming UNREACHABLE, which is
+    // dead code rather than a hazard — hence the message.
+    expect([...reached].sort()).toEqual([
       'agreed',
-      'key-collision',
+      'destination-deleted',
+      'destination-deleted-source-changed',
       'destination-moved',
+      'key-collision',
+      'new-on-source',
       'source-changed',
     ]);
-    expect(exercised.size).toBe(6);
   });
 });
 
