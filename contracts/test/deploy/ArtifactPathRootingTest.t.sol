@@ -9,6 +9,8 @@ import {
 } from "../../script/lib/ArtifactRoot.sol";
 import {RewardCustodyCeremonyBase} from
     "../../script/lib/RewardCustodyCeremonyBase.sol";
+import {RefreshAllFacetsInPlace} from
+    "../../script/RefreshAllFacetsInPlace.s.sol";
 
 /**
  * @notice Exposes the library's path helpers from a contract that CAN carry an
@@ -65,6 +67,31 @@ contract CeremonyPathProbe is RewardCustodyCeremonyBase, ArtifactRootBase {
 }
 
 /**
+ * @notice The refresh script's `addresses.json` READER, in its own context.
+ *
+ * @dev    No mixin here, and that is the point: `RefreshAllFacetsInPlace is
+ *         DeployDiamond`, and `DeployDiamond is Script, ArtifactRootBase`, so
+ *         the redirect capability is already the script's own. This probe adds
+ *         nothing but visibility, which is what lets the test assert the real
+ *         call site rather than a reconstruction of it.
+ *
+ *         `_readAddrOptional` returns an ADDRESS, not a path, so the assertion
+ *         has to go through the filesystem: seed a file under the redirected
+ *         root and see whether the reader finds it. That is a stronger test
+ *         than comparing strings — it fails if the path is wrong for any
+ *         reason, not only the one anticipated.
+ */
+contract RefreshReaderProbe is RefreshAllFacetsInPlace {
+    function readAddrOptional(string memory key)
+        external
+        view
+        returns (address)
+    {
+        return _readAddrOptional(key);
+    }
+}
+
+/**
  * @title  ArtifactPathRootingTest
  * @notice Issue #2261 — every per-chain artifact path resolves through
  *         `Deployments.artifactRoot()`, so a redirected run cannot write into
@@ -80,16 +107,25 @@ contract CeremonyPathProbe is RewardCustodyCeremonyBase, ArtifactRootBase {
  *         from the same run went to the scratch tree.
  *
  *         **What these tests can and cannot prove.** The library helpers are
- *         covered directly. The ceremony record's CALL SITE is covered too,
- *         through a probe — revert `_recordPath` to a hardcoded
- *         `"deployments/"` and `test_CeremonyRecord_FollowsTheRedirect` fails.
- *         The two `addresses.json` readers (`Handover._resolveAddressesPath`,
- *         `RefreshAllFacetsInPlace._readAddrOptional`) are NOT covered: both
- *         are `internal` on scripts that do not implement {IArtifactRoot}, so a
- *         probe would have to grant them a capability they do not have, and the
- *         test would then be asserting the probe's wiring rather than theirs.
- *         They are correct by construction — the hand-built root is gone — and
- *         that is stated rather than dressed up as coverage.
+ *         covered directly, and so are TWO of the four call sites — the
+ *         ceremony record and the refresh reader. Both are mutation targets:
+ *         restore the hand-built root in either and its test fails.
+ *
+ *         `Handover._resolveAddressesPath` is the one call site NOT covered.
+ *         `Handover is Script` only, so it carries no artifact-root override;
+ *         a probe would have to mix {IArtifactRoot} into it and the test would
+ *         then assert the probe's own wiring rather than Handover's. It is
+ *         correct by construction — the hand-built root is gone — and that is
+ *         stated rather than dressed up as coverage.
+ *
+ *         An earlier revision of this header made that same excuse for
+ *         `RefreshAllFacetsInPlace._readAddrOptional`, and it was false
+ *         (#2261 r1 P2): `RefreshAllFacetsInPlace is DeployDiamond`, and
+ *         `DeployDiamond is Script, ArtifactRootBase`, so it is ALREADY
+ *         redirect-capable and a derived probe needs no new capability. The
+ *         claim is recorded here rather than quietly deleted because it is
+ *         exactly the shape of excuse that turns a missing test into a
+ *         justified one.
  *
  *         **What the sweep leaves behind, and why none of it is a defect.**
  *         `grep -rn '"deployments/' contracts/script/` still returns matches
@@ -200,6 +236,85 @@ contract ArtifactPathRootingTest is Test {
             probe.recordPath("bind"),
             string.concat(root, "/", Deployments.chainSlug(), "/reward-custody-bind.json"),
             "the ceremony record ignored the artifact-root override - a redirected run would write it into the committed tree"
+        );
+    }
+
+    // ── The refresh reader's CALL SITE ────────────────────────────────
+
+    /// @notice The in-place refresh reads `addresses.json` through the active
+    ///         root, so a redirected rehearsal is configured from the artifact
+    ///         its own run wrote — not from the committed inventory.
+    ///
+    /// @dev    A MUTATION TARGET. Restore `_readAddrOptional`'s
+    ///         `string.concat("deployments/", Deployments.slugForChainId(
+    ///         block.chainid), "/addresses.json")` and this fails: the seeded
+    ///         key exists only under the scratch root, so the hand-built path
+    ///         reads the committed file (or nothing) and yields `address(0)`.
+    function test_RefreshReader_FollowsTheRedirect() public {
+        RefreshReaderProbe probe = new RefreshReaderProbe();
+        string memory root = _scratchRoot("refresh-reader");
+        probe.setArtifactRootOverride(root);
+
+        address seeded = address(0xBEEF);
+        string memory dir = string.concat(root, "/", Deployments.chainSlug());
+        vm.createDir(dir, true);
+        vm.writeFile(
+            string.concat(dir, "/addresses.json"),
+            string.concat('{"probeKey":"', vm.toString(seeded), '"}')
+        );
+
+        assertEq(
+            probe.readAddrOptional(".probeKey"),
+            seeded,
+            "the refresh reader ignored the artifact-root override - a redirected rehearsal would be configured from the COMMITTED inventory"
+        );
+    }
+
+    // ── Slug confinement ──────────────────────────────────────────────
+
+    /// @notice A slug carrying `..` is refused, so it cannot climb out of a
+    ///         redirected root and reach the committed inventory.
+    ///
+    /// @dev    The exact escape from #2261 r1 P2: root
+    ///         `deployments/.forge-test/<x>` + slug `../../anvil` resolved to
+    ///         `deployments/anvil/addresses.json`. `Handover` takes its slug
+    ///         from `CHAIN_SLUG`, so the string is genuinely free-form. The
+    ///         root check alone could not catch this — it had already passed,
+    ///         on a different string.
+    function test_SlugWithParentSegment_IsRefused() public {
+        PathProbe probe = new PathProbe();
+        probe.setArtifactRootOverride(_scratchRoot("slug-escape"));
+
+        vm.expectRevert(bytes("Deployments: chain slug must name ONE directory and contain no path separator - set CHAIN_SLUG to a slug such as base-sepolia"));
+        probe.pathForSlug("../../anvil");
+
+        // Separator-free, so it reaches the `..` test rather than the first one.
+        vm.expectRevert(bytes("Deployments: chain slug must contain no `..` segment - with one it climbs out of a redirected artifact root and reaches the committed inventory"));
+        probe.pathForSlug("..");
+    }
+
+    /// @notice An empty slug is refused rather than silently resolving to the
+    ///         artifact root itself.
+    function test_EmptySlug_IsRefused() public {
+        PathProbe probe = new PathProbe();
+        vm.expectRevert(bytes("Deployments: chain slug must be non-empty - an empty slug resolves to the artifact root itself"));
+        probe.pathForSlug("");
+    }
+
+    /// @notice A `..` inside a NAME is still a legitimate directory.
+    ///
+    /// @dev    BOUNDS GUARD, and the reason the slug test is a segment test
+    ///         rather than a substring search — the same distinction
+    ///         `ArtifactRootBase` already draws for the root.
+    function test_SlugWithDotsInsideAName_IsAccepted() public {
+        PathProbe probe = new PathProbe();
+        string memory root = _scratchRoot("slug-dots");
+        probe.setArtifactRootOverride(root);
+
+        assertEq(
+            probe.pathForSlug("my..chain"),
+            string.concat(root, "/my..chain/addresses.json"),
+            "a `..` inside a directory NAME is not a parent segment and must not be refused"
         );
     }
 
