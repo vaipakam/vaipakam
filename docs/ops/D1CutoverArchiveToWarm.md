@@ -1625,12 +1625,34 @@ sequence is:
    matches the manifest, and a migration that quietly removes rows leaves
    the schema matching.
 
-   Reconciling first is not available either. Archive is on the older
-   schema at this point and warm is not, and the tool refuses a table
-   whose declaration differs between the two — correctly, and that
-   refusal is what makes step 2b trustworthy when it does run.
+   **Reconcile BEFORE applying them — that pass is available, and this
+   paragraph used to say it was not** (#2267 r40). It said the tool
+   refuses a table whose declaration differs between the two sides, which
+   stopped being true at r36: a report-only run now reports a DDL
+   difference as drift and compares the rows anyway, and r39–r40 extended
+   that to a dropped column and a dropped table. So the ordinary weekly
+   pass runs perfectly well here, and it is the one thing that can name
+   what a destructive migration is about to erase:
 
-   So the inventory is taken outside the tool:
+   ```
+   node apps/indexer/scripts/d1-carry-rows.mjs reconcile \
+     --from vaipakam-archive --to vaipakam-warm --since cutover-mirror.json
+   ```
+
+   Run it, and keep the output with the digest. It reads both databases
+   and writes to neither, so it costs minutes and risks nothing.
+
+   **The order matters in one direction only.** Before the migration,
+   every archive-only insert and every late change is still there to be
+   named. Afterwards some of them are gone, and a column-removing
+   migration additionally puts the manifest's own projection out of
+   reach — the tool then refuses those tables rather than comparing them,
+   so the pass that could have named the loss is degraded by the very
+   change it would have reported on.
+
+   The digest is still taken, because the two answer different questions:
+   the reconciliation names what arrived late, the digest records what
+   the whole database held.
 
    ```
    ROLLBACK_TARGET=vaipakam-archive     # the database being returned to
@@ -1648,6 +1670,11 @@ sequence is:
      only from that export, by hand. This is a limitation NAMED, not
      closed: replaying rows a migration deliberately removed is a
      migration decision, and this tool does not make those.
+
+   The reconciliation run above is what turns that from a warning into a
+   list: anything it named that the migration then deletes is a known
+   loss with a known identity, rather than something nobody will ever
+   know was there.
 
 0b. **Bring the rollback target's schema back to parity:**
 

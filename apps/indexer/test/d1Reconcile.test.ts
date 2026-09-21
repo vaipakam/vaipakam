@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 // check precisely so this import cannot start carrying rows.
 // @ts-expect-error — untyped .mjs operator script, imported for its pure exports
 import {
+  classifyAgainstManifestOnly,
   classifyForReconcile,
   collapseOutsideLiterals,
   compareSequences,
@@ -377,6 +378,38 @@ describe('reconciliation decision table', () => {
     });
     expect(insert).toEqual([]);
     expect(conflicts).toEqual([]);
+  });
+
+  it('does not turn a hand-applied row into a permanent collision over a dropped column', () => {
+    // Found self-reviewing the fix above, before it was reviewed
+    // (#2267 r39). The marker that keeps a dropped column from reading
+    // as NULL belongs to the manifest-backed question only. For a row
+    // the mirror never carried there is no manifest hash to fall through
+    // to, so the same marker would make a row the operator applied by
+    // hand look like two records wearing one id — and nothing could ever
+    // resolve it, because nothing can make a dropped column match.
+    //
+    // Those rows are compared over the columns both sides have.
+    const { insert, conflicts } = classify({
+      rows: [{ id: 7, value: 'applied by hand' }],
+      held: [{ id: 7 }],
+      mirrored: [],
+      destCols: ['id'],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it('still collides when the two records differ on a column both sides have', () => {
+    // The other side of that narrowing: it must not become a blanket
+    // "anything outside the manifest agrees".
+    const { conflicts } = classify({
+      rows: [{ id: 7, value: 'source record' }],
+      held: [{ id: 7, value: 'a different record' }],
+      mirrored: [],
+      destCols: ['id', 'value'],
+    });
+    expect(conflicts.map((c) => c.kind)).toEqual(['key allocated on both sides']);
   });
 
   it('refuses to reconcile a table the manifest has no record of', () => {
@@ -1222,5 +1255,77 @@ describe('a reconciliation never stops before its late-write checks', () => {
 
   it('does not stop a clean carry', () => {
     expect(stopsBeforeVerification({ reconciling: false })).toBe(false);
+  });
+});
+
+describe('a table the destination no longer has', () => {
+  // A migration that DROPS a table leaves the retained source holding it
+  // and the comparison with nothing to compare against — but not with
+  // nothing to ask. Refusing it made every later weekly run emit the same
+  // generic refusal, so a straggler writing into that table was
+  // indistinguishable from schema drift everyone already knew about,
+  // permanently (#2267 r40).
+  const seenOf = (rows: Record<string, unknown>[]) => {
+    const w: Record<string, string> = {};
+    for (const r of rows) w[k(r.id as number)] = hashOf(r);
+    return w;
+  };
+
+  it('says nothing when the source has not been written to since the mirror', () => {
+    const rows = [{ id: 1, value: 'a' }];
+    expect(
+      classifyAgainstManifestOnly({
+        table: 'dropped_by_migration',
+        cols,
+        key,
+        rows,
+        wasSeen: seenOf(rows),
+      }).conflicts,
+    ).toEqual([]);
+  });
+
+  it('reports a late insert and a late update, with counts and no rows', () => {
+    const mirrored = [{ id: 1, value: 'a' }];
+    const { conflicts } = classifyAgainstManifestOnly({
+      table: 'dropped_by_migration',
+      cols,
+      key,
+      rows: [
+        { id: 1, value: 'changed since' },
+        { id: 2, value: 'arrived since' },
+      ],
+      wasSeen: seenOf(mirrored),
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].detail).toContain('1 row(s) added and 1 changed');
+    expect(conflicts[0].detail).toContain('DROPPED this table');
+    // There is nowhere to apply them and cutover output gets pasted into
+    // run logs, so the finding carries no row and no key.
+    expect(JSON.stringify(conflicts[0])).not.toContain('arrived since');
+  });
+
+  it('says so plainly when the manifest has no record of the table either', () => {
+    const { conflicts } = classifyAgainstManifestOnly({
+      table: 'unknown',
+      cols,
+      key,
+      rows: [{ id: 1, value: 'a' }],
+      wasSeen: null,
+    });
+    expect(conflicts.map((c) => c.kind)).toEqual(['no record']);
+  });
+
+  it('does not fail a reconciliation verdict, which would end the weekly run', () => {
+    const srcD = new Map([['dropped_by_migration', { digest: 'aaaa', count: 1 }]]);
+    expect(
+      verdictProblems({ srcD, dstD: new Map(), reconciling: true }),
+    ).toEqual([]);
+  });
+
+  it('still fails a MIRROR verdict, where it means the carry did not finish', () => {
+    const srcD = new Map([['t', { digest: 'aaaa', count: 1 }]]);
+    const problems = verdictProblems({ srcD, dstD: new Map(), reconciling: false });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('absent from the destination');
   });
 });

@@ -1062,7 +1062,14 @@ async function deleteKeys(dst, table, keyRows, key) {
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
-export function situationOf({ mirroredHash, sourceHash, destRow, cols, destCols = null }) {
+export function situationOf({
+  mirroredHash,
+  sourceHash,
+  sourceRow = null,
+  destRow,
+  cols,
+  destCols = null,
+}) {
   const mirrored = mirroredHash !== undefined;
   if (destRow === undefined) {
     if (!mirrored) return 'new-on-source';
@@ -1084,8 +1091,33 @@ export function situationOf({ mirroredHash, sourceHash, destRow, cols, destCols 
   // as absent, never as NULL, so "the destination no longer carries this
   // field" cannot be mistaken for "a straggler set this field to NULL"
   // and reported as the two sides agreeing.
-  if (rowHash(destRow, cols, destCols) === sourceHash) return 'agreed';
-  if (!mirrored) return 'key-collision';
+  //
+  // THE SENTINEL BELONGS TO THE MANIFEST-BACKED QUESTION ONLY, and using
+  // it for both cost a self-review round to notice. Where the mirror
+  // carried this key, the manifest can say whether the SOURCE moved, so
+  // treating a dropped column as a difference is free: the answer falls
+  // through to `destination-moved` when the source has not moved and to
+  // `source-changed` when it has, both correct.
+  //
+  // Where the mirror did NOT carry it there is no manifest hash to fall
+  // through to, so the same sentinel would make a row an operator had
+  // applied by hand look like two records wearing one id — permanently,
+  // since nothing can ever make a dropped column match. For those rows
+  // the comparison is over the columns BOTH sides have, which is the
+  // best evidence that exists. Two different records alike on every
+  // shared column and differing only on one the destination has dropped
+  // would read as agreement; that distinction is unrecoverable at the
+  // destination anyway.
+  if (mirrored) {
+    if (rowHash(destRow, cols, destCols) === sourceHash) return 'agreed';
+  } else {
+    const shared = destCols === null ? cols : cols.filter((c) => destCols.has(c));
+    if (sourceRow !== null && canonical(destRow, shared) === canonical(sourceRow, shared)) {
+      return 'agreed';
+    }
+    if (sourceRow === null && rowHash(destRow, cols) === sourceHash) return 'agreed';
+    return 'key-collision';
+  }
   return mirroredHash === sourceHash ? 'destination-moved' : 'source-changed';
 }
 
@@ -1128,6 +1160,69 @@ export function splitUniquesByEvaluability(uniques, sourceCols) {
  */
 export function stopsBeforeVerification({ reconciling, refused = [], conflicts = [] }) {
   return !reconciling && (refused.length > 0 || conflicts.length > 0);
+}
+
+/**
+ * What can still be said about a table the DESTINATION no longer has.
+ *
+ * A migration that drops a table leaves the retained source holding it
+ * and the reconciliation with nothing to compare against — but not with
+ * nothing to ask. The manifest recorded what the mirror carried, so the
+ * source can still be compared with its own past, and that is exactly
+ * the question the weekly run exists for: did anything write here after
+ * the mirror.
+ *
+ * It reports ONE finding for the table rather than one per row. Every
+ * row would otherwise come back as the destination having deleted it,
+ * whose message warns about undoing a retention prune — true of a row a
+ * cron removed, misleading about a table a migration dropped. And the
+ * counts are what an operator actually needs: whether anything arrived
+ * here after the switch, and how much.
+ *
+ * Rows and keys are deliberately absent from the finding. There is
+ * nowhere to apply them, and cutover output is pasted into run logs.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function classifyAgainstManifestOnly({ table, cols, key, rows, wasSeen }) {
+  if (wasSeen === null || wasSeen === undefined) {
+    return {
+      insert: [],
+      conflicts: [
+        {
+          table,
+          kind: 'no record',
+          detail:
+            'the destination no longer has this table and the manifest ' +
+            'has no record of it either, so nothing can be said about ' +
+            'what the source holds here',
+        },
+      ],
+    };
+  }
+  let added = 0;
+  let changed = 0;
+  for (const r of rows) {
+    const seen = wasSeen[keyOf(r, key)];
+    if (seen === undefined) added += 1;
+    else if (seen !== rowHash(r, cols)) changed += 1;
+  }
+  if (added === 0 && changed === 0) return { insert: [], conflicts: [] };
+  return {
+    insert: [],
+    conflicts: [
+      {
+        table,
+        kind: 'written to after the mirror, with no table left to apply it to',
+        detail:
+          `${added} row(s) added and ${changed} changed on the source ` +
+          `since the mirror, and the destination has since DROPPED this ` +
+          `table. Nothing here can be applied where the data now lives. ` +
+          `Decide whether those writes matter — they exist only on the ` +
+          `retained source, and only while it is retained`,
+      },
+    ],
+  };
 }
 
 export function classifyForReconcile({
@@ -1177,6 +1272,7 @@ export function classifyForReconcile({
     const situation = situationOf({
       mirroredHash: wasSeen[k],
       sourceHash: rowHash(r, cols),
+      sourceRow: r,
       destRow: heldByKey.get(k),
       cols,
       destCols,
@@ -1408,7 +1504,22 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   for (const table of tables) {
     const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
     assertRedactionsApply(table, cols);
-    if (!dstTables.has(table)) {
+    // A TABLE THE DESTINATION NO LONGER HAS STILL HAS A QUESTION TO
+    // ANSWER, and refusing it threw the question away (#2267 r40).
+    //
+    // For a carry the refusal is right: there is nowhere to put the rows.
+    // For the weekly reconciliation it is the check-that-can-never-pass
+    // shape a fourth time — a migration that DROPS a table makes every
+    // later run emit the same generic refusal, so a straggler writing
+    // into that table on the retained source is indistinguishable from
+    // the schema drift everyone already knows about, forever.
+    //
+    // The destination is simply out of the comparison here. What is left
+    // is the source against the MANIFEST, which is still a real question
+    // and the only one that matters: did anything write here after the
+    // mirror. That is answered below rather than refused.
+    const destTableGone = !dstTables.has(table);
+    if (destTableGone && !reportOnly) {
       plan.push({ table, refused: 'the destination has no such table' });
       continue;
     }
@@ -1439,7 +1550,18 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // declarations imply equal columns, key and unique indexes, so the
     // source's are used for both sides. That is 43 fewer round trips per
     // run, inside the window where the writers are stopped.
-    const dstDdl = (await declarations(dst.id)).get(table) ?? '';
+    const dstDdl = destTableGone ? ddl : ((await declarations(dst.id)).get(table) ?? '');
+    if (destTableGone) {
+      driftNotes.push({
+        table,
+        detail:
+          `the destination no longer has this table, which is what a ` +
+          `migration dropping it looks like from the retained source's ` +
+          `side. Rows here are compared against the MANIFEST alone — a ` +
+          `late write is still reported, though there is nowhere to ` +
+          `apply it`,
+      });
+    }
 
     // A DDL DIFFERENCE REFUSES A CARRY. IT MUST NOT REFUSE A REPORT
     // (#2267 r36).
@@ -1504,9 +1626,9 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // both onto the manifest's columns, so a column the destination no
     // longer has reads as absent and shows up as a difference to look
     // at rather than as a crash.
-    const heldShape = reportOnly ? await shapeOf(dst.id, table) : null;
+    const heldShape = reportOnly && !destTableGone ? await shapeOf(dst.id, table) : null;
     const heldCols = heldShape ? heldShape.cols : cols;
-    const missingKey = key.filter((c) => !heldCols.includes(c));
+    const missingKey = destTableGone ? [] : key.filter((c) => !heldCols.includes(c));
     if (missingKey.length > 0) {
       plan.push({
         table,
@@ -1547,7 +1669,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           `Check before applying one`,
       });
     }
-    const held = await readAll(dst.id, table, heldCols);
+    const held = destTableGone ? [] : await readAll(dst.id, table, heldCols);
     // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
     // source afterwards, and in reconcile mode it only asks whether the
     // destination has at least as many rows — which an UPDATE does not
@@ -1690,7 +1812,17 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       });
       continue;
     }
-    const { insert, conflicts } = onlyMissing
+    // WITH THE DESTINATION OUT OF THE COMPARISON, two of the three facts
+    // remain and they still answer the question this run exists to ask.
+    // Reporting per row would be wrong here and not merely noisy: every
+    // row would come back `destination-deleted`, whose whole message is
+    // a warning about undoing a retention prune, when what actually
+    // happened is that a migration dropped the table. So the table is
+    // reported ONCE, with counts, and the counts are what an operator
+    // needs to decide whether anything was lost (#2267 r40).
+    const { insert, conflicts } = destTableGone
+      ? classifyAgainstManifestOnly({ table, cols: hashCols, key, rows, wasSeen })
+      : onlyMissing
       ? classifyForReconcile({
           table,
           // The projection the manifest's hashes were taken over, which
@@ -1896,7 +2028,15 @@ export function verdictProblems({
     if (refusedNames.has(table)) continue;
     const d = dstD.get(table);
     if (!d) {
-      problems.push(`${table}: absent from the destination`);
+      // THE MIRROR'S FAILURE, NOT THE RECONCILIATION'S (#2267 r40). A
+      // source table the destination lacks means a mirror did not finish
+      // its job. In a reconciliation it means a migration dropped the
+      // table, which is permanent — so failing here would end the weekly
+      // run for good, the same trapdoor as the destination-only table
+      // above. The reconciliation has already said what it can about
+      // that table: the drift note names it, and the source is compared
+      // against the manifest so a late write there is still reported.
+      if (!reconciling) problems.push(`${table}: absent from the destination`);
     } else if (!reconciling && d.digest !== s.digest) {
       problems.push(
         `${table}: source ${s.digest} (${s.count} rows) != destination ` +

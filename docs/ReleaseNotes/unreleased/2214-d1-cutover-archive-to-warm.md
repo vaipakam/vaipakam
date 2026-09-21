@@ -205,7 +205,20 @@ look for late writes that leave no visible difference at all, and they come
 afterwards. A table that exists only on the new database — what a migration
 creating one looks like from the old one's side — is shown as drift rather than
 failing the run, since it cannot hold a late write from the old database and
-failing on it would end the weekly check at the first schema change.
+failing on it would end the weekly check at the first schema change. A table
+the new database has DROPPED is no longer refused either: the old one still
+holds it, and comparing it against the record of what was copied still answers
+the only question that matters — whether anything was written there after the
+copy. It is reported once, with counts, since there is nowhere left to apply it.
+
+**And the rollback now compares before it migrates.** Returning to the old
+database means bringing its schema up to date first, and a migration can delete
+rows. The procedure used to say a comparison was unavailable at that point,
+which stopped being true earlier in this same change: it runs, and before the
+migration every late record is still there to be named. Afterwards some are
+gone — and a column-removing migration also puts the record of what was copied
+out of reach, so the very check that would have reported the loss is degraded
+by the change causing it.
 
 **Four kinds of difference will keep being reported no matter what the
 operator does about them, and the runbook now says so rather than leaving
