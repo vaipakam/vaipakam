@@ -1718,6 +1718,19 @@ library LibRewardCustody {
     ///         later disposition makes them differ the stricter one binds,
     ///         which is the conservative direction.
     ///
+    ///         IN 3b-i THE RELEASED BRANCH IS UNREACHABLE, and that is worth
+    ///         stating here rather than only at the door (#2258, owner
+    ///         decision 2026-09-20; Codex #2232 r10). Both of
+    ///         {RewardEpochFacet}'s release entries revert
+    ///         `TransportReleaseNotYetAvailable` for every caller, so no batch
+    ///         is ever `released` and every packet holding one is refused
+    ///         below by `TransportBatchNotReleased` — BEFORE the split is ever
+    ///         consulted. The honest description of this cut is therefore that
+    ///         an epoch-holding packet is WHOLLY unclassifiable, not that it
+    ///         "classifies recycled only": the fresh-versus-recycled question
+    ///         is never reached. Nothing leaves the holder; the value stays
+    ///         membership-bound until 3b-ii opens the door.
+    ///
     ///         A packet with NO batch passes untouched and is debited nothing:
     ///         the rule is about value held in a transport epoch, and a d5
     ///         delivery, a pre-3b arrival, and a delivery that landed before

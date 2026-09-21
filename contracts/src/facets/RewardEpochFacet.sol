@@ -15,6 +15,26 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         oversize batch's paged indexing, and the parking and acknowledgment
  *         that release a batch so what remains of its packet becomes
  *         classifiable.
+ *
+ *         WHAT THIS CUT ACTUALLY OFFERS, stated here because the rest of this
+ *         file describes the release in the present tense and a reader meets
+ *         this header first (#2258, owner decision 2026-09-20; Codex #2232
+ *         r10). Only the paged indexing is live. BOTH release entries —
+ *         {parkTransportBatchRemainder} and
+ *         {acknowledgeTransportBatchRemainder} — revert
+ *         `TransportReleaseNotYetAvailable` for every caller, so no batch on
+ *         this deployment is ever `released`. Read every "the release does X"
+ *         below as 3b-ii's shape, which the library already implements and
+ *         which this facet's bodies do not yet reach.
+ *
+ *         THE CONSEQUENCE IS NOT CONFINED TO THIS FACET, and is a funds fact
+ *         rather than a surface one: {LibRewardCustody.takeFromReleasedRemainder}
+ *         refuses a packet whose batch is not released BEFORE it looks at the
+ *         fresh-versus-recycled split, so for as long as this door is shut a
+ *         packet holding an epoch is WHOLLY unclassifiable — not "classifiable
+ *         recycled only". Its value stays in the membership-bound holding,
+ *         visible in the ledger, spendable by nobody. A packet holding no
+ *         epoch is untouched by all of this.
  * @dev    #1566 transport epochs PR 3b (design §5c).
  *
  *         WHY ITS OWN FACET. Admission happens at ingress and lives with the
@@ -71,6 +91,9 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
+    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller (see
+    ///         the body, and the header's "what this cut actually offers").
+    ///         Everything the `@dev` below describes is 3b-ii's shape.
     /// @dev    The first half of the release, and not the whole of it: the
     ///         remainder becomes classifiable only once
     ///         {acknowledgeTransportBatchRemainder} records the acknowledgment
@@ -122,6 +145,12 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     }
 
     /// @notice Record the acknowledgment that RELEASES a batch.
+    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller, the
+    ///         administrator included. In particular the `ADMIN_ROLE` gate the
+    ///         `@dev` below argues for is ABSENT from this cut's signature on
+    ///         purpose, so that the refusal is uniform; do not read that
+    ///         paragraph as a description of who may call this today. Nobody
+    ///         may.
     /// @dev    After this, and only after this, the batch's packet passes the
     ///         classification gate: {LibRewardCustody.authenticatedFresh} then
     ///         derives the bound a classification reads from the packet's

@@ -60,7 +60,11 @@ test that; a close-out the platform cannot check would be an earmark spent on
 the caller's say-so. The release that adds per-day obligation tracking is the
 one that opens these entries. Until then an epoch's value stays in its
 membership-bound holding, visible in the ledger, and cannot be reconciled early
-by anyone. (Owner decision, recorded on issue #2258.) An operator draining an epoch does not
+by anyone. It also cannot be **classified** — neither as fresh nor as recycled
+— because classifying what a delivery holds is gated on the same close-out that
+is not offered. So a delivery holding an epoch is, in this release, wholly
+untyped: nothing of it moves, and nothing of it is lost. (Owner decision,
+recorded on issue #2258.) An operator draining an epoch does not
 thereby make its delivery reconcilable, and a late obligation whose day is in
 the parked membership can still be funded from what was parked rather than
 finding the value in a general pool it has no claim on.
