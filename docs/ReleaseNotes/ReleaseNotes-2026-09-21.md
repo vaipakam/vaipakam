@@ -1,3 +1,16 @@
+# Release Notes — 2026-09-21
+
+Two merges today. The larger one is the third transport-epochs release of the
+#1566 programme (PR #2232): every reward-budget delivery that reaches a mirror
+over one of the older wires now gets its own epoch in the ledger — a single
+untyped balance bound to the days the delivery named — and the close-out that
+would let such a delivery be reconciled early is deliberately not offered yet
+(owner decision on #2258). Nothing draws from an epoch in this release; the
+draws are the next one. The smaller merge (PR #2266) closes a latent
+inconsistency in the deploy tooling, where four scripts built a per-chain
+artifact path by hand instead of through the redirectable root the rest of the
+tooling follows.
+
 ### Reward transport epochs — the epoch ledger (#1566 PR 3b-i)
 
 A reward budget that reaches a mirror chain over one of the older wires
@@ -358,3 +371,23 @@ complete.
 Nothing here moves value yet: no draw exists until the next release adds one,
 and on a chain that has not received an old-wire delivery none of this is
 reachable at all.
+<!-- assembled-fragment: 1566-transport-epochs-3b-ledger.md sha256=cbd1b0c4112310dd97f8242586ca044bd303da1443058f426097fc76911e5c95 -->
+
+## Thread — four deploy scripts were writing and reading outside the redirect they were supposed to follow (PR #2266)
+
+Deployment tooling records what it did in a per-chain folder of the repository — the address inventory other tooling reads, plus a few ceremony receipts alongside it. A recent change made that folder redirectable, so a test can run a real script end to end without overwriting the committed record. The redirect is consulted in one place, and every path helper was supposed to reach it.
+
+Four scripts did not. Two wrote ceremony receipts and two read the address inventory, and all four built the folder path themselves from a fixed string. Under a redirect they ignored it: the two writers would have dropped their receipts into the committed folder while everything else from the same run went to the scratch one, and the two readers would have configured a redirected rehearsal against addresses belonging to a different deployment altogether. Nothing drives those scripts under a redirect today, so this was a latent inconsistency rather than an observed failure — but it is the kind that surfaces the first time someone writes the test that would have caught it.
+
+All four now go through the shared helpers, and the helpers themselves were re-layered so exactly one function decides where artifacts live; everything else, including a new form for "a named record beside the address inventory", is built on top of it. One of the four resolves its chain from an operator-set name rather than from the chain it is connected to, which is why there is a second entry point taking that name — rebuilding the root by hand to serve that case is precisely how these four drifted out.
+
+The accompanying tests cover the helpers directly and two of the four call sites — the ceremony receipt and the refresh reader — each through a probe, and each verified by restoring the fixed string in isolation and watching the matching test fail. The remaining call site, in the handover script, is not covered: it is internal to a script that cannot carry a redirect at all, so a probe would have to grant it a capability it does not have and would end up asserting its own wiring. It is correct by construction — the hand-built root is gone — and that is the claim being made for it.
+
+A first version of this change made that same excuse for the refresh reader, and the excuse was false: that script inherits the redirect capability already, so a probe needed nothing special and the test was simply missing. Review caught it. The distinction matters more than the one test does, because an unfounded reason not to test something reads exactly like a sound one, and stops anyone looking again.
+
+Review also found that the change had quietly reopened something an earlier one had closed. The redirect is confined by two checks on the destination root, and the reasoning recorded alongside them is that nothing satisfying both can climb back out to the committed folder. That reasoning is about the finished path, but it had only ever examined the root — and the new helper appends a second caller-supplied piece, the chain name, which one script reads from an environment variable. A chain name containing the usual step-up-a-directory notation therefore walked straight back to the committed inventory the redirect exists to protect. The same check now applies to both pieces, and it is one shared check rather than a copy per site, since a copy is how the two halves of a single rule drift apart.
+
+Worth recording because the comment was load-bearing and wrong: the note on the existing path helper stated that every artifact path in the library was built there. It was not, in two separate ways, and it had been read as assurance. It now says where the single place actually is and names what had been sitting outside it.
+
+Closes #2261.
+<!-- assembled-fragment: 2261-artifact-path-rooting.md sha256=9ed25ce27c4e2f02feebdeb170323cd55393020c254542e619ffa3820ccdf43b -->
