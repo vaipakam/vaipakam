@@ -151,16 +151,31 @@ because step 3 below is the part of it that had to be re-learned.
       reporting a reconciliation it did not perform.
    4. `digest --db vaipakam-archive` once more. If it differs from step 3's
       source digest, something committed during the carry: return to step 2.
-   5. Merge. The Workers redeploy onto warm; verify with
-      `check-live-d1-bindings.mjs` — which asks what each Worker is SERVING,
-      not what its latest upload says (§3 explains why that distinction cost
-      a false pass).
+   5. Merge. The three Workers redeploy onto warm (#2237). **Then deploy
+      `ops/offchain-data-warm` by hand** — it is not in the auto-deploy set,
+      so nothing the merge does moves it — and only then verify with
+      `check-live-d1-bindings.mjs`, which asks what each Worker is SERVING
+      rather than what its latest upload says (§3 explains why that
+      distinction cost a false pass). The gate covers all four Workers, so
+      running it before that manual deploy fails on the backup Worker even
+      when every writer switched correctly. That is the probe being right
+      and the sequence being wrong, and the sequence is what moved.
    6. **Reconcile, and keep reconciling.**
       `carry --from vaipakam-archive --to vaipakam-warm --only-missing
       --since cutover-mirror.json`, which inserts anything that appeared in
       archive late and **touches nothing warm has since written**. Repeat
-      until a run carries zero rows AND reports no conflicts. Archive is
-      retained regardless, so a row found a week later is still recoverable.
+      until **TWO CONSECUTIVE** runs carry zero rows and report no
+      conflicts. Archive is retained regardless, so a row found a week
+      later is still recoverable.
+
+      **Two, not one**, and the difference is the whole reason this step
+      exists: a single clean run says only that nothing had arrived by the
+      moment it read. Work suspended across the barrier can commit
+      immediately afterwards, which is precisely the case step 6 is here to
+      catch — so one clean pass is the same unearned confidence the barrier
+      was corrected for. `ProjectDetailsREADME.md` §13 and this change's
+      release note both said two while this step said one; the step was
+      wrong.
 
       **A late INSERT and a late UPDATE need different answers, which is why
       `--since` is mandatory.** A straggler that inserts a new row leaves a
@@ -835,11 +850,20 @@ when someone is watching and run Step 3 immediately, accepting that anything
 written in between may be lost. This was chosen when there were no real users.
 It is not a decision to inherit once there are.
 
-**Until #2255 lands, this is effectively the only procedure this document can
-honestly offer** — and the reason to say that out loud is that a partial gate
-is this option wearing a disguise. Closing the public routes while cron still
-ticks, or while a Durable Object alarm re-arms itself, accepts the same
-exposure and hides it behind a step that looks like protection.
+~~**Until #2255 lands, this is effectively the only procedure this document
+can honestly offer.**~~ **NO LONGER TRUE, and it must not be read as an
+instruction (2026-09-21, #2267 r10).** Execution-record step 3 is a
+procedure, it is the route this cutover takes, and this sentence sat a few
+lines below a statement saying so — two mutually exclusive instructions for a
+live data move, the later of which explicitly accepts lost writes. It is
+struck through rather than deleted because the reasoning in the next
+paragraph is still correct and still worth reading.
+
+That reasoning: **a partial gate is this option wearing a disguise.** Closing
+the public routes while cron still ticks, or while a Durable Object alarm
+re-arms itself, accepts the same exposure and hides it behind a step that
+looks like protection. That is exactly why step 3 removes the binding rather
+than closing routes.
 
 What the auto-deploy correction genuinely changes is **who** closes the
 window: it no longer waits on a person remembering a command. It does not make
@@ -1116,8 +1140,17 @@ node apps/indexer/scripts/d1-carry-rows.mjs carry \
 
 with the same barrier around it: stop the writers, observe the source still,
 mirror-carry, switch the bindings back, then reconcile in the same direction
-with `--only-missing --since rollback-mirror.json` until a run carries
-nothing and reports no conflicts. An earlier
+with `--only-missing --since rollback-mirror.json` until **two consecutive**
+runs carry nothing and report no conflicts.
+
+**The binding check inverts too, and it needs telling.** During a rollback
+the Workers are meant to be back on archive, so the gate is
+`check-live-d1-bindings.mjs --expect vaipakam-archive` — without it the probe
+expects whatever `apps/indexer/wrangler.jsonc` declares and would reject
+every correctly rolled-back Worker. **And both tools live in this change**:
+if the rollback is performed by reverting the commit that switched the
+bindings, keep a checkout that still has `apps/indexer/scripts/` from it, or
+the reverse switch has no serving-version check at all. An earlier
 revision of this section said a reverse import "is not a one-liner either",
 which was true of the export/import approach it described and is no longer
 the only option.

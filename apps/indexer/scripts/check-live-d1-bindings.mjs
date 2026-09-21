@@ -153,16 +153,27 @@ async function d1Of(script, versionId) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const USAGE =
+    'usage:\n  check-live-d1-bindings.mjs [--allow-maintenance] [--expect <database name>]';
   // Strict, for the same reason the carry tool is: a mistyped flag that is
   // silently ignored turns a deliberate allowance into an accidental one.
-  const unknown = argv.filter((a) => a !== '--allow-maintenance');
-  if (unknown.length > 0) {
-    fail(
-      `unrecognised argument(s): ${unknown.join(', ')}\n\nusage:\n` +
-        `  check-live-d1-bindings.mjs [--allow-maintenance]`,
-    );
+  let allowMaintenance = false;
+  let expectName = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--allow-maintenance') {
+      allowMaintenance = true;
+      continue;
+    }
+    if (argv[i] === '--expect') {
+      expectName = argv[i + 1];
+      if (!expectName || expectName.startsWith('--')) {
+        fail(`--expect needs a database name\n\n${USAGE}`);
+      }
+      i += 1;
+      continue;
+    }
+    fail(`unrecognised argument: ${argv[i]}\n\n${USAGE}`);
   }
-  const allowMaintenance = argv.includes('--allow-maintenance');
 
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
@@ -174,10 +185,27 @@ async function main() {
   if (!declared?.database_id) {
     fail(`${DECLARING_FILE} has no complete "DB" d1 binding to check against.`);
   }
-  const EXPECT = declared.database_id;
-  console.log(
-    `expecting ${declared.database_name} (${EXPECT}), per ${DECLARING_FILE}\n`,
-  );
+  // The default expectation is the declared shared database, which is the
+  // forward direction. A ROLLBACK inverts it: the Workers are meant to be
+  // back on the database being left behind, and a probe that can only
+  // expect the shared one would reject every correctly rolled-back Worker
+  // — leaving the reverse switch with no serving-version check at all,
+  // which is the half of the move where one is needed most.
+  let EXPECT = declared.database_id;
+  let expectLabel = `${declared.database_name} (${EXPECT}), per ${DECLARING_FILE}`;
+  if (expectName && expectName !== declared.database_name) {
+    const found = await cf(
+      `/d1/database?name=${encodeURIComponent(expectName)}`,
+    );
+    const hit = (found ?? []).find((d) => d.name === expectName);
+    if (!hit) fail(`no D1 database named "${expectName}" in this account`);
+    EXPECT = hit.uuid;
+    expectLabel =
+      `${expectName} (${EXPECT}) — NOT the database ${DECLARING_FILE} ` +
+      `declares (${declared.database_name}). This is the rollback ` +
+      `direction; say so in the run log`;
+  }
+  console.log(`expecting ${expectLabel}\n`);
 
   const problems = [];
   for (const file of CONFIGS) {

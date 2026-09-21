@@ -575,15 +575,25 @@ export function classifyForReconcile({
     const destRow = heldByKey.get(k);
     const inDest = destRow !== undefined;
 
+    // A CONFLICT IS ONLY A CONFLICT WHILE THE TWO SIDES ACTUALLY DIFFER,
+    // and this rule has to come before every case that reasons about the
+    // manifest — which is where it was missing twice.
+    //
+    // The manifest says what the mirror saw; it does not say what the two
+    // databases hold now. If they agree on this row there is nothing to
+    // reconcile, whatever the manifest recorded. That covers a row a
+    // PREVIOUS pass of this reconciliation carried, and equally a late
+    // update an operator has already RESOLVED by copying the chosen value
+    // across — which is the whole point of repeat-until-clean. Comparing
+    // the source against the manifest alone made both of those conflict
+    // forever, so the procedure could never come clean after doing
+    // anything about a finding.
+    if (inDest && rowHash(destRow, cols) === rowHash(r, cols)) continue;
+
     if (!mirrored && inDest) {
-      // The destination has a key the mirror never carried. That is either
-      // TWO records wearing one id — both sides allocate from the same
-      // AUTOINCREMENT sequence once they run independently — or the row a
-      // PREVIOUS pass of this same reconciliation already carried. Content
-      // is what tells them apart, and without this comparison the
-      // repeat-until-clean procedure could never converge after carrying
-      // anything: pass two would flag pass one's own work.
-      if (rowHash(destRow, cols) === rowHash(r, cols)) continue;
+      // The destination has a key the mirror never carried and holds a
+      // DIFFERENT row under it: both sides allocate from the same
+      // AUTOINCREMENT sequence once they run independently.
       conflicts.push({
         table,
         key: k,
@@ -621,12 +631,18 @@ export function classifyForReconcile({
       continue;
     }
 
-    if (mirrored && inDest && wasSeen[k] !== rowHash(r, cols)) {
+    if (mirrored && inDest) {
+      // The two sides differ — the equality rule above already returned
+      // for the case where they agree — and the source is not what the
+      // mirror saw, so a straggler wrote it after the barrier.
       conflicts.push({
         table,
         key: k,
         kind: 'changed on the source after the mirror',
-        detail: 'the destination already holds that row',
+        detail:
+          'the destination holds a different row under that key. Resolve ' +
+          'it by making the two sides agree; a later pass then passes over ' +
+          'it silently',
       });
     } else if (mirrored && !inDest) {
       conflicts.push({

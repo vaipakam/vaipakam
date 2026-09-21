@@ -90,12 +90,27 @@ describe('reconciliation decision table', () => {
   it('reports a row the source changed after the mirror, and does not carry it', () => {
     const { insert, conflicts } = classify({
       rows: [{ id: 1, value: 'after' }],
-      held: [1],
+      held: [{ id: 1, value: 'before' }],
       mirrored: [{ id: 1, value: 'before' }],
     });
     expect(insert).toEqual([]);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].kind).toBe('changed on the source after the mirror');
+  });
+
+  it('accepts a late update an operator has already resolved', () => {
+    // The operator picked a value and made both sides agree. Comparing the
+    // source against the MANIFEST alone would keep reporting this forever,
+    // so repeat-until-clean could never come clean after resolving
+    // anything — which is what the procedure asks the operator to do.
+    const resolved = { id: 1, value: 'after' };
+    const { insert, conflicts } = classify({
+      rows: [resolved],
+      held: [resolved],
+      mirrored: [{ id: 1, value: 'before' }],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toEqual([]);
   });
 
   it('refuses to resurrect a row the DESTINATION deleted', () => {
