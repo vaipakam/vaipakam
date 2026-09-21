@@ -181,8 +181,16 @@ against the new database, the old one is read again and anything that turned up
 late is **reported** — the step reads both databases and writes to neither, so
 nothing the services have written since can be disturbed by it. Each
 difference it names is applied by a person. That repeats until two consecutive
-runs find nothing, and the old database is kept regardless, so a record
-noticed a week later is still recoverable.
+runs find nothing — and then **keeps repeating, weekly, for as long as the old
+database is kept**.
+
+Two clean comparisons are two readings. Nothing available to the platform can
+withdraw the access that already-running work holds on the old database, and
+how long such work can run has never been measured, so a record can still
+arrive after both. Keeping the old database makes such a record
+*recoverable*; only continuing to compare makes one *found*. The comparison
+has a named owner and every run is written down, clean ones included, because
+the value of that record is that a gap in it is visible.
 
 **A late arrival and a late change are different problems, and only one of
 them is obvious.** A straggler that creates a new record leaves the new

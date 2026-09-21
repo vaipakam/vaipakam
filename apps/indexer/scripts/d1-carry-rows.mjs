@@ -634,6 +634,49 @@ async function sequenceProblems(src, dst) {
   return problems;
 }
 
+/**
+ * Did the SOURCE allocate past what the mirror recorded?
+ *
+ * This is the reconcile-side counterpart of `sequenceProblems`. A row
+ * inserted after the mirror and then deleted leaves no trace in the rows
+ * — both sides match again — while `sqlite_sequence` on the source has
+ * moved. The destination is free to issue that identifier to a different
+ * record, and a later rollback would then have one id and two records,
+ * which is the `key-collision` case arriving by a route nothing looks
+ * at.
+ *
+ * Reported, never repaired, like everything else this mode finds.
+ */
+async function sequenceAdvances(src, since) {
+  if (!since) return [];
+  const now = new Map();
+  try {
+    for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
+      if (!NEVER_CARRIED(r.name)) now.set(r.name, Number(r.seq));
+    }
+  } catch (err) {
+    if (!isMissingSequenceTable(err)) throw err;
+    return [];
+  }
+  const problems = [];
+  for (const [table, seq] of now) {
+    const then = since?.[table]?.seq;
+    // `null` means the mirror predates this record being kept; absent
+    // means the table was not carried. Neither is a comparison.
+    if (then === undefined || then === null) continue;
+    if (seq <= then) continue;
+    problems.push(
+      `${table}: the source has allocated identifiers up to ${seq}, and ` +
+        `the mirror recorded ${then}.\n      Something inserted ${seq - then} ` +
+        `row(s) here after the mirror. If they are still present they are ` +
+        `reported above; if they are NOT, they were inserted and deleted, ` +
+        `and the identifiers are spent on the source while the destination ` +
+        `still considers them free.`,
+    );
+  }
+  return problems;
+}
+
 async function digestDatabase(db) {
   const out = new Map();
   for (const table of await tablesOf(db.id)) {
@@ -1180,6 +1223,28 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
 
   const classifiedSource = new Map();
 
+  // Schema-drift notes raised before a table is classified. They cannot
+  // go into `conflicts` at that point: that is a const computed from
+  // `plan` further down, so pushing to it from here is a reference into
+  // the temporal dead zone. They are concatenated where `conflicts` is
+  // built instead.
+  const driftNotes = [];
+
+  // The source's allocation high-water marks, read once and recorded in
+  // the manifest so a later reconciliation can see the source allocate
+  // past them. Declared AND populated here — a map that is only ever
+  // read is the inert-fix shape this PR has hit twice.
+  const sequenceAtMirror = new Map();
+  if (!reportOnly) {
+    try {
+      for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
+        if (!NEVER_CARRIED(r.name)) sequenceAtMirror.set(r.name, Number(r.seq));
+      }
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
+    }
+  }
+
   // EVERY RETURN FROM HERE GOES THROUGH ONE CONSTRUCTOR, and that is a
   // fix for a defect rather than tidiness (#2267 r26).
   //
@@ -1250,7 +1315,37 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // source's are used for both sides. That is 43 fewer round trips per
     // run, inside the window where the writers are stopped.
     const dstDdl = (await declarations(dst.id)).get(table) ?? '';
-    if (dstDdl !== ddl) {
+
+    // A DDL DIFFERENCE REFUSES A CARRY. IT MUST NOT REFUSE A REPORT
+    // (#2267 r36).
+    //
+    // Parity matters because writing rows into a differently-shaped
+    // table is unsound — that is the carry's concern. `reconcile` writes
+    // nothing, and the weekly run this procedure now requires happens
+    // against an archive that receives no migrations after the switch,
+    // so from the FIRST post-cutover migration onward a refusal here
+    // would silence the only thing still looking for late writes. A
+    // check that switches itself off exactly when the thing it guards
+    // starts drifting is worse than no check, because the run still
+    // exits reporting something.
+    //
+    // So in report-only mode the difference is REPORTED and the table is
+    // still classified, over the manifest's column projection — which is
+    // the right basis anyway, since those are the columns its hashes
+    // were taken over. A key-projection change still refuses below:
+    // without a shared key there is nothing to match rows by at all.
+    if (dstDdl !== ddl && reportOnly) {
+      driftNotes.push({
+        table,
+        detail:
+          `the two sides DECLARE this table differently, which is ` +
+          `EXPECTED once the destination has taken a migration the ` +
+          `retained source has not. Rows below are still compared, over ` +
+          `the columns the manifest recorded. Reported so the drift is ` +
+          `visible rather than silent`,
+      });
+    }
+    if (dstDdl !== ddl && !reportOnly) {
       plan.push({
         table,
         refused:
@@ -1454,12 +1549,19 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // before a single statement is sent, so honouring that promise is a
   // matter of checking it here rather than of unwinding anything.
   const refused = plan.filter((s) => s.refused);
-  const conflicts = plan.flatMap((s) => s.conflicts ?? []);
+  const conflicts = [...driftNotes, ...plan.flatMap((s) => s.conflicts ?? [])];
   const manifestOf = () => {
     const m = {};
     for (const step of plan) {
       if (step.refused) continue;
-      m[step.table] = { key: step.key, cols: step.cols, rows: step.seen };
+      m[step.table] = {
+        key: step.key,
+        cols: step.cols,
+        // The allocation high-water mark at mirror time, so a later
+        // reconciliation can see the source allocate past it (#2267 r36).
+        seq: sequenceAtMirror.get(step.table) ?? null,
+        rows: step.seen,
+      };
     }
     return m;
   };
@@ -1884,11 +1986,16 @@ async function main() {
       reconciling,
       classifiedSource,
     }),
-    // Only for a mirror: reconcile writes nothing, so it has no
-    // destination sequence to have got wrong, and reporting one there
-    // would make the two required clean passes unreachable for a
-    // condition the run did not cause and cannot fix.
-    ...(reconciling ? [] : await sequenceProblems(src, dst)),
+    // A mirror compares the two databases' sequences, because it is
+    // about to make one match the other. A reconcile compares the
+    // SOURCE against the manifest instead: a straggler that allocated an
+    // id after the mirror and then deleted the row leaves the rows
+    // matching and the source's sequence advanced, so nothing else in
+    // this run would notice that an identifier is now spent on one side
+    // and free on the other (#2267 r36).
+    ...(reconciling
+      ? await sequenceAdvances(src, since)
+      : await sequenceProblems(src, dst)),
   ];
 
   console.log('');

@@ -169,7 +169,11 @@ because step 3 below is the part of it that had to be re-learned.
 
    So the sequence has two distinct parts, and conflating them is the error
    this revision exists to correct. Steps 1–5 make the window small.
-   **Step 6 is what closes it.**
+   **Step 6 is what keeps LOOKING — it does not close it either.** Nothing
+   in this procedure closes that window, because nothing here can revoke a
+   handle already granted (§4's banner). Step 6 is the only thing that
+   finds a late write, which is why it runs weekly for as long as the
+   predecessor is retained rather than ending at two clean passes.
 
    1. Deploy the maintenance build (no `d1_databases`) to all three
       Workers, then **confirm it took** —
@@ -1636,11 +1640,19 @@ sequence is:
 5. **Redeploy `ops/offchain-data-warm` by hand**, since it is not built on
    merge, and only then run the gate:
    `check-live-d1-bindings.mjs --expect vaipakam-archive`.
-6. **Reconcile** —
+6. **Reconcile, and keep reconciling** —
    `reconcile --from vaipakam-warm --to vaipakam-archive --since
    rollback-mirror.json` until **two consecutive** runs report nothing. It
    reads and reports; it writes nothing, so anything it finds is applied by
    a deliberate human step.
+
+   **Then weekly, for as long as warm is retained** (#2267 r36). The
+   direction inverts but the reasoning does not: an invocation holding the
+   former live `vaipakam-warm` binding can resume after both clean runs and
+   commit a record that is then absent from the now-live archive
+   indefinitely. Nothing revokes that handle either. Same owner, same log,
+   same rule — two clean runs pause the search, they do not end it, and
+   warm is now the retained database that has to keep being looked at.
 
 Steps 1–3 before step 4 is not a preference. Reverting first is the same
 defect as switching forward without a final carry, in the other direction,
