@@ -1341,23 +1341,36 @@ Two practical consequences:
   not uniformly additive.
 
   **Two consequences.** An `internal` library helper is inlined into every
-  caller, so annotating one is not a local change — annotating
-  `LibVaipakam`'s storage-pointer helper is a de-facto GLOBAL switch, because
-  nearly every facet inlines it. And the trade bites hardest exactly where
-  the benefit is greatest: the facets most likely to hit the stack ceiling
-  are the big ones, which are the ones with no room (this file records
+  caller, so annotating one is not a local change — `LibVaipakam`'s
+  storage-pointer helper reaches nearly every facet, so it is a NECESSARY
+  condition for most of the Diamond at once (not a sufficient one; see the
+  last-block rule below). And the trade bites hardest exactly where the
+  benefit is greatest: the facets most likely to hit the stack ceiling are
+  the big ones, which are the ones with no room (this file records
   `OfferAcceptFacet` shipping at 24,412 — 164 bytes clear — and #1835/#1780
   exist because of that squeeze).
+
+  **The guard flips only when the LAST unannotated block in a contract's
+  COMPILATION CONTEXT is annotated** — its own blocks plus every one inlined
+  into it. Until then a retrofit is INERT: no mover, no benefit, and no
+  bytecode growth either. `OfferMatchFacet` is the worked example in this
+  tree — bare blocks at `:588` and `:701` *and* it reaches
+  `LibVaipakam.storageSlot`'s bare block, so annotating any one or two of the
+  three changes nothing at all. Do not expect a partial retrofit to show up
+  in either direction, and do not read "it got no bigger" as "it was safe to
+  annotate" (#2260 r2 P2).
 
   **This does NOT contradict the annotate-new-blocks rule above, because the
   two directions are not symmetric.** Writing a NEW block into a contract
   that had none *removes* a guard that contract already had, so annotating it
-  restores the status quo and is bytecode-neutral against the state before
-  the block existed — keep annotating new safe blocks, always.
-  RETROFITTING an existing bare block flips its contract off→on, which is
-  what summons the mover and the bytecode. **"Do not sweep" applies to the
-  retrofit direction only**; there, annotate where a contract NEEDS the
-  guard and check headroom in the same change.
+  restores the status quo — **neutral with respect to GUARD AVAILABILITY**,
+  which is the comparison that matters here; the block's own instructions
+  still change runtime size like any other code. Keep annotating new safe
+  blocks, always. RETROFITTING is the direction that can flip a contract
+  off→on and summon the mover, subject to the last-block rule above. **"Do
+  not sweep" applies to the retrofit direction only**; there, annotate where
+  a contract NEEDS the guard, take its whole compilation context in one
+  change, and check headroom in the same change.
 - **A clean compile is NOT evidence for an annotation change — EIP-170 is a
   TEST, not a compiler error.** `forge build --skip test` reported "Compiler
   run successful" on the sweep above while two facets sat over the limit.
