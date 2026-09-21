@@ -1,9 +1,12 @@
 # Release Notes — 2026-09-21
 
 Two merges today. The larger one is the third transport-epochs release of the
-#1566 programme (PR #2232): every reward-budget delivery that reaches a mirror
-over one of the older wires now gets its own epoch in the ledger — a single
-untyped balance bound to the days the delivery named — and the close-out that
+#1566 programme (PR #2232): on a mirror whose reward custody has been
+switched on, every reward-budget delivery that arrives over one of the older
+wires now gets its own epoch in the ledger — a single untyped balance bound
+to the days the delivery named (a delivery landing before the switch-on takes
+none, and is assigned by the switch-on itself, as the section below says) —
+and the close-out that
 would let such a delivery be reconciled early is deliberately not offered yet
 (owner decision on #2258). Nothing draws from an epoch in this release; the
 draws are the next one. The smaller merge (PR #2266) closes a latent
@@ -381,7 +384,7 @@ Four scripts did not. Two wrote ceremony receipts and two read the address inven
 
 All four now go through the shared helpers, and the helpers themselves were re-layered so exactly one function decides where artifacts live; everything else, including a new form for "a named record beside the address inventory", is built on top of it. One of the four resolves its chain from an operator-set name rather than from the chain it is connected to, which is why there is a second entry point taking that name — rebuilding the root by hand to serve that case is precisely how these four drifted out.
 
-The accompanying tests cover the helpers directly and two of the four call sites — the ceremony receipt and the refresh reader — each through a probe, and each verified by restoring the fixed string in isolation and watching the matching test fail. The remaining call site, in the handover script, is not covered: it is internal to a script that cannot carry a redirect at all, so a probe would have to grant it a capability it does not have and would end up asserting its own wiring. It is correct by construction — the hand-built root is gone — and that is the claim being made for it.
+The accompanying tests cover the helpers directly and two of the three call sites — the ceremony receipt and the refresh reader — each through a probe, and each verified by restoring the fixed string in isolation and watching the matching test fail. The remaining call site, in the handover script, is not covered: it is internal to a script that cannot carry a redirect at all, so a probe would have to grant it a capability it does not have and would end up asserting its own wiring. It is correct by construction — the hand-built root is gone — and that is the claim being made for it.
 
 A first version of this change made that same excuse for the refresh reader, and the excuse was false: that script inherits the redirect capability already, so a probe needed nothing special and the test was simply missing. Review caught it. The distinction matters more than the one test does, because an unfounded reason not to test something reads exactly like a sound one, and stops anyone looking again.
 
