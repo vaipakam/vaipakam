@@ -98,7 +98,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](213); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
+        // exact count — the guard below requires n == length.
+        // 215 = 200 at the merge base + 13 from main (#1566 closure 2's
+        // creditInflowRawWithBefore, slice 4 PR B +5, cutover PR 2 +5) + 2 from
+        // this branch (#1566 §7's setBorrowerLifRebateRaw + setIntentCommitRaw).
+        // The length is the one hand-numbered value the cursor pattern cannot
+        // protect, so it is the one thing a merge must re-derive: take BOTH
+        // sides' additions over the base, never one side's total.
+        selectors = new bytes4[](215);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -196,6 +203,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setLoan.selector;
         selectors[n++] = TestMutatorFacet.setOffer.selector;
         selectors[n++] = TestMutatorFacet.setNextLoanId.selector;
+        selectors[n++] = TestMutatorFacet.setBorrowerLifRebateRaw.selector;
+        selectors[n++] = TestMutatorFacet.setIntentCommitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
         selectors[n++] = TestMutatorFacet.setNextOfferId.selector;
         selectors[n++] = TestMutatorFacet.setTreasuryAddress.selector;
         selectors[n++] = TestMutatorFacet.setKYCEnforcementFlag.selector;
@@ -328,7 +338,6 @@ contract HelperTest {
         // so FallbackPending fixtures can scaffold the snap (lender /
         // treasury / borrower entitlements + active flag) without
         // running the full at-fallback liquidation flow.
-        selectors[n++] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
         // LibERC721 lock-state + mint direct manipulators — exposed for
         // the focused setApprovalForAll-during-lock unit test. Names
         // intentionally avoid the `test*` prefix so Foundry's test

@@ -2,8 +2,9 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert, makeRoutingBoundary, UNROUTED } from './census-grandfathered-custody.mjs';
 import { toFunctionSelector } from 'viem';
+import { readFileSync } from 'node:fs';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
 const res = (chainSlug, deployment, atBlock, atBlockHash, diamond = '0xd1', vpfiToken = '0xt1') => ({ chainSlug, deployment, atBlock: String(atBlock), atBlockHash, diamond, vpfiToken });
@@ -122,4 +123,109 @@ test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload pr
   // an empty revert is not the fallback either
   assert.equal(isFunctionDoesNotExistRevert({ data: '0x' }), false);
   assert.equal(isFunctionDoesNotExistRevert(null), false);
+});
+
+test('the routing boundary: a read is gated by ITS OWN selector, answers UNROUTED instead of throwing, and probes each selector once (#2095 r26)', async () => {
+  const probed = [];
+  const reads = [];
+  const routed = new Set(['getFallbackSnapshot']); // the Diamond routes the snapshot getter and NOT the loan getter
+  const probe = async (fn) => { probed.push(fn); return routed.has(fn); };
+  const read = async (fn, args) => { reads.push([fn, args]); return `${fn}:ok`; };
+  const { selectorRouted, readRouted } = makeRoutingBoundary(probe, read);
+
+  assert.equal(await readRouted('getFallbackSnapshot', [], [1n]), 'getFallbackSnapshot:ok');
+  // THE REGRESSION: the loan getter is cut out. Before r26 this read threw
+  // FunctionDoesNotExist and took the whole deployment's evidence with it.
+  assert.equal(await readRouted('getLoanDetails', [], [1n]), UNROUTED, 'an unrouted selector answers the sentinel');
+  assert.deepEqual(reads, [['getFallbackSnapshot', [1n]]], 'an unrouted selector is never called');
+
+  // the per-loan loop asks again for every id: one probe per selector, not per read
+  await readRouted('getFallbackSnapshot', [], [2n]);
+  await readRouted('getLoanDetails', [], [2n]);
+  assert.deepEqual(probed, ['getFallbackSnapshot', 'getLoanDetails'], 'routing is resolved once per selector');
+  assert.equal(await selectorRouted('getFallbackSnapshot', [], [3n]), true, 'the gates read the same one answer');
+  assert.equal(probed.length, 2);
+});
+
+test('the routing boundary does NOT remember a failed probe — only an answer is a fact about the Diamond (#2095 r26)', async () => {
+  let attempt = 0;
+  const probe = async () => { attempt += 1; if (attempt === 1) throw new Error('rate limited'); return true; };
+  const { selectorRouted } = makeRoutingBoundary(probe, async () => 'value');
+  await assert.rejects(() => selectorRouted('getIntentCommit', [], [1n]), /rate limited/);
+  assert.equal(await selectorRouted('getIntentCommit', [], [1n]), true, 'the next caller probes again rather than inheriting a transport failure as "unrouted"');
+  assert.equal(attempt, 2);
+});
+
+// #2095 r27 — the finalization is only worth anything if the census actually
+// runs it, and no unit test can reach `applyLayoutProvenance` (it needs a
+// client and a Diamond). Deleting its one call would leave every rule above
+// green, which is the failure mode #1800 named on the deploy guard. So the
+// CALL SITE is pinned here, structurally: the pass's every exit goes through
+// the finalization, and the census's every exit goes through the pass.
+test('#2095 r27 — every exit of the layout-provenance pass is finalized, and the census has no other exit', () => {
+  const src = readFileSync(new URL('./census-grandfathered-custody.mjs', import.meta.url), 'utf8');
+  const bodyOf = (signature) => {
+    const at = src.indexOf(signature);
+    assert.notEqual(at, -1, `${signature} — the function this test pins has been renamed; re-point the test rather than deleting it`);
+    // the parameter list is destructured, so the first `{` after the signature
+    // belongs to it — walk the parens out first, then take the body's brace
+    let p = src.indexOf('(', at);
+    let k = p;
+    for (let depth = 0; k < src.length; k++) {
+      if (src[k] === '(') depth++;
+      else if (src[k] === ')' && --depth === 0) break;
+    }
+    let i = src.indexOf('{', k);
+    for (let depth = 0, j = i; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}' && --depth === 0) return src.slice(i, j + 1);
+    }
+    throw new Error(`${signature}: unbalanced braces`);
+  };
+
+  // only the function's OWN returns: a nested helper's return says nothing
+  // about the exit the caller sees. Comments go first so a `return` written in
+  // prose cannot be mistaken for one.
+  const ownReturns = (body) => {
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const out = [];
+    // a brace that opens a NESTED function body (`=>` or `function …()` before
+    // it) hides everything under it; any other brace is a block or an object
+    // literal and the returns inside it are still this function's own
+    const stack = [];
+    for (let i = 0; i < code.length; i++) {
+      if (code[i] === '{') { stack.push(/(?:=>|\bfunction\b[^{;]*)\s*$/.test(code.slice(Math.max(0, i - 200), i))); continue; }
+      if (code[i] === '}') { stack.pop(); continue; }
+      if (stack.length && stack.some(Boolean)) continue;
+      // `return` as a keyword: an identifier character on either side makes it
+      // prose (`returned NONE`, in a message this function throws)
+      if (stack.length && code.startsWith('return', i) && !/[A-Za-z0-9_$]/.test(code[i - 1] ?? ' ') && !/[A-Za-z0-9_$]/.test(code[i + 6] ?? ' ')) {
+        const end = code.indexOf(';', i);
+        out.push(code.slice(i + 'return'.length, end).trim());
+        i = end;
+      }
+    }
+    return out;
+  };
+
+  const pass = bodyOf('async function applyLayoutProvenance(');
+  const returns = ownReturns(pass);
+  assert.ok(returns.length, 'the pass returns something');
+  for (const r of returns) {
+    assert.ok(
+      r.startsWith('finalizeVerdictFromEvidence('),
+      `the layout-provenance pass returns \`${r}\` unfinalized — a class it withdraws would leave the liability aggregates stating the old figure (#2095 r27)`,
+    );
+  }
+
+  // and the census's own exits are that pass, so there is no path around it
+  const census = bodyOf('async function censusDeployment(');
+  const exits = ownReturns(census).filter((r) => r.length);
+  assert.ok(exits.length >= 3, 'the census has the code-absent exit, the shell exit and the full exit');
+  for (const r of exits) {
+    assert.ok(
+      r.startsWith('applyLayoutProvenance(') || r.startsWith('finalizeVerdictFromEvidence('),
+      `censusDeployment returns \`${r.slice(0, 60)}…\` through neither the layout-provenance pass nor the finalization — that path can publish a class verdict and a liability figure nothing re-derived (#2095 r27)`,
+    );
+  }
 });

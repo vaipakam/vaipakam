@@ -422,6 +422,8 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
+  ["contracts/deployments/storage-layout-violations.ack.json", [1, "HISTORICAL RECORD — acknowledged storage-layout change events (#2092, #2095): the before/after declarations of past layout changes name fields the retired buy surface once held; it records what WAS laid out, never a live surface", "4e0fe29628cd"]],
+  ["contracts/deployments/storage-slot-eras.json", [43, "HISTORICAL RECORD — the storage-layout era table (#1566 §7a, #2095): its bytecode catalogue names every contract each past build produced and its earlier-era field labels name fields past layouts held, the retired buy surface among them; it records what WAS compiled and laid out, never a live surface", "f2252a81b76c"]],
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "fdcbec2821b2"]],
   [".github/scripts/check-excision-residue.selftest.mjs", [28, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "39d667741801"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
