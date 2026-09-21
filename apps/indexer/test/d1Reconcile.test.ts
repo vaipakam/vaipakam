@@ -5,7 +5,12 @@ import { describe, expect, it } from 'vitest';
 // by path; the module guards its own `main()` behind a direct-execution
 // check precisely so this import cannot start carrying rows.
 // @ts-expect-error — untyped .mjs operator script, imported for its pure exports
-import { classifyForReconcile, situationOf, verdictProblems } from '../scripts/d1-carry-rows.mjs';
+import {
+  classifyForReconcile,
+  readAll,
+  situationOf,
+  verdictProblems,
+} from '../scripts/d1-carry-rows.mjs';
 
 /**
  * WHY THIS TEST EXISTS. Post-switch reconciliation decides, per row,
@@ -435,5 +440,84 @@ describe('verdict — a table only the destination has', () => {
     });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('NOT CARRIED');
+  });
+});
+
+/**
+ * WHY THIS TEST EXISTS. `readAll` pages a table with `LIMIT/OFFSET`, and
+ * each page is a separate statement against a database that may be
+ * changing: a row inserted between pages whose sort position falls into a
+ * page already read is returned by none of them. The tool answers that by
+ * reading the whole table TWICE and comparing — which only works if a row
+ * the first pass skipped really does come back in the result.
+ *
+ * Nothing about that is visible from a rehearsal against the live pair,
+ * because a quiesced source agrees on the first comparison every time.
+ * These drive `readAll` against an in-memory table that moves underneath
+ * it on purpose.
+ */
+describe('readAll — a paged read is not a snapshot', () => {
+  const COLS = ['id'];
+  const PAGE = 500;
+  const id = (n: number) => `r${String(n).padStart(5, '0')}`;
+
+  /**
+   * A table that answers `LIMIT/OFFSET` from its current contents, with a
+   * hook that runs strictly BETWEEN statements — which is exactly where a
+   * straggler's write lands.
+   */
+  function fakeTable(initial: string[]) {
+    const state = {
+      rows: [...initial],
+      statements: 0,
+      afterStatement: (_n: number, _s: { rows: string[] }) => {},
+    };
+    const run = async (_dbId: string, sql: string) => {
+      const m = /LIMIT (\d+) OFFSET (\d+)/.exec(sql);
+      if (!m) throw new Error(`unexpected SQL: ${sql}`);
+      const page = [...state.rows]
+        .sort()
+        .slice(Number(m[2]), Number(m[2]) + Number(m[1]))
+        .map((v) => ({ id: v }));
+      state.statements += 1;
+      state.afterStatement(state.statements, state);
+      return page;
+    };
+    return { state, run };
+  }
+
+  it('reads a single-statement table once and does not re-read it', async () => {
+    const { state, run } = fakeTable([id(1), id(2), id(3)]);
+    const rows = await readAll('db', 't', COLS, run);
+    expect(rows.map((r: { id: string }) => r.id)).toEqual([id(1), id(2), id(3)]);
+    expect(state.statements).toBe(1);
+  });
+
+  it('re-reads a table that actually paged, and agrees when it is still', async () => {
+    const all = Array.from({ length: PAGE + 100 }, (_, i) => id(i + 1));
+    const { state, run } = fakeTable(all);
+    const rows = await readAll('db', 't', COLS, run);
+    expect(rows.map((r: { id: string }) => r.id)).toEqual(all);
+    // Two full passes of two statements each — the second pass is the
+    // check, and it is not skipped just because the table was quiet.
+    expect(state.statements).toBe(4);
+  });
+
+  it('returns a row the first pass skipped entirely', async () => {
+    const all = Array.from({ length: PAGE + 100 }, (_, i) => id(i + 1));
+    const { state, run } = fakeTable(all);
+    // A straggler commits after the first page is read, sorting ahead of
+    // everything already returned — the one insert a single paged pass
+    // cannot see.
+    const straggler = id(0);
+    state.afterStatement = (n, s) => {
+      if (n === 1) s.rows.push(straggler);
+    };
+
+    const rows = await readAll('db', 't', COLS, run);
+    const seen = rows.map((r: { id: string }) => r.id);
+
+    expect(seen).toContain(straggler);
+    expect([...new Set(seen)].sort()).toEqual([straggler, ...all].sort());
   });
 });

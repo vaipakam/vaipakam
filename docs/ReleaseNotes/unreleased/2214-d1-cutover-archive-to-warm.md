@@ -186,8 +186,8 @@ database without it, which the reconciliation can see and name. A
 straggler that *changes an existing* record — an offer's status, a
 notification preference, how far the chain has been read — leaves a record
 that already exists on both sides, so a reconciliation that asks only "is
-this record present?" does nothing at all, reports that it carried nothing,
-and calls itself finished while the new database is stale. That is counting
+this record present?" has nothing to say about it at all, reports that it
+found nothing, and calls itself finished while the new database is stale. That is counting
 instead of comparing, one level up from where the same mistake was caught
 earlier in this move.
 
@@ -201,10 +201,12 @@ compares against that record.
 **Having that written record turns a two-way question into a three-way one,
 and the difference is not academic.** For any record there are three facts:
 was it in the copy, is it on the old database now, is it on the new one now.
-Only one combination can be acted on without a person — a record that
-appeared on the old database after the copy and has never existed on the new
-one. Every other divergence is a decision, and three of them were being got
-wrong in ways that all *looked* like success:
+Those three answers are what let each divergence be *named* correctly — and
+naming it is the whole job, because the step writes to neither database and
+a person applies every difference it reports, including the simplest one (a
+record that appeared on the old database after the copy and has never
+existed on the new one). Three of those divergences were being got wrong in
+ways that all *looked* like success:
 
 - Both databases can allocate the **same new identifier** for different
   records once they are running independently, since some records are

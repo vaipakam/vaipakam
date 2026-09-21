@@ -476,13 +476,20 @@ async function orderByDependency(dbId, tables) {
  * loudly, which is the correct outcome: `reconcile` reporting "clean" from
  * a read that may have skipped a row is exactly the false pass this whole
  * change keeps removing.
+ *
+ * `run` is the statement executor, injectable so the moving-database case
+ * can be driven deliberately — a rehearsal against a quiesced source
+ * agrees on the first comparison every time and therefore demonstrates
+ * nothing. `apps/indexer/test/d1Reconcile.test.ts` inserts a row between
+ * two pages, at a sort position the first pass has already read, and
+ * asserts it is in the result.
  */
-async function readAll(dbId, table, cols) {
+export async function readAll(dbId, table, cols, run = query) {
   const quoted = cols.map((c) => `"${c}"`).join(', ');
   const onePass = async () => {
     const out = [];
     for (let offset = 0; ; offset += PAGE) {
-      const rows = await query(
+      const rows = await run(
         dbId,
         `SELECT ${quoted} FROM "${table}" ORDER BY ${quoted} LIMIT ${PAGE} OFFSET ${offset}`,
       );
@@ -492,8 +499,12 @@ async function readAll(dbId, table, cols) {
     return out;
   };
 
-  // A table that fits in one page cannot be torn by paging at all, so the
-  // second pass is only needed once there is more than one page.
+  // A table read by ONE statement cannot be torn by paging at all, so the
+  // second pass is only needed once paging actually happened — and fewer
+  // than PAGE rows in total IS that test, not an approximation of it: the
+  // loop continues only when a page came back full, so any pass that
+  // issued a second statement has already collected PAGE rows from the
+  // first. `< PAGE` and "one statement" are the same condition here.
   let first = await onePass();
   if (first.length < PAGE) return first;
 
