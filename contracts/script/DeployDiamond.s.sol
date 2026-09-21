@@ -143,11 +143,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         plausible-sounding mechanism that gets rediscovered. See the
     ///         `memoryguard` note on `Deployments.finalizeArtifact` for what was
     ///         actually happening — briefly: an unannotated inline-assembly
-    ///         block withdraws viaIR's stack-to-memory mover for the WHOLE
-    ///         contract, and solc reports that as the frame being too deep. The
-    ///         probes each carried such a block, which is why they failed while
-    ///         the base compiled, and five revisions were spent moving a call
-    ///         that was never the cause.
+    ///         block THAT TOUCHES MEMORY withdraws viaIR's stack-to-memory
+    ///         mover for the WHOLE contract, and solc reports that as the frame
+    ///         being too deep. The probes each carried such a block, which is
+    ///         why they failed while the base compiled, and five revisions were
+    ///         spent moving a call that was never the cause. (A block touching
+    ///         no memory does not withhold the guard; that note and CLAUDE.md
+    ///         carry the full rule — this is a summary, so do not re-derive it
+    ///         here.)
     ///
     ///         Gated to self-calls so it is not an operator-reachable entry
     ///         point on a broadcast script.

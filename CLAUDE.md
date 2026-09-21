@@ -1394,13 +1394,35 @@ Two practical consequences:
   two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet` only
   (`FacetSizeLimitTest.t.sol:75-84`), so a **non-facet deployable**
   (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
-  size-checked by it at all: for a change touching one of those, read its
-  `deployedBytecode` length out of `out/<Name>.sol/<Name>.json` and compare
-  against the pre-change build yourself. The suite is not a substitute there.
-- **`forge build --skip test` cannot see a test contract doing this.** A probe
-  or helper under `test/` that inherits a script and carries an unannotated
-  block fails only in the test build, which is the failure mode that cost #2253
-  those five revisions.
+  size-checked by it at all. For a change touching one of those, read its
+  `deployedBytecode` length out of `out/<Name>.sol/<Name>.json` and check it
+  **against 24,576 — the absolute EIP-170 ceiling — not only against the
+  pre-change build.** The before/after delta tells you the annotation moved
+  size and by how much; it does not tell you whether the result deploys, and a
+  contract that crosses the ceiling does so on some particular change whose
+  delta looks no different from a harmless one. Compare both ways: the ceiling
+  for deployability, the delta for how much headroom the change spent. The
+  suite is not a substitute there.
+- **An annotation under `test/` needs a THIRD command — neither of the two
+  above compiles it.** `forge build --skip test` excludes `test/` by
+  definition, and `--match-path "test/deploy/*"` compiles only the matched
+  files and their dependency closure (the same sparseness the "Local full
+  regression" section relies on), so a block in, say,
+  `test/SignedOfferBook.t.sol` is compiled by neither. Both advertised checks
+  then pass **without the changed block ever reaching solc** — green on a
+  change they did not look at. Match the file you actually touched:
+
+  ```bash
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    forge test --match-path "test/SignedOfferBook.t.sol"
+  # or, when the block is in a widely-inherited helper and you want the
+  # whole closure compiled, the chunked regression:
+  FOUNDRY_PROFILE=default bash script/run-regression.sh
+  ```
+
+  This is the same trap in a second form: a probe or helper under `test/` that
+  inherits a script and carries an unannotated block fails only in the test
+  build, which is the failure mode that cost #2253 those five revisions.
 
 **Scope of what is actually left** (#2260, re-measured). `src/` carries 25 bare
 blocks, but **6 are the no-memory storage-pointer idiom and need nothing**. The

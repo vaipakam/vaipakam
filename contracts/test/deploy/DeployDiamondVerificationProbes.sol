@@ -18,12 +18,20 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
  *
  *         What actually happened: the failing probe carried a bare
  *         `assembly { revert(add(err, 0x20), mload(err)) }` to rethrow a caught
- *         revert. An unannotated assembly block withdraws viaIR's
- *         stack-to-memory mover for the WHOLE contract — and these contracts
- *         inherit `runWith`, whose ~80 live facet addresses depend on it. solc
- *         then reports `Variable … is 1 too deep in the stack` naming `runWith`,
- *         a function the assembly block is nowhere near, and adds the real
- *         diagnosis on its last line: "No memoryguard was present."
+ *         revert. That block READS MEMORY, and an unannotated MEMORY-TOUCHING
+ *         assembly block withdraws viaIR's stack-to-memory mover for the WHOLE
+ *         contract — and these contracts inherit `runWith`, whose ~80 live
+ *         facet addresses depend on it. solc then reports `Variable … is 1 too
+ *         deep in the stack` naming `runWith`, a function the assembly block is
+ *         nowhere near, and adds the real diagnosis on its last line: "No
+ *         memoryguard was present."
+ *
+ *         The memory-touching qualifier is the whole rule, not a detail: a
+ *         block that touches no memory does not withhold the guard. Do not
+ *         restate the rule without it here — see the `memoryguard` note on
+ *         `Deployments.finalizeArtifact`, and CLAUDE.md's "1 too deep in the
+ *         stack" section for the canonical treatment and the cost of
+ *         annotating a block that did not need it.
  *
  *         So the probes failed on their own assembly, not on the seam, and five
  *         revisions were spent moving a call that was never the cause. Neither

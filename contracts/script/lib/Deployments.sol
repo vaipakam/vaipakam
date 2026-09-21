@@ -712,11 +712,23 @@ library Deployments {
             //
             // viaIR rescues a deep frame with a stack-to-memory mover, and solc
             // emits that mover only behind a `memoryguard`, which it withholds
-            // from the WHOLE contract if any inline-assembly block is
-            // unannotated. So one unannotated block here un-rescues every frame
-            // that inlines this library, and the error names the frame that
-            // overflowed rather than the block that caused it. solc does say so,
-            // on the last line of its own output: "No memoryguard was present."
+            // from the WHOLE contract if an inline-assembly block in it that
+            // TOUCHES MEMORY is unannotated. So one such unannotated block here
+            // un-rescues every frame that inlines this library, and the error
+            // names the frame that overflowed rather than the block that caused
+            // it. solc does say so, on the last line of its own output: "No
+            // memoryguard was present."
+            //
+            // The qualifier is load-bearing, not hedging: a block that touches
+            // no memory — the `x.slot := position` storage-pointer idiom — does
+            // NOT withhold the guard and needs no annotation. An earlier
+            // revision of this comment said "any inline-assembly block", which
+            // sends a maintainer off annotating blocks that neither need it nor
+            // benefit, and the annotation is not free (it enables the mover,
+            // and the mover is code — #2268 put two facets over EIP-170 that
+            // way). CLAUDE.md's "1 too deep in the stack" section is the
+            // canonical treatment; keep this scoped the same way if you edit
+            // either.
             // Five revisions of this PR moved a call around chasing the frame
             // and never read that line.
             //
