@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, withholdUnknownAssetEvidence, deriveLiabilityAggregates, finalizeVerdictFromEvidence, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -411,4 +411,105 @@ test('an unshared layout withdraws the rows it COUNTED, not only the rows it exc
   // no scope-dependent row at all (the no-loans bound): nothing to withdraw
   const none = { status: 'proven', provenBy: 'no-loans-ever-created', count: 0, total: '0', rows: [], nonVpfiRowsExcluded: [] };
   assert.deepEqual(downgradeUnreconciledScope(none, share, { getters: 'g' }), none, 'an unshared layout cannot unprove a class that read no rows');
+});
+
+test('#2095 r27 — a class holding unknown-asset evidence is never certified, and a zero count never hides it', () => {
+  // THE REGRESSION: getFallbackSnapshot routed, getLoanDetails not. Every
+  // observed row is recorded unknown-asset; neither `rows` nor
+  // `nonVpfiRowsExcluded` is populated, so no scope downgrade fires and the
+  // class stood as proven with count 0 — which `allClassesEmpty` read as
+  // absence over an observed custody row.
+  const classes = {
+    fallbackSnapshotCustody: { status: 'proven', provenBy: 'routed-getter', count: 0, total: '0', rows: [], nonVpfiRowsExcluded: [], unknownAssetRows: [{ loanId: '7' }] },
+    rebateRows: { status: 'proven', provenBy: 'routed-getter', count: 1, total: '5', rows: [{ loanId: '1', rebateAmount: '5' }], unknownAssetRows: [] },
+  };
+  const out = withholdUnknownAssetEvidence(classes);
+  assert.equal(out.fallbackSnapshotCustody.status, 'indeterminate', 'an observed row whose asset is unreadable cannot be certified absent');
+  assert.equal(out.fallbackSnapshotCustody.provenBy, undefined);
+  assert.equal(out.fallbackSnapshotCustody.count, 1, 'the count states the row in evidence rather than reporting zero beside it');
+  assert.equal(out.fallbackSnapshotCustody.total, null);
+  assert.match(out.fallbackSnapshotCustody.totalUnavailable, /unreadable asset/);
+  assert.match(out.fallbackSnapshotCustody.indeterminateReason, /asset could not be read/);
+  assert.deepEqual(out.rebateRows, classes.rebateRows, 'a class with no unknown-asset evidence is untouched');
+
+  // counted rows beside unknown ones: the count states both
+  const mixed = withholdUnknownAssetEvidence({
+    c: { status: 'proven', provenBy: 'routed-getter', count: 2, total: '30', rows: [{ a: 1 }, { a: 2 }], unknownAssetRows: [{ loanId: '9' }] },
+  });
+  assert.equal(mixed.c.count, 3);
+  assert.match(mixed.c.indeterminateReason, /beside 2 counted as VPFI/);
+
+  // already indeterminate: the rule takes away, it never re-states a verdict
+  const already = { c: { status: 'indeterminate', count: 4, total: '7', unknownAssetRows: [{ loanId: '1' }], indeterminateReason: 'an earlier pass said why' } };
+  assert.deepEqual(withholdUnknownAssetEvidence(already), already);
+});
+
+test('#2095 r27 — the liability aggregates are derived from the final classes and withdrawn with the class total', () => {
+  const rows = {
+    vpfiHeldCustody: { status: 'proven', count: 1, total: '10', rows: [{ vpfiHeld: '10' }] },
+    rebateRows: { status: 'proven', count: 1, total: '5', rows: [{ rebateAmount: '5' }] },
+    fallbackSnapshotCustody: { status: 'proven', count: 1, total: '20', rows: [{ collateralTotal: '20' }] },
+    liveIntentCommits: { status: 'proven', count: 0, total: '0', rows: [] },
+  };
+  // nothing withdrawn: the derivation reproduces the figures, shortfall included
+  const clean = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  assert.equal(clean.vpfiRowsTotal, '35');
+  assert.equal(clean.backingShortfall, '5');
+  assert.equal(clean.vpfiRowsTotalUnavailable, undefined);
+
+  const covered = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '100', vpfiRowsTotal: '35', backingShortfall: '0' });
+  assert.equal(covered.backingShortfall, '0', 'backing above the liability is a real zero, not a withdrawal');
+
+  // THE REGRESSION: the scope downgrade emptied `rows` into unknown-asset
+  // evidence and withdrew the class total AFTER these two figures were
+  // written. They kept publishing the amount as a substantiated liability.
+  const downgraded = {
+    ...rows,
+    fallbackSnapshotCustody: { status: 'indeterminate', count: 1, total: null, totalUnavailable: 'the asset of every row is unreconciled — the getters do not attribute to a common layout', rows: [], unknownAssetRows: [{ collateralTotal: '20' }] },
+  };
+  const w = deriveLiabilityAggregates({ classes: downgraded, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  assert.equal(w.vpfiRowsTotal, null, 'a liability no class can total is not stated');
+  assert.notEqual(w.vpfiRowsTotal, '15', 'and it is NOT re-derived from the surviving rows, which would understate it');
+  assert.match(w.vpfiRowsTotalUnavailable, /fallbackSnapshotCustody/);
+  assert.equal(w.backingShortfall, null, 'no shortfall is computable against a liability that is not stated');
+  assert.match(w.backingShortfallUnavailable, /not stated/);
+
+  // an indeterminate class still carrying a total contributes nothing: its
+  // total is a lower bound at best, and summing it would state a completeness
+  // nothing proved
+  const unestablished = { ...rows, liveIntentCommits: { status: 'indeterminate', count: 0, total: '0', rows: [], indeterminateReason: 'getLoanDetails is unrouted on this Diamond today' } };
+  const u = deriveLiabilityAggregates({ classes: unestablished, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  assert.equal(u.vpfiRowsTotal, null);
+  assert.match(u.vpfiRowsTotalUnavailable, /liveIntentCommits is not established/);
+  assert.equal(u.backingShortfall, null);
+
+  // an unreadable Diamond balance withholds the shortfall and says so
+  const noBacking = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: null, vpfiRowsTotal: '35', backingShortfall: null });
+  assert.equal(noBacking.vpfiRowsTotal, '35');
+  assert.equal(noBacking.backingShortfall, null);
+  assert.match(noBacking.backingShortfallUnavailable, /balance could not be read/);
+});
+
+test('#2095 r27 — the finalization composes the two: unknown-asset evidence withdraws the aggregates too', () => {
+  const result = {
+    diamondVpfiBacking: '100',
+    vpfiRowsTotal: '0',
+    backingShortfall: '0',
+    classes: {
+      vpfiHeldCustody: { status: 'proven', count: 0, total: '0', rows: [] },
+      rebateRows: { status: 'proven', count: 0, total: '0', rows: [] },
+      // the r27 shape: proven, count 0, one observed row with an unreadable asset
+      fallbackSnapshotCustody: { status: 'proven', provenBy: 'routed-getter', count: 0, total: '0', rows: [], unknownAssetRows: [{ loanId: '7' }] },
+      liveIntentCommits: { status: 'proven', count: 0, total: '0', rows: [] },
+    },
+  };
+  const f = finalizeVerdictFromEvidence(result);
+  assert.equal(f.classes.fallbackSnapshotCustody.status, 'indeterminate');
+  assert.equal(f.classes.fallbackSnapshotCustody.count, 1);
+  assert.equal(f.vpfiRowsTotal, null, 'the class the finalization just withdrew withdraws the aggregate in the same pass');
+  assert.equal(f.backingShortfall, null);
+  assert.notEqual(f.backingShortfall, '0', 'the shortfall must not report zero over a row whose asset is unknown');
+
+  // a result with no classes (the shell path) passes through
+  assert.deepEqual(finalizeVerdictFromEvidence({ vpfiRowsTotal: null }), { vpfiRowsTotal: null });
 });

@@ -612,3 +612,128 @@ export function downgradeUnreconciledScope(cls, share, { getters } = {}) {
       `common layout (${share?.reason ?? 'no layout agreement'}) — the asset is not reconciled either way; refusing to certify`,
   };
 }
+
+/** The four liability classes and the row field each one's amount lives in. One list, because every figure derived from a class reads it. */
+export const LIABILITY_CLASS_FIELDS = {
+  vpfiHeldCustody: 'vpfiHeld',
+  rebateRows: 'rebateAmount',
+  fallbackSnapshotCustody: 'collateralTotal',
+  liveIntentCommits: 'custodialCollateral',
+};
+
+/**
+ * #2095 r27 P1 — unknown-asset evidence is never certified, whatever pass put
+ * it there.
+ *
+ * A class can hold rows whose asset could not be read — `getFallbackSnapshot`
+ * routed while `getLoanDetails` is not records every observed row that way, and
+ * so does the scope downgrade when the getters read different layouts. Neither
+ * populates `rows` or `nonVpfiRowsExcluded`, so until now such a class could
+ * stand as `proven` with `count: 0`, and `allClassesEmpty` could go true over
+ * an observed custody row.
+ *
+ * The rule is about the EVIDENCE, not about the pass that collected it, so it
+ * is stated once here rather than as a clause inside each downgrade. `count`
+ * takes the unknown rows in as well: a zero beside a non-empty
+ * `unknownAssetRows` is a misstatement of what the census found, and the total
+ * is withdrawn because it would bound a liability the asset read cannot bound.
+ * Pure.
+ */
+export function withholdUnknownAssetEvidence(classes) {
+  const out = {};
+  for (const [name, c] of Object.entries(classes ?? {})) {
+    const unknown = c?.unknownAssetRows ?? [];
+    if (!c || c.status !== 'proven' || !unknown.length) { out[name] = c; continue; }
+    const counted = (c.rows ?? []).length;
+    out[name] = {
+      ...c,
+      status: 'indeterminate',
+      provenBy: undefined,
+      count: counted + unknown.length,
+      total: null,
+      totalUnavailable: `${unknown.length} row(s) in evidence have an unreadable asset — a total here would bound a liability the asset read cannot bound`,
+      indeterminateReason:
+        `${unknown.length} row(s) were observed whose asset could not be read${counted ? `, beside ${counted} counted as VPFI` : ''} — ` +
+        `their custody is neither provably VPFI nor provably not; refusing to certify`,
+    };
+  }
+  return out;
+}
+
+/**
+ * #2095 r27 P1 — the liability aggregates are DERIVED from the classes as they
+ * finally stand, and stated only where every contributing class was
+ * established.
+ *
+ * `vpfiRowsTotal` and `backingShortfall` were written while the census still
+ * held the rows, and the layout-provenance pass runs afterwards: the scope
+ * downgrade moves counted rows into unknown-asset evidence and sets the class
+ * total to `null`, and the two aggregates kept publishing the amount as a
+ * substantiated VPFI liability and shortfall. Recomputing from `rows` alone
+ * would be worse than leaving them — it would quietly UNDERSTATE the liability
+ * by exactly the rows the downgrade withdrew.
+ *
+ * So an unestablished class withdraws the aggregates too, with the reason
+ * named and the rows it did read left on the class itself; a shortfall is not
+ * computable against a liability that is not stated, so it goes with it. Where
+ * every class stands, this reproduces the figures already there — the rule only
+ * ever takes away. Pure.
+ */
+export function deriveLiabilityAggregates(result) {
+  const classes = result?.classes;
+  const names = Object.keys(LIABILITY_CLASS_FIELDS).filter((n) => classes?.[n]);
+  if (!names.length) return result;
+  // A class contributes a figure only where it was ESTABLISHED. An
+  // indeterminate class may still carry a total, and that total is a lower
+  // bound at best — the census did not settle that its rows are all of them —
+  // so summing it into a headline liability states a completeness nothing
+  // proved. This is broader than the round's finding, which asked only for the
+  // scope downgrade to be carried through; it is the same rule without the
+  // question of which kinds of withdrawal count, which is how this one was
+  // missed in the first place.
+  const withheld = names.filter((n) => classes[n].status !== 'proven' || classes[n].total === null || classes[n].totalUnavailable || (classes[n].unknownAssetRows ?? []).length);
+  if (withheld.length) {
+    const why =
+      `${withheld.join(', ')} ${withheld.length === 1 ? 'is not established' : 'are not established'} ` +
+      `(${withheld.map((n) => classes[n].totalUnavailable ?? classes[n].indeterminateReason ?? 'not certified').map((r) => String(r).split(' — ')[0]).join('; ')}) — ` +
+      `the liability across the classes is not established; the rows each class did read are reported on the class itself`;
+    return {
+      ...result,
+      vpfiRowsTotal: null,
+      vpfiRowsTotalUnavailable: why,
+      backingShortfall: null,
+      backingShortfallUnavailable: `no shortfall can be computed against a liability that is not stated: ${why}`,
+    };
+  }
+  const total = names.reduce(
+    (acc, n) => acc + (classes[n].rows ?? []).reduce((a, r) => a + (r[LIABILITY_CLASS_FIELDS[n]] !== undefined ? BigInt(r[LIABILITY_CLASS_FIELDS[n]]) : 0n), 0n),
+    0n,
+  );
+  const backing = result.diamondVpfiBacking === null || result.diamondVpfiBacking === undefined ? null : BigInt(result.diamondVpfiBacking);
+  return {
+    ...result,
+    vpfiRowsTotal: total.toString(),
+    vpfiRowsTotalUnavailable: undefined,
+    backingShortfall: backing === null ? null : (total > backing ? total - backing : 0n).toString(),
+    backingShortfallUnavailable: backing === null ? 'the Diamond\'s VPFI balance could not be read, so a shortfall cannot be computed' : undefined,
+  };
+}
+
+/**
+ * #2095 r27 — ONE finalization, because both of that round's code findings are
+ * one invariant: a class's verdict, and every figure derived from it, must be
+ * computed from the evidence the result FINALLY holds — never from an
+ * intermediate state a later pass has since withdrawn.
+ *
+ * Round 26 replaced five hand-written routing gates with one boundary for the
+ * same reason a round earlier. This is that shape one level up, and it is why
+ * neither finding is fixed where it was raised: a clause added to the scope
+ * downgrade would leave the next pass that withdraws a class free to forget
+ * the aggregates again, exactly as this one did.
+ *
+ * Runs at the end of every deployment's census, on both paths. Pure.
+ */
+export function finalizeVerdictFromEvidence(result) {
+  if (!result?.classes) return result;
+  return deriveLiabilityAggregates({ ...result, classes: withholdUnknownAssetEvidence(result.classes) });
+}

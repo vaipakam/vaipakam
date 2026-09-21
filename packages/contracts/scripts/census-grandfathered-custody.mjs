@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, finalizeVerdictFromEvidence, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -505,11 +505,14 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   result.proofStandard = PROOF_STANDARD;
   if (result.scanned.notADiamond) {
     result.scanned.layoutProvenance = { verdict: 'not-a-diamond', reason: 'the record names no Vaipakam Diamond; there are no facets of this protocol to attribute' };
-    return result;
+    return finalizeVerdictFromEvidence(result);
   }
   if (!STORAGE_READ.ok) {
+    // #2095 r27 — finalized on the way out like every other exit: this one
+    // carries a FULL result, so skipping it would certify a class holding
+    // unknown-asset evidence whenever the era table happens to be unreadable.
     result.scanned.layoutProvenance = { verdict: 'not-checked', reason: STORAGE_READ.reason };
-    return result;
+    return finalizeVerdictFromEvidence(result);
   }
   const recorded = recordedFacetAddresses(slug, diamond, manifestEntry);
   let loupe = null;
@@ -660,7 +663,11 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
       if (STORAGE_ONLY_PROOFS.has(result.provenBy)) result.provenBy = undefined;
     }
   }
-  return result;
+  // #2095 r27 — the LAST thing a deployment's census does, on both paths,
+  // because every pass above can withdraw a class and the figures derived from
+  // one are written before any of them run. The rule is in
+  // census-storage-read.mjs where the test reaches it.
+  return finalizeVerdictFromEvidence(result);
 }
 /**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
@@ -2089,7 +2096,10 @@ async function censusDeployment(dep) {
   if (codeAbsentUnexplained) {
     // No code: the artifact names no contract on this chain; cannot certify.
     await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
-    return {
+    // #2095 r27 — finalized like every other exit, so there is no path around
+    // the rule. A no-op here today (every class is already indeterminate); the
+    // point is that it stays one when this branch's classes change.
+    return finalizeVerdictFromEvidence({
       chainSlug: slug,
       deployment: label,
       chainId: Number(chainId),
@@ -2111,7 +2121,7 @@ async function censusDeployment(dep) {
         indeterminateReason: codeAbsentReason,
         count: 0, total: '0', rows: [],
       }])),
-    };
+    });
   }
 
   // Enumeration needs the metrics surface. Where it is unrouted and no bound
@@ -3275,7 +3285,9 @@ async function main() {
   for (const r of results) {
     const c = r.classes;
     process.stdout.write(
-      `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, backing ${r.diamondVpfiBacking ?? '?'} VPFI wei${r.backingShortfall && r.backingShortfall !== '0' ? `, SHORTFALL ${r.backingShortfall}` : ''}): ` +
+      // #2095 r27 — a withdrawn shortfall is SAID, not left blank: silence
+      // here reads exactly like the "no shortfall" a zero would report.
+      `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, backing ${r.diamondVpfiBacking ?? '?'} VPFI wei${r.backingShortfall && r.backingShortfall !== '0' ? `, SHORTFALL ${r.backingShortfall}` : r.backingShortfallUnavailable ? ', SHORTFALL unknown' : ''}): ` +
         `loans=${r.scanned.loanIdsEnumerated} ` +
         `vpfiHeld=${c.vpfiHeldCustody.count} rebate=${c.rebateRows.count} ` +
         `fallback=${c.fallbackSnapshotCustody.count} liveIntents=${c.liveIntentCommits.count}\n`,

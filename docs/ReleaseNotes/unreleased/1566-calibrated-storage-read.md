@@ -65,3 +65,22 @@ missing. Where a getter the census wanted is not routed, the class that needed
 it is now recorded as undetermined and the rest of the deployment is still
 read — where before a single absent getter could end the whole deployment's
 read and leave every other class unexamined.
+
+Those two rules withdraw a class, and a later review round found the
+withdrawal did not travel: the census publishes a liability figure for the
+whole deployment and a shortfall against the Diamond's balance, and both were
+written before the passes that withdraw a class ever ran. So the report could
+say in one place that a row's asset is unreconciled and in another still
+present its amount as a substantiated liability. A class could also be
+certified empty while holding rows whose asset nobody could read — a count of
+zero standing beside the rows themselves.
+
+Both are now one rule, applied once at the end of every deployment's census
+rather than at the places that raised them: a verdict, and every figure
+derived from it, is computed from the evidence the census finally holds. A
+class holding rows of unknown asset is never certified and its count says how
+many there are; the deployment-wide liability and shortfall are stated only
+where every class contributing to them was established, and otherwise the
+report says they are not established and why, with each class's own rows still
+reported beside it. A withdrawn shortfall is now printed as unknown rather
+than left blank, since a blank reads exactly like "none".
