@@ -191,10 +191,32 @@ then the new one has legitimately moved on, so almost every active record
 differs. What identifies a straggler is that the record changed **on the old
 database, after the copy** — a question about that database and its own
 past. So the copy now writes down what it saw, and the reconciliation
-compares against that record. Anything it finds is **reported and left
-alone**: whether the late value or the newer one should win is a decision for
-a person, and choosing silently would be the same overwrite the mode exists
-to avoid.
+compares against that record.
+
+**Having that written record turns a two-way question into a three-way one,
+and the difference is not academic.** For any record there are three facts:
+was it in the copy, is it on the old database now, is it on the new one now.
+Only one combination can be acted on without a person — a record that
+appeared on the old database after the copy and has never existed on the new
+one. Every other divergence is a decision, and three of them were being got
+wrong in ways that all *looked* like success:
+
+- Both databases can allocate the **same new identifier** for different
+  records once they are running independently, since some records are
+  numbered sequentially. Carrying blindly would drop one of the two.
+- A record the new database has since **deleted** — a closed support
+  request, an expired link, a pruned diagnostic — is absent there, which is
+  indistinguishable from never having arrived unless you know the copy
+  carried it. Re-adding it would silently undo a deletion, and some
+  deletions are privacy obligations rather than housekeeping.
+- A record **deleted on the old database** after the copy is not in its
+  records at all, so anything that works through them never encounters it,
+  and the new database quietly keeps a record that should be gone.
+
+Anything found in any of these cases is **reported and left alone**: which
+version is correct is a decision for a person, and choosing silently would be
+the same overwrite — or the same resurrection — the reconciliation exists to
+avoid.
 
 Two smaller gaps are stated rather than glossed: a write that stores the value
 already stored changes nothing observable — harmless for a copy, because the

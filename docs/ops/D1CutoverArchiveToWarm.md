@@ -27,8 +27,13 @@ because step 3 below is the part of it that had to be re-learned.
    ```
    node apps/indexer/scripts/d1-carry-rows.mjs digest --db vaipakam-archive
    node apps/indexer/scripts/d1-carry-rows.mjs carry \
-     --from vaipakam-archive --to vaipakam-warm
+     --from vaipakam-archive --to vaipakam-warm \
+     --mirror --manifest cutover-mirror.json
    ```
+
+   Both `--mirror` and `--manifest` are required and neither is implied —
+   see the properties below. A command here that omitted them would exit
+   before copying anything, which is what this block did until #2267 r8.
 
    Five of its properties are load-bearing. Each was learned by a review
    round finding the previous version of this list insufficient, and each is
@@ -170,10 +175,25 @@ because step 3 below is the part of it that had to be re-learned.
       switch warm legitimately moves on, so almost every live row differs.
       What identifies a straggler is that the row changed **on archive,
       after the mirror** — a question about archive and its own past, which
-      is what the manifest is. The tool reports each such row and **exits
-      non-zero without applying it**: whether archive's late value or warm's
-      newer one should win is a decision, and guessing would be the exact
-      overwrite this mode exists to prevent.
+      is what the manifest is.
+
+      **With the manifest there are THREE facts per row, not two**, and
+      reading it as two is how several defects got in. Was the row in the
+      manifest; is it on archive now; is it on warm now. Only one
+      combination is safe to act on without a person:
+
+      | manifest | archive | warm | what it means |
+      | --- | --- | --- | --- |
+      | no | yes | no | a straggler inserted it → **carried**, the only automatic case |
+      | no | yes | yes | both sides allocated the same key after the mirror — `notifications` and `diag_legal_hold_audit` are `AUTOINCREMENT`, so this is two different records wearing one id, and an insert would drop archive's |
+      | yes | yes | yes, changed | a straggler's write; which value wins is a decision |
+      | yes | yes | **no** | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
+      | yes | **no** | yes | archive deleted it after the mirror. It is not in archive's rows at all, so a loop over archive never sees it and warm keeps a row that should be gone |
+
+      The tool resolves none of the four conflict cases. It names the row,
+      prints archive's current value, and **exits non-zero without applying
+      anything**. Guessing would be the exact overwrite — or the exact
+      resurrection — this mode exists to prevent.
 
    Step 6 is not a belt-and-braces precaution; it is the only part of this
    that covers work suspended across the whole barrier. It is possible
@@ -1065,12 +1085,14 @@ the destination — so the reverse is:
 
 ```
 node apps/indexer/scripts/d1-carry-rows.mjs carry \
-  --from vaipakam-warm --to vaipakam-archive
+  --from vaipakam-warm --to vaipakam-archive \
+  --mirror --manifest rollback-mirror.json
 ```
 
 with the same barrier around it: stop the writers, observe the source still,
-mirror-carry, switch the bindings back, then reconcile with `--only-missing`
-in the same direction until two consecutive runs carry nothing. An earlier
+mirror-carry, switch the bindings back, then reconcile in the same direction
+with `--only-missing --since rollback-mirror.json` until a run carries
+nothing and reports no conflicts. An earlier
 revision of this section said a reverse import "is not a one-liner either",
 which was true of the export/import approach it described and is no longer
 the only option.
