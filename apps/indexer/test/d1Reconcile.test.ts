@@ -1549,3 +1549,36 @@ describe('the cursor must be unique in the database being READ', () => {
     expect(viaId.filter((r: Record<string, unknown>) => r.old_key === PAGE)).toHaveLength(2);
   });
 });
+
+describe('a destination out of the comparison is not a question dropped', () => {
+  // Two situations put the destination out of reach — a migration
+  // dropped the table, or dropped the key this run needs to read it
+  // coherently while live — and both still leave the source and the
+  // manifest, which is where a late write actually shows up. The keyless
+  // case used to skip the table entirely, so the run printed a note and
+  // then said VERIFIED having not looked (#2267 r44).
+  const seenOf = (rows: Record<string, unknown>[]) => {
+    const w: Record<string, string> = {};
+    for (const r of rows) w[k(r.id as number)] = hashOf(r);
+    return w;
+  };
+
+  it('reports the late write, and says which situation the operator is in', () => {
+    const { conflicts } = classifyAgainstManifestOnly({
+      table: 'lost_its_key',
+      cols,
+      key,
+      rows: [{ id: 1, value: 'changed since' }],
+      wasSeen: seenOf([{ id: 1, value: 'as mirrored' }]),
+      why:
+        'the destination still HAS this table but has dropped its primary ' +
+        'key, so its rows cannot be read coherently while it is live',
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].detail).toContain('0 row(s) added and 1 changed');
+    expect(conflicts[0].detail).toContain('dropped its primary key');
+    // The two situations are different facts about what to do next, so
+    // the wording must not claim the table is gone when it is not.
+    expect(conflicts[0].detail).not.toContain('DROPPED this table');
+  });
+});

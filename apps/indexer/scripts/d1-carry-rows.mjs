@@ -1344,7 +1344,18 @@ export function stopsBeforeVerification({ reconciling, refused = [], conflicts =
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
-export function classifyAgainstManifestOnly({ table, cols, key, rows, wasSeen }) {
+export function classifyAgainstManifestOnly({
+  table,
+  cols,
+  key,
+  rows,
+  wasSeen,
+  // Why the destination is out of the comparison, in the operator's
+  // terms. Two situations reach here and they are NOT the same fact: a
+  // table a migration dropped, and one whose key it dropped — the second
+  // still holds the data, which changes what the operator does next.
+  why = 'the destination has since DROPPED this table, so nothing here can be applied where the data now lives',
+}) {
   if (wasSeen === null || wasSeen === undefined) {
     return {
       insert: [],
@@ -1373,13 +1384,12 @@ export function classifyAgainstManifestOnly({ table, cols, key, rows, wasSeen })
     conflicts: [
       {
         table,
-        kind: 'written to after the mirror, with no table left to apply it to',
+        kind: 'written to after the mirror, in a table this run cannot compare',
         detail:
           `${added} row(s) added and ${changed} changed on the source ` +
-          `since the mirror, and the destination has since DROPPED this ` +
-          `table. Nothing here can be applied where the data now lives. ` +
-          `Decide whether those writes matter — they exist only on the ` +
-          `retained source, and only while it is retained`,
+          `since the mirror, and ${why}. Decide whether those writes ` +
+          `matter — the source's copy of them exists only while it is ` +
+          `retained`,
       },
     ],
   };
@@ -1900,7 +1910,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // is read and the duplicates become visible. Matching rows to the
     // source still uses the source's key, unchanged.
     const heldPagingKey = heldShape ? heldShape.key : key;
-    if (reportOnly && !destTableGone && heldPagingKey.length === 0) {
+    const destKeyless = reportOnly && !destTableGone && heldPagingKey.length === 0;
+    if (destKeyless) {
       // NO KEY ON THE LIVE SIDE IS A BLIND SPOT, AND IT IS NAMED AS ONE.
       // Without a unique cursor there, the only paging left is OFFSET,
       // which a concurrent write tears silently; the alternative — the
@@ -1912,14 +1923,26 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         table,
         detail:
           `the destination has no primary key here, so there is no unique ` +
-          `cursor to read it by while it is live. Rows in this table are ` +
-          `NOT compared by this run — a late write to it would not be ` +
+          `cursor to read it by while it is live. Its rows cannot be ` +
+          `compared with the source's — but the source is still compared ` +
+          `against the manifest below, so a late write here is still ` +
           `reported. Restoring a key on the destination is what closes ` +
-          `this`,
+          `the rest`,
       });
-      continue;
     }
-    const held = destTableGone
+    // THE DESTINATION IS OUT OF THE COMPARISON; THE QUESTION IS NOT
+    // (#2267 r44). Two ways that happens — a migration dropped the table,
+    // or it dropped the key this run needs to read the live table
+    // coherently — and both leave the SOURCE and the MANIFEST, which is
+    // where a late write actually shows up.
+    //
+    // The keyless case used to `continue` here, which threw the
+    // answerable question away with the unanswerable one: the run printed
+    // a note and then said VERIFIED — no unresolved late write was found,
+    // having not looked. A blind spot that is merely printed is not a
+    // blind spot that is handled.
+    const destOutOfComparison = destTableGone || destKeyless;
+    const held = destOutOfComparison
       ? []
       : await readAll(dst.id, table, heldCols, query, {
           key: reportOnly ? heldPagingKey : null,
@@ -2109,8 +2132,20 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       });
       continue;
     }
-    const { insert, conflicts } = destTableGone
-      ? classifyAgainstManifestOnly({ table, cols: hashCols, key, rows, wasSeen })
+    const { insert, conflicts } = destOutOfComparison
+      ? classifyAgainstManifestOnly({
+          table,
+          cols: hashCols,
+          key,
+          rows,
+          wasSeen,
+          why: destTableGone
+            ? `the destination has since DROPPED this table, so nothing ` +
+              `here can be applied where the data now lives`
+            : `the destination still HAS this table but has dropped its ` +
+              `primary key, so its rows cannot be read coherently while ` +
+              `it is live — these writes may or may not already be there`,
+        })
       : onlyMissing
       ? classifyForReconcile({
           table,
