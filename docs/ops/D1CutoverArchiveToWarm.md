@@ -42,10 +42,16 @@ because step 3 below is the part of it that had to be re-learned.
    - **One end of a carry is always the SHARED database.** Not "the
      destination is fixed" — that was the first version, and it made the tool
      unable to perform the rollback §"Rolling back" requires, which is the
-     same move in the other direction. The property that matters is that rows
-     cannot be carried between two databases this repository does not account
-     for: the shared one, as `apps/indexer/wrangler.jsonc` declares it and
-     `check-d1-name-consistency` guards it, is always one end.
+     same move in the other direction. The property that matters is that
+     **BOTH ends are pinned** — the successor and its recorded predecessor,
+     by id as well as name, in
+     `apps/indexer/scripts/lib/cutover-databases.mjs`. Requiring only that
+     the shared database be ONE end is **not** the rule and must not be
+     restated as though it were: it would permit an unrelated account
+     database to be mirrored over the shared one, and the shared one's rows
+     to be copied into an unrelated database, while reading as a
+     restriction. `check-d1-name-consistency` keeps the pinned pair
+     agreeing with every binding and command, on name AND id.
    - **Parents before children.** Tables are ordered by FOREIGN KEY
      dependency, not alphabetically. D1 enforces foreign keys, so a child
      carried before its parent is *rejected*, aborting the carry — and
@@ -1503,9 +1509,10 @@ them — which strands those rows exactly as going forward without a carry
 would have stranded the originals.
 
 **There IS now a repeatable path for it, and it is the forward sequence
-run backwards.** `d1-carry-rows.mjs` carries in either direction — the
-constraint is that the shared database is one END of a carry, not that it is
-the destination — so the reverse is:
+run backwards.** `d1-carry-rows.mjs` carries in either direction between
+the two pinned endpoints — that is what makes the reverse possible at all,
+and it is a pinned PAIR rather than "the shared database at one end" — so
+the reverse is:
 
 ```
 node apps/indexer/scripts/d1-carry-rows.mjs carry \
@@ -1514,8 +1521,17 @@ node apps/indexer/scripts/d1-carry-rows.mjs carry \
 ```
 
 with the same barrier around it. **The ordered sequence is the numbered one
-in §4 above** — stop, observe still, carry back, revert, hand-deploy the
-backup Worker, gate, reconcile — and that list is the one to follow. This
+in §4 above** — bring the rollback target's schema to parity, stop the
+writers, observe still, **reconcile archive-only changes and resolve them**,
+carry back, revert, hand-deploy the backup Worker, gate, reconcile — and
+that list is the one to follow.
+
+The reconcile BEFORE the reverse carry is step 2b, and it was missing from
+this summary while the numbered list had it (#2267 r25). Skipping it is not
+a slower path to the same place: the reverse mirror makes archive identical
+to warm, so anything archive holds that warm does not is **deleted by the
+carry**, unexamined. That is the one step in the rollback whose omission
+destroys data rather than delaying it. This
 passage exists to explain *why the tool can go this way at all*; it is not a
 second procedure, and where the two ever appear to differ, §4's numbered
 steps are the instruction.

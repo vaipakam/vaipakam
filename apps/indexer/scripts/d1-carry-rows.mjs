@@ -347,6 +347,45 @@ async function shapeOf(dbId, table) {
 }
 
 /**
+ * Collapse runs of whitespace, EXCEPT inside quoted text.
+ *
+ * The comparison exists so two schemas that differ anywhere show up, and a
+ * blanket `\s+ → ' '` quietly exempted the contents of every string
+ * literal: SQLite keeps `DEFAULT 'a  b'` and `DEFAULT 'a b'` as different
+ * declarations, and this made them the same string (#2267 r25). Defaults,
+ * CHECK constraint values and trigger bodies all live inside quotes, so
+ * the one thing the normaliser must not touch is the one place a
+ * difference can hide while everything around it matches.
+ *
+ * Single quotes delimit SQL string literals, double quotes and backticks
+ * delimit identifiers, and a delimiter is escaped by doubling it — which
+ * needs no special case here, since the closing quote of the first pair
+ * simply opens the next.
+ */
+export function collapseOutsideLiterals(sql) {
+  let out = '';
+  let quote = null;
+  for (const ch of sql) {
+    if (quote) {
+      out += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (!out.endsWith(' ')) out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out.trim();
+}
+
+/**
  * The normalised `CREATE TABLE` / `CREATE INDEX` text for a table, as
  * `sqlite_master` holds it. Indexes are sorted by name so the comparison
  * does not depend on creation order.
@@ -377,7 +416,7 @@ async function declarations(dbId) {
   const byTable = new Map();
   for (const r of rows) {
     if (typeof r.sql !== 'string' || typeof r.tbl_name !== 'string') continue;
-    const line = `${r.type} ${r.name}: ${r.sql.replace(/\s+/g, ' ').trim()}`;
+    const line = `${r.type} ${r.name}: ${collapseOutsideLiterals(r.sql)}`;
     byTable.set(r.tbl_name, [...(byTable.get(r.tbl_name) ?? []), line]);
   }
   const out = new Map();
@@ -509,6 +548,58 @@ function digestOf(rows, cols) {
   const h = createHash('sha256');
   for (const l of lines) h.update(l).update('\n');
   return { digest: h.digest('hex').slice(0, 16), count: rows.length };
+}
+
+/**
+ * AUTOINCREMENT tables promise never to reuse an identifier, and rows
+ * alone do not carry that promise.
+ *
+ * `sqlite_sequence` holds the highest id ever allocated, which stays above
+ * `MAX(rowid)` once the highest row is deleted — a retention prune on
+ * `notifications` does exactly that. Carrying the surviving rows advances
+ * the destination's sequence only to their maximum, so the destination
+ * goes on to REISSUE identifiers the source promised were spent (#2267
+ * r25). After the switch those are new records wearing old ids; on a
+ * rollback they are the `key-collision` case, one id and two different
+ * records.
+ *
+ * THIS REPORTS AND DOES NOT REPAIR, deliberately. Raising a destination's
+ * sequence means writing SQLite's own bookkeeping table, and the only
+ * thing that could otherwise raise it is inserting rows that do not
+ * exist. Which identifiers a database may allocate is an allocation
+ * decision, not a copy — the same reason a schema difference is refused
+ * here rather than migrated around.
+ *
+ * Measured 2026-09-21: archive and warm both hold `notifications` at
+ * seq=46, max(rowid)=46, and `diag_legal_hold_audit` has never allocated.
+ * So there is no gap today, and this check exists for the prune that
+ * happens between now and the window.
+ */
+async function sequenceProblems(src, dst) {
+  const read = async (db) => {
+    const out = new Map();
+    for (const r of await query(db.id, 'SELECT name, seq FROM sqlite_sequence')) {
+      if (NEVER_CARRIED(r.name)) continue;
+      out.set(r.name, Number(r.seq));
+    }
+    return out;
+  };
+  const [a, b] = [await read(src), await read(dst)];
+  const problems = [];
+  for (const [table, seq] of a) {
+    const held = b.get(table);
+    if (held !== undefined && held >= seq) continue;
+    problems.push(
+      `${table}: the source has allocated identifiers up to ${seq}, the ` +
+        `destination ${held === undefined ? 'has allocated none' : `only to ${held}`}` +
+        `.\n      Rows carry values, not the promise that an identifier is ` +
+        `spent, so the destination would reissue ${
+          held === undefined ? 1 : held + 1
+        }..${seq} to different records. Raising it is an allocation ` +
+        `decision for a person, not something this tool does on its own.`,
+    );
+  }
+  return problems;
 }
 
 async function digestDatabase(db) {
@@ -862,6 +953,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
 
   const plan = [];
 
+  const classifiedSource = new Map();
+
   // A destination table the source does not have is refused BEFORE any
   // write, not merely reported afterwards. A mirror that proceeded would
   // leave the destination holding a table it had not examined while
@@ -932,6 +1025,15 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // live destination the two answers need not even agree.
     const rows = await readAll(src.id, table, cols);
     const held = await readAll(dst.id, table, cols);
+    // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
+    // source afterwards, and in reconcile mode it only asks whether the
+    // destination has at least as many rows — which an UPDATE does not
+    // change. So a straggler that updates an archive row after its table
+    // was classified produced no conflict, left the count equal, and
+    // printed VERIFIED without ever reporting the late value (#2267 r25).
+    // Keeping what was classified lets the verdict notice that the ground
+    // it decided on has moved.
+    classifiedSource.set(table, digestOf(rows, cols).digest);
     // A NULL inside a key breaks the model this tool compares rows with:
     // two such rows are equal to JSON and to `keyOf`, but `"c" = ?` in a
     // DELETE never matches NULL, so a surplus row would silently survive
@@ -1090,7 +1192,14 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
     }
   }
-  return { written, refused, conflicts, pending, manifest: manifestOf() };
+  return {
+    written,
+    refused,
+    conflicts,
+    pending,
+    classifiedSource,
+    manifest: manifestOf(),
+  };
 }
 
 /**
@@ -1115,6 +1224,7 @@ export function verdictProblems({
   refused = [],
   conflicts = [],
   reconciling,
+  classifiedSource = new Map(),
 }) {
   const refusedNames = new Set(refused.map((r) => r.table));
   const problems = [];
@@ -1155,6 +1265,29 @@ export function verdictProblems({
       problems.push(
         `${table}: destination holds ${d.count} rows, fewer than the ` +
           `source's ${s.count} — rows are still missing`,
+      );
+    } else if (
+      reconciling &&
+      classifiedSource.has(table) &&
+      classifiedSource.get(table) !== s.digest
+    ) {
+      // THE SOURCE MOVED BETWEEN CLASSIFICATION AND THE VERDICT, so the
+      // report above describes a database that no longer exists and the
+      // count check cannot see it: an UPDATE leaves the count equal, so
+      // a late straggler's value was neither carried nor reported while
+      // the run printed VERIFIED (#2267 r25).
+      //
+      // This is the same rule as the two-pass read one level up — a
+      // conclusion is only as good as the reading it was drawn from —
+      // and reconcile is where losing it costs most, because a clean
+      // reconcile is what licenses deleting the source.
+      problems.push(
+        `${table}: the source CHANGED while this run was working. It was ` +
+          `classified as ${classifiedSource.get(table)} and now reads ` +
+          `${s.digest} (${s.count} rows).\n      Every decision above ` +
+          `about this table was made against the earlier reading, and a ` +
+          `late UPDATE leaves the row count identical — so nothing else ` +
+          `here would have noticed. Run it again.`,
       );
     }
   }
@@ -1380,7 +1513,8 @@ async function main() {
   );
 
   const since = reconciling ? readManifest(sincePath, src) : null;
-  const { written, refused, conflicts, manifest, pending } = await carry(
+  const { written, refused, conflicts, manifest, pending, classifiedSource } =
+    await carry(
     src,
     dst,
     { onlyMissing: reconciling, reportOnly: reconciling, since },
@@ -1422,13 +1556,21 @@ async function main() {
   printDigest(`source  ${src.name}`, srcD);
   printDigest(`target  ${dst.name}`, dstD);
 
-  const problems = verdictProblems({
-    srcD,
-    dstD,
-    refused,
-    conflicts,
-    reconciling,
-  });
+  const problems = [
+    ...verdictProblems({
+      srcD,
+      dstD,
+      refused,
+      conflicts,
+      reconciling,
+      classifiedSource,
+    }),
+    // Only for a mirror: reconcile writes nothing, so it has no
+    // destination sequence to have got wrong, and reporting one there
+    // would make the two required clean passes unreachable for a
+    // condition the run did not cause and cannot fix.
+    ...(reconciling ? [] : await sequenceProblems(src, dst)),
+  ];
 
   console.log('');
   if (problems.length > 0) reportProblems(problems, dst);

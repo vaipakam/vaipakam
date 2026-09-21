@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error — untyped .mjs operator script, imported for its pure exports
 import {
   classifyForReconcile,
+  collapseOutsideLiterals,
   readAll,
   situationOf,
   verdictProblems,
@@ -519,5 +520,89 @@ describe('readAll — a paged read is not a snapshot', () => {
 
     expect(seen).toContain(straggler);
     expect([...new Set(seen)].sort()).toEqual([straggler, ...all].sort());
+  });
+});
+
+/**
+ * WHY THESE TESTS EXIST. Both behaviours below decide whether a run that
+ * looks clean actually is, and neither is reachable from a rehearsal
+ * against the live pair — the first needs a source that moves mid-run,
+ * the second needs two schemas that differ only inside a quoted literal.
+ */
+describe('a verdict is only as good as the reading it was drawn from', () => {
+  const d = (digest: string, count: number) => ({ digest, count });
+
+  it('reports a source that changed between classification and the verdict', () => {
+    // The trap: an UPDATE leaves the row count identical, and reconcile
+    // mode only checks that the destination has at least as many rows. So
+    // a straggler updating an archive row after its table was classified
+    // produced no conflict and printed VERIFIED.
+    const problems = verdictProblems({
+      srcD: new Map([['offers', d('after', 12)]]),
+      dstD: new Map([['offers', d('whatever', 12)]]),
+      refused: [],
+      conflicts: [],
+      reconciling: true,
+      classifiedSource: new Map([['offers', 'before']]),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the source CHANGED while this run was working');
+    expect(problems[0]).toContain('before');
+    expect(problems[0]).toContain('after');
+  });
+
+  it('stays silent when the source held still, whatever the destination did', () => {
+    // The destination is live during a reconcile and legitimately differs;
+    // only the SOURCE moving invalidates the classification.
+    const problems = verdictProblems({
+      srcD: new Map([['offers', d('same', 12)]]),
+      dstD: new Map([['offers', d('destination moved on', 14)]]),
+      refused: [],
+      conflicts: [],
+      reconciling: true,
+      classifiedSource: new Map([['offers', 'same']]),
+    });
+    expect(problems).toEqual([]);
+  });
+
+  it('does not apply the check to a mirror, which compares digests outright', () => {
+    const problems = verdictProblems({
+      srcD: new Map([['offers', d('aaaa', 3)]]),
+      dstD: new Map([['offers', d('aaaa', 3)]]),
+      refused: [],
+      conflicts: [],
+      reconciling: false,
+      classifiedSource: new Map([['offers', 'something else']]),
+    });
+    expect(problems).toEqual([]);
+  });
+});
+
+describe('schema comparison — whitespace outside literals only', () => {
+  it('keeps two defaults that SQLite keeps distinct, distinct', () => {
+    expect(collapseOutsideLiterals("x TEXT DEFAULT 'a  b'")).not.toBe(
+      collapseOutsideLiterals("x TEXT DEFAULT 'a b'"),
+    );
+  });
+
+  it('still collapses whitespace outside quotes', () => {
+    expect(collapseOutsideLiterals('CREATE   TABLE\n  t (a)')).toBe(
+      'CREATE TABLE t (a)',
+    );
+  });
+
+  it('preserves spacing inside quoted identifiers and CHECK values', () => {
+    expect(collapseOutsideLiterals('CREATE TABLE "x  y" (a)')).toBe(
+      'CREATE TABLE "x  y" (a)',
+    );
+    expect(collapseOutsideLiterals("a CHECK (a <> 'p  q')")).toBe(
+      "a CHECK (a <> 'p  q')",
+    );
+  });
+
+  it('handles a doubled quote, where one literal closes and the next opens', () => {
+    expect(collapseOutsideLiterals("x DEFAULT 'it''s  here'")).toBe(
+      "x DEFAULT 'it''s  here'",
+    );
   });
 });
