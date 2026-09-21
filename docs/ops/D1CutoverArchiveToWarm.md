@@ -1800,6 +1800,30 @@ sequence is:
    `reconcile --from vaipakam-archive --to vaipakam-warm --since
    cutover-mirror.json`, read-only, and **resolve everything it reports**.
 
+   > **A RECONSTRUCTED BASELINE MARKED `uncovered` DOES NOT LICENSE THIS
+   > ROLLBACK, and an earlier draft called such a baseline "usable with
+   > care"** (#2281 r2). It is usable for spotting NEW differences. It is
+   > not usable HERE, and the difference is destructive.
+   >
+   > Follow it through. A straggler updates a row on archive after the
+   > forward mirror. The baseline is later reconstructed and absorbs that
+   > value, so archive now MATCHES its own baseline. Warm has since
+   > changed the same row on its own. The comparison reads source =
+   > baseline, destination ≠ baseline — `destination-moved`, which is not
+   > a conflict and is not reported. Step 3 then mirrors warm over
+   > archive and destroys the only copy of the straggler's write, with
+   > every check having said clean.
+   >
+   > So: if the manifest in hand carries `provenance.interval:
+   > "uncovered"` — `reconcile` prints it at the top of every run —
+   > **the automated rollback is unavailable.** Say so in the run log,
+   > and recover through the export path §4 step 0a describes, by hand.
+   > That is a limitation NAMED, in the same way as the migration case
+   > below it.
+   >
+   > A manifest the mirror wrote carries no `interval` and needs none: it
+   > observed the moment it describes, so there is no gap to cover.
+
    The trap here is exact and worth spelling out: `--mirror` makes archive
    the DESTINATION, and a mirror deletes destination-only keys and
    overwrites rows that differ. A straggler that reached archive after the

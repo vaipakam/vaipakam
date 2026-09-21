@@ -1803,3 +1803,44 @@ describe('a baseline says which kind of baseline it is', () => {
     expect(doc.takenAt).toBeTruthy();
   });
 });
+
+describe('a reconstructed baseline says whether it covers the gap', () => {
+  // `--stands-for` is prose for a human, and prose cannot gate anything.
+  // Whether the evidence COVERS the interval since the mirror decides
+  // whether a clean reconciliation may license the rollback's reverse
+  // mirror — a destructive step — so it is recorded as a value (#2281 r2).
+  const dir = mkdtempSync(join(tmpdir(), 'interval-'));
+  const src = { name: 'vaipakam-archive', id: 'abc' };
+  const tables = { t: manifestEntry({ key: ['id'], cols: ['id'], seq: 0, rows: {} }) };
+
+  it('records the verdict and the bounds of the read, not the file-write time', () => {
+    // `takenAt` is stamped when the artifact is written, AFTER the last
+    // read — so a transaction committing in between precedes it and is
+    // absent from the baseline. A claim phrased against `takenAt` would
+    // say the opposite of what the file holds.
+    const path = join(dir, 'm.json');
+    writeManifest(path, src, tables, {
+      producer: 'manifest (reconstructed)',
+      readStartedAt: '2026-09-21T21:20:41.857Z',
+      readCompletedAt: '2026-09-21T21:22:09.483Z',
+      observes: 'vaipakam-archive as read between the two times above',
+      standsFor: 'the 19:56 mirror',
+      interval: 'uncovered',
+    });
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    expect(doc.provenance.interval).toBe('uncovered');
+    expect(doc.provenance.readStartedAt).toBe('2026-09-21T21:20:41.857Z');
+    expect(doc.provenance.readCompletedAt).toBe('2026-09-21T21:22:09.483Z');
+    expect(new Date(doc.takenAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(doc.provenance.readCompletedAt).getTime(),
+    );
+  });
+
+  it('leaves a mirror carrying no interval, because it has no gap to cover', () => {
+    const path = join(dir, 'mirror.json');
+    writeManifest(path, src, tables);
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    expect(doc.provenance.producer).toBe('carry --mirror');
+    expect(doc.provenance.interval).toBeUndefined();
+  });
+});

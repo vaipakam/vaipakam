@@ -121,7 +121,14 @@
  */
 
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
@@ -1192,13 +1199,24 @@ function readManifest(path, src) {
   if (prov.producer === 'carry --mirror') {
     console.log(`  reconciling against the mirror of ${doc.takenAt}`);
   } else {
+    const read =
+      prov.readStartedAt && prov.readCompletedAt
+        ? `between ${prov.readStartedAt} and ${prov.readCompletedAt}`
+        : `at ${doc.takenAt}`;
     console.log(
       `  reconciling against a RECONSTRUCTED baseline, read from ` +
-        `${doc.source?.name} at ${doc.takenAt} — NOT the record the ` +
-        `mirror wrote.\n  It stands for: ${prov.standsFor}\n  ` +
-        `A write that committed before ${doc.takenAt} is part of this ` +
-        `baseline and cannot be reported as late by any run using it. ` +
-        `That interval is covered by the evidence above or not at all.`,
+        `${doc.source?.name} ${read} — NOT the record the mirror wrote.\n` +
+        `  It stands for: ${prov.standsFor}\n` +
+        `  Interval since the mirror: ${prov.interval ?? 'NOT STATED'}\n` +
+        `  A write that committed before that reading is part of this ` +
+        `baseline and cannot be reported as late by any run using it.` +
+        (prov.interval === 'covered'
+          ? ''
+          : `\n  BECAUSE THAT INTERVAL IS ${(prov.interval ?? 'not stated').toUpperCase()}, ` +
+            `a clean result here does NOT license the rollback's reverse ` +
+            `mirror. A late write absorbed into this baseline reads as ` +
+            `\`destination-moved\`, reports no conflict, and the reverse ` +
+            `mirror would then destroy the only copy of it.`),
     );
   }
   return doc.tables ?? {};
@@ -1749,9 +1767,12 @@ async function takeManifest(db) {
   const manifest = {};
   const refused = [];
   const digestAtRead = new Map();
+  const ddlAtRead = new Map();
+  const readStartedAt = new Date().toISOString();
 
   for (const table of tables) {
     const { cols, key } = await shapeOf(db.id, table);
+    ddlAtRead.set(table, await declarationOf(db.id, table));
     if (key.length === 0) {
       // Same rule as the carry: without a key nothing identifies a row,
       // so there is nothing to record it under.
@@ -1796,7 +1817,35 @@ async function takeManifest(db) {
   // proof — two identical readings around a change and back would pass —
   // but it is the same standard the cutover's own drain barrier uses,
   // and it fails loudly on the ordinary case rather than quietly.
+  //
+  // THE SHAPE IS RE-READ TOO, not only the rows (#2281 r2). A migration
+  // that ADDS a column and populates it changes neither digest, because
+  // both passes project onto the columns the first `shapeOf` saw — and a
+  // reconciliation later projects onto the columns the manifest
+  // recorded, so a write confined to that new column is invisible
+  // forever while every run reports VERIFIED. Comparing the stored
+  // declaration is what catches it, the same instrument the carry uses
+  // for the same reason.
+  const tablesNow = await tablesOf(db.id);
+  if (JSON.stringify([...tablesNow].sort()) !== JSON.stringify([...tables].sort())) {
+    fail(
+      `the SET OF TABLES changed while this manifest was being taken.\n\n` +
+        `A baseline assembled from a moving database describes no moment ` +
+        `that ever existed.`,
+    );
+  }
   for (const [table, entry] of Object.entries(manifest)) {
+    const ddlNow = await declarationOf(db.id, table);
+    if (ddlNow !== ddlAtRead.get(table)) {
+      fail(
+        `"${table}" was REDECLARED while this manifest was being taken.\n\n` +
+          `A column added and populated in that window changes no digest ` +
+          `here — both passes project onto the columns the first reading ` +
+          `saw — and the manifest would then record a projection that ` +
+          `hides every write to the new column, permanently, while later ` +
+          `runs report clean.`,
+      );
+    }
     const rows = await readAll(db.id, table, entry.cols);
     const now = digestOf(rows, entry.cols).digest;
     if (now !== digestAtRead.get(table)) {
@@ -1830,7 +1879,18 @@ async function takeManifest(db) {
     }
   }
 
-  return { manifest, refused };
+  // THE DIGESTS THIS READ ACCEPTED are returned, because the procedure
+  // asks the operator to compare them with what was recorded at the
+  // mirror — and running `digest` separately afterwards observes a
+  // DIFFERENT interval, so it is not evidence about the rows in this
+  // artifact (#2281 r2).
+  return {
+    manifest,
+    refused,
+    digests: digestAtRead,
+    readStartedAt,
+    readCompletedAt: new Date().toISOString(),
+  };
 }
 
 async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
@@ -2767,10 +2827,12 @@ function reportProblems(problems, dst) {
 const USAGE =
   'usage:\n' +
   '  d1-carry-rows.mjs digest    --db <name>\n' +
-  '  d1-carry-rows.mjs manifest  --db <name> --out <path> --stands-for <text>\n' +
+  '  d1-carry-rows.mjs manifest  --db <name> --out <path>\n' +
+  '                              --stands-for <text> --interval covered|uncovered\n' +
   '      READ ONLY. Takes a baseline from one database; writes no database.\n' +
   '      --stands-for records WHICH moment it stands for and what establishes\n' +
-  '      that, in the artifact. Present stillness does not establish it.\n' +
+  '      that. --interval says whether that evidence COVERS the gap since the\n' +
+  '      mirror; an uncovered baseline must not license a reverse mirror.\n' +
   '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
   '      WRITES. Only ever against a destination nothing is writing to.\n' +
   '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
@@ -2827,12 +2889,13 @@ async function main() {
 
   if (mode === 'manifest') {
     const opts = parseArgs(rest, {
-      flags: ['--db', '--out', '--stands-for'],
+      flags: ['--db', '--out', '--stands-for', '--interval'],
       switches: [],
     });
     const name = opts['--db'];
     const out = opts['--out'];
     const standsFor = opts['--stands-for'];
+    const interval = opts['--interval'];
     if (!name || !out) fail(`manifest needs --db <name> and --out <path>\n\n${USAGE}`);
     // PRESENT QUIESCENCE CANNOT SUBSTANTIATE HISTORICAL EQUALITY, and
     // the first version of this verb implied it could (#2281 r1).
@@ -2875,6 +2938,27 @@ async function main() {
           `since the mirror is NOT covered"\n\n${USAGE}`,
       );
     }
+    // AND WHETHER THAT EVIDENCE COVERS THE INTERVAL, as a value this
+    // tool can read (#2281 r2). `--stands-for` is prose for a human;
+    // prose cannot gate anything. The distinction it carries decides
+    // whether a clean reconciliation may license the ROLLBACK's reverse
+    // mirror, and that is not a judgement to leave in a sentence.
+    if (interval !== 'covered' && interval !== 'uncovered') {
+      fail(
+        `manifest needs --interval covered|uncovered.\n\n` +
+          `  covered    — evidence recorded AT the mirror has been ` +
+          `compared with this reading and agrees. Name it in ` +
+          `--stands-for.\n` +
+          `  uncovered  — no such evidence. The baseline is still useful ` +
+          `for spotting NEW differences, and it must NOT be used to ` +
+          `license the rollback's reverse mirror: a late write absorbed ` +
+          `into it reads as \`destination-moved\`, reports no conflict, ` +
+          `and the reverse mirror then destroys the only copy.\n\n` +
+          `This is a separate flag from --stands-for because prose cannot ` +
+          `gate anything, and this distinction decides whether a clean ` +
+          `run means the rollback is safe.\n\n${USAGE}`,
+      );
+    }
     // Either end of the cutover, and nothing else — the same pinning the
     // carry uses, for the same reason: a baseline is only meaningful
     // about a database this procedure is actually between.
@@ -2893,17 +2977,35 @@ async function main() {
           `not necessarily the one this tool was written for.`,
       );
     }
+    // THE ORIGINAL IS NOT REPLACEABLE, AND THIS VERB IS ONLY NEEDED WHEN
+    // IT IS ABSENT (#2281 r2). Writing over an existing artifact needs no
+    // error to destroy it: a reconstruction that may have absorbed late
+    // writes would silently take the place of the one baseline that
+    // observed the moment it describes, and nothing can recreate that.
+    if (existsSync(out)) {
+      fail(
+        `${out} already exists, and this verb will not replace it.\n\n` +
+          `A manifest the MIRROR wrote observed the moment it describes. ` +
+          `A reconstruction only stands in for that moment, and may have ` +
+          `absorbed writes that committed after it. Replacing the first ` +
+          `with the second destroys the only baseline that was ever a ` +
+          `direct observation — and that cannot be undone.\n\n` +
+          `Write to a new path. If the existing file is known to be ` +
+          `unusable, move it aside deliberately first.`,
+      );
+    }
     console.log(
       `taking a manifest of ${db.name} (${db.id})\n` +
         `     READ ONLY — no database is written. This records ${db.name} ` +
         `AS IT IS NOW.\n` +
         `     It stands for: ${standsFor}\n` +
+        `     Interval since the mirror: ${interval.toUpperCase()}\n` +
         `     A write that committed before this reading is INSIDE this ` +
         `baseline and no reconciliation using it can report the write as ` +
-        `late. That interval is covered by the statement above or it is ` +
-        `not covered at all.`,
+        `late.`,
     );
-    const { manifest, refused } = await takeManifest(db);
+    const { manifest, refused, digests, readStartedAt, readCompletedAt } =
+      await takeManifest(db);
     // A PARTIAL BASELINE IS NOT A BASELINE, and writing one would also
     // destroy whatever valid artifact was at this path (#2281 r1). The
     // refusals are reported and nothing is written.
@@ -2921,15 +3023,36 @@ async function main() {
     }
     writeManifest(out, db, manifest, {
       producer: 'manifest (reconstructed)',
-      observes: `${db.name} as read at the time below`,
+      // BOUNDS, not the file-write time (#2281 r2). `takenAt` is stamped
+      // when the artifact is written, which is AFTER the last read — so
+      // a transaction committing in between precedes `takenAt` and is
+      // absent from the baseline. A sentence claiming everything before
+      // `takenAt` is included says the opposite of what the file holds.
+      readStartedAt,
+      readCompletedAt,
+      observes: `${db.name} as read between the two times above`,
       standsFor,
+      interval,
     });
+    // THE EVIDENCE THE PROCEDURE ASKS FOR, from the reading that was
+    // actually accepted. Running `digest` afterwards observes a
+    // different interval and says nothing about the rows in this file.
+    console.log(`\nper-table digest of the reading recorded in ${out}:`);
+    for (const [table, digest] of [...digests].sort()) {
+      console.log(`  ${table.padEnd(32)} ${digest}`);
+    }
     console.log(
-      `recorded ${Object.keys(manifest).length} table(s).\n\n` +
-        `This artifact now carries what it stands for, so a reader does ` +
-        `not have to be holding the run log to know which moment it ` +
-        `describes — and \`reconcile\` will repeat it rather than calling ` +
-        `this "the mirror".`,
+      `\nrecorded ${Object.keys(manifest).length} table(s), read between ` +
+        `${readStartedAt} and ${readCompletedAt}.\n` +
+        `Compare the digests above with what was recorded AT the mirror. ` +
+        `That comparison is what the word "${interval}" above is ` +
+        `answerable for.` +
+        (interval === 'uncovered'
+          ? `\n\nThis baseline is marked UNCOVERED. It will still surface ` +
+            `NEW differences, and it must NOT license the rollback's ` +
+            `reverse mirror — see the rollback section of ` +
+            `docs/ops/D1CutoverArchiveToWarm.md.`
+          : ''),
     );
     return;
   }
