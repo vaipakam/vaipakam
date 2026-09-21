@@ -527,6 +527,119 @@ interface IVaipakamErrors {
     ///         caller has paid a transport fee for a message the destination
     ///         must reject.
     error RemitSplitAlreadyOnWire(uint256 remitId);
+    /// @notice #1566 transport epochs PR 3b — the day list re-supplied to a
+    ///         materialization call is not the one this delivery committed to
+    ///         at ingress. Membership is never taken from an event or from a
+    ///         caller's word: the packet's 3a commitment is the authority, and
+    ///         a page that cannot prove itself against it writes nothing.
+    error TransportDayListMismatch(bytes32 batchId, bytes32 committed, bytes32 supplied);
+    /// @notice #1566 transport epochs PR 3b — this batch's per-day index is
+    ///         already whole, so there is no page left to materialize.
+    error TransportBatchFullyIndexed(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — no batch was admitted under this
+    ///         id. A d5 delivery has no batch by design (its components are
+    ///         typed on the wire and credited to the shared ledgers at
+    ///         ingress), and neither has a packet that arrived before 3a began
+    ///         recording the day-list commitment an epoch is bound to.
+    ///
+    ///         NOT "a packet that landed before this ledger existed" (Codex
+    ///         #2232 r15). An arrival between 3a and 3b carries that
+    ///         commitment and is OWED an epoch: it draws this error only until
+    ///         someone calls the permissionless rollout admission, and the
+    ///         remedy is to call it rather than to conclude the packet is
+    ///         outside the ledger. `LibRewardCustody.rolloutAdmissionStatus`
+    ///         is what tells the two apart, and is the only place that list
+    ///         lives.
+    error TransportBatchUnknown(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         already holds a transport epoch, so the ROLLOUT admission has
+    ///         nothing to open. The retrospective entry exists only for
+    ///         packets that landed before this ledger did; re-running it on an
+    ///         admitted packet would restate an anchor the conservation rule
+    ///         treats as immutable.
+    error TransportBatchAlreadyAdmitted(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         carries no 3a day-list commitment, so there is no membership to
+    ///         bind an epoch to. A d6+ arrival is typed on the wire and has no
+    ///         day list to name; a pre-3a one recorded none. Neither can be
+    ///         admitted retrospectively, because membership is never taken
+    ///         from a caller's word.
+    error TransportPacketHasNoDayList(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet's
+    ///         record STATES a component, so its wire typed it and the value
+    ///         was credited to a shared ledger at ingress. Opening an epoch
+    ///         over it would make the same value drawable twice — once through
+    ///         the ledger that holds it, once through the epoch — which is the
+    ///         error design §5c's one-accounting-path rule exists to prevent.
+    error TransportPacketWireTyped(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
+    ///         holds nothing protected-and-unclassified, so a retrospective
+    ///         epoch would have a balance of zero: a membership that can
+    ///         reserve nothing, behind a gate that would hold the packet shut
+    ///         until an operator released a batch releasing nothing. Refused
+    ///         for the same reason the ingress opens no epoch for an empty
+    ///         remainder.
+    error TransportPacketNothingUntyped(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — this packet
+    ///         holds no transport epoch YET, and it is one the rollout
+    ///         admission can still open one over: it landed with a 3a day-list
+    ///         commitment, its wire typed nothing, and its remainder is still
+    ///         unclassified. Classifying it now would spend, with no release
+    ///         and no debit, value its own listed days are entitled to reach
+    ///         — the bypass the epoch gate exists to close, on precisely the
+    ///         population the retrospective admission exists to rescue.
+    ///         Admit it (`admitLegacyTransportBatch`, permissionless, with the
+    ///         committed day list), index it, park it, acknowledge it, then
+    ///         classify. A packet the rollout refuses can never hold an epoch
+    ///         and is classifiable as before.
+    error TransportBatchNotAdmitted(bytes32 packetHash);
+    /// @notice #1566 transport epochs PR 3b — the batch's remainder is already
+    ///         parked. Parking is once and for all: the remainder it names is
+    ///         what the batch's obligations left, and a second park would
+    ///         restate a finished fact.
+    error TransportRemainderAlreadyParked(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — the batch's per-day index is not
+    ///         yet whole, so what its obligations may still reach is not yet
+    ///         known and its remainder cannot be parked.
+    error TransportBatchNotFullyIndexed(bytes32 batchId, uint32 indexedDays, uint32 dayCount);
+    /// @notice #1566 transport epochs PR 3b — no remainder is parked for this
+    ///         batch, so there is nothing to acknowledge.
+    error TransportRemainderNotParked(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — this batch's parked remainder is
+    ///         already acknowledged, and the acknowledgment is what released
+    ///         the batch.
+    error TransportRemainderAlreadyAcknowledged(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — a classification would take more
+    ///         than the batch's PARKED REMAINDER still holds. The remainder is
+    ///         what a released batch's obligations left, and classification is
+    ///         one of its dispositions (design §5c): stepping it down with each
+    ///         classification is what keeps it from reporting value that has
+    ///         already left, and the bound falls out of the same arithmetic.
+    error TransportRemainderExceeded(bytes32 batchId, uint256 requested, uint256 available);
+    /// @notice #1566 transport epochs PR 3b-i — the transport-epoch RELEASE is
+    ///         not available in this cut, to anyone. Owner decision on #2258
+    ///         (2026-09-20): §5c requires the classification entry to refuse a
+    ///         batch that still lists an outstanding obligation, and 3b-i has
+    ///         no per-day obligation figure to test — that is the unbounded
+    ///         walk 3b-ii's tracking exists for. Until it lands, a release
+    ///         followed by a classification would move a delivery's value out
+    ///         of its membership-bound earmark on nobody's authority but the
+    ///         caller's. The entries exist so the surface, the cut wiring and
+    ///         the atomic cut group keep their shape; 3b-ii replaces bodies.
+    error TransportReleaseNotYetAvailable(bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — an old-wire packet whose batch
+    ///         has not been released cannot be classified. The only route by
+    ///         which what remains of such a packet becomes classifiable is its
+    ///         batch's remainder being parked WITH its acknowledgment (design
+    ///         §5c): classifying earlier would spend value the batch's own
+    ///         listed obligations can still draw.
+    error TransportBatchNotReleased(bytes32 packetHash, bytes32 batchId);
+    /// @notice #1566 transport epochs PR 3b — the canonical chain refuses to
+    ///         build a remittance whose day list exceeds the transport fan-out
+    ///         cap. The cap is enforced HERE, at dispatch, because a transport
+    ///         payload is immutable once sent: a receive-side refusal would
+    ///         retry the same over-cap message forever.
+    error TransportDayFanoutExceeded(uint256 dayCount, uint256 cap);
     /// @notice A split attestation arrived from a chain that is not this
     ///         deployment's canonical (Base) chain. Messenger authentication
     ///         proves a message came from a configured peer, never that the

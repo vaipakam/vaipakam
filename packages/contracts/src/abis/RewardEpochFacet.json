@@ -1,17 +1,12 @@
 [
   {
     "type": "function",
-    "name": "consumePerkCredit",
+    "name": "acknowledgeTransportBatchRemainder",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -19,27 +14,90 @@
   },
   {
     "type": "function",
-    "name": "getPerkConfig",
+    "name": "admitLegacyTransportBatch",
     "inputs": [
       {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [
       {
-        "name": "priceVpfi",
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getTransportBatch",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "balance",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "durationSeconds",
+        "name": "admitted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayCount",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "unitsSold",
+        "name": "indexedDays",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "released",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportBatchLegs",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "consumedFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumedRecycled",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -48,32 +106,81 @@
   },
   {
     "type": "function",
-    "name": "getPerkEntitlement",
+    "name": "getTransportDayBatches",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "perkId",
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "active",
+        "name": "page",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "arrivedAt",
+        "type": "uint64[]",
+        "internalType": "uint64[]"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportRemainder",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayListHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "acknowledged",
         "type": "bool",
         "internalType": "bool"
       },
       {
-        "name": "until",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "credits",
+        "name": "debited",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -82,232 +189,102 @@
   },
   {
     "type": "function",
-    "name": "getPerkSpendCumulative",
-    "inputs": [],
+    "name": "materializeTransportBatchPage",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
     "outputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "purchasePerk",
-    "inputs": [
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxTotalVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expectedDurationSeconds",
+        "name": "indexedDays",
         "type": "uint32",
         "internalType": "uint32"
       }
     ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "setPerkConfig",
+    "name": "parkTransportBatchRemainder",
     "inputs": [
       {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "priceVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "durationSeconds",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "PerkConfigured",
-    "inputs": [
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "priceVpfi",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "durationSeconds",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PerkCreditConsumed",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "creditsAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PerkPurchased",
-    "inputs": [
-      {
-        "name": "buyer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "vpfiSpent",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "entitledUntil",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "creditsAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VpfiRecycled",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VpfiRecycledPreLaunch",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AccessControlUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "neededRole",
+        "name": "batchId",
         "type": "bytes32",
         "internalType": "bytes32"
       }
-    ]
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "TransportBatchAdmitted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransportBatchPageIndexed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "indexedDays",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "error",
@@ -1159,11 +1136,6 @@
   },
   {
     "type": "error",
-    "name": "EnforcedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FeeEntitlementChargeFailed",
     "inputs": []
   },
@@ -1364,22 +1336,6 @@
     "type": "error",
     "name": "InsufficientProceeds",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientRecycleBacking",
-    "inputs": [
-      {
-        "name": "needed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1983,81 +1939,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PerkModeLocked",
-    "inputs": [
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PerkNoCreditsHeld",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PerkNotForSale",
-    "inputs": [
-      {
-        "name": "perkId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PerkPriceExceedsMax",
-    "inputs": [
-      {
-        "name": "spend",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxTotalVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PerkTermsChanged",
-    "inputs": [
-      {
-        "name": "expected",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "actual",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PerkUnitsZero",
-    "inputs": []
   },
   {
     "type": "error",
@@ -3300,6 +3181,22 @@
   },
   {
     "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -3339,17 +3236,6 @@
     "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

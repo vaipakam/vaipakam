@@ -89,6 +89,7 @@ import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -226,7 +227,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 80;
+    uint256 public constant EXPECTED_FACETS = 81;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -399,41 +400,67 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         Item[] memory items = _deployItems();
         require(items.length == EXPECTED_FACETS, "RefreshAllFacetsInPlace: facet count drift vs DeployDiamond");
 
-        // #1566 transport epochs PR 3a (Codex #2224 r5) — the MIRROR-SIDE
-        // INGRESS is cut FIRST, before any other item's cut goes out.
+        // #1566 transport epochs PR 3a/3b — the ATOMIC CUT GROUP goes out
+        // FIRST, and goes out WHOLE, in one diamondCut transaction.
         //
         // Cuts are built in items[] order and sent in SELECTOR_BUDGET-sized
         // transactions, so an item near the end of the array lands several
-        // transactions after the first. That is ordinarily harmless, but the
-        // value-bearing receive entries deliberately skip `whenNotPaused` so
-        // in-flight deliveries can still land while the Diamond is paused for
-        // migration (the migration mode) — which means the pause this script
-        // takes as its first transaction does NOT hold arrivals back. A
-        // delivery arriving mid-refresh would therefore execute whatever
-        // implementation those three selectors currently point at, and until
-        // this item's cut lands that is the OLD remittance bytecode, which
-        // records a packet with no day-list commitment for the transport
-        // epochs to materialize against — permanently, since the commitment
-        // is written once, with the record.
+        // transactions after the first. That is ordinarily harmless, because
+        // facets are ordinarily independent: each selector's old and new
+        // bytecode agree about storage, so which side of a batch boundary it
+        // falls on does not matter.
         //
-        // Hoisting closes it: after the first cut transaction every arrival
-        // takes the new ingress, and before it the deployment is wholly
-        // pre-3a, where a packet without a commitment is a historical one by
-        // definition and is handled as such. The facet is safe to install
-        // ahead of the rest — its library code is inlined into its own
-        // bytecode, and the custody entry it calls is unchanged by this PR.
+        // It is NOT harmless for a set of facets that share one accounting
+        // rule. Between the batch that replaces one of them and the batch that
+        // replaces the next, the Diamond routes a MIXED VERSION of that rule —
+        // and the value-bearing receive entries deliberately skip
+        // `whenNotPaused` so in-flight deliveries can still land while the
+        // Diamond is paused for migration, which means the pause this script
+        // takes as its first transaction does not hold arrivals back and the
+        // window is reachable.
+        //
+        // THE INVARIANT, stated once here rather than rediscovered per facet:
+        // the transport-epoch lifecycle's participants must switch version
+        // TOGETHER. No cut transaction may leave one of them new while another
+        // is old. Three review rounds each found a different instance of that
+        // one defect (Codex #2232 r1/r2/r3) and each was answered by hoisting
+        // one more name to the front, which is a patch per path:
+        //
+        //   - the OLD ingress records a packet with no day-list commitment for
+        //     the epochs to materialize against — permanently, since the
+        //     commitment is written once, with the record;
+        //   - the NEW ingress opens a transport batch while the OLD
+        //     `classifyLegacyPacket` is still routed, and that implementation
+        //     reduces the packet's `unclassified` figure without checking or
+        //     debiting the batch — two claims on one amount, which is exactly
+        //     what §5c's one-accounting-path rule forbids;
+        //   - and the epoch facet's own lifecycle entries must not be
+        //     reachable against an ingress that has not yet been replaced.
+        //
+        // Cutting the group as ONE transaction removes the window rather than
+        // narrowing it: before that transaction every participant is old and
+        // consistent, after it every participant is new and consistent, and
+        // there is no state in between for an arrival or an operator to land
+        // in. `_hoistGroupFirst` puts the group at the head of `items[]` and
+        // `_groupCutEnd` forces the batch boundary immediately after it.
         //
         // Pausing the standalone receiver instead was considered and
         // rejected: `unpause()` there is owner-only while `pause()` is
         // guardian-or-owner, so a run whose broadcaster is not the owner
         // could halt the lane and be unable to restart it — trading a
         // bounded, self-closing window for an unbounded one.
-        _hoistFirst(items, "rewardIngressFacet");
+        uint256 groupLen = _hoistGroupFirst(items, _atomicCutGroup());
 
         // Split each facet's canonical selector list against the live loupe:
         // routed -> Replace, unrouted -> Add.
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](items.length * 2);
         uint256 nCuts;
+        // Where the group's cut entries end, and how many selectors they carry.
+        // Both are counted here rather than re-derived below: `_split` decides
+        // how many entries an item produces (one, two, or none), so the only
+        // reliable boundary is the one recorded while building.
+        uint256 groupCutEnd;
+        uint256 groupSelectors;
         for (uint256 i; i < items.length; ++i) {
             (bytes4[] memory adds, bytes4[] memory reps) = _split(loupe, items[i].selectors);
             if (reps.length > 0) {
@@ -452,13 +479,100 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
             console.log(items[i].key, items[i].impl);
             console.log("   replace:", reps.length, "add:", adds.length);
+            if (i + 1 == groupLen) {
+                groupCutEnd = nCuts;
+                groupSelectors = _selectorsIn(cuts, 0, nCuts);
+            }
         }
+
+        // The group is one transaction or the run does not start. If it ever
+        // outgrows the budget the honest outcome is a loud refusal here, in
+        // simulation, rather than a silent split in production that reopens
+        // the window the group exists to close — which is the failure mode
+        // this whole construct is a fix for, and it must not come back as a
+        // capacity accident.
+        require(
+            groupSelectors <= SELECTOR_BUDGET,
+            "RefreshAllFacetsInPlace: atomic cut group exceeds SELECTOR_BUDGET"
+        );
+
+        // ─── the RECEIVER is upgraded BEFORE the first cut ────────────────
+        //
+        // Codex #2232 r3 — ordering, and it is the whole of the fix. The
+        // widened ingress is installed by the FIRST cut batch (it is hoisted
+        // above), while the receiver upgrade used to sit after every batch,
+        // after `_removeRetired`, and after the M1 migration. Between those
+        // transactions an old-wire delivery finds a generation-4 receiver
+        // still calling the routed 9-argument selector — which SUCCEEDS
+        // against the previous ingress bytecode and opens no transport epoch.
+        // A packet with no batch is deliberately ungated, so that delivery
+        // bypasses the classification gate permanently, silently, and with no
+        // later step able to notice.
+        //
+        // Upgrading first inverts the window into the fail-closed one this
+        // script already relies on everywhere else: the new receiver calls the
+        // 10-argument selector, which is not routed until the first cut lands,
+        // so an early delivery REVERTS, CCIP records a failed message, and it
+        // re-executes against the finished Diamond. A bounded retry costs
+        // nothing; a silent bypass cannot be undone.
+        //
+        // It runs here rather than at the top of the script so the window in
+        // which arrivals revert is as short as the run allows — after the 78
+        // implementation deploys, which under `--slow` are minutes of separate
+        // transactions, and immediately before the cuts.
+        //
+        // The retired ingress selectors are Removed immediately BELOW, before
+        // the first cut (Codex #2232 r4), and swept again after the cuts as
+        // the interrupted-run pass - NOT last. An earlier revision of this
+        // comment kept the "remove last, it is the completion marker"
+        // rationale after the code had moved the removal forward; a future
+        // edit reading it could have restored the unsafe order. The marker
+        // argument no longer applies, and {_removeRetiredIngress} says why.
+        // This probe is generation-gated and therefore idempotent on a rerun.
+        _upgradeRemitReceiverAhead(diamond, signer);
+
+        // ─── the RETIRED ingress selectors go BEFORE the first cut too ────
+        //
+        // Codex #2232 r4, and it is the half of the window the upgrade above
+        // cannot reach. That upgrade closes the window for a receiver this
+        // script can FIND; the retired selector is what an un-upgraded one
+        // still calls, and until it is unrouted that call SUCCEEDS against the
+        // previous ingress bytecode and opens no transport epoch. Pre-cut, on
+        // an older mirror that does not route the receiver lens and whose
+        // artifact is missing or stale, there is no receiver to find — so the
+        // window stayed open in exactly the case the resolution fallback
+        // exists for.
+        //
+        // Removing here makes it fail-closed WITHOUT having to resolve
+        // anything: from this transaction on, a delivery through any
+        // un-upgraded receiver reverts, CCIP records a failed message, and it
+        // re-executes against the finished Diamond. That is the posture the
+        // rest of this run already relies on, and it holds for a receiver
+        // this script never saw.
+        //
+        // The same call runs again after the cuts as the interrupted-run
+        // sweep; see {_removeRetiredIngress} and the block there for why the
+        // completion-marker argument for removing LAST no longer applies.
+        _removeRetiredIngress(diamond, loupe);
 
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
-        uint256 batchStart;
+        //
+        // The atomic group is sent first and ALONE. Letting it merely lead the
+        // ordinary batching would not do: the budget loop packs following
+        // items into the same transaction until the budget is reached, which
+        // is harmless, but it would also SPLIT the group across two
+        // transactions the moment the group grew past the budget — the exact
+        // mixed-version window this is here to remove, reappearing silently
+        // as the group grows. A forced boundary makes the group's atomicity a
+        // property of the dispatch rather than of its current size.
+        uint256 batchStart = groupCutEnd;
         uint256 batchSelectors;
-        for (uint256 i; i < nCuts; ++i) {
+        if (groupCutEnd > 0) {
+            _sendBatch(diamond, cuts, 0, groupCutEnd);
+            console.log("  ^ atomic cut group: entries", groupCutEnd, "selectors", groupSelectors);
+        }
+        for (uint256 i = groupCutEnd; i < nCuts; ++i) {
             uint256 selLen = cuts[i].functionSelectors.length;
             if (batchSelectors > 0 && batchSelectors + selLen > SELECTOR_BUDGET) {
                 _sendBatch(diamond, cuts, batchStart, i);
@@ -526,6 +640,111 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
 
+        // ─── the receiver requirement, decided ONCE, after the cuts ───────
+        //
+        // Codex #2232 r3 (F1 + F4). The UPGRADE happened before the cuts; this
+        // is where it is PROVEN, and it is deliberately ungated: a deployment
+        // already past the B2-d5 migration routes no retired selector, so a
+        // requirement living inside that block would never run there — which
+        // is exactly why a second receiver probe grew further down the script
+        // in the first place. There is now one of each. The probe ahead of the
+        // cuts is the only upgrade; this is the only requirement.
+        //
+        // TWO ADDRESSES, TWO JOBS, AND THEY DO NOT SUBSTITUTE FOR EACH OTHER.
+        // Both are PROBED for the upgrade when they differ, so a rotation
+        // leaves neither behind (the probe is generation-gated, so after the
+        // pre-cut pass these calls are no-ops). But only the LIVE address —
+        // the Diamond's registered receiver, the sender the refreshed ingress
+        // accepts — is REQUIRED, because it is the only one whose presence
+        // says anything about whether remittances will land. The artifact is
+        // never a fallback for it; see the requirement below.
+        {
+            address liveRecv =
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
+            address artifactRecv = _readAddrOptional(".rewardRemittanceReceiver");
+            // THE ROLE, NOT "NOT CANONICAL" (Codex #2232 r12). A receiver is
+            // required by the chains that RECEIVE deliveries, and that is
+            // exactly `Mirror` — not the complement of `Canonical`, which also
+            // sweeps in the two roles that receive nothing:
+            //
+            //   * `Unconfigured` — a supported single-chain deploy with no
+            //     delivery, no residual and no counterparty, which therefore
+            //     registers no receiver and never will. Keying on
+            //     `!isCanonical` made its refresh IMPOSSIBLE.
+            //   * `Detached` — was in a role and no longer has one; it fails
+            //     closed on backing it cannot re-earn, so no further delivery
+            //     arrives for a receiver to accept.
+            //
+            // Safe to read here although the role BACKFILL is still ahead of
+            // us: a genuine mirror resolves `Mirror` from its configured base
+            // chain, with or without the backfill. The backfill exists only to
+            // separate `Detached` from `Unconfigured`, which are byte-identical
+            // in state and neither of which requires a receiver either way — so
+            // there is no ordering in which this read mistakes a mirror for a
+            // role that skips the requirement.
+            uint8 rewardRoleRecv = RewardReporterFacet(diamond).getRewardRole();
+            bool mirrorNeedsReceiver = rewardRoleRecv == _roleFromLabel("mirror");
+
+            // Same fatality rule as the pre-cut pass, and it is the rule this
+            // block's own comment above has asserted since it was written
+            // without the code ever enforcing it (Codex #2232 r3): the live
+            // receiver is mandatory, the artifact is best-effort. Normally
+            // both are no-ops here — the pre-cut pass is generation-gated and
+            // has already done the work — so this runs for real only where the
+            // live address could not be resolved before the cuts.
+            if (liveRecv != address(0)) _probeUpgradeRemitReceiver(liveRecv, true, signer);
+            if (artifactRecv != address(0) && artifactRecv != liveRecv) {
+                _probeUpgradeRemitReceiver(artifactRecv, false, signer);
+            }
+
+            // THE REQUIREMENT READS THE LIVE ADDRESS AND NOTHING ELSE (Codex
+            // #2232 r11). The artifact is evidence about which proxy to TRY to
+            // upgrade; it is not evidence about which sender the refreshed
+            // ingress will accept. That is `s.rewardRemittanceReceiver`, which
+            // `RewardIngressFacet` compares `msg.sender` against directly and
+            // which `getRewardRemittanceReceiver()` returns — so an artifact
+            // address satisfying this requirement proves nothing about the
+            // Diamond, and promoting it into `recv` broke the rule in BOTH
+            // directions:
+            //
+            //   * a mirror with a zero live receiver and a populated artifact
+            //     passed the requirement and the generation assertion, then
+            //     unpaused with every remittance reverting at the ingress
+            //     sender check — permanently, because the retired selectors
+            //     that would make a rerun retry are Removed below;
+            //   * a CANONICAL chain, which legitimately registers no receiver,
+            //     was aborted by a stale artifact naming a proxy it does not
+            //     need and this signer may no longer be able to upgrade.
+            //
+            // Both disappear by deleting the fallback: there is now exactly
+            // one address that can satisfy this block, and it is the one the
+            // ingress actually enforces. The artifact keeps its only honest
+            // job — the best-effort upgrade probe above.
+            //
+            // A MIRROR must never pass this point without that live receiver:
+            // the retired selectors are Removed below, and a mirror left
+            // calling an unrouted ingress fails every delivery while the
+            // marker that would make a rerun retry the upgrade is gone. Every
+            // other role legitimately has none - nothing remits to it.
+            require(
+                liveRecv != address(0) || !mirrorNeedsReceiver,
+                "remit receiver: mirror refresh needs a live .rewardRemittanceReceiver registered on the Diamond"
+            );
+            if (liveRecv != address(0)) {
+                // Assert the GENERATION rather than assuming the probe worked.
+                // This is the fact the Remove below is safe against, so it is
+                // read back from the proxy instead of inferred from having
+                // called an upgrade.
+                (bool okGen, bytes memory genRet) =
+                    liveRecv.staticcall(abi.encodeWithSignature("WIRE_GENERATION()"));
+                require(
+                    okGen && genRet.length == 32
+                        && abi.decode(genRet, (uint256)) >= REMIT_RECEIVER_WIRE_GENERATION,
+                    "remit receiver: still below REMIT_RECEIVER_WIRE_GENERATION after the upgrade pass"
+                );
+            }
+        }
+
         // ─── remit ingress widened 6 → 7 (#1222 B2-d5) → 8 (#1434 P1-a) ────
         //
         // B2-d5 added `recycledShare` to `onRewardBudgetReceived`, so its
@@ -573,101 +792,35 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         //   (b) OPERATIONAL — upgrade the receiver proxy, so the happy path
         //       works immediately rather than needing a manual re-execution.
         //
-        // Ordering follows the M1 lesson above: the still-routed old selector
-        // is the DURABLE completion marker, so it is Removed LAST. If the
-        // receiver upgrade lands but the Remove is dropped, a rerun re-enters
-        // and redoes both (re-upgrading to a fresh implementation is
-        // idempotent in effect). Removing first would clear the marker while
-        // the upgrade could still fail, permanently skipping it.
-        bytes4 oldRemitIngress6 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)"
-            )
-        );
-        bytes4 oldRemitIngress7 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)"
-            )
-        );
-        // #1566 closure 2 cutover PR 1 — the ingress gained
-        // `transportMessageId` (the ingress stamp), so the 8-arg selector
-        // retired the same way, and so did the 12-arg compensation ingress.
-        bytes4 oldRemitIngress8 = bytes4(
-            keccak256(
-                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)"
-            )
-        );
-        bytes4 oldCompIngress12 = bytes4(
-            keccak256(
-                "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)"
-            )
-        );
-        bool routed6 = loupe.facetAddress(oldRemitIngress6) != address(0);
-        bool routed7 = loupe.facetAddress(oldRemitIngress7) != address(0);
-        bool routed8 = loupe.facetAddress(oldRemitIngress8) != address(0);
-        bool routed12 = loupe.facetAddress(oldCompIngress12) != address(0);
-        if (routed6 || routed7 || routed8 || routed12) {
-            address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
-            (, , , bool isCanonicalReward, ) =
-                RewardReporterFacet(diamond).getRewardReporterConfig();
-
-            // Codex r2 F2 — a MIRROR must never pass this point without its
-            // receiver actually upgraded. `_readAddrOptional` returns zero for
-            // a missing/stale/malformed artifact as well as for a chain that
-            // genuinely has no receiver; skipping on that ambiguity and then
-            // Removing the selector anyway would leave the old receiver
-            // calling an UNROUTED ingress — every delivery failing — while
-            // destroying the migration marker, so a rerun would never retry
-            // the upgrade. Only the canonical chain legitimately has no
-            // receiver (nothing remits to it), so only it may skip.
-            require(
-                remitReceiver != address(0) || isCanonicalReward,
-                "B2-d5: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
-            );
-
-            if (remitReceiver != address(0)) {
-                address newImpl = address(new RewardRemittanceReceiver());
-                UUPSUpgradeable(remitReceiver).upgradeToAndCall(newImpl, "");
-                // Codex r2 F3 — the CANONICAL key. `writeFacet` would write
-                // `.facets.rewardRemittanceReceiverImpl`, while DeployCrosschain
-                // and every consumer read the TOP-LEVEL
-                // `.rewardRemittanceReceiverImpl`; using it would leave the
-                // real record pointing at the superseded implementation while
-                // inventing a spurious facet entry.
-                Deployments.writeRewardRemittanceReceiverImpl(newImpl);
-                console.log(
-                    "B2-d5: upgraded RewardRemittanceReceiver impl ->", newImpl
-                );
-            } else {
-                console.log(
-                    "B2-d5: canonical reward chain - no receiver to upgrade"
-                );
-            }
-
-            // Only the selectors actually routed are Removed — a Diamond
-            // already past B2-d5 has no 6-arg selector, and asking the cut to
-            // Remove an unrouted one reverts, which would abort the whole
-            // refresh over a migration that had already happened.
-            bytes4[] memory rmIngress = new bytes4[](
-                (routed6 ? 1 : 0) + (routed7 ? 1 : 0) + (routed8 ? 1 : 0) + (routed12 ? 1 : 0)
-            );
-            uint256 k;
-            if (routed6) rmIngress[k++] = oldRemitIngress6;
-            if (routed7) rmIngress[k++] = oldRemitIngress7;
-            if (routed8) rmIngress[k++] = oldRemitIngress8;
-            if (routed12) rmIngress[k++] = oldCompIngress12;
-            IDiamondCut.FacetCut[] memory rmIngressCut =
-                new IDiamondCut.FacetCut[](1);
-            rmIngressCut[0] = IDiamondCut.FacetCut({
-                facetAddress: address(0),
-                action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rmIngress
-            });
-            IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
-            console.log(
-                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover) and the 12-arg onCompensationBudgetReceived"
-            );
-        }
+        // ORDERING — the Remove runs BEFORE the first cut, and this call is
+        // the sweep behind it (Codex #2232 r4).
+        //
+        // It used to run only here, last, on the M1 reasoning that a
+        // still-routed retired selector is the DURABLE COMPLETION MARKER: if
+        // the receiver upgrade landed but the Remove was dropped, a rerun
+        // re-entered this block and redid both. That reasoning retired with
+        // r3. The receiver upgrade no longer lives in this block — it runs
+        // ahead of the cuts and is gated on the proxy's own
+        // `WIRE_GENERATION`, so a rerun redoes it whenever the proxy is still
+        // behind, whether or not the Remove ever mined. The marker was
+        // protecting something that has moved.
+        //
+        // What removing LAST cost, meanwhile, was the whole cut window. Layer
+        // (a) above is only fail-closed while the retired selector is
+        // unrouted; until the Remove mines it stays pointed at the PREVIOUS
+        // ingress bytecode, so an un-upgraded receiver's delivery in that
+        // window SUCCEEDS and opens no transport epoch — the r3 hazard again,
+        // in the one case r3's fix cannot reach: a Diamond on which no
+        // receiver could be resolved pre-cut at all (an older mirror that does
+        // not route the lens, with a missing or stale artifact). Resolving a
+        // receiver more cleverly cannot close that; making the window
+        // fail-closed regardless of what was resolved does.
+        //
+        // So {_removeRetiredIngress} runs ahead of the cut dispatch and again
+        // here. It removes only what the loupe still routes, so the second
+        // call is a no-op on a normal run and the sweep for an interrupted
+        // one — and a rerun re-enters it exactly as before.
+        _removeRetiredIngress(diamond, loupe);
         // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
         // ingress gained the same parameter, and the Diamond-releasing
         // `custodyUncreditFresh` retired with the in-holder unwind. Both are
@@ -807,64 +960,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
-        // ─── #1434 P2-w2 (Codex #1634 r1) — receiver wire-generation probe ──
+        // ─── #1434 P2-w2 — the receiver wire-generation probe: RETIRED ────
         //
-        // The B2-d5 block above gates its receiver upgrade on the RETIRED
-        // Diamond selectors still being routed — its own durable migration
-        // marker. A deployment already past that migration routes neither,
-        // so the block is (correctly) skipped there — but that also skipped
-        // the RECEIVER upgrade for every LATER wire generation: the P2
-        // compensation tag would hit a receiver that reads the keccak-sized
-        // tag as a legacy array offset and reverts every delivery, while
-        // Base has already closed the day and holds the reservation Pending.
-        //
-        // The durable gate for this and every future generation is the
-        // receiver's OWN `WIRE_GENERATION` constant: a missing selector
-        // (pre-P2 implementation) or a lower value means the proxy needs
-        // the upgrade. Idempotent — a rerun (or a same-run pass after the
-        // B2-d5 block already upgraded) reads the new implementation's
-        // value and skips.
-        {
-            // #1660 r9 - live-config-over-artifact, the same rule as
-            // every other probe: the Diamond's registered receiver is
-            // the one the refreshed ingress trusts.
-            address liveRecvP2 =
-                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
-            address remitReceiverP2 =
-                _readAddrOptional(".rewardRemittanceReceiver");
-            if (liveRecvP2 != address(0)) {
-                // #1566 closure 2 cutover PR 2 (Codex #2200 r7) — the LIVE
-                // receiver is probed FIRST, then a distinct artifact address:
-                // a stale record naming a proxy this signer can no longer
-                // upgrade must not abort the run before the live receiver is
-                // reached. Same order as every other probe.
-                _probeUpgradeRemitReceiver(liveRecvP2);
-                if (
-                    remitReceiverP2 != address(0)
-                        && remitReceiverP2 != liveRecvP2
-                ) {
-                    _probeUpgradeRemitReceiver(remitReceiverP2);
-                }
-                remitReceiverP2 = liveRecvP2;
-            }
-            // #1634 r2 — the SAME fail-closed posture as the B2-d5 block:
-            // `_readAddrOptional` returns zero for a missing / stale /
-            // malformed artifact as well as for a chain that genuinely has
-            // no receiver, and a MIRROR silently skipping here would ship
-            // the P2 Diamond ingress with a receiver that cannot decode
-            // the P2 tag — every manual compensation failing while Base
-            // has closed the day. Only the canonical chain legitimately
-            // has no receiver.
-            (, , , bool isCanonicalRewardP2, ) =
-                RewardReporterFacet(diamond).getRewardReporterConfig();
-            require(
-                remitReceiverP2 != address(0) || isCanonicalRewardP2,
-                "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
-            );
-            // The artifact-only case (no live receiver registered): the live
-            // one, where it exists, was probed first above.
-            if (liveRecvP2 == address(0)) _probeUpgradeRemitReceiver(remitReceiverP2);
-        }
+        // Codex #2232 r3 — this block did exactly what the pre-cut probe now
+        // does (live address first, artifact as a distinct fallback,
+        // generation-gated upgrade), only later in the run and as a second
+        // copy of the resolution rule. Two copies is how the two diverged:
+        // this one read the live receiver while the B2-d5 block above read
+        // the artifact alone, and neither ran before the cut that installs
+        // the widened ingress. There is now ONE upgrade, ahead of the cuts,
+        // and ONE requirement, asserted after them.
 
         // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
         //
@@ -1445,6 +1550,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // as Replace toward this facet and the remittance item no longer lists
         // them: one refresh moves both halves.
         items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
+        items[80] = Item("rewardEpochFacet", address(new RewardEpochFacet()), _getRewardEpochSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
@@ -1632,7 +1738,194 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.
     /// @dev #1660 r9 — generation-probe + UUPS-upgrade one remittance
     ///      receiver proxy (no-op for zero or already-current).
-    function _probeUpgradeRemitReceiver(address proxy) private {
+    /// @notice Every RETIRED mirror-ingress signature this script Removes, in
+    ///         the order they were retired.
+    /// @dev    #1566 transport epochs PR 3b (Codex #2232 r1). These were four
+    ///         inline locals until this PR, extended once per widening and
+    ///         covered by no test — which is how the FOURTH widening managed to
+    ///         omit itself. Leaving a retired selector routed is silent and
+    ///         severe: it still points at the previous facet bytecode, so an
+    ///         un-upgraded receiver keeps calling it and its deliveries SUCCEED
+    ///         against stale code, skipping whatever the new ingress added.
+    ///
+    ///         `RetiredIngressSelectorsTest` pins the CURRENT ingress selectors
+    ///         against this list, so a future signature change fails a test
+    ///         that names the predecessor it has to add here, rather than
+    ///         shipping a Diamond that half-migrated in the operator's favour.
+    ///
+    ///         `public` so a test can read it without broadcasting anything.
+    function retiredIngressSignatures() public pure returns (string[] memory sigs) {
+        sigs = new string[](5);
+        // #1222 B2-d5 — `recycledShare` (6 → 7 args).
+        sigs[0] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)";
+        // #1434 P1-a — `freshShare` (7 → 8).
+        sigs[1] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)";
+        // #1566 closure 2 cutover PR 1 — `transportMessageId` (8 → 9).
+        sigs[2] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256)";
+        // #1566 transport epochs PR 3b — `splitTyped` (9 → 10).
+        sigs[3] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256,bytes32)";
+        // #1566 closure 2 cutover PR 1 — the compensation ingress's own stamp.
+        sigs[4] = "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)";
+    }
+
+    /// @dev Codex #2232 r3 — the LIVE receiver the refreshed ingress will
+    ///      trust, read tolerantly. Every other live-config read in this
+    ///      script runs after the cuts, where the lens selector is certainly
+    ///      routed; this one runs BEFORE them, so a Diamond old enough not to
+    ///      route it must degrade to the artifact rather than abort the run.
+    ///      Zero means "could not be determined here", never "there is none" —
+    ///      the mirror requirement is asserted after the cuts, where the read
+    ///      is reliable, and that is the only place it is decided.
+    function _liveRemitReceiverOptional(address diamond) private view returns (address) {
+        (bool ok, bytes memory ret) = diamond.staticcall(
+            abi.encodeWithSignature("getRewardRemittanceReceiver()")
+        );
+        if (!ok || ret.length != 32) return address(0);
+        return abi.decode(ret, (address));
+    }
+
+    /// @dev Codex #2232 r3 — upgrade the remittance receiver AHEAD of the
+    ///      facet cuts, probing the LIVE address and the artifact as two
+    ///      SEPARATE targets rather than one with a fallback (Codex #2232 r3
+    ///      F4: a stale or superseded artifact entry must never decide whether
+    ///      the live receiver gets upgraded, and both are probed when they
+    ///      differ so a rotation in progress leaves neither behind; #2232 r11:
+    ///      nor may it stand IN PLACE of the live address anywhere, which is
+    ///      why the post-cut requirement reads only the live one).
+    ///      Generation-gated in
+    ///      {_probeUpgradeRemitReceiver}, so it is a no-op on a rerun and on
+    ///      every already-current proxy.
+    function _upgradeRemitReceiverAhead(address diamond, address broadcaster) private {
+        address live = _liveRemitReceiverOptional(diamond);
+        address artifact = _readAddrOptional(".rewardRemittanceReceiver");
+        // AUTHORITY DECIDES FATALITY (Codex #2232 r3 F3). The LIVE receiver is
+        // the one the refreshed ingress will trust, so failing to upgrade it
+        // must stop the run — proceeding would install the widened ingress
+        // for a receiver that cannot call it. The ARTIFACT is a RECORD of a
+        // receiver, and a record can be stale: a superseded proxy whose
+        // upgrade authority has rotated away reverts on `upgradeToAndCall`,
+        // and an earlier revision let that revert abort a refresh whose live
+        // receiver had already been resolved and upgraded successfully — a
+        // stale bookkeeping entry deciding the fate of a correct deployment.
+        //
+        // Removing the artifact probe was the other option and is worse: a
+        // rotation IN PROGRESS is exactly when the two differ, and that is
+        // when leaving the outgoing receiver un-upgraded matters. So it stays,
+        // demoted to best-effort — attempted where this signer has the
+        // authority, and reported loudly where it does not, never fatal. The
+        // skip is safe in the direction that matters: an un-upgraded receiver
+        // calls the retired selector, which this run removes, so its
+        // deliveries REVERT and are MANUALLY RE-EXECUTED after the refresh
+        // (CCIP does not redeliver a failed message on its own —
+        // {CcipMessenger} and the cutover runbook both define the recovery as
+        // manual re-execution). Recoverable, against a run aborted midway.
+        //
+        // The demotion is enforced by PREFLIGHTING the upgrade authority, not
+        // by catching the revert — see {_probeUpgradeRemitReceiver}, where a
+        // caught revert under `startBroadcast` was still a queued transaction
+        // and so was never best-effort at all (Codex #2232 r14).
+        if (live != address(0)) _probeUpgradeRemitReceiver(live, true, broadcaster);
+        if (artifact != address(0) && artifact != live) {
+            _probeUpgradeRemitReceiver(artifact, false, broadcaster);
+        }
+        if (live == address(0) && artifact == address(0)) {
+            // Not a failure here: the canonical chain legitimately has no
+            // receiver, and a mirror without a LIVE one is STOPPED after the
+            // cuts, where `getRewardReporterConfig` can say which this is.
+            // Note the post-cut stop is keyed on the live address alone
+            // (#2232 r11), so a mirror that resolves ONLY the artifact is
+            // stopped there too and simply does not reach this line.
+            console.log("remit receiver: none resolvable pre-cut - decided after the cuts");
+        }
+    }
+
+    /// @dev #1566 transport epochs PR 3b (Codex #2232 r4) — Remove every
+    ///      RETIRED ingress selector the loupe still routes, in one cut.
+    ///
+    ///      ONE implementation, called TWICE: ahead of the cut dispatch, where
+    ///      it makes the whole refresh window fail-closed for a receiver that
+    ///      was never upgraded, and again after the cuts, where it is the
+    ///      sweep for a run that was interrupted between the two. Idempotent
+    ///      by construction — it removes only what is routed and asking a cut
+    ///      to Remove an unrouted selector reverts, which would abort a
+    ///      refresh over a migration that had already happened.
+    ///
+    ///      The retired signatures live in {retiredIngressSignatures} so the
+    ///      list is a surface a test can pin (Codex #2232 r1); this only asks
+    ///      the loupe which of them are still routed here.
+    /// @return removed How many were Removed by this call.
+    function _removeRetiredIngress(address diamond, IDiamondLoupe loupe)
+        private
+        returns (uint256 removed)
+    {
+        string[] memory retiredSigs = retiredIngressSignatures();
+        bytes4[] memory retired = new bytes4[](retiredSigs.length);
+        for (uint256 r; r < retiredSigs.length; ++r) {
+            retired[r] = bytes4(keccak256(bytes(retiredSigs[r])));
+            if (loupe.facetAddress(retired[r]) != address(0)) ++removed;
+        }
+        if (removed == 0) {
+            console.log("remit ingress: no retired selector routed - nothing to remove");
+            return 0;
+        }
+        bytes4[] memory rmIngress = new bytes4[](removed);
+        uint256 k;
+        for (uint256 r; r < retired.length; ++r) {
+            if (loupe.facetAddress(retired[r]) != address(0)) rmIngress[k++] = retired[r];
+        }
+        IDiamondCut.FacetCut[] memory rmIngressCut = new IDiamondCut.FacetCut[](1);
+        rmIngressCut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: rmIngress
+        });
+        IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
+        // Read back rather than assumed: an un-Removed selector is the whole
+        // defect this call exists to prevent, so it is verified, not hoped for.
+        for (uint256 r; r < rmIngress.length; ++r) {
+            require(
+                loupe.facetAddress(rmIngress[r]) == address(0),
+                "RefreshAllFacetsInPlace: a retired ingress selector is still routed after the Remove"
+            );
+        }
+        console.log(
+            "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b) and the 12-arg onCompensationBudgetReceived"
+        );
+    }
+
+    /// @dev `mandatory` says whether a failed upgrade stops the run. True for
+    ///      the LIVE receiver the ingress will trust; false for an artifact
+    ///      entry, which is corroborating and may be stale (see
+    ///      {_upgradeRemitReceiverAhead}). A non-mandatory skip is logged
+    ///      rather than swallowed: the operator must be told which proxy was
+    ///      left behind, because a receiver still on the old generation is a
+    ///      lane whose deliveries will revert until it is upgraded by hand.
+    ///
+    ///      NO try/catch — THE AUTHORITY IS PREFLIGHTED INSTEAD (Codex #2232
+    ///      r14). This runs under `startBroadcast`, and the rule this script
+    ///      already states for the armed-fresh seed (Codex #1699 r4 P1 /
+    ///      #2158 r25 P1) applies verbatim here: Forge records every external
+    ///      call made in broadcast mode as a transaction whether or not
+    ///      Solidity caught its simulated revert, so a call EXPECTED to revert
+    ///      must not be made at all. Catching the revert therefore never made
+    ///      the artifact probe best-effort — the reverting `upgradeToAndCall`
+    ///      stayed in the broadcast list and failed the run at send time,
+    ///      AFTER the cuts had mined. That is the mid-run abort the r3 demotion
+    ///      was introduced to prevent, reintroduced by the mechanism chosen to
+    ///      prevent it.
+    ///
+    ///      `_authorizeUpgrade` on {RewardRemittanceReceiver} is `onlyOwner`,
+    ///      so the one EXPECTED failure — a superseded proxy whose ownership
+    ///      has rotated away from this signer — is answerable by a
+    ///      `staticcall`, which broadcasts nothing. A proxy this signer cannot
+    ///      upgrade is skipped before any transaction exists. Anything that
+    ///      reverts AFTER that check is unexpected, and an unexpected revert
+    ///      must abort rather than be swallowed, which a plain call does.
+    function _probeUpgradeRemitReceiver(
+        address proxy,
+        bool mandatory,
+        address broadcaster
+    ) private {
         if (proxy == address(0)) return;
         uint256 gen = 0;
         (bool ok, bytes memory ret) = proxy.staticcall(
@@ -1640,6 +1933,31 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
+            // Read the upgrade authority before creating any transaction. A
+            // proxy that does not answer `owner()` is treated as un-upgradable
+            // by this signer rather than optimistically called: it is either
+            // not this contract or not a proxy, and either way the upgrade
+            // would revert.
+            (bool okOwner, bytes memory ownerRet) = proxy.staticcall(
+                abi.encodeWithSignature("owner()")
+            );
+            address proxyOwner =
+                (okOwner && ownerRet.length == 32) ? abi.decode(ownerRet, (address)) : address(0);
+            if (proxyOwner != broadcaster) {
+                if (mandatory) {
+                    revert(
+                        "RefreshAllFacetsInPlace: live remit receiver is not owned by ADMIN_PRIVATE_KEY - it cannot be upgraded by this run"
+                    );
+                }
+                console.log(
+                    "P2-w2: WARNING - artifact remit receiver NOT upgraded, not owned by this signer (stale entry?), proxy:",
+                    proxy
+                );
+                console.log(
+                    "       its deliveries will revert on the retired selector until upgraded by hand"
+                );
+                return;
+            }
             address newImpl = address(new RewardRemittanceReceiver());
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeRewardRemittanceReceiverImpl(newImpl);
@@ -1882,25 +2200,92 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         return abi.decode(ret, (address));
     }
 
-    /// @dev #1566 transport epochs PR 3a — move one item to the front of the
-    ///      refresh so its cut goes out in the FIRST batch. Order is otherwise
-    ///      irrelevant here (every other consumer of `items` is a set
-    ///      operation: the write-back, the verification sweep, the parity
-    ///      test), which is why a swap is enough and no ordering machinery is
-    ///      needed. Reverts on an unknown key rather than silently leaving the
-    ///      order unchanged — a rename must not quietly reopen the window this
-    ///      exists to close.
-    function _hoistFirst(Item[] memory items, string memory key) internal pure {
-        bytes32 want = keccak256(bytes(key));
-        for (uint256 i; i < items.length; ++i) {
-            if (keccak256(bytes(items[i].key)) == want) {
-                Item memory head = items[0];
-                items[0] = items[i];
-                items[i] = head;
-                return;
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the facets that
+    ///         must be cut in ONE diamondCut transaction, because they share
+    ///         one accounting rule and a mixed version of it is unsound.
+    /// @dev    The MEMBERSHIP TEST, so a future facet is not left out by
+    ///         judgement: a facet belongs here when its replacement changes
+    ///         how the TRANSPORT EPOCH ledger is written or read, such that
+    ///         running it against another member's previous bytecode would
+    ///         make two surfaces disagree about one amount.
+    ///
+    ///         - `rewardIngressFacet` OPENS an epoch (and stamps the day-list
+    ///           commitment every later step proves against);
+    ///         - `rewardReconciliationFacet` hosts `classifyLegacyPacket`,
+    ///           which SPENDS from it and is the surface that, on its previous
+    ///           bytecode, reduces a packet's `unclassified` figure without
+    ///           debiting the batch;
+    ///         - `rewardEpochFacet` carries the lifecycle BETWEEN those two —
+    ///           the paged indexing, the park, the acknowledgment — so its
+    ///           entries must not be reachable against an ingress that has not
+    ///           yet been replaced.
+    ///
+    ///         `RefreshScriptAtomicGroupTest` pins this list, so adding a
+    ///         fourth participant to the lifecycle without adding it here
+    ///         fails a test that names the rule rather than shipping a refresh
+    ///         with the window quietly reopened.
+    ///
+    ///         This is deliberately a SMALL set. Hoisting is not free — every
+    ///         member is also a facet whose new bytecode runs against the rest
+    ///         of the Diamond's OLD bytecode for the remainder of the run — so
+    ///         membership is for facets that would otherwise disagree about
+    ///         value, not for facets that are merely related.
+    function _atomicCutGroup() internal pure returns (string[] memory keys) {
+        keys = new string[](3);
+        keys[0] = "rewardIngressFacet";
+        keys[1] = "rewardReconciliationFacet";
+        keys[2] = "rewardEpochFacet";
+    }
+
+    /// @dev #1566 transport epochs PR 3b — move every key of the atomic group
+    ///      to the front of the refresh, in the order given, so their cuts are
+    ///      built contiguously and can be dispatched as one transaction.
+    ///      Order is otherwise irrelevant here (every other consumer of
+    ///      `items` is a set operation: the write-back, the verification
+    ///      sweep, the parity test), which is why swaps are enough and no
+    ///      ordering machinery is needed.
+    ///
+    ///      Reverts on an unknown key rather than silently leaving the order
+    ///      unchanged — a rename must not quietly reopen the window this
+    ///      exists to close — and on a DUPLICATE key, which would otherwise
+    ///      swap a member back out of the group it had just been placed in
+    ///      and leave the count reporting a group larger than the one built.
+    /// @return groupLen How many leading items the group occupies.
+    function _hoistGroupFirst(Item[] memory items, string[] memory keys)
+        internal
+        pure
+        returns (uint256 groupLen)
+    {
+        for (uint256 k; k < keys.length; ++k) {
+            bytes32 want = keccak256(bytes(keys[k]));
+            for (uint256 j; j < k; ++j) {
+                require(
+                    keccak256(bytes(keys[j])) != want,
+                    "RefreshAllFacetsInPlace: duplicate atomic cut group key"
+                );
             }
+            bool found;
+            for (uint256 i = groupLen; i < items.length; ++i) {
+                if (keccak256(bytes(items[i].key)) == want) {
+                    Item memory head = items[groupLen];
+                    items[groupLen] = items[i];
+                    items[i] = head;
+                    ++groupLen;
+                    found = true;
+                    break;
+                }
+            }
+            require(found, "RefreshAllFacetsInPlace: atomic cut group key not found");
         }
-        revert("RefreshAllFacetsInPlace: _hoistFirst key not found");
+    }
+
+    /// @dev Total selectors carried by `cuts[start:end]`.
+    function _selectorsIn(IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end)
+        internal
+        pure
+        returns (uint256 total)
+    {
+        for (uint256 i = start; i < end; ++i) total += cuts[i].functionSelectors.length;
     }
 
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {
@@ -2012,11 +2397,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         view
         returns (address)
     {
-        string memory path = string.concat(
-            "deployments/",
-            Deployments.slugForChainId(block.chainid),
-            "/addresses.json"
-        );
+        string memory path = Deployments.path();
         try vm.readFile(path) returns (string memory json) {
             try vm.parseJsonAddress(json, key) returns (address a) {
                 return a;

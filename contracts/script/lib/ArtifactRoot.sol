@@ -78,6 +78,33 @@ interface IArtifactRoot {
 // rejects `@notice`/`@dev` on a file-level variable (Error 6546).
 string constant ARTIFACT_SCRATCH_PREFIX = "deployments/.forge-test/";
 
+/// Total test: does `s` contain a `..` PATH SEGMENT?
+///
+/// Segment, not substring — `deployments/.forge-test/my..dir` is a legitimate
+/// directory name and must not be refused, while `deployments/.forge-test/../../x`
+/// must be. A segment is `..` exactly when both bytes are `.` and each side is
+/// either a `/` or the end of the string.
+///
+/// File-level, and deliberately: this is HALF the confinement invariant stated
+/// above — "without `..` nothing beginning with the prefix can climb back out"
+/// — and the root is not the only string that gets composed into an artifact
+/// path. `Deployments.dirForSlug` appends a SLUG to the root, so a `..` in the
+/// slug re-opens the escape the root check closed (#2261 r1 P2). Both checks
+/// must therefore be the SAME check; a private copy per contract is how they
+/// drift. Plain `//`-style doc rather than the contract-member form for the
+/// same solc-6546 reason the constant above carries.
+function hasParentSegment(string memory s) pure returns (bool) {
+    bytes memory b = bytes(s);
+    if (b.length < 2) return false;
+    for (uint256 i; i + 1 < b.length; ++i) {
+        if (b[i] != "." || b[i + 1] != ".") continue;
+        bool leftIsBoundary = (i == 0) || b[i - 1] == "/";
+        bool rightIsBoundary = (i + 2 == b.length) || b[i + 2] == "/";
+        if (leftIsBoundary && rightIsBoundary) return true;
+    }
+    return false;
+}
+
 /**
  * @title  ArtifactRootBase
  * @notice Inherited by every deploy script whose artifact a TEST may need to
@@ -157,7 +184,7 @@ abstract contract ArtifactRootBase is IArtifactRoot {
             "ArtifactRootBase: a redirected artifact root must start with deployments/.forge-test/ - any other root can alias the committed artifact, and fs_permissions grants write access under deployments/ only"
         );
         require(
-            !_hasParentSegment(newRoot),
+            !hasParentSegment(newRoot),
             "ArtifactRootBase: a redirected artifact root must contain no `..` segment - with one it can climb back out of the scratch directory and reach the committed artifact"
         );
         _artifactRootOverride = newRoot;
@@ -178,23 +205,4 @@ abstract contract ArtifactRootBase is IArtifactRoot {
         return true;
     }
 
-    /// @dev Total test: does `s` contain a `..` PATH SEGMENT?
-    ///
-    ///      Segment, not substring — `deployments/.forge-test/my..dir` is a
-    ///      legitimate directory name and must not be refused, while
-    ///      `deployments/.forge-test/../../x` must be. A segment is `..`
-    ///      exactly when both bytes are `.` and each side is either a `/` or
-    ///      the end of the string.
-    function _hasParentSegment(string memory s) private pure returns (bool) {
-        bytes memory b = bytes(s);
-        if (b.length < 2) return false;
-        for (uint256 i; i + 1 < b.length; ++i) {
-            if (b[i] != "." || b[i + 1] != ".") continue;
-            bool leftIsBoundary = (i == 0) || b[i - 1] == "/";
-            bool rightIsBoundary =
-                (i + 2 == b.length) || b[i + 2] == "/";
-            if (leftIsBoundary && rightIsBoundary) return true;
-        }
-        return false;
-    }
 }

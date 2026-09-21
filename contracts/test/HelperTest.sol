@@ -84,6 +84,7 @@ import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -98,7 +99,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](213); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5
+        selectors = new bytes4[](219); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -497,6 +498,15 @@ contract HelperTest {
             TestMutatorFacet.getRewardEntryExpiryBegunRaw.selector;
         selectors[n++] =
             TestMutatorFacet.getUserClaimPendingUncappedRaw.selector;
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — the rollout
+        // population's fixture: put a packet back into its pre-3b shape, and
+        // set the arrival that a day's batch index is ordered by.
+        selectors[n++] = TestMutatorFacet.unadmitTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.setPacketArrivedAtRaw.selector;
+        selectors[n++] = TestMutatorFacet.setPacketDayListRaw.selector;
+        selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2451,6 +2461,25 @@ contract HelperTest {
         selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
         // #1566 transport epochs PR 3a — the split attestation ingress.
         selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+    }
+
+    /// #1566 transport epochs PR 3b — the transport epochs' ledger. Mirrors
+    /// `DeployDiamond._getRewardEpochSelectors` (SelectorCoverageTest asserts
+    /// the match).
+    function getRewardEpochFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](8);
+        selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
+        selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
+        selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
+        selectors[3] = RewardEpochFacet.getTransportBatch.selector;
+        selectors[4] = RewardEpochFacet.getTransportBatchLegs.selector;
+        selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
+        selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
+        selectors[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
