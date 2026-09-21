@@ -965,15 +965,37 @@ export function classifyForReconcile({
     if (sourceKeys.has(k)) continue;
     // If the destination has dropped it too, the two agree and there is
     // nothing to decide.
-    if (!heldByKey.has(k)) continue;
+    const held = heldByKey.get(k);
+    if (held === undefined) continue;
+
+    // "STALE" IS A CLAIM ABOUT THE DESTINATION'S ROW, so it has to be
+    // checked against that row and not merely against its key (#2267
+    // r26). The destination is live, and several of these keys are
+    // NATURAL and reusable — `user_thresholds` is keyed by the setting
+    // itself, not by an allocated id — so between the mirror and now the
+    // source may have deleted the row while the destination UPDATED it or
+    // created it afresh. Reporting that as "stale there" invites an
+    // operator to delete a newer setting a user has just changed.
+    //
+    // The manifest is what tells the two apart: if the destination still
+    // holds the row the mirror carried, the source deleted it and the
+    // destination merely has not; if it holds something else, both sides
+    // moved and neither value is obviously right.
+    const unchangedSinceMirror = rowHash(held, cols) === wasSeen[k];
     conflicts.push({
       table,
       key: k,
-      kind: 'deleted on the source after the mirror',
-      detail:
-        'the destination still holds it, so it is stale there — but ' +
-        'whether to delete it is a decision this tool will not make on a ' +
-        'live database',
+      kind: unchangedSinceMirror
+        ? 'deleted on the source after the mirror'
+        : 'deleted on the source, and CHANGED on the destination',
+      detail: unchangedSinceMirror
+        ? 'the destination still holds the row the mirror carried, so it ' +
+          'is stale there — but whether to delete it is a decision this ' +
+          'tool will not make on a live database'
+        : 'the source deleted it and the destination now holds a ' +
+          'DIFFERENT row under the same key, so the destination has its ' +
+          'own newer value. Deleting it would discard that; this is a ' +
+          'decision, not a stale row',
     });
   }
   return { insert, conflicts };
@@ -986,6 +1008,26 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   const plan = [];
 
   const classifiedSource = new Map();
+
+  // EVERY RETURN FROM HERE GOES THROUGH ONE CONSTRUCTOR, and that is a
+  // fix for a defect rather than tidiness (#2267 r26).
+  //
+  // There are three exits — reconcile's read-only report, the refusal
+  // exit, and the completed carry — and each used to hand-list the fields
+  // it returned. `classifiedSource` was added to the last one only, which
+  // is the one reconcile NEVER reaches: so the source-change check added
+  // to protect reconcile received `undefined`, fell back to its empty
+  // default, and was disabled on the single path it was written for. It
+  // could not have been caught by reading the check, only by reading the
+  // exit it never came through.
+  const result = (written) => ({
+    written,
+    refused,
+    conflicts,
+    pending,
+    classifiedSource,
+    manifest: manifestOf(),
+  });
 
   // A destination table the source does not have is refused BEFORE any
   // write, not merely reported afterwards. A mirror that proceeded would
@@ -1191,7 +1233,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         `conflict(s), ${pending.length} row(s) present on the source and ` +
         `absent from the destination.`,
     );
-    return { written: 0, refused, conflicts, pending, manifest: manifestOf() };
+    return result(0);
   }
 
   if (refused.length > 0 || conflicts.length > 0) {
@@ -1203,7 +1245,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         `${conflicts.length} conflict(s) were found while planning, and a ` +
         `run that cannot do all of what it was asked does none of it.`,
     );
-    return { written: 0, refused, conflicts, pending, manifest: manifestOf() };
+    return result(0);
   }
 
   // Deletes run children-first, which is the reverse of the insert order,
@@ -1224,14 +1266,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
     }
   }
-  return {
-    written,
-    refused,
-    conflicts,
-    pending,
-    classifiedSource,
-    manifest: manifestOf(),
-  };
+  return result(written);
 }
 
 /**

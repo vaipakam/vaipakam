@@ -646,3 +646,49 @@ describe('the one error that means "nothing has ever allocated"', () => {
     expect(isMissingSequenceTable(live('Authentication error'))).toBe(false);
   });
 });
+
+/**
+ * WHY THESE TESTS EXIST. A key the mirror carried that the source no
+ * longer has appears in NO row of the source, so the per-row loop never
+ * reaches it — it is handled by a separate pass over the manifest, and
+ * that pass had been asserting the destination's row is stale after
+ * checking only that its KEY still exists.
+ *
+ * Several of these keys are natural and reusable (`user_thresholds` is
+ * keyed by the setting, not by an allocated id), so the destination may
+ * hold a row a user changed after the mirror.
+ */
+describe('a source-side deletion, against a destination that may have moved', () => {
+  it('calls it stale only when the destination still holds what was mirrored', () => {
+    const mirrored = { id: 1, value: 'as mirrored' };
+    const { conflicts } = classify({
+      rows: [], // deleted on the source
+      held: [mirrored], // destination still has the mirrored row
+      mirrored: [mirrored],
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe('deleted on the source after the mirror');
+  });
+
+  it('reports both sides moving when the destination row has since changed', () => {
+    const { conflicts } = classify({
+      rows: [], // deleted on the source
+      held: [{ id: 1, value: 'the user changed this after the mirror' }],
+      mirrored: [{ id: 1, value: 'as mirrored' }],
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe(
+      'deleted on the source, and CHANGED on the destination',
+    );
+    expect(conflicts[0].detail).toContain('its own newer value');
+  });
+
+  it('says nothing when both sides dropped it', () => {
+    const { conflicts } = classify({
+      rows: [],
+      held: [],
+      mirrored: [{ id: 1, value: 'gone from both' }],
+    });
+    expect(conflicts).toEqual([]);
+  });
+});
