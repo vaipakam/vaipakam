@@ -380,3 +380,60 @@ describe('verdict', () => {
     expect(problems[0]).not.toContain('@');
   });
 });
+
+describe('verdict — a table only the destination has', () => {
+  const d = (digest: string, count: number) => ({ digest, count });
+
+  it('fails rather than reporting VERIFIED', () => {
+    // A mirror says it makes the destination IDENTICAL to the source. A
+    // table the destination alone holds makes that claim false, and the
+    // loop over the source can never see it — so the run would have
+    // printed VERIFIED with an unexamined table of user records sitting
+    // there.
+    const srcD = new Map([['t', d('aaaa', 3)]]);
+    const dstD = new Map([
+      ['t', d('aaaa', 3)],
+      ['left_behind', d('bbbb', 40)],
+    ]);
+    const problems = verdictProblems({
+      srcD,
+      dstD,
+      refused: [],
+      conflicts: [],
+      reconciling: false,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('left_behind');
+    expect(problems[0]).toContain('ABSENT from the source');
+  });
+
+  it('fails in the read-only direction too', () => {
+    // reconcile compares against a manifest taken when the two sides were
+    // in parity; an extra table means that premise no longer holds.
+    const srcD = new Map([['t', d('aaaa', 3)]]);
+    const dstD = new Map([
+      ['t', d('zzzz', 9)],
+      ['left_behind', d('bbbb', 40)],
+    ]);
+    expect(
+      verdictProblems({ srcD, dstD, refused: [], conflicts: [], reconciling: true }),
+    ).toHaveLength(1);
+  });
+
+  it('does not double-report a table already refused', () => {
+    const srcD = new Map([['t', d('aaaa', 3)]]);
+    const dstD = new Map([
+      ['t', d('aaaa', 3)],
+      ['odd', d('bbbb', 1)],
+    ]);
+    const problems = verdictProblems({
+      srcD,
+      dstD,
+      refused: [{ table: 'odd', refused: 'destination-only' }],
+      conflicts: [],
+      reconciling: false,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('NOT CARRIED');
+  });
+});

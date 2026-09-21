@@ -810,6 +810,22 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   const dstTables = new Set(await tablesOf(dst.id));
 
   const plan = [];
+
+  // A destination table the source does not have is refused BEFORE any
+  // write, not merely reported afterwards. A mirror that proceeded would
+  // leave the destination holding a table it had not examined while
+  // claiming the two sides are identical.
+  for (const table of dstTables) {
+    if (tables.includes(table)) continue;
+    plan.push({
+      table,
+      refused:
+        'the destination has this table and the source does not. That is ' +
+        'a schema difference, so it is a migration decision — this tool ' +
+        'will not drop it and will not carry rows while it exists',
+    });
+  }
+
   for (const table of tables) {
     const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
     if (!dstTables.has(table)) {
@@ -1046,6 +1062,29 @@ export function verdictProblems({
 }) {
   const refusedNames = new Set(refused.map((r) => r.table));
   const problems = [];
+
+  // A table the DESTINATION has and the source does not. Nothing above
+  // looks at it — the loop below walks the source — so a mirror could
+  // print VERIFIED while the destination still held an unexamined table
+  // and its rows, which for this database means user-facing records.
+  //
+  // `carry --mirror` says it makes the destination IDENTICAL to the
+  // source, and that claim is simply false while such a table exists.
+  // `reconcile` compares against a manifest taken when the two were in
+  // parity, so an extra table means that premise no longer holds. Either
+  // way it is a schema difference, which this tool treats as a migration
+  // decision rather than something to resolve on its own — it will not
+  // drop the table, and it will not pass over it in silence.
+  for (const table of dstD.keys()) {
+    if (srcD.has(table) || refusedNames.has(table)) continue;
+    problems.push(
+      `${table}: present on the destination and ABSENT from the source. ` +
+        `This tool does not drop tables — that is a migration decision — ` +
+        `but it will not report agreement while one side has a table the ` +
+        `other does not.`,
+    );
+  }
+
   for (const [table, s] of srcD) {
     if (refusedNames.has(table)) continue;
     const d = dstD.get(table);
