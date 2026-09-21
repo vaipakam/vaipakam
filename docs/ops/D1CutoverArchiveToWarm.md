@@ -172,12 +172,28 @@ because step 3 below is the part of it that had to be re-learned.
       that silently did not land leaves the barrier open while every step
       below behaves as though it were closed.
 
-      > **CHECK THE TOKEN BEFORE YOU START — this step is where a
-      > credential fails, and it fails after the decision to begin.**
-      > All three writers bind **Secrets Store** secrets
-      > (`apps/indexer` 2, `apps/keeper` 1, `apps/agent` 2), so creating a
-      > Worker version for any of them needs a token that can bind those,
-      > not merely `Workers Scripts: Edit`. A token without it gets:
+      > **THE MAINTENANCE BUILD IS DEPLOYED BY MERGING IT, not by
+      > `wrangler deploy` from an operator's shell.** All three writers
+      > deploy through Workers Builds when a merge to `main` touches their
+      > watched paths, and a config-only change is such a touch. So step 1
+      > is: merge a commit that removes `d1_databases` from the three
+      > writers, and confirm with `--writers-held`.
+      >
+      > **[evidence] 2026-09-21** — `cab26d24a` (#2252) carries
+      > `Workers Builds: vaipakam-{indexer,keeper,agent}`, all `success`,
+      > completing at `11:30:59Z` / `11:32:02Z` / `11:33:01Z`; the three
+      > live Workers' latest deployments are `11:30:55Z` / `11:31:57Z` /
+      > `11:32:56Z`. A merge whose diff misses those paths gets no build
+      > and no deploy — `37f0d9809` changed only `apps/app/e2e/` and
+      > produced neither — which is why the confirmation step is not
+      > optional.
+      >
+      > **A direct `wrangler deploy` needs a credential the session token
+      > does not have, and it fails after the decision to begin.** All
+      > three writers bind **Secrets Store** secrets (`apps/indexer` 15,
+      > `apps/keeper` 15, `apps/agent` 18), so creating a Worker version
+      > for any of them needs a token that can bind those, not merely
+      > `Workers Scripts: Edit`. A token without it gets:
       >
       > ```
       > ✘ [ERROR] A request to the Cloudflare API
@@ -186,24 +202,28 @@ because step 3 below is the part of it that had to be re-learned.
       >   permissions and secret scopes. [code: 10021]
       > ```
       >
-      > **[run] 2026-09-21** — this is exactly what the session token did,
-      > and the attempt stopped here. No version was created (the call
-      > fails at version-create), the stripped configs were restored, and
-      > all four Workers stayed on archive. Nothing was half-done, which is
-      > the one good property of failing at this step rather than a later
-      > one.
+      > **[run] 2026-09-21** — this is exactly what the session token did.
+      > No version was created (the call fails at version-create), the
+      > stripped configs were restored, and all four Workers stayed on
+      > archive. Nothing was half-done, which is the one good property of
+      > failing at this step rather than a later one. The same token reads
+      > the store fine — it lists `vaipakam-credentials` and sees every
+      > secret `active` and `workers`-scoped — so this is the token's
+      > permission set, not the secrets' configuration, and re-scoping the
+      > secrets would not fix it.
       >
       > **Do NOT work around it by also stripping the Secrets Store
       > bindings.** That removes secrets from a production Worker using a
-      > token that cannot put them back: if the post-merge auto-deploy then
+      > token that cannot put them back: if the post-merge build then
       > failed, the Worker could not be restored from the same session. An
       > action that cannot be reversed with the credentials in hand is not
       > a workaround, it is a second outage waiting on someone else's
       > permissions.
       >
-      > Verify first: a token that can `wrangler deploy` one of these
-      > Workers can run the barrier; one that cannot, cannot, and the
-      > cutover does not start.
+      > `ops/offchain-data-warm` is the exception in both directions: it
+      > binds no Secrets Store secrets and it does not auto-deploy, so it
+      > is the one Worker here that a `Workers Scripts: Edit` token
+      > deploys by hand — which is what step 7 asks for.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
 
       **A table bigger than one page is read twice and compared, and the
@@ -294,7 +314,8 @@ because step 3 below is the part of it that had to be re-learned.
 
       **A late INSERT and a late UPDATE need different answers, which is why
       `--since` is mandatory.** A straggler that inserts a new row leaves a
-      key warm lacks, and the reconciliation simply carries it. A straggler
+      key warm lacks, which the reconciliation can see and name for the
+      operator to apply — it carries nothing itself. A straggler
       that *updates* an existing row — an `offers` status, a cursor, a
       threshold — leaves a key warm already has, so a carry keyed on
       presence alone does nothing, reports zero rows, and calls itself
