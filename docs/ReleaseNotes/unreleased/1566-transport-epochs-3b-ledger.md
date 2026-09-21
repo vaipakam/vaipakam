@@ -129,19 +129,25 @@ than left standing next to a section that contradicts it.
 A delivery whose list does not match is refused and left exactly as it was,
 having lost nothing by the attempt.
 
-### Who may close an epoch out
+### Who may close an epoch out — once the close-out is offered
+
+**Neither of the two steps below can be performed on this release.** Both
+entries refuse every caller, the operator included; the close-out arrives with
+the follow-up. This whole section describes the rule each step **will** carry
+when it opens, and it is written down now because the rule is what the two
+halves were separated for. Nothing here is an instruction for today.
 
 The close-out's two steps are open to different parties, because they are
 different kinds of act.
 
-Parking what a delivery's obligations left is **mechanical, and anyone may do
-it**. It moves the delivery's own remainder into a holding of that same
+Parking what a delivery's obligations left will be **mechanical, and open to
+anyone**. It moves the delivery's own remainder into a holding of that same
 delivery, under the same membership; nothing becomes spendable that was not
 spendable before, and a valid delivery's close-out must never sit waiting on
 whoever happens to hold the operator role.
 
-Recording the acknowledgment is **an operator decision, and only the operator
-may take it** — the rule the entry will enforce once it is opened. It is the platform choosing to stop waiting on a lane that
+Recording the acknowledgment will be **an operator decision, and only the
+operator may take it**. It is the platform choosing to stop waiting on a lane that
 cannot prove its own closure, and it has a consequence somebody else bears:
 obligations arriving afterwards for any of that delivery's listed days are
 refused to the extent they looked to it. That is a claim written off on a

@@ -11,21 +11,37 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @title  RewardEpochFacet
  * @notice The TRANSPORT EPOCHS: each old-wire reward delivery holds an untyped
  *         balance that only the obligations whose day it listed may draw from.
- *         This facet carries that ledger's lifecycle after ingress — an
- *         oversize batch's paged indexing, and the parking and acknowledgment
- *         that release a batch so what remains of its packet becomes
- *         classifiable.
+ *         This facet carries that ledger's lifecycle after ingress — the
+ *         retrospective admission of a rollout-window delivery, a batch's
+ *         paged indexing, and the parking and acknowledgment that release a
+ *         batch so what remains of its packet becomes classifiable.
  *
  *         WHAT THIS CUT ACTUALLY OFFERS, stated here because the rest of this
  *         file describes the release in the present tense and a reader meets
  *         this header first (#2258, owner decision 2026-09-20; Codex #2232
- *         r10). Only the paged indexing is live. BOTH release entries —
- *         {parkTransportBatchRemainder} and
- *         {acknowledgeTransportBatchRemainder} — revert
- *         `TransportReleaseNotYetAvailable` for every caller, so no batch on
- *         this deployment is ever `released`. Read every "the release does X"
- *         below as 3b-ii's shape, which the library already implements and
- *         which this facet's bodies do not yet reach.
+ *         r10). It is stated as a COMPLEMENT — the refused set named
+ *         exhaustively, everything else live — rather than by listing what
+ *         works, because a list of what works omits an entry silently and a
+ *         complement cannot (Codex #2232 r11, which is what an earlier
+ *         "only the paged indexing is live" did to {admitLegacyTransportBatch}):
+ *
+ *           * REFUSED, to every caller, the administrator included — EXACTLY
+ *             TWO entries: {parkTransportBatchRemainder} and
+ *             {acknowledgeTransportBatchRemainder}, which revert
+ *             `TransportReleaseNotYetAvailable`. So no batch on this
+ *             deployment is ever `released`.
+ *           * LIVE — everything else on this facet. That is
+ *             {admitLegacyTransportBatch}, {materializeTransportBatchPage}
+ *             and every read surface. The two write entries there are not
+ *             optional housekeeping: a delivery from the 3a-to-3b rollout
+ *             window is admitted ONLY by {admitLegacyTransportBatch} (until
+ *             it is, its packet is refused with `TransportBatchNotAdmitted`),
+ *             and every admitted batch — oversize or not — has its membership
+ *             written ONLY by {materializeTransportBatchPage}.
+ *
+ *         Read every "the release does X" below as 3b-ii's shape, which the
+ *         library already implements and which this facet's bodies do not yet
+ *         reach.
  *
  *         THE CONSEQUENCE IS NOT CONFINED TO THIS FACET, and is a funds fact
  *         rather than a surface one: {LibRewardCustody.takeFromReleasedRemainder}
@@ -62,16 +78,26 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         migration the pause exists to permit.
  */
 contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipakamErrors {
-    /// @notice Index one bounded page of an OVERSIZE batch's membership.
+    /// @notice Index one bounded page of a batch's membership. EVERY ADMITTED
+    ///         BATCH NEEDS THIS, not only an oversize one: size changes how
+    ///         many calls it takes, never whether any is needed.
     /// @dev    Permissionless, because the authority is the day-list
     ///         commitment the delivery's own ingress stamped and not the
     ///         caller: anyone may supply the payload, and nobody can supply a
-    ///         different one. An oversize batch is admitted compactly — a
-    ///         transport payload is immutable, so refusing one at the
-    ///         destination would refuse the same message on every
-    ///         re-execution — and this is how its membership is then written,
-    ///         at a per-call storage cost equal to what a within-cap
-    ///         admission pays in one go.
+    ///         different one.
+    ///
+    ///         ADMISSION WRITES NO MEMBERSHIP AT ALL. Every batch is admitted
+    ///         compactly — a transport payload is immutable, so refusing one
+    ///         at the destination would refuse the same message on every
+    ///         re-execution — which means admission stamps the anchor, the
+    ///         balance and the day COUNT and stops there, leaving
+    ///         `indexedDays` at zero whatever the count. This is the only
+    ///         writer of the membership itself, so a caller who materializes
+    ///         only the batches that exceed `TRANSPORT_DAY_FANOUT_CAP` leaves
+    ///         every ordinary batch permanently un-indexed, and therefore
+    ///         unable to meet the fully-indexed precondition its lifecycle
+    ///         will require. A within-cap batch simply reaches that state in
+    ///         one call instead of several.
     /// @param  batchId The batch, which is its packet's ingress stamp.
     /// @param  dayIds  The delivery's WHOLE day list, re-supplied. The
     ///                 commitment is flat, so the whole list is what proves a
@@ -93,7 +119,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @notice PARK what a batch's obligations left, under the batch's own key.
     ///         NOT OFFERED IN THIS CUT — this entry refuses every caller (see
     ///         the body, and the header's "what this cut actually offers").
-    ///         Everything the `@dev` below describes is 3b-ii's shape.
+    ///         Everything the dev note below describes is 3b-ii's shape.
     /// @dev    The first half of the release, and not the whole of it: the
     ///         remainder becomes classifiable only once
     ///         {acknowledgeTransportBatchRemainder} records the acknowledgment
@@ -147,7 +173,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @notice Record the acknowledgment that RELEASES a batch.
     ///         NOT OFFERED IN THIS CUT — this entry refuses every caller, the
     ///         administrator included. In particular the `ADMIN_ROLE` gate the
-    ///         `@dev` below argues for is ABSENT from this cut's signature on
+    ///         dev note below argues for is ABSENT from this cut's signature on
     ///         purpose, so that the refusal is uniform; do not read that
     ///         paragraph as a description of who may call this today. Nobody
     ///         may.

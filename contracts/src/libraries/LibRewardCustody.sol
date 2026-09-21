@@ -1003,8 +1003,10 @@ library LibRewardCustody {
         uint256 amount,
         uint256 dayCount
     );
-    /// @notice #1566 transport epochs PR 3b — one bounded page of an oversize
-    ///         batch's membership was indexed against its commitment.
+    /// @notice #1566 transport epochs PR 3b — one bounded page of a batch's
+    ///         membership was indexed against its commitment. Every admitted
+    ///         batch is indexed this way; size decides how many pages, not
+    ///         whether there are any.
     /// @custom:event-category state-change/reward-custody
     event TransportBatchPageIndexed(bytes32 indexed batchId, uint32 indexedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — what a batch's obligations left
@@ -1255,10 +1257,12 @@ library LibRewardCustody {
     uint256 internal constant TRANSPORT_DAY_FANOUT_CAP = 32;
 
     /// @notice How many member days one materialization call indexes.
-    /// @dev    #1566 transport epochs PR 3b — the same per-call storage cost
-    ///         the cap allows a within-cap admission, so an oversize batch is
-    ///         indexed by repeating a call that is known to fit rather than by
-    ///         a caller guessing a page size.
+    /// @dev    #1566 transport epochs PR 3b — sized to the same per-call
+    ///         storage cost `TRANSPORT_DAY_FANOUT_CAP` bounds a delivery to,
+    ///         so ANY batch is indexed by repeating a call that is known to
+    ///         fit rather than by a caller guessing a page size. A within-cap
+    ///         batch takes exactly one such call; it does not skip the step,
+    ///         because admission writes no membership for any batch.
     uint256 internal constant TRANSPORT_INDEX_PAGE = 32;
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
@@ -1576,9 +1580,10 @@ library LibRewardCustody {
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
 
-    /// @notice #1566 transport epochs PR 3b — index one bounded page of an
-    ///         OVERSIZE batch's membership, proving the page against the day
-    ///         list this delivery committed to at ingress.
+    /// @notice #1566 transport epochs PR 3b — index one bounded page of a
+    ///         batch's membership, proving the page against the day list this
+    ///         delivery committed to at ingress. EVERY admitted batch is
+    ///         indexed here, oversize or not — see the note below.
     /// @dev    Permissionless: the commitment is the authority, so anyone may
     ///         supply the payload and nobody can supply a different one. The
     ///         whole list is re-supplied on every call because the commitment

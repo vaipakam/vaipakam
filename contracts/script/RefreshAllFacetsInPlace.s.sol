@@ -646,13 +646,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // in the first place. There is now one of each. The probe ahead of the
         // cuts is the only upgrade; this is the only requirement.
         //
-        // LIVE ADDRESS FIRST, artifact as a DISTINCT fallback. The Diamond's
-        // registered receiver is the one the refreshed ingress actually calls,
-        // and a stale artifact naming a superseded proxy this signer can no
-        // longer upgrade must not abort a run whose live receiver is fine.
-        // Both are probed when they differ, so a rotation leaves neither
-        // behind. The probe is generation-gated, so after the pre-cut pass
-        // these calls are no-ops.
+        // TWO ADDRESSES, TWO JOBS, AND THEY DO NOT SUBSTITUTE FOR EACH OTHER.
+        // Both are PROBED for the upgrade when they differ, so a rotation
+        // leaves neither behind (the probe is generation-gated, so after the
+        // pre-cut pass these calls are no-ops). But only the LIVE address —
+        // the Diamond's registered receiver, the sender the refreshed ingress
+        // accepts — is REQUIRED, because it is the only one whose presence
+        // says anything about whether remittances will land. The artifact is
+        // never a fallback for it; see the requirement below.
         {
             address liveRecv =
                 RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
@@ -672,23 +673,46 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 _probeUpgradeRemitReceiver(artifactRecv, false);
             }
 
-            address recv = liveRecv != address(0) ? liveRecv : artifactRecv;
-            // A MIRROR must never pass this point without a receiver: the
-            // retired selectors are Removed below, and a mirror left calling
-            // an unrouted ingress fails every delivery while the marker that
-            // would make a rerun retry the upgrade is gone. Only the canonical
-            // chain legitimately has none - nothing remits to it.
+            // THE REQUIREMENT READS THE LIVE ADDRESS AND NOTHING ELSE (Codex
+            // #2232 r11). The artifact is evidence about which proxy to TRY to
+            // upgrade; it is not evidence about which sender the refreshed
+            // ingress will accept. That is `s.rewardRemittanceReceiver`, which
+            // `RewardIngressFacet` compares `msg.sender` against directly and
+            // which `getRewardRemittanceReceiver()` returns — so an artifact
+            // address satisfying this requirement proves nothing about the
+            // Diamond, and promoting it into `recv` broke the rule in BOTH
+            // directions:
+            //
+            //   * a mirror with a zero live receiver and a populated artifact
+            //     passed the requirement and the generation assertion, then
+            //     unpaused with every remittance reverting at the ingress
+            //     sender check — permanently, because the retired selectors
+            //     that would make a rerun retry are Removed below;
+            //   * a CANONICAL chain, which legitimately registers no receiver,
+            //     was aborted by a stale artifact naming a proxy it does not
+            //     need and this signer may no longer be able to upgrade.
+            //
+            // Both disappear by deleting the fallback: there is now exactly
+            // one address that can satisfy this block, and it is the one the
+            // ingress actually enforces. The artifact keeps its only honest
+            // job — the best-effort upgrade probe above.
+            //
+            // A MIRROR must never pass this point without that live receiver:
+            // the retired selectors are Removed below, and a mirror left
+            // calling an unrouted ingress fails every delivery while the
+            // marker that would make a rerun retry the upgrade is gone. Only
+            // the canonical chain legitimately has none - nothing remits to it.
             require(
-                recv != address(0) || isCanonicalRewardRecv,
-                "remit receiver: mirror refresh needs a live or artifact .rewardRemittanceReceiver"
+                liveRecv != address(0) || isCanonicalRewardRecv,
+                "remit receiver: mirror refresh needs a live .rewardRemittanceReceiver registered on the Diamond"
             );
-            if (recv != address(0)) {
+            if (liveRecv != address(0)) {
                 // Assert the GENERATION rather than assuming the probe worked.
                 // This is the fact the Remove below is safe against, so it is
                 // read back from the proxy instead of inferred from having
                 // called an upgrade.
                 (bool okGen, bytes memory genRet) =
-                    recv.staticcall(abi.encodeWithSignature("WIRE_GENERATION()"));
+                    liveRecv.staticcall(abi.encodeWithSignature("WIRE_GENERATION()"));
                 require(
                     okGen && genRet.length == 32
                         && abi.decode(genRet, (uint256)) >= REMIT_RECEIVER_WIRE_GENERATION,
@@ -1737,11 +1761,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     }
 
     /// @dev Codex #2232 r3 — upgrade the remittance receiver AHEAD of the
-    ///      facet cuts, resolving the LIVE address first and treating the
-    ///      artifact as a distinct fallback (Codex #2232 r3 F4: a stale or
-    ///      superseded artifact entry must never decide whether the live
-    ///      receiver gets upgraded, and both are probed when they differ so a
-    ///      rotation in progress leaves neither behind). Generation-gated in
+    ///      facet cuts, probing the LIVE address and the artifact as two
+    ///      SEPARATE targets rather than one with a fallback (Codex #2232 r3
+    ///      F4: a stale or superseded artifact entry must never decide whether
+    ///      the live receiver gets upgraded, and both are probed when they
+    ///      differ so a rotation in progress leaves neither behind; #2232 r11:
+    ///      nor may it stand IN PLACE of the live address anywhere, which is
+    ///      why the post-cut requirement reads only the live one).
+    ///      Generation-gated in
     ///      {_probeUpgradeRemitReceiver}, so it is a no-op on a rerun and on
     ///      every already-current proxy.
     function _upgradeRemitReceiverAhead(address diamond) private {
@@ -1771,8 +1798,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
         if (live == address(0) && artifact == address(0)) {
             // Not a failure here: the canonical chain legitimately has no
-            // receiver, and a mirror that cannot resolve one is STOPPED after
-            // the cuts, where `getRewardReporterConfig` can say which this is.
+            // receiver, and a mirror without a LIVE one is STOPPED after the
+            // cuts, where `getRewardReporterConfig` can say which this is.
+            // Note the post-cut stop is keyed on the live address alone
+            // (#2232 r11), so a mirror that resolves ONLY the artifact is
+            // stopped there too and simply does not reach this line.
             console.log("remit receiver: none resolvable pre-cut - decided after the cuts");
         }
     }
