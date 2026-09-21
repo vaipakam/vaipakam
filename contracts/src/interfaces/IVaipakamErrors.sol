@@ -539,8 +539,17 @@ interface IVaipakamErrors {
     /// @notice #1566 transport epochs PR 3b — no batch was admitted under this
     ///         id. A d5 delivery has no batch by design (its components are
     ///         typed on the wire and credited to the shared ledgers at
-    ///         ingress), and neither has a packet that landed before this
-    ///         ledger existed.
+    ///         ingress), and neither has a packet that arrived before 3a began
+    ///         recording the day-list commitment an epoch is bound to.
+    ///
+    ///         NOT "a packet that landed before this ledger existed" (Codex
+    ///         #2232 r15). An arrival between 3a and 3b carries that
+    ///         commitment and is OWED an epoch: it draws this error only until
+    ///         someone calls the permissionless rollout admission, and the
+    ///         remedy is to call it rather than to conclude the packet is
+    ///         outside the ledger. `LibRewardCustody.rolloutAdmissionStatus`
+    ///         is what tells the two apart, and is the only place that list
+    ///         lives.
     error TransportBatchUnknown(bytes32 batchId);
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
     ///         already holds a transport epoch, so the ROLLOUT admission has

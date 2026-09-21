@@ -161,9 +161,12 @@ and not of the acknowledgment.
 ### A delivery that can still be brought in is not an ungated one
 
 The close-out gate asks whether a delivery holds an epoch. A delivery that
-landed before this ledger existed holds none and never can, so it was
-reconcilable as it always had been — correct, and the rule was applied one step
-too widely. A delivery from the window described above holds no epoch **yet**:
+arrived before the day-list fingerprint was first recorded holds none and never
+can — there is no membership an epoch could be bound to — so it was reconcilable
+as it always had been. That much was correct; what went wrong was the
+boundary. The rule was applied to everything that landed before this ledger
+existed, which is a wider population: a delivery from the window described above
+holds no epoch **yet**:
 it carries the day-list commitment, and anyone can bring it in at any time. Read
 as though it were pre-ledger, it could be reconciled away first — with no
 close-out and nothing drawn down — which is the bypass the gate exists to
@@ -194,6 +197,20 @@ four holds six, and six on its own cannot be told from a delivery that only
 ever parked six. With both stated, anyone can check that a delivery's opening
 figure still equals what it holds plus what has been parked plus what has left
 — rather than having to infer the difference and hope.
+
+**A reading about a delivery the ledger has never heard of is refused, not
+answered with zeros.** Asking what a delivery's transport legs have spent, or
+what it has parked, used to return zeros for an identifier no delivery ever
+opened — the same zeros a real delivery that has spent nothing and parked
+nothing returns. The two are not the same statement: one is a figure, the other
+is the ledger having nothing to say, and these particular figures are half of
+the evidence a close-out's ceiling is read from. A mistyped or stale identifier
+could therefore be presented as substantiated evidence that nothing had been
+drawn. Both readings now refuse an unrecognised identifier by name, in the same
+words the writing operations already use for it. One reading still answers, by
+design: the one that reports the delivery's epoch as a whole is how a caller
+asks whether the ledger knows an identifier at all, so it has to stay callable
+on one it does not.
 
 ### The one other way protected value leaves, and why it cannot reach an epoch
 

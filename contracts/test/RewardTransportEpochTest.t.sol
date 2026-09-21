@@ -778,6 +778,62 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
 
     // ─── 4. the reads ────────────────────────────────────────────────────────
 
+    /// Codex #2232 r15 — the two DETAIL reads refuse an id the ledger never
+    /// opened, and the straddle is the whole test: a known batch that has
+    /// drawn nothing and parked nothing answers with zeros, and an unknown id
+    /// used to answer with the SAME zeros. Those figures are half of the
+    /// evidence a classification's bound is read from, so a typo returning
+    /// them as substantiated no-consumption is an unstated unknown about
+    /// funds. Both now refuse by the same name the write paths use.
+    function test_Reads_RefuseAnUnknownBatch_ButAnswerZeroForAKnownOne() public {
+        bytes32 h = _untyped(10e18, 2, 77, keccak256("r15"));
+        bytes32 nobody = keccak256("no delivery opened this");
+
+        // The known batch: zeros, and they are an ANSWER.
+        (uint256 consumedFresh, uint256 consumedRecycled) = _epoch().getTransportBatchLegs(h);
+        assertEq(consumedFresh + consumedRecycled, 0, "a known batch has drawn nothing yet");
+        (uint256 parked, , , bool acknowledged, uint256 debited) = _epoch().getTransportRemainder(h);
+        assertEq(parked, 0, "and has parked nothing yet");
+        assertEq(debited, 0, "with nothing taken out of a remainder that does not exist");
+        assertFalse(acknowledged, "and no acknowledgment");
+
+        // The unknown id: the same zeros are no longer offered as figures.
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
+        _epoch().getTransportBatchLegs(nobody);
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
+        _epoch().getTransportRemainder(nobody);
+    }
+
+    /// The EXISTENCE ORACLE stays answerable on an id nothing opened — it is
+    /// how a caller asks the question the two reads above refuse on, so a
+    /// reader holding an id of unknown provenance is never left without a
+    /// non-reverting way to find out. Pinned because making this one refuse
+    /// too would be the obvious "consistency" change and would close the only
+    /// door out.
+    function test_Reads_TheExistenceOracleStillAnswersForAnUnknownBatch() public {
+        bytes32 nobody = keccak256("no delivery opened this either");
+        (bytes32 packetHash, uint256 balance, uint256 admitted, , , bool released) =
+            _epoch().getTransportBatch(nobody);
+        assertEq(packetHash, bytes32(0), "the zero stamp IS the answer 'no batch here'");
+        assertEq(balance, 0, "and nothing is claimed about a batch that does not exist");
+        assertEq(admitted, 0, "nor about what it was admitted with");
+        assertFalse(released, "nor about its release");
+    }
+
+    /// A TYPED delivery opens no epoch by design, so the detail reads refuse
+    /// its packet stamp as well. Straddled here rather than left implied: the
+    /// gate that lets a typed packet through classification is a different
+    /// rule from this one, and a reader who confuses them would expect zeros.
+    function test_Reads_RefuseATypedDeliverysStamp() public {
+        bytes32 h = _deliver(10e18, _days(2), 78, keccak256("r15typed"), true);
+        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, bytes32(0), "a typed delivery holds no epoch");
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, h));
+        _epoch().getTransportBatchLegs(h);
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, h));
+        _epoch().getTransportRemainder(h);
+    }
+
     /// The day index paginates and reports its cursor, because the legacy lane
     /// can mint arbitrarily many batches listing one day — a view returning
     /// the whole index would stop being callable on exactly the days that

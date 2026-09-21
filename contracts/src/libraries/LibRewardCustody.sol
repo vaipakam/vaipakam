@@ -1125,11 +1125,18 @@ library LibRewardCustody {
     ///         draws: a classification must never be able to run against a
     ///         packet whose legs are unreadable.
     ///
-    ///         A packet with NO batch answers zero directly. That is the right
-    ///         answer for every population that has none — a d5 delivery,
-    ///         whose components were typed on the wire; any packet that landed
-    ///         before this ledger existed; and any that landed before reward
-    ///         custody was activated here (Codex #2232 r1).
+    ///         A packet with NO batch answers zero directly, which is the
+    ///         right answer for a packet that HAS none — and a packet holding
+    ///         none is not the same population as a packet that can never hold
+    ///         one (Codex #2232 r4/r15). Which packets can never hold one is
+    ///         {rolloutAdmissionStatus}'s question and is not restated here:
+    ///         a d5 delivery, a packet that arrived before 3a began recording
+    ///         the day-list commitment, and one that arrived before reward
+    ///         custody was activated on this deployment are all refused by
+    ///         that predicate. An arrival between 3a and 3b carries the
+    ///         commitment, IS owed an epoch, and reads zero here only until
+    ///         somebody opens it — so a zero from this seam is never by itself
+    ///         evidence that a packet is outside the ledger.
     ///
     ///         The second half of the seam {authenticatedFresh} reads, kept
     ///         separate from {packetBatchReleased} deliberately: one predicate
@@ -1155,12 +1162,17 @@ library LibRewardCustody {
     ///         an operator would otherwise make a packet classifiable merely
     ///         by draining its batch.
     ///
-    ///         A packet with no batch answers NO, which is what keeps every
-    ///         packet that landed before this ledger behaving exactly as it
-    ///         did. A d5 packet also has none, and never needs one: its
-    ///         components were typed on the wire and credited to the shared
-    ///         ledgers at ingress, so it is not attested and this predicate is
-    ///         never the thing standing between it and a classification.
+    ///         A packet with no batch answers NO, which is what keeps a packet
+    ///         outside the ledger behaving exactly as it did. Outside the
+    ///         ledger is decided by {rolloutAdmissionStatus} and not by when
+    ///         the packet landed (Codex #2232 r4/r15): an arrival between 3a
+    ///         and 3b carries the day-list commitment and is owed an epoch, so
+    ///         it answers NO here only until the permissionless admission
+    ///         opens one — a wait, not an exemption. A d5 packet also has
+    ///         none, and never needs one: its components were typed on the
+    ///         wire and credited to the shared ledgers at ingress, so it is
+    ///         not attested and this predicate is never the thing standing
+    ///         between it and a classification.
     function packetBatchReleased(LibVaipakam.IngressPacket storage p) internal view returns (bool) {
         bytes32 batchId = p.batchId;
         if (batchId == bytes32(0)) return false;
@@ -1585,6 +1597,32 @@ library LibRewardCustody {
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
 
+    /// @notice #1566 transport epochs PR 3b (Codex #2232 r15) — whether a
+    ///         batch was ever admitted under this id.
+    /// @dev    THE existence question, with ONE name, so every surface that
+    ///         needs it asks the same thing of the same field rather than
+    ///         re-deriving it. `admitted` is the marker the struct itself
+    ///         nominates — non-zero for every admitted batch, because a
+    ///         delivery with nothing untyped in it opens none — and it is the
+    ///         only field that qualifies: `balance` empties at parking,
+    ///         `released` is false for every batch in this cut, and the
+    ///         REMAINDER's own `batchId` answers "is something parked", which
+    ///         is a different question that reads the same when the answer is
+    ///         no.
+    ///
+    ///         This is the batch-side twin of {rolloutAdmissionStatus}. That
+    ///         predicate answers "could an epoch still be opened over this
+    ///         PACKET"; this one answers "does this BATCH exist". Both were
+    ///         being answered by hand at their call sites, and both times the
+    ///         hand-answer was the defect: r4 found the packet question asked
+    ///         tacitly in a gate that then exempted the population the rollout
+    ///         entry exists to rescue, and r15 found the batch question not
+    ///         asked at all in two reads, which returned an unknown id's zeros
+    ///         as though they were a batch's figures.
+    function transportBatchExists(LibVaipakam.TransportBatch storage b) internal view returns (bool) {
+        return b.admitted != 0;
+    }
+
     /// @notice #1566 transport epochs PR 3b — index one bounded page of a
     ///         batch's membership, proving the page against the day list this
     ///         delivery committed to at ingress. EVERY admitted batch is
@@ -1608,7 +1646,7 @@ library LibRewardCustody {
         uint256[] calldata dayIds
     ) internal returns (uint32 indexedDays) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
         // The batch's key IS its packet's stamp, so the commitment is read
@@ -1671,7 +1709,7 @@ library LibRewardCustody {
         bytes32 batchId
     ) internal returns (uint256 amount) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (b.admitted == 0) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         if (b.indexedDays < b.dayCount) {
             revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
         }
@@ -1742,9 +1780,12 @@ library LibRewardCustody {
     ///         membership-bound until 3b-ii opens the door.
     ///
     ///         A packet with NO batch passes untouched and is debited nothing:
-    ///         the rule is about value held in a transport epoch, and a d5
-    ///         delivery, a pre-3b arrival, and a delivery that landed before
-    ///         custody was activated all hold none.
+    ///         the rule is about value held in a transport epoch. Which
+    ///         packets those are is the next paragraph's question, and it is
+    ///         deliberately not answered here as a list of populations
+    ///         (Codex #2232 r15) — the list that used to stand here named "a
+    ///         pre-3b arrival" among them, which is the very reading the
+    ///         paragraph below was written to retire.
     ///
     ///         "No batch" is NOT "no batch YET" (Codex #2232 r4). A 3a-to-3b
     ///         packet carries a day-list commitment and holds no batch only

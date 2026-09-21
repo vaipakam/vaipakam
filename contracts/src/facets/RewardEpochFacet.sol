@@ -232,10 +232,26 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         inflates the viaIR peak stack, which this codebase sits close
     ///         to. `balance` is what remains spendable by the batch's member
     ///         days; `admitted` is the immutable conservation anchor.
+    ///
+    ///         THIS IS THE EXISTENCE ORACLE, and the only ledger read that
+    ///         answers rather than refusing an unknown id (Codex #2232 r15).
+    ///         The sibling reads {getTransportBatchLegs} and
+    ///         {getTransportRemainder} revert `TransportBatchUnknown`, because
+    ///         their figures are meaningless for a batch that does not exist;
+    ///         this one is how a caller ASKS whether it exists, so it must
+    ///         stay callable on an id that does not. A reader with an id of
+    ///         unknown provenance therefore calls this first — which is what
+    ///         the conservation invariant and the rollout handler already do,
+    ///         both skipping on a zero `packetHash` before reading anything
+    ///         else.
     /// @return packetHash  The delivery that opened it; zero when no batch was
-    ///                     admitted under this id. DERIVED, not stored — the
-    ///                     batch is keyed by that stamp, so storing it would
-    ///                     restate the key.
+    ///                     admitted under this id — the same
+    ///                     {LibRewardCustody.transportBatchExists} the two
+    ///                     sibling reads refuse on, expressed as a value so
+    ///                     this read can report the absence instead of
+    ///                     reverting on it. DERIVED, not stored — the batch is
+    ///                     keyed by that stamp, so storing it would restate
+    ///                     the key.
     /// @return balance     Untyped value still held by the epoch.
     /// @return admitted    What admission recorded.
     /// @return dayCount    How many days the delivery listed.
@@ -258,7 +274,10 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
         uint256 admittedAmount = b.admitted;
         return (
-            admittedAmount == 0 ? bytes32(0) : batchId,
+            // Asked through the shared predicate rather than by re-testing
+            // `admittedAmount` here, so this read and the two that refuse an
+            // unknown id cannot come to disagree about what "exists" means.
+            !LibRewardCustody.transportBatchExists(b) ? bytes32(0) : batchId,
             b.balance,
             admittedAmount,
             b.dayCount,
@@ -272,12 +291,25 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         with the ledger rather than with the draws because they are
     ///         half of the evidence a classification is bounded by, and an
     ///         operator reading that bound needs both halves.
+    ///
+    ///         AN UNKNOWN ID IS REFUSED BY NAME, not answered with zeros
+    ///         (Codex #2232 r15). A batch that exists and has drawn nothing
+    ///         reads `(0, 0)`, and so did an id no delivery ever opened — so a
+    ///         typo or a stale id was returned as substantiated evidence of no
+    ///         consumption, on the very figures a classification's bound is
+    ///         read from. Answering a question about a batch that does not
+    ///         exist is the unstated unknown AGENTS.md names a defect, and
+    ///         here it would be an unstated unknown about funds. The refusal
+    ///         is the same one, by the same name, that the write paths give
+    ///         for the same id: {LibRewardCustody.transportBatchExists} is
+    ///         asked once and every surface gets one answer.
     function getTransportBatchLegs(bytes32 batchId)
         external
         view
         returns (uint256 consumedFresh, uint256 consumedRecycled)
     {
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
+        if (!LibRewardCustody.transportBatchExists(b)) revert TransportBatchUnknown(batchId);
         return (b.consumedFresh, b.consumedRecycled);
     }
 
@@ -289,6 +321,17 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         conservation identity — a batch's `admitted` is always its
     ///         `balance` plus what is parked plus what classification took,
     ///         plus (from PR 3b-ii) its transport legs.
+    ///
+    ///         AN UNKNOWN ID IS REFUSED BY NAME (Codex #2232 r15), and the
+    ///         two absences this read has to keep apart are why. "No batch was
+    ///         ever admitted here" and "this batch exists and has parked
+    ///         nothing" both used to come back as the same all-zero tuple,
+    ///         because the early return asked the REMAINDER record's own
+    ///         `batchId` — which answers "is something parked", a different
+    ///         question that reads identically when the answer is no. The
+    ///         batch's existence is now asked of the batch, through the one
+    ///         predicate {LibRewardCustody.transportBatchExists}; the parked
+    ///         zeros stay an ANSWER, because for a known batch they are one.
     /// @return amount       What is parked NOW; zero when nothing is, and also
     ///                      zero once classification has taken all of it.
     /// @return dayListHash  The membership that still binds it.
@@ -307,8 +350,11 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             uint256 debited
         )
     {
-        LibVaipakam.TransportRemainder storage r =
-            LibVaipakam.storageSlot().transportRemainders[batchId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!LibRewardCustody.transportBatchExists(s.transportBatches[batchId])) {
+            revert TransportBatchUnknown(batchId);
+        }
+        LibVaipakam.TransportRemainder storage r = s.transportRemainders[batchId];
         if (r.batchId == bytes32(0)) return (0, bytes32(0), 0, false, 0);
         return (r.amount, r.dayListHash, r.dayCount, r.acknowledged, r.debited);
     }

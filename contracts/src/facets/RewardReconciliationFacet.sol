@@ -171,9 +171,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // remainder's dispositions, so leaving the entry at its parked figure
         // would report value that has already left — and it bounds the take at
         // what the entry still holds, which is a second ceiling beside the
-        // packet's own remainder. A packet holding no batch — a d5 delivery, a
-        // pre-3b arrival, or one that landed before custody was activated —
-        // passes untouched and is debited nothing.
+        // packet's own remainder. A packet that can never hold a batch passes
+        // untouched and is debited nothing — which population that is, is
+        // decided inside by LibRewardCustody.rolloutAdmissionStatus and is
+        // deliberately not restated here (Codex #2232 r15): the list that used
+        // to stand in this comment said "a pre-3b arrival", and an arrival
+        // between 3a and 3b is owed an epoch rather than exempt from one.
         LibRewardCustody.takeFromReleasedRemainder(s, packetHash, freshShare + recycledShare);
         if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {
             LibVaipakam.StrandedRecovery storage sr =
