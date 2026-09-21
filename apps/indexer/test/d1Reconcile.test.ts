@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -2280,7 +2281,7 @@ describe("a table set that changed is evidence too", () => {
       ].join("\n"),
     );
     expect(e.conflicts).toHaveLength(1);
-    expect(e.conflicts[0]).toContain("appears in 1 of them");
+    expect(e.conflicts[0]).toContain("missing from 1 of");
     expect(e.conflicts[0]).toContain("a database that");
   });
 
@@ -2312,7 +2313,7 @@ describe("a table set that changed is evidence too", () => {
     );
     expect(e.conflicts).toHaveLength(1);
     expect(e.conflicts[0]).toContain("b:");
-    expect(e.conflicts[0]).toContain("named after the last one");
+    expect(e.conflicts[0]).toContain("missing from 1 of");
   });
 
   it("refuses when the tail names a new table only in a sequence line", () => {
@@ -2329,9 +2330,7 @@ describe("a table set that changed is evidence too", () => {
     // pins is the TABLE-SET one, because that is the fact the sequence
     // check cannot make on its own: a table with no allocations at all
     // would arrive in the tail with no sequence line to disagree with.
-    expect(
-      e.conflicts.some((c) => c.includes("named after the last one")),
-    ).toBe(true);
+    expect(e.conflicts.some((c) => c.includes("missing from 1 of"))).toBe(true);
   });
 
   it("accepts a tail that names only tables the readings already had", () => {
@@ -2386,6 +2385,105 @@ describe("a table set that changed is evidence too", () => {
       ].join("\n"),
     );
     expect(e.conflicts).toEqual([]);
+  });
+
+  // #2281 r9 — the three boundaries. Rounds 5 through 9 each found
+  // another way for one block structure, delimited by the sequence
+  // marker, to answer three different questions wrongly.
+  it("closes a digest reading at its count line, not at the sequence marker", () => {
+    // The first run's count line survived the paste; its
+    // `seq-listing complete` did not. Under one shared boundary the two
+    // runs merged, the first declared count was overwritten, and `b`
+    // arriving in the second run was invisible.
+    const e = parseEvidence(
+      [
+        "a 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "a 1111111111111111",
+        "b 2222222222222222",
+        `${"\u2014".repeat(8)}   0  (2 tables)`,
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.conflicts.some((c) => c.includes("missing from 1 of"))).toBe(true);
+  });
+
+  it("counts appearances in a closed block that did not enumerate", () => {
+    // The second block is closed by the sequence marker but carries no
+    // count line, so it is not an enumeration — and it is not the tail
+    // either. The tables it names are still named.
+    const e = parseEvidence(
+      [
+        "a 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq-listing complete",
+        "a 1111111111111111",
+        "b 2222222222222222",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.conflicts.some((c) => c.includes("missing from 1 of"))).toBe(true);
+  });
+
+  // THE VERB, not just the parser. The parser returning the right shape
+  // proves nothing about whether `cover` accepts it, and the guard that
+  // rejected this case lives in the verb (#2281 r9).
+  it("promotes an empty reconstruction against empty-database evidence", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cover-empty-"));
+    const manifest = join(dir, "reconstructed.json");
+    const expected = join(dir, "evidence.txt");
+    writeFileSync(
+      manifest,
+      JSON.stringify({
+        source: { name: "vaipakam-archive", id: "abc" },
+        takenAt: new Date().toISOString(),
+        provenance: {
+          producer: "manifest (reconstructed)",
+          interval: "uncovered",
+          standsFor: "a database with no tables",
+        },
+        tables: {},
+      }),
+    );
+    // Exactly what `digest` prints over a source with no application
+    // tables: a complete reading of an empty table set, and a complete
+    // reading of an empty sequence table.
+    writeFileSync(
+      expected,
+      `${"\u2014".repeat(8)}   0  (0 tables)\nseq-listing complete\n`,
+    );
+    const out = execFileSync(
+      process.execPath,
+      [
+        new URL("../scripts/d1-carry-rows.mjs", import.meta.url).pathname,
+        "cover",
+        "--manifest",
+        manifest,
+        "--expect",
+        expected,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(out).toContain("COVERED");
+    expect(JSON.parse(readFileSync(manifest, "utf8")).provenance.interval).toBe(
+      "covered",
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a database with no tables as a reading, not as silence", () => {
+    // `digest` over a source carrying no application tables prints
+    // exactly this. Both value maps come back empty, which is why the
+    // count of closed readings is reported separately.
+    const e = parseEvidence(
+      [`${"\u2014".repeat(8)}   0  (0 tables)`, "seq-listing complete"].join(
+        "\n",
+      ),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(e.digests.size).toBe(0);
+    expect(e.readings.tableSets).toBe(1);
+    expect(e.readings.sequences).toBe(1);
   });
 
   it("refuses a complete reading whose count does not match its lines", () => {

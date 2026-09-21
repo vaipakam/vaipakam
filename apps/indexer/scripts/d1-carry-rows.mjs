@@ -1885,70 +1885,78 @@ export function parseEvidence(text) {
     map.set(table, value);
   };
 
-  // SEQUENCES ARE READ PER LISTING, NOT GLOBALLY (#2281 r5). A table
-  // that has never allocated has no line at all, so absence inside a
-  // listing that declares itself COMPLETE is a known zero. Flattening
-  // every reading into one map destroys exactly that fact: a first
-  // complete listing with no line for `t`, then a later one with
-  // `seq t 1`, is a log PROVING an allocation happened — and it parsed
-  // as the single value 1, with nothing to conflict against, so a
-  // reconstruction sitting at 1 sailed through.
+  // THREE THINGS ARE BEING READ OUT OF ONE PASTED LOG, AND THEY HAVE
+  // THEIR OWN BOUNDARIES (#2281 r9 — the root of rounds 5 through 9).
   //
-  // Each `seq-listing complete` closes a listing. Within a closed one,
-  // every table the evidence mentions anywhere is read as zero unless
-  // that listing gave it a value, and a disagreement across listings is
-  // reported like any other.
-  const listings = [];
-  const digestListings = [];
-  let current = new Map();
-  let currentDigests = new Map();
-  let currentDeclared = null;
+  // Every round since r5 has found another way for this parser to reach
+  // a clean verdict over a log that records a change, and every one was
+  // the same underlying mistake: ONE block structure, delimited by the
+  // sequence marker, doing duty for three separate questions. A digest
+  // block whose count line is present but whose `seq-listing complete`
+  // is missing merged into the next run and overwrote its count. A
+  // digest block with no count line, closed by a sequence marker, was
+  // neither an enumeration nor "trailing", so the tables it named
+  // stopped counting as named at all. Patching either in place would
+  // have left the other, and the next one after that.
+  //
+  // So the text is read as three things that do not share a delimiter:
+  //
+  //   ENUMERATIONS — digest lines closed by `printDigest`'s own
+  //     rule-and-count line. Nothing else closes one. An enumeration is
+  //     a reading of the WHOLE table set, so what it does not name was
+  //     not there; that is the only thing in this file that can say so.
+  //     A count that disagrees with the lines present means a part
+  //     paste, and it is reported and not used.
+  //
+  //   SEQUENCE READINGS — `seq` lines closed by `seq-listing complete`.
+  //     Within one, a table the evidence names anywhere and this
+  //     reading does not is a known zero.
+  //
+  //   APPEARANCES — every table named by any line anywhere, closed
+  //     block or not, digest line or sequence line. Each one names a
+  //     table that was there when the line was written.
+  //
+  // The asymmetry from r7 is now the whole rule, and it needs no cases:
+  // a table that APPEARS anywhere and is MISSING from any enumeration is
+  // a table set that changed between two moments in the log. It does not
+  // matter which came first — either direction is a change — so there is
+  // no ordering to get wrong, and no "trailing" special case to forget.
+  const enumerations = [];
+  const seqReadings = [];
+  let openDigests = new Map();
+  let openSeqs = new Map();
   let sawAnyComplete = false;
   const mentioned = new Set();
 
   for (const raw of text.split("\n")) {
     const line = raw.trim();
+    // Closes a SEQUENCE reading, and only that.
     if (line.startsWith("seq-listing complete")) {
-      listings.push(current);
-      digestListings.push({
-        digests: currentDigests,
-        declared: currentDeclared,
-      });
+      seqReadings.push(openSeqs);
+      openSeqs = new Map();
       sawAnyComplete = true;
-      current = new Map();
-      currentDigests = new Map();
-      currentDeclared = null;
       continue;
     }
-    // THE DIGEST SECTION SAYS OF ITSELF THAT IT IS WHOLE, exactly as the
-    // sequence section does (#2281 r8). `printDigest` closes every run
-    // with a rule and a count — `———…—  1384  (43 tables)` — and it
-    // prints that line even when the count is zero.
-    //
-    // That line is what makes a reading an ENUMERATION. Inferring it
-    // from "this listing has at least one digest in it" had two faults
-    // at once: a genuinely EMPTY complete run was discarded as though
-    // its digest section had merely been omitted, so a later run
-    // carrying a new table became the only enumeration and the table's
-    // arrival stopped being a conflict; and a digest section pasted only
-    // in part was read as a complete reading of the table set, so every
-    // table left out of the paste read as a table that was not there.
+    // Closes a DIGEST reading, and only that. `printDigest` prints this
+    // line at the end of every run, including when the count is zero —
+    // which is why an empty enumeration is still an enumeration.
     const tot = /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)$/.exec(line);
     if (tot) {
-      currentDeclared = Number(tot[1]);
+      enumerations.push({ digests: openDigests, declared: Number(tot[1]) });
+      openDigests = new Map();
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
     if (seq) {
       mentioned.add(seq[1]);
-      const had = current.get(seq[1]);
+      const had = openSeqs.get(seq[1]);
       if (had !== undefined && had !== Number(seq[2])) {
         conflicts.push(
           `${seq[1]}: one sequence listing gives it twice, as ${had} and ` +
             `${seq[2]}`,
         );
       }
-      current.set(seq[1], Number(seq[2]));
+      openSeqs.set(seq[1], Number(seq[2]));
       continue;
     }
     // `<table> [rowcount] <16-hex>` — the digest command prints a count
@@ -1958,90 +1966,48 @@ export function parseEvidence(text) {
     );
     if (dig) {
       mentioned.add(dig[1]);
-      currentDigests.set(dig[1], dig[2]);
+      openDigests.set(dig[1], dig[2]);
       put(digests, "digest", dig[1], dig[2]);
     }
   }
-  // Trailing entries with no completeness marker are a listing whose
-  // absences say nothing, so they contribute values but no zeros.
-  const trailing = current;
-  const trailingDigests = currentDigests;
+  // Whatever is still open was never closed, so it names tables — which
+  // `mentioned` already holds — and says nothing by omission.
+  const trailingSeqs = openSeqs;
 
   // A declared count that does not match the lines present means the
-  // section was pasted in part. It is then not a reading of the table
-  // set either, and it says so rather than being quietly downgraded.
-  for (const [i, l] of digestListings.entries()) {
-    if (l.declared !== null && l.declared !== l.digests.size) {
-      conflicts.push(
-        `complete reading ${i + 1} declares ${l.declared} table(s) but ` +
-          `carries ${l.digests.size} digest line(s). Part of it is ` +
-          `missing, so what it does not name cannot be read as a table ` +
-          `that was not there`,
-      );
-      l.declared = null;
-    }
-  }
-
-  // A TABLE SET THAT CHANGED IS EVIDENCE TOO (#2281 r6, widened r7).
-  // The sequence side learned this a round ago; the digest side had the
-  // same hole. A table created between two recorded runs is ABSENT from
-  // the first complete output and present in the second, which yields
-  // one digest, no disagreement, and a clean comparison — while the log
-  // itself records that the database gained a table in the window.
-  //
-  // THE RULE IS ASYMMETRIC, and that is the whole of it (#2281 r7). A
-  // reading that ENUMERATED the tables says two things: these tables
-  // existed, and — because the enumeration is of the whole database —
-  // no others did. An unterminated tail says only the first. So:
-  //
-  //   PRESENCE is proven by ANY appearance, in a complete reading or in
-  //   the tail, as a digest line or as a sequence line. All of them
-  //   name a table that was there when that line was written.
-  //
-  //   ABSENCE is proven ONLY by a complete reading that enumerated.
-  //
-  // The r6 check compared complete readings against each other and
-  // therefore skipped a table whose only appearance is in the tail —
-  // `seenIn === 0` read as "never seen" rather than as "appeared after
-  // every reading that says it was not there". That is the same table
-  // arriving mid-log, one door over: a complete run naming only `a`,
-  // then a cropped run naming `a` and a new `b`, produced no conflict
-  // at all, and `b`'s trailing digest plus the earlier reading's
-  // inferred zero let a matching reconstruction be marked COVERED and
-  // license the rollback.
-  //
-  // A listing testifies to absence only if it SAYS it enumerated — the
-  // rule-and-count line `printDigest` closes every run with. A listing
-  // without one may be a sequence-only record or a digest section pasted
-  // in part, and neither can be told from a database with no tables in
-  // it. This is the same standard the sequence side has always held to,
-  // and the reason an EMPTY enumeration is still an enumeration: it
-  // declares zero, which is a reading, not a silence (#2281 r8).
-  const enumerations = digestListings.filter((l) => l.declared !== null);
-  for (const table of mentioned) {
-    const seenIn = enumerations.filter((l) => l.digests.has(table)).length;
-    const provenAtTail = trailingDigests.has(table) || trailing.has(table);
-    if (enumerations.length === 0) continue;
-    if (seenIn === enumerations.length) continue;
-    if (seenIn === 0 && !provenAtTail) continue;
-    const where =
-      seenIn > 0
-        ? `appears in ${seenIn} of them`
-        : `appears in none of them, but is named after the last one`;
+  // block was pasted in part. It is then not a reading of the table set
+  // either, and it says so rather than being quietly downgraded.
+  const readings = enumerations.filter((e, i) => {
+    if (e.declared === e.digests.size) return true;
     conflicts.push(
-      `${table}: the evidence has ${enumerations.length} complete ` +
-        `reading(s) of the table set and this table ${where}. A table ` +
-        `that comes or goes between readings is a database that ` +
-        `changed, whatever the digests say`,
+      `complete reading ${i + 1} declares ${e.declared} table(s) but ` +
+        `carries ${e.digests.size} digest line(s). Part of it is ` +
+        `missing, so what it does not name cannot be read as a table ` +
+        `that was not there`,
+    );
+    return false;
+  });
+
+  // THE TABLE SET, in one rule: named anywhere, missing from a reading
+  // of the whole set.
+  for (const table of mentioned) {
+    const missing = readings.filter((e) => !e.digests.has(table)).length;
+    if (missing === 0) continue;
+    conflicts.push(
+      `${table}: the evidence has ${readings.length} complete reading(s) ` +
+        `of the table set and this table is missing from ${missing} of ` +
+        `them, while being named elsewhere in the same evidence. A table ` +
+        `that comes or goes between readings is a database that changed, ` +
+        `whatever the digests say`,
     );
   }
 
   const seqs = new Map();
   for (const table of mentioned) {
     let agreed;
-    for (const listing of listings) {
-      // Inside a COMPLETE listing, no line means zero.
-      const value = listing.has(table) ? listing.get(table) : 0;
+    for (const reading of seqReadings) {
+      // Inside a CLOSED listing, no line means zero.
+      const value = reading.has(table) ? reading.get(table) : 0;
       if (agreed === undefined) {
         agreed = value;
       } else if (agreed !== value) {
@@ -2054,9 +2020,9 @@ export function parseEvidence(text) {
         break;
       }
     }
-    if (trailing.has(table)) {
-      const value = trailing.get(table);
-      if (agreed === undefined && listings.length === 0) agreed = value;
+    if (trailingSeqs.has(table)) {
+      const value = trailingSeqs.get(table);
+      if (agreed === undefined && seqReadings.length === 0) agreed = value;
       else if (agreed !== undefined && agreed !== value) {
         conflicts.push(
           `${table}: the evidence gives two different sequence readings — ` +
@@ -2069,7 +2035,16 @@ export function parseEvidence(text) {
     if (agreed !== undefined) seqs.set(table, agreed);
   }
 
-  return { digests, seqs, seqListingComplete: sawAnyComplete, conflicts };
+  return {
+    digests,
+    seqs,
+    seqListingComplete: sawAnyComplete,
+    // HOW MANY CLOSED READINGS THERE WERE, so a caller can tell an
+    // evidence file that says nothing from one that says the database
+    // was empty (#2281 r9). Both have empty maps.
+    readings: { tableSets: readings.length, sequences: seqReadings.length },
+    conflicts,
+  };
 }
 
 /**
@@ -2328,6 +2303,26 @@ async function takeManifest(db) {
   // recorded — which is the same shape as the two-pass row read, applied
   // to the thing the row read depends on.
   await declarations(db.id, { fresh: true });
+  // THE TABLE SET AFTER THE ROWS TOO, not only the shapes (#2281 r9).
+  // The loop below walks the manifest, so it can only ever re-examine
+  // tables the first pass already found. A table CREATED and populated
+  // while the existing tables were being read is in none of them: the
+  // shapes it would fail are not consulted, and if it is keyed
+  // naturally there is no sequence row to move either. The baseline is
+  // then accepted without it, and every later reconciliation reads that
+  // table's entire contents as original.
+  const tablesAfterRows = await tablesOf(db.id);
+  if (
+    JSON.stringify([...tablesAfterRows].sort()) !==
+    JSON.stringify([...tables].sort())
+  ) {
+    fail(
+      `the SET OF TABLES changed while the rows were being re-read.\n\n` +
+        `A table created in that window is in no part of this baseline, ` +
+        `and nothing later would look for it — every row it holds would ` +
+        `read as original for as long as this manifest is used.`,
+    );
+  }
   for (const [table, entry] of Object.entries(manifest)) {
     const after = await shapeOf(db.id, table);
     const ddlAfter = await declarationOf(db.id, table);
@@ -3414,7 +3409,22 @@ async function main() {
       fail(`${path} is already marked covered.`);
     }
     const evidence = parseEvidence(readFileSync(expect, "utf8"));
-    if (evidence.digests.size === 0 && evidence.seqs.size === 0) {
+    // A DATABASE WITH NO TABLES PRODUCES EXACTLY THIS, and it is not the
+    // same as an empty file (#2281 r9). `digest` over a source carrying
+    // no application tables prints `(0 tables)` and `seq-listing
+    // complete` and nothing else — a complete reading of a table set
+    // that is empty, and a complete reading of an empty sequence table.
+    // Both value maps come back empty, so a guard that looks only at
+    // them reads valid evidence as no evidence, and the matching empty
+    // reconstruction could never be promoted. A rollback path that
+    // cannot be followed on a legitimate database state is a check that
+    // can never pass, which is the shape this PR exists to remove.
+    const saidSomething =
+      evidence.digests.size > 0 ||
+      evidence.seqs.size > 0 ||
+      evidence.readings.tableSets > 0 ||
+      evidence.readings.sequences > 0;
+    if (!saidSomething) {
       fail(
         `nothing usable was found in ${expect}. It should hold what was ` +
           `recorded AT the mirror: lines of "<table> <digest>" — the ` +
