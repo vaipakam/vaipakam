@@ -17,6 +17,7 @@ import {
   situationOf,
   splitUniquesByEvaluability,
   stopsBeforeVerification,
+  unsupportedUniqueReason,
   verdictProblems,
 } from '../scripts/d1-carry-rows.mjs';
 
@@ -1370,5 +1371,45 @@ describe('the source-moved check answers a question about the SOURCE', () => {
         classifiedSource: new Map([['t', 'same']]),
       }),
     ).toEqual([]);
+  });
+});
+
+describe('a uniqueness this tool cannot reproduce is named, not simplified', () => {
+  // `PRAGMA index_info` answers with bare column names, which discards
+  // three things that change what the index actually rejects. Both
+  // readings used here — `index_xinfo`'s per-term collation and
+  // `index_list`'s `partial` — were verified against the live D1 before
+  // being relied on (#2267 r41).
+  const term = (name: string | null, coll = 'BINARY') => ({ name, coll, key: 1 });
+
+  it('passes an ordinary index', () => {
+    expect(
+      unsupportedUniqueReason({ partial: 0 }, [term('dedup_key')]),
+    ).toBeNull();
+  });
+
+  it('names a partial index, which constrains only some rows', () => {
+    // Treating it as total invents collisions the destination would not
+    // raise — the inverse of the collation error below.
+    expect(unsupportedUniqueReason({ partial: 1 }, [term('x')])).toContain('PARTIAL');
+  });
+
+  it('names an expression index rather than dropping the term', () => {
+    // This is the one that was actively wrong before: the old filter
+    // dropped nameless terms and KEPT the rest, turning a two-term index
+    // into a one-term index and reporting collisions on the wrong tuple.
+    expect(
+      unsupportedUniqueReason({ partial: 0 }, [term('tenant'), term(null)]),
+    ).toContain('EXPRESSION');
+  });
+
+  it('names a collation, under which two values this tool separates are one row', () => {
+    const why = unsupportedUniqueReason({ partial: 0 }, [term('name', 'NOCASE')]);
+    expect(why).toContain('NOCASE');
+    expect(why).toContain('the same row');
+  });
+
+  it('is not fooled by the spelling of BINARY', () => {
+    expect(unsupportedUniqueReason({ partial: 0 }, [term('x', 'binary')])).toBeNull();
   });
 });

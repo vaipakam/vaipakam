@@ -299,6 +299,39 @@ async function tablesOf(dbId) {
 }
 
 /** Column order and primary key, as the table itself declares them. */
+/**
+ * Why this tool cannot reproduce a declared uniqueness — or `null` if it
+ * can, which is the ordinary case.
+ *
+ * `idx` is a `PRAGMA index_list` row and `terms` its `PRAGMA index_xinfo`
+ * key terms. Both are readings rather than parses of the declaration,
+ * which is the point: enumerating what a CREATE INDEX can say is the
+ * unbounded predicate this codebase keeps being bitten by, and SQLite
+ * will answer the question directly.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function unsupportedUniqueReason(idx, terms) {
+  if (idx.partial === 1) return 'it is a PARTIAL index, so it constrains only some rows';
+  if (terms.some((c) => typeof c.name !== 'string')) {
+    return 'it indexes an EXPRESSION, which has no column to compare';
+  }
+  const collated = [
+    ...new Set(
+      terms
+        .map((c) => c.coll)
+        .filter((c) => typeof c === 'string' && c.toUpperCase() !== 'BINARY'),
+    ),
+  ];
+  if (collated.length > 0) {
+    return (
+      `it uses collation(s) ${collated.join(', ')}, under which values ` +
+      `this tool would read as different are the same row`
+    );
+  }
+  return null;
+}
+
 async function shapeOf(dbId, table) {
   const info = await query(dbId, `PRAGMA table_info("${table}")`);
   const cols = [...info]
@@ -345,16 +378,7 @@ async function shapeOf(dbId, table) {
     // `key: 0` rows are the rowid/auxiliary terms every index carries,
     // not part of the constraint.
     const terms = [...parts].filter((c) => c.key === 1).sort((a, b) => a.seqno - b.seqno);
-    const why =
-      idx.partial === 1
-        ? 'it is a PARTIAL index, so it constrains only some rows'
-        : terms.some((c) => typeof c.name !== 'string')
-          ? 'it indexes an EXPRESSION, which has no column to compare'
-          : terms.some((c) => typeof c.coll === 'string' && c.coll.toUpperCase() !== 'BINARY')
-            ? `it uses collation(s) ` +
-              `${[...new Set(terms.map((c) => c.coll))].join(', ')}, under ` +
-              `which values this tool would read as different are the same row`
-            : null;
+    const why = unsupportedUniqueReason(idx, terms);
     const columns = terms.map((c) => c.name).filter((n) => typeof n === 'string');
     if (why !== null) {
       // A primary key reproduced elsewhere is already how rows are
