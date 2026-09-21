@@ -833,7 +833,12 @@ async function main() {
   console.log('');
   if (problems.length > 0) {
     console.error(
-      `\nVERIFICATION FAILED — ${problems.length} table(s):\n` +
+      // "problem(s)", not "table(s)": the list mixes whole-table digest
+      // differences with per-ROW conflicts, and a run reporting seventeen
+      // conflicting rows in ONE table said "17 table(s)". A count that
+      // names the wrong unit is a small lie in a report whose whole job is
+      // not telling them.
+      `\nVERIFICATION FAILED — ${problems.length} problem(s):\n` +
         problems.map((p) => `  - ${p}`).join('\n') +
         `\n\nA digest difference is not always a fault in the carry: a ` +
         `source with live writers moves on while it runs. A REFUSED table ` +

@@ -88,6 +88,19 @@ because step 3 below is the part of it that had to be re-learned.
    the carry. The tool exiting non-zero there is the correct outcome and is
    the barrier's case made twice over — a carry taken against a live source
    cannot converge, however well it is written.
+
+   **[run] 2026-09-21, the full pair, as a rehearsal.** `--mirror
+   --manifest` carried 1,384 rows across 43 tables (0 removed) and recorded
+   a manifest of 1,384 row hashes stamped `02:30:20Z`; its own verification
+   then failed on `indexer_cursor` and `recycle_backing_snapshot`, both
+   still being written. The reconciliation that followed —
+   `--only-missing --since` that manifest — reported **`wrote 0 row(s)`**,
+   because nothing was missing, and then **17 conflicts**, each a named
+   `indexer_cursor` row archive had changed since the mirror, with its
+   current value. Before this round's fix that same run printed `wrote 0`
+   and `VERIFIED`. The rehearsal is what shows the difference: the work the
+   reconciliation exists to find is invisible to a check that asks only
+   whether a key is present.
 3. **The switch — NOT DONE, and it requires the writers stopped first.**
 
    The bindings change is staged in the PR but must not land while anything is
