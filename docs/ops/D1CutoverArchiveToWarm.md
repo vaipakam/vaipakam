@@ -431,7 +431,11 @@ because step 3 below is the part of it that had to be re-learned.
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
       cutover-mirror.json`, which **reads both sides and reports. It writes
       nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
-      runs report nothing at all.
+      runs report nothing at all — with one documented exception: three of
+      the situations below have a resolution that changes no data and so
+      report on every subsequent pass. See the #2279 box under the
+      situation table before concluding that a repeating line means
+      something is unresolved.
 
       > **TWO CLEAN RUNS PAUSE THIS STEP. THEY DO NOT END IT** (#2267
       > r34/r35). There is no fence on archive — see the banner at the
@@ -520,6 +524,42 @@ because step 3 below is the part of it that had to be re-learned.
       stopped asking one of the three questions. The three are now asked in
       one place, the answer is a name, and the code that acts on it handles
       every name or throws — so a dropped question cannot be written.
+
+      > **THREE OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
+      > GAP IN THIS PROCEDURE RATHER THAN A MISTAKE BY THE OPERATOR WHO
+      > HITS IT** (#2279, found scouting the same seam for the fourth
+      > round running). The tool compares data. Three of the situations
+      > above have a legitimate resolution that **changes no data** — it is
+      > a decision to leave things as they are — and a decision is not
+      > something either database holds, so the next pass compares the same
+      > two rows and reports the same difference. Forever.
+      >
+      > Driving the shipped classifier against each resolution shows which:
+      >
+      > | situation | legitimate resolution | what the next pass reports |
+      > | --- | --- | --- |
+      > | `key-collision` | insert archive's record into warm under a NEW id, leaving warm's own record on the old one | `key-collision` again — the id is still allocated on both sides to different records |
+      > | `destination-deleted` | decide the deletion stands (a retention cron did its job, or it was a privacy obligation) | `destination-deleted` again — the row is still absent from warm |
+      > | the source-side *stale row* case | decide warm's row stays as it is | the same again — archive still deleted it after the mirror |
+      > | `source-changed` | apply archive's value to warm | **clean** — this one converges, because applying it is a data change |
+      >
+      > So a run that reports only these is as resolved as it is going to
+      > get. **Record them in the run log by table and key with the decision
+      > taken, treat that as the clean run for the purposes of the two-run
+      > rule, and keep the weekly re-runs going** — their job is to surface
+      > anything NEW, and a fixed set of known-and-decided lines does not
+      > stop them doing it. What it does cost is the property that made
+      > "repeat until clean" self-checking, which is why this is written
+      > down rather than left for an operator to work out at 2am.
+      >
+      > **The fix is not in this change.** #2279 proposes recording
+      > decisions — an `accepted` set in the manifest and a `ratify` verb
+      > that puts them there — so a decided line stops reporting while an
+      > undecided one still does. Building that at this point in the review
+      > loop would add an unreviewed write path to the one tool whose whole
+      > safety property is that it cannot write; stating the limitation
+      > where the rule is asserted is the honest half, and it is the half
+      > that helps the operator.
 
       Two more cases sit underneath that table, because *absent by primary
       key* is not the same as *insertable*, and *present under a key the
@@ -1644,7 +1684,9 @@ sequence is:
    `reconcile --from vaipakam-warm --to vaipakam-archive --since
    rollback-mirror.json` until **two consecutive** runs report nothing. It
    reads and reports; it writes nothing, so anything it finds is applied by
-   a deliberate human step.
+   a deliberate human step. The #2279 exception applies here too, in the
+   same three situations and for the same reason — the direction of the
+   move does not change which resolutions alter data.
 
    **Then weekly, for as long as warm is retained** (#2267 r36). The
    direction inverts but the reasoning does not: an invocation holding the
@@ -1810,7 +1852,9 @@ Order matters here, and this plan does not own all of it:
 - [ ] **Step 6's reconciliation is CURRENT** — the two consecutive clean
       runs happened, every difference an earlier run reported was actually
       resolved, AND the periodic re-run has been kept up since (#2267
-      r35).
+      r35). "Clean" here means the §4 step-6 sense: nothing reported, or
+      nothing beyond the lines #2279 says can never stop reporting,
+      each logged with the decision taken.
 
       **It is never "completed" while archive is retained**, and this box
       said so until now. Two clean runs describe two moments; a suspended

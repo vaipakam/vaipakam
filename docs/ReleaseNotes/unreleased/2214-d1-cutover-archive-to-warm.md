@@ -192,6 +192,19 @@ arrive after both. Keeping the old database makes such a record
 has a named owner and every run is written down, clean ones included, because
 the value of that record is that a gap in it is visible.
 
+**Three kinds of difference will keep being reported no matter what the
+operator does about them, and the runbook now says so rather than leaving
+someone to discover it.** The comparison reports differences in data; some
+differences are resolved by a decision that changes no data — a deletion that
+should stand, a clash resolved by keeping both records under separate
+identifiers, a stale copy the operator decides to keep — and the next
+comparison therefore finds the same difference again. Those are recorded once
+with the decision taken and the weekly comparison continues, since its job is
+to surface what is new. Making a decided difference stop reporting means
+recording decisions somewhere, which is a change to the one tool whose entire
+safety property is that it cannot write; that is tracked separately rather
+than improvised here.
+
 **A late arrival and a late change are different problems, and only one of
 them is obvious.** A straggler that creates a new record leaves the new
 database without it, which the reconciliation can see and name. A
