@@ -578,7 +578,22 @@ function digestOf(rows, cols) {
 async function sequenceProblems(src, dst) {
   const read = async (db) => {
     const out = new Map();
-    for (const r of await query(db.id, 'SELECT name, seq FROM sqlite_sequence')) {
+    let rows;
+    try {
+      rows = await query(db.id, 'SELECT name, seq FROM sqlite_sequence');
+    } catch (err) {
+      // SQLite creates `sqlite_sequence` on the first AUTOINCREMENT
+      // allocation and not before, so a database where none has ever
+      // happened does not have the table at all and the query is an
+      // error rather than an empty result. That case is genuinely "no
+      // identifiers promised", so it is empty — but ONLY that case. Any
+      // other failure here is a failure to check, and this tool does not
+      // report a check it could not perform as a check that passed.
+      const missing = /no such table: sqlite_sequence\b/.test(String(err?.message ?? err));
+      if (!missing) throw err;
+      return out;
+    }
+    for (const r of rows) {
       if (NEVER_CARRIED(r.name)) continue;
       out.set(r.name, Number(r.seq));
     }
