@@ -171,6 +171,39 @@ because step 3 below is the part of it that had to be re-learned.
       serving version of all three carries no D1 binding at all. A deploy
       that silently did not land leaves the barrier open while every step
       below behaves as though it were closed.
+
+      > **CHECK THE TOKEN BEFORE YOU START — this step is where a
+      > credential fails, and it fails after the decision to begin.**
+      > All three writers bind **Secrets Store** secrets
+      > (`apps/indexer` 2, `apps/keeper` 1, `apps/agent` 2), so creating a
+      > Worker version for any of them needs a token that can bind those,
+      > not merely `Workers Scripts: Edit`. A token without it gets:
+      >
+      > ```
+      > ✘ [ERROR] A request to the Cloudflare API
+      >   (/accounts/…/workers/scripts/vaipakam-indexer/versions) failed.
+      >   Secrets store binding authorization failed. Check your
+      >   permissions and secret scopes. [code: 10021]
+      > ```
+      >
+      > **[run] 2026-09-21** — this is exactly what the session token did,
+      > and the attempt stopped here. No version was created (the call
+      > fails at version-create), the stripped configs were restored, and
+      > all four Workers stayed on archive. Nothing was half-done, which is
+      > the one good property of failing at this step rather than a later
+      > one.
+      >
+      > **Do NOT work around it by also stripping the Secrets Store
+      > bindings.** That removes secrets from a production Worker using a
+      > token that cannot put them back: if the post-merge auto-deploy then
+      > failed, the Worker could not be restored from the same session. An
+      > action that cannot be reversed with the credentials in hand is not
+      > a workaround, it is a second outage waiting on someone else's
+      > permissions.
+      >
+      > Verify first: a token that can `wrangler deploy` one of these
+      > Workers can run the barrier; one that cannot, cannot, and the
+      > cutover does not start.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
       **If anything changed, do not proceed — wait and repeat.** Two
       consecutive identical digests, ten minutes apart, allow the next step.
