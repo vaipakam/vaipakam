@@ -80,7 +80,9 @@ abstract contract RewardCustodyCeremonyBase is Script {
     // ─── Ceremony record ────────────────────────────────────────────────────
 
     function _recordPath(string memory kind) internal view returns (string memory) {
-        return string.concat("deployments/", Deployments.chainSlug(), "/reward-custody-", kind, ".json");
+        return Deployments.namedPath(
+            string.concat("reward-custody-", kind, ".json")
+        );
     }
 
     /// @dev A pending record must be dealt with BEFORE a new ceremony

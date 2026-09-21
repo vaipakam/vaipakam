@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
-import {IArtifactRoot} from "./ArtifactRoot.sol";
+import {IArtifactRoot, hasParentSegment} from "./ArtifactRoot.sol";
 // The REAL cut interface, imported rather than approximated. An earlier
 // revision declared a "minimal" `diamondCut(bytes,address,bytes)` here to keep
 // this library free of domain imports; that has a DIFFERENT selector from the
@@ -138,18 +138,85 @@ library Deployments {
         }
     }
 
+    /// Directory holding a chain's artifacts, addressed by SLUG.
+    ///
+    /// @dev The bottom of the path API: every other path helper here reaches
+    ///      {artifactRoot} through this, so there is exactly one place that
+    ///      decides where artifacts live. Exists as its own layer because one
+    ///      caller resolves its chain from `CHAIN_SLUG` rather than from
+    ///      `block.chainid` (#2261), and rebuilding the root by hand to serve
+    ///      that is what put four scripts outside the redirect.
+    ///
+    ///      **The slug is validated here, and that is not belt-and-braces**
+    ///      (#2261 r1 P2). `ArtifactRootBase` confines a redirected root by two
+    ///      total tests — it starts with the scratch prefix, and it contains no
+    ///      `..` segment — and reasons that "without `..` nothing beginning
+    ///      with it can climb back out". That argument is about the WHOLE
+    ///      composed path, but it had only ever examined the root. This
+    ///      function appends a second caller-supplied string to that root, so a
+    ///      slug of `../../anvil` under root `deployments/.forge-test/run`
+    ///      resolves straight back to the committed
+    ///      `deployments/anvil/addresses.json` — the one file the redirect
+    ///      exists to protect. `Handover` sources its slug from the `CHAIN_SLUG`
+    ///      environment variable, so that string is genuinely free-form.
+    ///
+    ///      The rule is deliberately the SAME {hasParentSegment} the root check
+    ///      uses, not a second opinion about paths, and the separator ban keeps
+    ///      a slug to the one directory level it names. Two total tests on a
+    ///      string — not a path normaliser, whose unbounded edge list #1995
+    ///      records the cost of.
+    function dirForSlug(string memory slug) internal view returns (string memory) {
+        require(
+            bytes(slug).length != 0,
+            "Deployments: chain slug must be non-empty - an empty slug resolves to the artifact root itself"
+        );
+        require(
+            !_hasPathSeparator(slug),
+            "Deployments: chain slug must name ONE directory and contain no path separator - set CHAIN_SLUG to a slug such as base-sepolia"
+        );
+        require(
+            !hasParentSegment(slug),
+            "Deployments: chain slug must contain no `..` segment - with one it climbs out of a redirected artifact root and reaches the committed inventory"
+        );
+        return string.concat(artifactRoot(), "/", slug);
+    }
+
+    /// @dev Total test: does `s` contain `/` or `\`? A slug names exactly one
+    ///      directory under the artifact root; every slug {slugForChainId}
+    ///      returns is a single segment, and the only free-form source is an
+    ///      operator's `CHAIN_SLUG`.
+    function _hasPathSeparator(string memory s) private pure returns (bool) {
+        bytes memory b = bytes(s);
+        for (uint256 i; i < b.length; ++i) {
+            if (b[i] == "/" || b[i] == "\\") return true;
+        }
+        return false;
+    }
+
     /// Directory holding `addresses.json` for an arbitrary EVM chain.
     function dirForChainId(uint256 cid) internal view returns (string memory) {
-        return string.concat(artifactRoot(), "/", slugForChainId(cid));
+        return dirForSlug(slugForChainId(cid));
+    }
+
+    /// Path to a slug-addressed chain's `addresses.json`.
+    function pathForSlug(string memory slug) internal view returns (string memory) {
+        return string.concat(dirForSlug(slug), "/addresses.json");
     }
 
     /// Path to an arbitrary EVM chain's `addresses.json`.
     ///
-    /// @dev EVERY artifact path in this library is built here. Five call sites
-    ///      used to concatenate `"deployments/" + slug + "/addresses.json"`
-    ///      by hand, which is four opportunities for one of them to disagree
-    ///      with the others — and would have been four places to forget when
-    ///      the root became redirectable.
+    /// @dev Five call sites used to concatenate
+    ///      `"deployments/" + slug + "/addresses.json"` by hand, which is four
+    ///      opportunities for one of them to disagree with the others — and
+    ///      four places to forget when the root became redirectable.
+    ///
+    ///      This note used to open "EVERY artifact path in this library is
+    ///      built here", and #2261 found that false twice over. Two more
+    ///      scripts were still hand-building an `addresses.json` path
+    ///      (`Handover`, `RefreshAllFacetsInPlace`) and two more a per-chain
+    ///      RECORD path, so four call sites sat outside the redirect while
+    ///      this comment said none did. The single place is {dirForSlug}, one
+    ///      layer down; read the claim there, not here.
     function pathForChainId(uint256 cid) internal view returns (string memory) {
         return string.concat(dirForChainId(cid), "/addresses.json");
     }
@@ -161,6 +228,33 @@ library Deployments {
     /// `contracts/deployments/<slug>/addresses.json`.
     function path() internal view returns (string memory) {
         return pathForChainId(block.chainid);
+    }
+
+    /// Path to a NAMED artifact sitting beside the ACTIVE chain's
+    /// `addresses.json` — a ceremony record, an activation receipt, anything
+    /// per-chain that is not the address inventory itself.
+    ///
+    /// @dev #2261. The note on {pathForChainId} claimed every artifact path was
+    ///      built in one place, and that was true of the paths carrying
+    ///      ADDRESSES — but the scripts writing per-chain RECORDS still
+    ///      concatenated `"deployments/" + slug + "/…"` themselves, so they
+    ///      were outside the consolidation and outside the redirect. A
+    ///      redirected run wrote its ceremony record into the COMMITTED tree
+    ///      while every other artifact from that run went to the scratch tree.
+    ///      This exists so a per-chain artifact cannot be reached except
+    ///      through {artifactRoot}.
+    ///
+    ///      Active-chain only, deliberately: there is no cross-chain caller,
+    ///      and a `namedPathForChainId(cid, …)` twin to mirror
+    ///      {pathForChainId} would be surface nothing calls. One that appears
+    ///      later composes {dirForChainId} with its file name and still cannot
+    ///      escape the root, which is the property being defended here.
+    function namedPath(string memory fileName)
+        internal
+        view
+        returns (string memory)
+    {
+        return string.concat(dirForChainId(block.chainid), "/", fileName);
     }
 
     /// Per-chain folder slug for the *active* chain. Used both for the

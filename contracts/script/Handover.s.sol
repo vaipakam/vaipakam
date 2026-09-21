@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title Handover
@@ -353,7 +354,7 @@ contract Handover is Script {
         } catch {}
         string memory slug = vm.envString("CHAIN_SLUG");
         require(bytes(slug).length > 0, "Set CHAIN_SLUG or ADDRESSES_JSON_PATH");
-        return string.concat("deployments/", slug, "/addresses.json");
+        return Deployments.pathForSlug(slug);
     }
 
     function _readAddrOrRevert(
