@@ -1341,39 +1341,52 @@ Two practical consequences:
   not uniformly additive.
 
   **Two consequences.** An `internal` library helper is inlined into every
-  caller, so annotating one is not a local change — `LibVaipakam`'s
-  storage-pointer helper reaches nearly every facet, so it is a NECESSARY
-  condition for most of the Diamond at once (not a sufficient one; see the
-  last-block rule below). And the trade bites hardest exactly where the
-  benefit is greatest: the facets most likely to hit the stack ceiling are
-  the big ones, which are the ones with no room (this file records
-  `OfferAcceptFacet` shipping at 24,412 — 164 bytes clear — and #1835/#1780
-  exist because of that squeeze).
+  caller, so annotating a memory-touching one is not a local change — the
+  revert forwarders in `LibRevert` / `LibVPFIDiscount` reach most of the
+  Diamond, which is where the sweep's cost above came from. And the trade
+  bites hardest exactly where the benefit is greatest: the facets most
+  likely to hit the stack ceiling are the big ones, which are the ones with
+  no room (this file records `OfferAcceptFacet` shipping at 24,412 — 164
+  bytes clear — and #1835/#1780 exist because of that squeeze).
 
-  **The guard flips only when the LAST unannotated block in a contract's
-  COMPILATION CONTEXT is annotated** — its own blocks plus every one reachable
-  through inheritance, modifiers, libraries and internal calls. Until then a
-  retrofit is INERT: no mover, no benefit, and no bytecode growth either. Do
-  not expect a partial retrofit to show up in either direction, and **do not
-  read "it got no bigger" as "it was safe to annotate"** — that inference is
-  the trap (#2260 r2).
+  **A block that touches NO memory is already memory-safe and needs no
+  annotation** — MEASURED, #2260 r4. The storage-pointer idiom
+  (`x.slot := position` in `LibVaipakam.storageSlot`,
+  `LibAccessControl`, `LibPausable`, `LibReentrancyGuard`, `LibERC721`,
+  `GuardianPausable`) assigns a slot and reads and writes nothing, so solc
+  does not withhold the guard for it. Single-variable proof: annotating only
+  the 18 memory-touching blocks and leaving those 6 bare produces
+  **byte-identical** output to annotating all 24 — `OfferCreateFacet` 33,026,
+  `OfferAcceptFacet` 26,381, `OfferMatchFacet` 24,557, `RiskFacet` 24,298,
+  every one matching the full sweep exactly. **Do not annotate them**, and do
+  not count them when looking for what is holding a guard down.
 
-  **DO NOT try to enumerate a compilation context by reading the source.** It
-  is transitive and the count is always larger than it looks. `OfferMatchFacet`
-  is the cautionary example rather than a worked one: this note first said
-  ONE block, review made it THREE (its own `:588`/`:701` plus
-  `LibVaipakam.storageSlot`), and the next round made it at least FIVE —
-  it is `DiamondReentrancyGuard, DiamondPausable`, so every `nonReentrant` /
-  `whenNotPaused` method also pulls in `LibReentrancyGuard._storage` `:31`
-  and `LibPausable._storage` `:78`. Each count was produced by careful
-  reading and each was wrong, because the predicate is unbounded in prose —
-  the #1995 / #2066 pattern (#2260 r3).
+  **The guard stays down while ANY memory-touching block in a contract's
+  COMPILATION CONTEXT is unannotated** — its own blocks plus every one
+  reachable through inheritance, modifiers, libraries and internal calls. So
+  a partial retrofit can be INERT, and **"it got no bigger" does not mean "it
+  was safe to annotate"** (#2260 r2).
 
-  **MEASURE instead.** Compile and diff `deployedBytecode` before and after,
-  the way #2268's numbers above were produced. A size change means the guard
-  flipped; no change means the retrofit was inert. That test is bounded,
-  needs no inventory, and is how every correct claim in this section was
-  actually established.
+  **DO NOT try to enumerate a compilation context by reading the source.**
+  `OfferMatchFacet` is the cautionary example, and the history is the
+  argument: this note said **ONE** block, review made it **THREE** (its own
+  `:588`/`:701` plus `LibVaipakam.storageSlot`), then at least **FIVE** (it
+  is `DiamondReentrancyGuard, DiamondPausable`, so `nonReentrant` /
+  `whenNotPaused` pull in two more `_storage` helpers) — and the measurement
+  above says the real answer is **TWO**, its own revert blocks, because every
+  storage-pointer helper in that chain was auto-safe all along. Four counts
+  from careful reading, four wrong, in both directions. The predicate is
+  unbounded in prose (#1995 / #2066) **and** it rests on compiler behaviour
+  that reading cannot settle (#2260 r3–r4).
+
+  **MEASURE instead — and know what the measurement does and does not say.**
+  Compile and diff `deployedBytecode`, the way every number in this section
+  was produced. A size change is evidence that **code generation changed**.
+  The converse does NOT hold: a contract whose stack already fits needs no
+  spill code, so the guard can become available with the size unmoved. Read
+  no change as "nothing observable happened here", never as proof the guard
+  is still down (#2260 r4) — if the distinction matters for a decision,
+  inspect the IR rather than inferring from size.
 
   **This does NOT contradict the annotate-new-blocks rule above, because the
   two directions are not symmetric.** Writing a NEW block into a contract
@@ -1396,8 +1409,14 @@ Two practical consequences:
   FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
     forge test --match-path "test/deploy/*" -vv
   # or, same two requirements, through the gate:
-  FOUNDRY_PROFILE=default bash script/predeploy-check.sh
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    bash script/predeploy-check.sh
   ```
+
+  **The wrapper needs the prefix too** (#2260 r4). `predeploy-check.sh`
+  shells out to bare `forge build` / `forge test` (`:88`, `:130`), so
+  priority is inherited from the wrapper process — invoke it under plain
+  `bash` and neither child gets the scheduling posture the rule requires.
 
   **Both prefixes are required, and each closes a way this check can pass
   without checking anything** (#2260 r3). `FOUNDRY_PROFILE=default` because an
@@ -1429,10 +1448,15 @@ Two practical consequences:
   block fails only in the test build, which is the failure mode that cost #2253
   those five revisions.
 
-`contracts/test/deploy/PartialRefreshRoutingTest.t.sol` and ~25 blocks under
-`src/`/`script/` are still unannotated. They are LATENT, not broken: the guard
-is per-contract and those contracts compile today. Sweeping them is tracked in
-**#2260** and needs the audit above, not a bulk edit.
+**Scope of what is actually left** (#2260, re-measured r4). `src/` carries 25
+bare blocks, but **6 are the auto-safe storage-pointer idiom and need nothing**
+— proven byte-identical above. The real remainder is **19**: 18 memory-touching
+blocks plus the `VaipakamDiamond` fallback, which `calldatacopy(0, 0, …)`
+clobbers memory from offset 0 and so wants its own verification rather than a
+bulk annotation. `test/` holds 9 more, the class `forge build --skip test`
+cannot see. They are LATENT, not broken — those contracts compile today — and
+#2268 showed a blanket sweep is not the remedy, since it put two facets over
+EIP-170.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
