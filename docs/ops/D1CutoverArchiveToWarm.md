@@ -69,6 +69,12 @@ because step 3 below is the part of it that had to be re-learned.
      The tool canonicalises each table's rows and hashes them, and the
      comparison is part of the carry rather than a step someone may skip.
 
+   It also **refuses rather than guesses** in two cases that would otherwise
+   pass quietly: a table the two sides declare different columns or keys for
+   (a migration decision, not a copy — both shapes are printed), and a row
+   carrying NULL inside its key, which SQL equality cannot match, so such a
+   row could be neither reliably matched nor removed.
+
    **[run] 2026-09-21** — the digest of both sides immediately after the
    first copy, with the Workers still live, showed **three** tables
    differing: `indexer_cursor`, `protocol_config`, `recycle_backing_snapshot`.

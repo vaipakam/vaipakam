@@ -40,6 +40,15 @@
  *     whose key is absent from the source. That is only safe against an
  *     INERT destination, which the tool says out loud.
  *
+ *   - **Both sides must declare the same SHAPE for a table before its
+ *     rows are compared.** The two databases are kept on the same
+ *     migrations, so this normally holds — but the destination is read
+ *     with the source's column list, which is what makes "normally"
+ *     load-bearing: a destination carrying an extra column would be
+ *     reported identical while every carried row left that column at its
+ *     default. A shape difference is a migration decision, not a copy, so
+ *     the table is refused and both shapes are printed.
+ *
  *   - **A live destination gets `--only-missing` instead.** Reconciling
  *     into a database that is being written to must not overwrite what it
  *     has: rows are inserted only where the key is absent, nothing is
@@ -432,21 +441,63 @@ async function carry(src, dst, { onlyMissing }) {
       });
       continue;
     }
+    // The two sides must agree on the table's SHAPE before its rows are
+    // compared. Reading the destination with the source's column list
+    // would otherwise either fail obscurely or, where the destination has
+    // columns the source lacks, quietly carry rows that leave those
+    // columns at their defaults while reporting the tables identical.
+    const dstShape = await shapeOf(dst.id, table);
+    if (
+      dstShape.cols.join() !== cols.join() ||
+      dstShape.key.join() !== key.join()
+    ) {
+      plan.push({
+        table,
+        refused:
+          `the two sides declare different shapes — source columns ` +
+          `[${cols.join(', ')}] key [${key.join(', ')}], destination ` +
+          `columns [${dstShape.cols.join(', ')}] key ` +
+          `[${dstShape.key.join(', ')}]. Carrying rows across a schema ` +
+          `difference is a migration decision, not a copy`,
+      });
+      continue;
+    }
+    // Each side is read ONCE. Reading the destination twice would spend a
+    // second round trip to ask a question already answered, and against a
+    // live destination the two answers need not even agree.
     const rows = await readAll(src.id, table, cols);
-    const have = new Set(
-      (await readAll(dst.id, table, cols)).map((r) => keyOf(r, key)),
+    const held = await readAll(dst.id, table, cols);
+    // A NULL inside a key breaks the model this tool compares rows with:
+    // two such rows are equal to JSON and to `keyOf`, but `"c" = ?` in a
+    // DELETE never matches NULL, so a surplus row would silently survive
+    // and verification would fail afterwards with nothing to point at.
+    // SQLite permits NULL in a non-INTEGER primary key, so this is checked
+    // rather than assumed.
+    const nullKeyed = [...rows, ...held].find((r) =>
+      key.some((c) => r[c] === null || r[c] === undefined),
     );
+    if (nullKeyed) {
+      plan.push({
+        table,
+        refused:
+          `a row carries NULL in its key (${key.join(', ')}). Row identity ` +
+          `is what this tool compares and deletes by, and SQL equality does ` +
+          `not match NULL — so such a row can be neither reliably matched ` +
+          `nor removed`,
+      });
+      continue;
+    }
+    const sourceKeys = new Set(rows.map((r) => keyOf(r, key)));
+    const heldKeys = new Set(held.map((r) => keyOf(r, key)));
     plan.push({
       table,
       cols,
       key,
-      insert: rows.filter((r) => !have.has(keyOf(r, key))),
       all: rows,
+      insert: rows.filter((r) => !heldKeys.has(keyOf(r, key))),
       surplus: onlyMissing
         ? []
-        : (await readAll(dst.id, table, cols)).filter(
-            (r) => !rows.some((s) => keyOf(s, key) === keyOf(r, key)),
-          ),
+        : held.filter((r) => !sourceKeys.has(keyOf(r, key))),
     });
   }
 
