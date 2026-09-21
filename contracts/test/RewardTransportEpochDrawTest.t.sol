@@ -20,6 +20,7 @@ import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
@@ -204,6 +205,34 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     function _balance(bytes32 h) internal view returns (uint256 b) {
         (, b, , , , ) = _epoch().getTransportBatch(h);
+    }
+
+
+    /// @dev The allocation view takes one request struct; this keeps the
+    ///      rule tests readable as eight figures.
+    function _alloc(
+        uint256 dayId,
+        uint256 needF,
+        uint256 needR,
+        uint256 domF,
+        uint256 domR,
+        uint256 poolF,
+        uint256 cap,
+        uint256 bucket
+    ) internal view returns (uint256 tf, uint256 tr, bool capHit) {
+        LibRewardCustody.AllocRequest memory q;
+        q.dayId = dayId;
+        q.needFresh = needF;
+        q.needRecycled = needR;
+        q.domainFresh = domF;
+        q.domainRecycled = domR;
+        q.poolFresh = poolF;
+        q.deliveredCap = cap;
+        q.bucket = bucket;
+        q.ovIds = new bytes32[](0);
+        q.ovDrawn = new uint256[](0);
+        LibRewardCustody.AllocResult memory r = _epoch().getTransportAllocationForDay(q);
+        return (r.transportFresh, r.transportRecycled, r.capHit);
     }
 
     function _cursor(uint256 d) internal view returns (uint256 c) {
@@ -430,6 +459,155 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_cursor(1), 3, "idempotent");
     }
 
+    // ─── round 1: the seam's edges ──────────────────────────────────────────
+
+    /// @dev A day priced with fresh AND recycled halves: the stamp carries a
+    ///      recycled budget equal to the fresh half, so the claimant's capped
+    ///      need splits across both legs.
+    function _twoLegDay(uint256 d, uint256 cap) internal {
+        _mut().setDayPoolStampRaw(d, uint128(2e18), uint128(2e18));
+        _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+        _mut().setDayCapThreshold18(d, type(uint256).max);
+        _mut().setDayCapModeRaw(d, 1);
+        _mut().setDayUserSideCapRaw(d, cap);
+    }
+
+    function _outstandingRecycled() internal view returns (uint256 o) {
+        (, , , o, , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+    }
+
+    /// @dev A claim's recycled leg an epoch paid retires its commitment
+    ///      without a bucket debit, exactly as a forfeit's does (Codex #2276
+    ///      r1 P1): the outstanding recycled commitment falls by the epoch-paid
+    ///      recycled, and the bucket does not move.
+    function test_ClaimsEpochPaidRecycled_RetiresItsCommitment() public {
+        _twoLegDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epoch().getObligationDomainNeeds(alice);
+        assertGt(needR, 0, "fixture: a recycled leg");
+        _liveOf(needF, _one(1), 1, keccak256("live"));
+        bytes32 h = _epochOf(needR, _one(1), 2, keccak256("e"));
+        _mut().setOutstandingCommitRaw(0, needR); // the commitment behind the recycled leg
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        assertEq(_claim(), NEED);
+        (, uint256 lr) = _legs(h);
+        assertEq(lr, needR, "the epoch paid the recycled leg");
+        assertEq(_outstandingRecycled(), 0, "and its commitment retired");
+        assertEq(_cfg().getRecycleBucket(), bucketBefore, "without a bucket debit");
+    }
+
+    /// @dev An epoch whose membership is still being written in pages is
+    ///      invisible to every day until its last page lands (Codex #2276 r1
+    ///      P1): a 40-day delivery indexes 32 days per call, and day 1 reads
+    ///      no coverage from it until the second page.
+    function test_AnIncompletelyIndexedEpoch_IsInvisibleUntilWhole() public {
+        uint256[] memory days_ = new uint256[](40);
+        for (uint256 i; i < 40; ++i) days_[i] = i + 1;
+        bytes32 id = keccak256("wide");
+        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, days_, CHAIN_BASE, 1, REMITTER, 0, 0, id, false);
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        assertEq(_epoch().materializeTransportBatchPage(h, days_), 32, "first page");
+        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "day 1 sees nothing of a half-indexed epoch");
+        assertEq(_epoch().materializeTransportBatchPage(h, days_), 40, "second page: whole");
+        (avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 10e18, "and now the whole balance");
+    }
+
+    /// @dev The executability gates net the recycled upper bound by what the
+    ///      epochs would pay (Codex #2276 r1 P1): with the bucket EMPTY and an
+    ///      epoch covering the day's recycled leg, the expiry clock accrues
+    ///      and the entry expires, absorbing both legs in place.
+    function test_ExpiryClock_AccruesWhenAnEpochCoversTheRecycledLeg() public {
+        _twoLegDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint256 id = _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epoch().getObligationDomainNeeds(alice);
+        assertGt(needR, 0, "fixture: a recycled leg");
+        assertEq(_cfg().getRecycleBucket(), 0, "fixture: the bucket is empty");
+        _liveOf(needF, _one(1), 1, keccak256("live"));
+        bytes32 h = _epochOf(needR, _one(1), 2, keccak256("e"));
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        assertEq(RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids), 0, "stamps only");
+        uint256 remaining = 180 days + 90 days;
+        uint256 swept;
+        while (remaining > 0) {
+            uint256 step = remaining < 7 days ? remaining : 7 days;
+            vm.warp(vm.getBlockTimestamp() + step);
+            swept = RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+            remaining -= step;
+            if (swept > 0) break;
+        }
+        if (swept == 0) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+        }
+        assertEq(swept, NEED, "expired: the clock accrued with an empty bucket");
+        (, uint256 lr) = _legs(h);
+        assertEq(lr, needR, "the epoch paid the recycled leg of the expiry");
+        assertEq(_cfg().getRecycleBucket() - bucketBefore, NEED, "both legs recycled in place");
+    }
+
+    /// @dev Within one preview an epoch listing two days is not counted for
+    ///      both (Codex #2276 r1 P2): one epoch worth one day lists days 1 and
+    ///      2; the preview reports one day, and the claim pays one day.
+    function test_ThePreview_DoesNotCountAnEpochTwice() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        _epochOf(NEED, _two(1, 2), 1, keccak256("one-day-worth"));
+        assertEq(_preview(), NEED, "one day, not two");
+        assertEq(_claim(), NEED, "and the claim agrees");
+    }
+
+    /// @dev The draws need no migration on an in-place upgrade (Codex #2276
+    ///      r1 P1): with the appended admission counter forced to zero over a
+    ///      ledger that holds an epoch, the day still draws from it.
+    function test_TheDraw_NeedsNoCounter_OnAnUpgradedLedger() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("e1"));
+        _mut().setTransportBatchesAdmittedRaw(0);
+        assertEq(_claim(), NEED, "drawn with the counter at zero");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, NEED);
+        assertEq(_mut().getArmedFreshPaidRaw(), 0, "the ledger untouched");
+    }
+
+    /// @dev The order is the ledger's, not the indexer's (Codex #2276 r1 P1):
+    ///      X lists days 1 and 2, Y lists day 1 only, and X was indexed
+    ///      first. Day 1 spends Y — the fewest listed days first — and keeps
+    ///      X for day 2, which only X can fund.
+    function test_FewestListedDaysFirst_KeepsTheWiderEpochForTheDayOnlyItFunds() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        bytes32 x = _epochOf(NEED, _two(1, 2), 1, keccak256("x")); // indexed first
+        bytes32 y = _epochOf(NEED, _one(1), 2, keccak256("y"));
+        assertEq(_claim(), 2 * NEED, "both days settle");
+        (uint256 xf, ) = _legs(x);
+        (uint256 yf, ) = _legs(y);
+        assertEq(yf, NEED, "day 1 spent Y");
+        assertEq(xf, NEED, "day 2 spent X");
+    }
+
     // ─── the allocation rule, on the design's own cases ─────────────────────
 
     function test_TheAllocationRule_FromTheDesignsOwnCases() public {
@@ -437,21 +615,21 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         // 5 fresh / 5 recycled, 5 live fresh, an empty bucket, a 5-token epoch:
         // fully backed ONLY if live pays fresh and the epoch pays recycled.
         uint256 MAX = type(uint256).max; // "the day is the domain"
-        (uint256 tf, uint256 tr, bool capHit) = _epoch().getTransportAllocationForDay(1, 5, 5, MAX, MAX, 100, 5, 0);
+        (uint256 tf, uint256 tr, bool capHit) = _alloc(1, 5, 5, MAX, MAX, 100, 5, 0);
         assertEq(tf, 0, "live covers fresh, so the epoch is not spent there");
         assertEq(tr, 5, "the epoch covers the recycled shortfall");
         assertFalse(capHit);
         // No typed source on either leg: fresh first on ties.
-        (tf, tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, MAX, MAX, 100, 0, 0);
+        (tf, tr, ) = _alloc(1, 5, 5, MAX, MAX, 100, 0, 0);
         assertEq(tf, 5);
         assertEq(tr, 0);
         // Both legs typed-covered: transport is still drawn first, in order.
         _epochOf(5, _one(1), 2, keccak256("five-more"));
-        (tf, tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, MAX, MAX, 100, 5, 5);
+        (tf, tr, ) = _alloc(1, 5, 5, MAX, MAX, 100, 5, 5);
         assertEq(tf, 5);
         assertEq(tr, 5);
         // The fresh need is read net of the pool cap: 2 of headroom, 10 of coverage.
-        (tf, tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, MAX, MAX, 2, 0, 0);
+        (tf, tr, ) = _alloc(1, 5, 5, MAX, MAX, 2, 0, 0);
         assertEq(tf, 2, "never assigned fresh the cap would not let anyone pay");
         assertEq(tr, 5);
     }
@@ -464,15 +642,15 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      fresh deficit 0, so the batch relieves recycled.
     function test_TheAllocationRule_RelievesTheGreaterDomainDeficit() public {
         _epochOf(5, _one(1), 1, keccak256("five"));
-        (uint256 tf, uint256 tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, 5, 10, 100, 5, 5);
+        (uint256 tf, uint256 tr, ) = _alloc(1, 5, 5, 5, 10, 100, 5, 5);
         assertEq(tf, 0, "fresh is covered domain-wide by live");
         assertEq(tr, 5, "the batch relieves the domain's recycled deficit");
         // The same day with no other demand in the domain: fresh first.
-        (tf, tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, 5, 5, 100, 5, 5);
+        (tf, tr, ) = _alloc(1, 5, 5, 5, 5, 100, 5, 5);
         assertEq(tf, 5);
         assertEq(tr, 0);
         // The day's own shortfall always comes first, whatever the domain says.
-        (tf, tr, ) = _epoch().getTransportAllocationForDay(1, 5, 5, 5, 10, 100, 0, 5);
+        (tf, tr, ) = _alloc(1, 5, 5, 5, 10, 100, 0, 5);
         assertEq(tf, 5, "A cannot settle without its fresh shortfall covered");
         assertEq(tr, 0);
     }
@@ -531,7 +709,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(avail, 0);
         assertFalse(capHit);
         (uint256 tf, uint256 tr, ) =
-            _epoch().getTransportAllocationForDay(1, 5, 5, type(uint256).max, type(uint256).max, 100, 0, 0);
+            _alloc(1, 5, 5, type(uint256).max, type(uint256).max, 100, 0, 0);
         assertEq(tf + tr, 0);
     }
 

@@ -3069,7 +3069,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         s[12] = RewardEpochFacet.getObligationDomainNeeds.selector;
-        s[13] = RewardEpochFacet.epochSettleForfeitLegs.selector;
+        s[13] = RewardEpochFacet.epochSettleClaimLegs.selector;
         s[14] = RewardEpochFacet.getDryRunShareOfPoolDays.selector;
     }
 

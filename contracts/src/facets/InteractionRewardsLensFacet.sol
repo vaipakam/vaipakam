@@ -918,24 +918,27 @@ contract InteractionRewardsLensFacet {
      *         Additive on purpose: {getUserArmedFreshNeed} keeps its selector
      *         and its callers, so no routed selector is retired here.
      * @param  user The claimant.
-     * @return armed        Capped armed fresh the user's open claim would consume.
-     * @return userLegs     Legacy legs bound for the user.
-     * @return treasuryLegs Legacy legs bound for treasury (they reserve too).
-     * @return legacyFresh  #1566 closure 2 — the FRESH part of both legacy
-     *                      legs PLUS the legacy window the claim settles
-     *                      first. The executability predicate and the sweeps
-     *                      measure the claimant's aggregate VINTAGE-BLIND fresh
-     *                      need (`armed + legacyFresh`, capped at the pool)
-     *                      against the delivered bound, because the claim's
-     *                      delivery chokepoint now refuses on the TOTAL fresh
-     *                      component: a predicate that measured only `armed`
-     *                      would read a legacy-only claimant executable while
-     *                      their claim reverts, and run their expiry clock.
+     * @return need The claimant's aggregate need as the claim's own walk
+     *              measures it ({LibInteractionRewards.ArmedNeed}): the capped
+     *              armed fresh; the legacy legs by destination (both
+     *              reserve); the FRESH part of both legacy legs plus the
+     *              legacy window the claim settles first (#1566 closure 2 —
+     *              the predicate and the sweeps measure the aggregate
+     *              VINTAGE-BLIND fresh need, `armed + legacyFresh` capped at
+     *              the pool, against the delivered bound, because the claim's
+     *              delivery chokepoint refuses on the TOTAL fresh component:
+     *              a predicate that measured only `armed` would read a
+     *              legacy-only claimant executable while their claim reverts,
+     *              and run their expiry clock); the chunk's draw on the
+     *              recycle bucket net of what the epochs pay, a deferred day
+     *              included; and whether a day would defer on the transport
+     *              scan window (3b-ii-A, Codex #2276 r1 — one struct, so every
+     *              gate decodes one shape).
      */
     function getUserArmedFreshNeedWithLegs(address user)
         external
         view
-        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
+        returns (LibInteractionRewards.ArmedNeed memory need)
     {
         return LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
     }

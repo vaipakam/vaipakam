@@ -435,25 +435,26 @@ contract RewardClaimFacet is
             // backs and must never be the operand.
             _deliverReward(vpfi, paid, freshPending, res.transport, deliverTo, today);
         }
-        if (treasuryDelta > 0) {
-            // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split:
-            // the FRESH-funded share is genuine absorption and credits the
-            // recycle bucket; the RECYCLED-funded share never physically
-            // left the bucket, so it is a pure commitment RELEASE with
-            // ZERO new credit (crediting it would inflate Ā on every
-            // forfeit while absorbing nothing). #1566 closure 2 — the fresh
-            // absorption goes through the bounding operation. 3b-ii-A — the
-            // LIVE-funded fresh absorbs as before; the epoch-funded legs
-            // recycle in place from the epochs' custody and reach no
-            // delivered-ledger charge (§5c). The three operations are hosted
-            // on the epoch facet ({epochSettleForfeitLegs}) because this
-            // facet has no room to inline them.
-            LibRewardCustody.callSettleForfeitLegs(
-                freshTreasury - res.transport.treasuryFresh,
-                res.transport.treasuryFresh + res.transport.treasuryRecycled,
-                forfeitRecycled
-            );
-        }
+        // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split: the
+        // FRESH-funded share is genuine absorption and credits the recycle
+        // bucket; the RECYCLED-funded share never physically left the bucket,
+        // so it is a pure commitment RELEASE with ZERO new credit (crediting
+        // it would inflate Ā on every forfeit while absorbing nothing). #1566
+        // closure 2 — the fresh absorption goes through the bounding
+        // operation. 3b-ii-A — the LIVE-funded fresh absorbs as before; the
+        // epoch-funded legs recycle in place from the epochs' custody and
+        // reach no delivered-ledger charge (§5c); and the USER's epoch-paid
+        // recycled retires its commitment without a bucket debit, since the
+        // bucket never paid it. The operations are hosted on the epoch facet
+        // ({epochSettleClaimLegs}) because this facet has no room to inline
+        // them; the wrapper makes no call when every figure is zero.
+        LibRewardCustody.callSettleClaimLegs(
+            freshTreasury - res.transport.treasuryFresh,
+            res.transport.treasuryFresh + res.transport.treasuryRecycled,
+            forfeitRecycled,
+            res.transport.userRecycled,
+            0
+        );
         emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
     }
 

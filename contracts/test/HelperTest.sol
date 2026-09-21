@@ -99,7 +99,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](219); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3
+        selectors = new bytes4[](220); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -507,6 +507,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.setTransportBatchesAdmittedRaw.selector; // 3b-ii-A upgrade case
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2487,7 +2488,7 @@ contract HelperTest {
         selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         selectors[12] = RewardEpochFacet.getObligationDomainNeeds.selector;
-        selectors[13] = RewardEpochFacet.epochSettleForfeitLegs.selector;
+        selectors[13] = RewardEpochFacet.epochSettleClaimLegs.selector;
         selectors[14] = RewardEpochFacet.getDryRunShareOfPoolDays.selector;
     }
 

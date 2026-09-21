@@ -121,7 +121,11 @@ library LibVpfiRecycle {
         // envelope, classified by the reconciliation epoch. Relocated custody
         // like {RemittedCustodyRelocation} — Base-funded tokens whose typing
         // arrived late — never absorption; the same exclusions apply.
-        LegacyReconciliation
+        LegacyReconciliation,
+        /// @dev #1566 transport epochs PR 3b-ii-A — release-only class: the
+        ///      recycled leg of a USER claim an epoch paid, whose commitment
+        ///      retires without a bucket debit (the bucket never paid it).
+        TransportPaidClaim
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

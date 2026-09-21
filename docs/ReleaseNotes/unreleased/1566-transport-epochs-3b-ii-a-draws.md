@@ -15,7 +15,18 @@ day pricing every one of those settlements already goes through, so the
 claim, the forfeit sweep, the expiry sweep and the preview the claimant
 sees cannot disagree about what an epoch pays. The preview says what the
 claim will do; the executable-now predicate that drives the expiry clock
-reads the same figure.
+reads the same figure. That predicate's recycled test now reads the claim
+walk's own draw on the recycle bucket — net of what the epochs pay, the
+day the walk would refuse included — where it previously compared a
+pre-cap upper bound. The bound could not be netted by an exact epoch
+figure: on a day the per-user cap trims, the difference left a residue no
+claim would ever draw, and an obligation an epoch covered in full read as
+a bucket drought without end, its expiry clock never starting. The walk's
+figure carries what the bound was kept for — it is the joint draw of the
+claimant's whole day set, and it is measured day by day — without the
+slack. A settlement the walk would refuse because more epochs list a day
+than one read scans is likewise not executable until the day's cursor has
+been pruned, which anyone may do.
 
 An epoch's balance is untyped, so when it cannot cover both of a day's
 legs it is split in two steps. First the day's own shortfalls — each leg's
@@ -59,17 +70,39 @@ held, plus what was parked, plus what left by classification, plus what
 the legs paid — holds after every draw, and a delivery's attested fresh
 cap is netted by the fresh leg its epoch has already paid.
 
-A day's epochs are read through a **bounded window**. When more epochs
-list a day than one window scans, and the visible coverage cannot cover
-the day while a residual would otherwise fall through to the shared
-sources, the day is deferred rather than paid short: nothing is drawn and
-nothing is staged, so there is nothing to unwind, and the day's cursor is
-moved past any epochs already exhausted by other days so the next attempt
-sees a fresh window. Anyone may run that cursor maintenance for a day at
-any time. The follow-up release adds the staging that lets a day wider
-than one window make progress; until then such a day waits, with its
-value protected in its epochs. A chain that has never admitted an epoch
-pays one storage read per settled day for all of this and makes no call.
+A day's epochs are read through a **bounded window**, and within it they
+are spent in an order the ledger fixes rather than the order anyone
+indexed them: the epoch listing the **fewest days first**, the oldest
+arrival on ties. An epoch that lists fewer days has fewer other
+obligations that could need it, so it is spent first and the wider one is
+kept for the days only it can fund — the design's own default, applied on
+chain because indexing is open to anyone and its order would otherwise
+decide who gets scarce funding. An epoch whose membership is still being
+written in pages is invisible to every day until its last page lands, so
+a first page's days cannot drain what later pages' days were owed. When
+more epochs list a day than one window scans, and the visible coverage
+cannot cover the day while a residual would otherwise fall through to the
+shared sources, the day is deferred rather than paid short: nothing is
+drawn and nothing is staged, so there is nothing to unwind, and the day's
+cursor is moved past any epochs already exhausted by other days so the
+next attempt sees a fresh window. Anyone may run that cursor maintenance
+for a day at any time. The follow-up release adds the staging that lets a
+day wider than one window make progress; until then such a day waits,
+with its value protected in its epochs. A day no epoch lists costs one
+storage read and no call, on every chain — which also means the draws are
+right from the first block of an in-place upgrade, with no migration of
+the ledger that already holds epochs. (One refinement of the split — the
+domain rule above — keys on a counter this release adds, so on an
+upgraded chain it activates with the first delivery admitted afterwards;
+until then that chain splits by the day's own shortfalls and fresh first,
+and no draw is affected.)
+
+The preview a claimant sees simulates the draws it predicts: within one
+preview, an epoch listing two days is not counted for both, so the figure
+shown is the figure the claim pays. And a claim's recycled leg that an
+epoch paid retires its commitment the way a forfeit's does — without a
+bucket debit, since the bucket never paid it — so what the mirror reports
+as fundable is not depressed by obligations that have already ended.
 
 What this release deliberately does not decide: an allocation the design
 calls **contested** — one where another obligation is known to be

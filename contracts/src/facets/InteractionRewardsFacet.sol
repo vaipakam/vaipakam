@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -152,26 +153,21 @@ contract InteractionRewardsFacet is
         // bucket (genuine absorption); the RECYCLED share never left the
         // bucket, so its commitment releases with ZERO new credit.
         // 3b-ii-A — the LIVE-funded fresh absorbs as before; the epoch-funded
-        // legs recycle in place from the epochs' custody (§5c). A sweep's set
-        // is one forfeited entry, so every leg it drew is treasury's — the
-        // user legs are folded in so a set that ever carried them would be
-        // absorbed rather than dropped.
-        uint256 epochLegs = tp.treasuryFresh + tp.treasuryRecycled + tp.userFresh + tp.userRecycled;
-        if (freshCredited > tp.treasuryFresh + tp.userFresh) {
-            LibVpfiRecycle.absorbRewardFresh(
-                LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                loanId,
-                freshCredited - tp.treasuryFresh - tp.userFresh
-            );
-        }
-        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, loanId, epochLegs);
-        if (recycledReleased > 0) {
-            LibVpfiRecycle.releaseCommitment(
-                LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                loanId,
-                recycledReleased
-            );
-        }
+        // legs recycle in place from the epochs' custody (§5c); the recycled
+        // commitment releases. A sweep's set is one forfeited entry, so every
+        // leg it drew is treasury's — the user legs are folded in so a set
+        // that ever carried them would be absorbed rather than dropped. The
+        // three operations are hosted on the epoch facet
+        // ({epochSettleClaimLegs}): this facet sits within 100 bytes of
+        // EIP-170 with them inlined.
+        uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
+        LibRewardCustody.callSettleClaimLegs(
+            freshCredited > epochFresh ? freshCredited - epochFresh : 0,
+            epochFresh + tp.treasuryRecycled + tp.userRecycled,
+            recycledReleased,
+            0,
+            loanId
+        );
     }
 
 

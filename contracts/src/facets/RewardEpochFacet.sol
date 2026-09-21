@@ -498,38 +498,25 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @dev    The ONE read every armed-day settlement and preview makes,
     ///         through {LibRewardCustody.callTransportAllocateForDay}; the
     ///         rule is {LibRewardCustody.transportAllocateForDay}.
-    function getTransportAllocationForDay(
-        uint256 dayId,
-        uint256 needFresh,
-        uint256 needRecycled,
-        uint256 domainFresh,
-        uint256 domainRecycled,
-        uint256 poolFresh,
-        uint256 deliveredCap,
-        uint256 bucket
-    ) external view returns (uint256 tf, uint256 tr, bool capHit) {
-        return LibRewardCustody.transportAllocateForDay(
-            LibVaipakam.storageSlot(),
-            dayId,
-            needFresh,
-            needRecycled,
-            domainFresh,
-            domainRecycled,
-            poolFresh,
-            deliveredCap,
-            bucket
-        );
+    function getTransportAllocationForDay(LibRewardCustody.AllocRequest calldata q)
+        external
+        view
+        returns (LibRewardCustody.AllocResult memory)
+    {
+        return LibRewardCustody.transportAllocateForDay(LibVaipakam.storageSlot(), q);
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
-    ///         given delivered cap and fresh budget — what a claim would pay
-    ///         and the armed fresh it would charge.
+    ///         given delivered cap and fresh budget — what a claim would pay,
+    ///         the armed fresh it would charge, its draw on the recycle bucket
+    ///         net of what the epochs pay (a deferred day included), and
+    ///         whether it would defer a day on the transport scan window.
     /// @dev    Hosted here: see {LibInteractionRewards.dryRunShareOfPoolDaysView}.
     function getDryRunShareOfPoolDays(
         address user,
         uint256 deliveredCap,
         uint256 freshBudget
-    ) external view returns (uint256 userTotal, uint256 armedTotal) {
+    ) external view returns (uint256 userTotal, uint256 armedTotal, uint256 bucketRecycled, bool capHit) {
         return LibInteractionRewards.dryRunShareOfPoolDaysView(user, deliveredCap, freshBudget);
     }
 
@@ -543,18 +530,32 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return LibInteractionRewards.userDomainNeedsView(user);
     }
 
-    /// @notice Diamond-internal: settle a claim's forfeit legs — the
-    ///         live-funded fresh absorbed through the bounding operation, the
-    ///         epoch-funded legs recycled in place, and the recycled
-    ///         commitment released.
-    /// @dev    Hosted here for `RewardClaimFacet`'s EIP-170 headroom (3b-ii-A);
-    ///         the three operations are the claim's own, unchanged.
-    function epochSettleForfeitLegs(uint256 liveFresh, uint256 epochLegs, uint256 recycledRelease) external {
+    /// @notice Diamond-internal: settle a claim's or a forfeit sweep's
+    ///         treasury and epoch legs — the live-funded fresh absorbed
+    ///         through the bounding operation, the epoch-funded legs recycled
+    ///         in place, the treasury's recycled commitment released, and the
+    ///         USER's epoch-paid recycled commitment released without a bucket
+    ///         debit (Codex #2276 r1: a claim an epoch paid recycled for would
+    ///         otherwise leave that commitment outstanding forever, depressing
+    ///         what the mirror reports fundable).
+    /// @dev    Hosted here for `RewardClaimFacet`'s and
+    ///         `InteractionRewardsFacet`'s EIP-170 headroom (3b-ii-A); the
+    ///         operations are the callers' own, unchanged.
+    function epochSettleClaimLegs(
+        uint256 liveFresh,
+        uint256 epochLegs,
+        uint256 treasuryRecycledRelease,
+        uint256 userEpochRecycled,
+        uint256 refId
+    ) external {
         _requireDiamondInternal();
-        LibVpfiRecycle.absorbRewardFresh(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, liveFresh);
-        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, epochLegs);
-        if (recycledRelease > 0) {
-            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, recycledRelease);
+        LibVpfiRecycle.absorbRewardFresh(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, liveFresh);
+        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, epochLegs);
+        if (treasuryRecycledRelease > 0) {
+            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, treasuryRecycledRelease);
+        }
+        if (userEpochRecycled > 0) {
+            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.TransportPaidClaim, refId, userEpochRecycled);
         }
     }
 

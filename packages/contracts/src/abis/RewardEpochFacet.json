@@ -74,7 +74,7 @@
   },
   {
     "type": "function",
-    "name": "epochSettleForfeitLegs",
+    "name": "epochSettleClaimLegs",
     "inputs": [
       {
         "name": "liveFresh",
@@ -87,7 +87,17 @@
         "internalType": "uint256"
       },
       {
-        "name": "recycledRelease",
+        "name": "treasuryRecycledRelease",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "userEpochRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -125,6 +135,16 @@
         "name": "armedTotal",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "bucketRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capHit",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -158,61 +178,95 @@
     "name": "getTransportAllocationForDay",
     "inputs": [
       {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "needFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "needRecycled",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "domainFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "domainRecycled",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "poolFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deliveredCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "bucket",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "q",
+        "type": "tuple",
+        "internalType": "struct LibRewardCustody.AllocRequest",
+        "components": [
+          {
+            "name": "dayId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "domainFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "domainRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "poolFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deliveredCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bucket",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "ovIds",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "ovDrawn",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          }
+        ]
       }
     ],
     "outputs": [
       {
-        "name": "tf",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tr",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "capHit",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibRewardCustody.AllocResult",
+        "components": [
+          {
+            "name": "transportFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "transportRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capHit",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "planIds",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "planTakes",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          }
+        ]
       }
     ],
     "stateMutability": "view"

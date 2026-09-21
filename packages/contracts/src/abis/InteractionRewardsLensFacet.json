@@ -491,24 +491,41 @@
     ],
     "outputs": [
       {
-        "name": "armed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "userLegs",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryLegs",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "legacyFresh",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "need",
+        "type": "tuple",
+        "internalType": "struct LibInteractionRewards.ArmedNeed",
+        "components": [
+          {
+            "name": "armed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "userLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "treasuryLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "legacyFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bucketRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capHit",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
