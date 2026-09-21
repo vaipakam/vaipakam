@@ -2047,7 +2047,18 @@ export function verdictProblems({
         `${table}: destination holds ${d.count} rows, fewer than the ` +
           `source's ${s.count} — rows are still missing`,
       );
-    } else if (
+    }
+
+    // THE SOURCE-MOVED CHECK IS NOT PART OF THAT CHAIN, and it was
+    // (#2267 r40, self-review). Every branch above is a statement about
+    // the DESTINATION; this one is about the source reading differently
+    // now than when it was classified. Sitting at the end of an else-if
+    // meant any destination-side finding suppressed it — including, as
+    // of this round, a table the destination has dropped, which is
+    // exactly a table whose late writes are the only thing left to look
+    // for. Nothing about the destination should gate a question about
+    // the source.
+    if (
       reconciling &&
       classifiedSource.has(table) &&
       classifiedSource.get(table) !== s.digest

@@ -1329,3 +1329,46 @@ describe('a table the destination no longer has', () => {
     expect(problems[0]).toContain('absent from the destination');
   });
 });
+
+describe('the source-moved check answers a question about the SOURCE', () => {
+  // It sat at the end of an else-if chain whose every other branch is a
+  // statement about the destination, so any destination-side finding
+  // suppressed it — including a table the destination has dropped, which
+  // is precisely a table whose late writes are all that is left to look
+  // for (#2267 r40, found in self-review).
+  const d = (digest: string, count: number) => ({ digest, count });
+
+  it('fires for a table the destination has dropped', () => {
+    const problems = verdictProblems({
+      srcD: new Map([['dropped_by_migration', d('now', 4)]]),
+      dstD: new Map(),
+      reconciling: true,
+      classifiedSource: new Map([['dropped_by_migration', 'when-classified']]),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('CHANGED while this run was working');
+  });
+
+  it('fires alongside a destination-side finding rather than instead of it', () => {
+    const problems = verdictProblems({
+      srcD: new Map([['t', d('now', 9)]]),
+      dstD: new Map([['t', d('other', 2)]]),
+      reconciling: true,
+      classifiedSource: new Map([['t', 'when-classified']]),
+    });
+    expect(problems).toHaveLength(2);
+    expect(problems.join('\n')).toContain('rows are still missing');
+    expect(problems.join('\n')).toContain('CHANGED while this run was working');
+  });
+
+  it('stays quiet when the source read the same both times', () => {
+    expect(
+      verdictProblems({
+        srcD: new Map([['t', d('same', 2)]]),
+        dstD: new Map([['t', d('whatever', 5)]]),
+        reconciling: true,
+        classifiedSource: new Map([['t', 'same']]),
+      }),
+    ).toEqual([]);
+  });
+});
