@@ -1451,6 +1451,41 @@ open. The binding read closes the window; the write confirms it afterwards.
 
 ## 4. Rollback
 
+> ## THERE IS NO FENCE ON ARCHIVE, AND THREE STEPS BELOW ASSUMED ONE
+>
+> **Nothing in this procedure can revoke a handle an invocation already
+> holds on `vaipakam-archive`.** Removing a binding stops the next
+> invocation from obtaining one; it does nothing to one already granted,
+> and §3 states plainly that no bound on how long such work can run has
+> ever been measured. Stopping the *warm* writers later cannot revoke an
+> *archive* handle taken before the cutover.
+>
+> It follows that **no point-in-time read of archive is a fence**, and any
+> step that DESTROYS archive content on the strength of one is unsound.
+> Round 34 found three places that did, and they are one defect:
+>
+> 1. the pre-migration export at step 0a — a write can land after the
+>    export and before the destructive migration;
+> 2. the migration itself at step 0b — applied in place, so it destroys
+>    what it deletes;
+> 3. the reverse mirror at step 3 — step 2b's clean report describes the
+>    moment it read, and the mirror overwrites archive afterwards.
+>
+> **THE SOUND VERSION DOES NOT MUTATE ARCHIVE AT ALL.** A rollback would
+> build a FRESH database, seed it from warm, apply the archive-only rows
+> a reconciliation names, and point the bindings there — leaving archive
+> immutable, forever, as everything else already treats it. That is a
+> design change rather than a step reordering: it needs a third pinned
+> endpoint, its own binding configuration and its own guard entries.
+> **Tracked as #2278; not built here.**
+>
+> Until it exists, an operator rolling back must know that **steps 0b and
+> 3 destroy archive content and cannot be made safe by any check in this
+> document.** Take the export at 0a, understand it may be a moment short,
+> and record in the run log that the rollback proceeded without a fence.
+> That is the honest position, and it is worse than the one this section
+> implied before.
+
 **Free until the Workers start writing to the target — and staying free is
 something you have to DO, not something you observe** (#2238 r2 P1).
 

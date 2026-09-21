@@ -504,3 +504,28 @@ is retired in place rather than removed, because it was the documented
 first action for seven weeks. Nothing replaces it: the copy makes the new
 database match the old one record by record, which is what emptying it was
 for.
+
+### The way back destroys the copy it is supposed to protect
+
+The old database is kept so that anything written to it late stays
+recoverable. Going back, as written, would have rewritten it — applying
+schema changes to it in place and then overwriting its contents from the
+new database — each step justified by a check performed a moment earlier.
+
+Those checks cannot justify it. Nothing in the procedure can take away
+access that a piece of work already has to the old database, and the
+platform has never measured how long such work can run. So a check is a
+statement about the instant it ran, and a step that destroys records on the
+strength of one is unsound — three separate steps did exactly that.
+
+The honest version is stated rather than patched: going back must never
+write to the old database at all. It should build a new one, seed it from
+the live database, apply the records the old one holds and the live one
+does not, and point the services there — leaving the old database
+untouched, which is what keeping it was for. That is a larger change than
+this one and is recorded separately.
+
+Until it exists, the procedure says plainly that two of its steps destroy
+records in the old database and that no check in the document makes them
+safe. That is worse than what it implied before, which is the reason for
+saying it.
