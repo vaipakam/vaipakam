@@ -614,6 +614,30 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(liveArmed, 0, "and the live delivery must fund none of it");
     }
 
+    /// @dev One epoch worth one day lists day 1, which the claimant covers on
+    ///      BOTH sides: the preview counts the epoch once across the two side
+    ///      walks (Codex #2276 r3 P1), and the claim agrees — the lender side
+    ///      draws it, the borrower side finds nothing and defers.
+    function test_ThePreview_CarriesTheOverlayAcrossSides() public {
+        _mut().setDayPoolStampRaw(1, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, ) = _epochView().getObligationDomainNeeds(alice);
+        assertEq(needF, 2 * NEED, "fixture: both sides need the day's fresh");
+        _epochOf(NEED, _one(1), 1, keccak256("one-day-worth"));
+        assertEq(_preview(), NEED, "one epoch, one side - not both");
+        assertEq(_claim(), NEED, "and the claim agrees");
+    }
+
     /// @dev A draw records its exit on the PACKET too, so the packet's own
     ///      identity holds after it (Codex #2274 r8 P1).
     function test_ADraw_KeepsThePacketIdentity() public {

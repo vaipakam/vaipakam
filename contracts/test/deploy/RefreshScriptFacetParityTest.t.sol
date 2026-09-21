@@ -460,6 +460,22 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
         }
         assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
+        // 3b-ii-A (Codex #2276 r3 P1) — the four-argument vault credit is
+        // retired, and its five-argument successor is routed.
+        bool namesOldVaultCredit;
+        for (uint256 i; i < retired.length; ++i) {
+            if (
+                retired[i]
+                    == bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"))
+            ) namesOldVaultCredit = true;
+        }
+        assertTrue(namesOldVaultCredit, "the four-argument vaultCreditFromRewardCustodyERC20 selector is not retired");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(
+                bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"))
+            ) != address(0),
+            "the five-argument vault credit is not routed"
+        );
         assertTrue(
             IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
             "the epoch-bound seed is not routed"

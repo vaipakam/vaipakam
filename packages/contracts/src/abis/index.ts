@@ -94,6 +94,7 @@ import RewardCustodyFacetABI from './RewardCustodyFacet.json';
 import RewardReconciliationFacetABI from './RewardReconciliationFacet.json';
 import RewardIngressFacetABI from './RewardIngressFacet.json';
 import RewardEpochFacetABI from './RewardEpochFacet.json';
+import RewardEpochViewFacetABI from './RewardEpochViewFacet.json';
 import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
@@ -198,6 +199,7 @@ export {
   RewardReconciliationFacetABI,
   RewardIngressFacetABI,
   RewardEpochFacetABI,
+  RewardEpochViewFacetABI,
   RepatriationFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
@@ -299,6 +301,7 @@ export const DIAMOND_ABI = [
   ...RewardReconciliationFacetABI,
   ...RewardIngressFacetABI,
   ...RewardEpochFacetABI,
+  ...RewardEpochViewFacetABI,
   ...RepatriationFacetABI,
   ...ConfigFacetABI,
   ...NumeraireConfigFacetABI,

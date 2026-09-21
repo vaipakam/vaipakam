@@ -2331,12 +2331,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
         // only the amount; it now carries the pause epoch too, so the old
         // selector must not survive routed to bytecode that checks neither
         // the manual pause, the epoch, nor the cap.
         s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
+        // #1566 transport epochs PR 3b-ii-A (Codex #2276 r3 P1) — the vault
+        // credit from reward custody gained a third, epoch leg. The
+        // four-argument signature the custody cutover shipped must not
+        // survive routed to the previous VaultFactory implementation: the
+        // refresh's lists carry only the current signature, so without this
+        // leg the old one stays a stale route and the facet set no longer
+        // matches the artifact.
+        s[1] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @dev Remove every retired selector the loupe still routes, in one cut,

@@ -102,7 +102,8 @@ claimant's armed-need reading keeps its shape; it counts the epoch-paid
 fresh in the requirement it reports and says, beside it, how much of that
 the live delivery must fund.
 
-The preview a claimant sees simulates the draws it predicts: within one
+The preview a claimant sees simulates the draws it predicts, on either
+side of the claim: within one
 preview, an epoch listing two days is not counted for both, so the figure
 shown is the figure the claim pays. And a claim's recycled leg that an
 epoch paid retires its commitment the way a forfeit's does — without a

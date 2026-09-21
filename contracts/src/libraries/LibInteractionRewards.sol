@@ -2930,6 +2930,9 @@ library LibInteractionRewards {
         DryRunState memory dry;
         dry.active = true;
         dry.loanSide = new LoanSideCarry[](work.length);
+        // The overlay is the RUN's, not the side's (Codex #2276 r3 P1).
+        dry.ovIds = acc.ovIds;
+        dry.ovDrawn = acc.ovDrawn;
 
         while (daysSpent < daysLeft) {
             uint256 d = _dryLowestDay(s, work, cur);
@@ -3001,6 +3004,8 @@ library LibInteractionRewards {
             }
             unchecked { ++daysSpent; }
         }
+        acc.ovIds = dry.ovIds;
+        acc.ovDrawn = dry.ovDrawn;
     }
 
     /// @dev Lowest simulated pending day; `max` when the side is done.
@@ -6064,6 +6069,15 @@ library LibInteractionRewards {
         ///      gates; `armedTotal` itself stays the full capped figure the
         ///      public armed need reports (Codex #2276 r2 P2).
         uint256 liveArmed;
+        /// @dev The dry run's epoch OVERLAY, carried ACROSS the two side
+        ///      walks (Codex #2276 r3 P1): each side walk seeds its state
+        ///      from here and writes back what it planned, so an epoch
+        ///      listing a lender-side day and a borrower-side day of the same
+        ///      chunk is read net of the first side's planned draw when the
+        ///      second is priced — as the settle walk, whose draws are in
+        ///      storage by then, sees it.
+        bytes32[] ovIds;
+        uint256[] ovDrawn;
     }
 
     /// @dev Per-claim walk state, threaded by reference through both side
