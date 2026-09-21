@@ -647,18 +647,20 @@ async function sequenceProblems(src, dst) {
  *
  * Reported, never repaired, like everything else this mode finds.
  */
-async function sequenceAdvances(src, since) {
+async function sequenceAdvances(src, dst, since) {
   if (!since) return [];
-  const now = new Map();
-  try {
-    for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
-      if (!NEVER_CARRIED(r.name)) now.set(r.name, Number(r.seq));
+  const read = async (db) => {
+    const out = new Map();
+    try {
+      for (const r of await query(db.id, 'SELECT name, seq FROM sqlite_sequence')) {
+        if (!NEVER_CARRIED(r.name)) out.set(r.name, Number(r.seq));
+      }
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
     }
-  } catch (err) {
-    if (!isMissingSequenceTable(err)) throw err;
-    return [];
-  }
-  return compareSequences(now, since);
+    return out;
+  };
+  return compareSequences(await read(src), since, await read(dst));
 }
 
 /**
@@ -670,12 +672,24 @@ async function sequenceAdvances(src, since) {
  * has ever made as a late one — which on the first weekly run would bury
  * the real signal under 43 lines of noise.
  */
-export function compareSequences(now, since) {
+export function compareSequences(now, since, held = new Map()) {
   const problems = [];
   for (const [table, seq] of now) {
     const then = since?.[table]?.seq;
     if (then === undefined || then === null) continue;
     if (seq <= then) continue;
+    // THE DESTINATION IS WHAT MAKES THIS CONVERGE (#2267 r38). The
+    // mirror baseline never moves, so `seq > then` stays true forever
+    // once anything has allocated — and the procedure's two consecutive
+    // clean runs would be unreachable after a single reported advance.
+    //
+    // What resolves it is the destination catching up: applying the late
+    // row advances the destination's own sequence, and an operator who
+    // decides the identifier is spent can advance it deliberately. Either
+    // way the two agree and there is nothing left to report. This is the
+    // same rule the row comparison uses for a conflict an operator has
+    // already resolved.
+    if ((held.get(table) ?? -1) >= seq) continue;
     problems.push(
       `${table}: the source has allocated identifiers up to ${seq}, and ` +
         `the mirror recorded ${then}.\n      Something inserted ${seq - then} ` +
@@ -1382,7 +1396,36 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // second round trip to ask a question already answered, and against a
     // live destination the two answers need not even agree.
     const rows = await readAll(src.id, table, cols);
-    const held = await readAll(dst.id, table, cols);
+    // THE DESTINATION IS READ WITH ITS OWN COLUMNS WHEN REPORTING
+    // (#2267 r38). Using the source's list is right for a mirror, where
+    // parity has already been required. For the weekly reconciliation it
+    // is fatal: a post-cutover migration that DROPS or renames a column
+    // leaves the retained source holding it, and `SELECT "gone" FROM t`
+    // against the destination fails with `no such column` before the
+    // drift can even be reported — killing the only check still looking
+    // for late writes. The projection check cannot catch this either,
+    // since it compares the manifest against the SOURCE.
+    //
+    // Read each side as it actually is; the comparison below projects
+    // both onto the manifest's columns, so a column the destination no
+    // longer has reads as absent and shows up as a difference to look
+    // at rather than as a crash.
+    const heldCols = reportOnly ? (await shapeOf(dst.id, table)).cols : cols;
+    const missingKey = key.filter((c) => !heldCols.includes(c));
+    if (missingKey.length > 0) {
+      plan.push({
+        table,
+        key,
+        cols,
+        refused:
+          `the destination no longer has key column(s) ` +
+          `${missingKey.map((c) => `"${c}"`).join(', ')}.\n      Rows here ` +
+          `cannot be matched to the source at all without them, so ` +
+          `nothing this run said about this table would mean anything`,
+      });
+      continue;
+    }
+    const held = await readAll(dst.id, table, heldCols);
     // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
     // source afterwards, and in reconcile mode it only asks whether the
     // destination has at least as many rows — which an UPDATE does not
@@ -2029,7 +2072,7 @@ async function main() {
     // this run would notice that an identifier is now spent on one side
     // and free on the other (#2267 r36).
     ...(reconciling
-      ? await sequenceAdvances(src, since)
+      ? await sequenceAdvances(src, dst, since)
       : await sequenceProblems(src, dst)),
   ];
 

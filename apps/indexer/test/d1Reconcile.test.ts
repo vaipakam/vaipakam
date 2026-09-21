@@ -975,3 +975,37 @@ describe('a never-allocated baseline is zero, not unknown', () => {
     ).toEqual([]);
   });
 });
+
+describe('a reported sequence advance can be resolved', () => {
+  it('stops reporting once the destination has caught up', () => {
+    // The mirror baseline never moves, so `seq > then` stays true
+    // forever once anything allocates. Applying the late row advances
+    // the destination's own sequence, and that is what makes the two
+    // required clean runs reachable again (#2267 r38).
+    expect(
+      compareSequences(
+        new Map([['notifications', 52]]),
+        { notifications: { seq: 46 } },
+        new Map([['notifications', 52]]),
+      ),
+    ).toEqual([]);
+  });
+
+  it('still reports while the destination is behind', () => {
+    expect(
+      compareSequences(
+        new Map([['notifications', 52]]),
+        { notifications: { seq: 46 } },
+        new Map([['notifications', 46]]),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('reports when the destination has never allocated at all', () => {
+    expect(
+      compareSequences(new Map([['notifications', 52]]), {
+        notifications: { seq: 46 },
+      }),
+    ).toHaveLength(1);
+  });
+});
