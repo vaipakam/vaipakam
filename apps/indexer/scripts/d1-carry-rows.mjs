@@ -120,7 +120,7 @@
  * this one moves rows a person's money position is described by.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -715,9 +715,37 @@ const CREDENTIAL_KEY_COLUMNS = new Map([
   ],
 ]);
 
-/** Short, non-reversible, and stable across runs so reports correlate. */
-const fingerprint = (v) =>
-  `fp:${createHash('sha256').update(String(v)).digest('hex').slice(0, 12)}`;
+/**
+ * A HASH OF A SIX-DIGIT CODE IS NOT A REDACTION, it is an encoding.
+ *
+ * The first version of this was an unsalted sha256, on the reasoning
+ * that a hash is non-reversible and a stable one lets a reader correlate
+ * the same row across runs. Both halves were wrong for this input: the
+ * whole domain of a six-digit code is a million candidates, so anyone
+ * holding the report enumerates it in about a second and has the live
+ * credential (#2267 r33, demonstrated). And stability across runs is
+ * exactly what makes an offline table reusable.
+ *
+ * So it is an HMAC under a key generated fresh for each run and never
+ * printed. Within a run the same value fingerprints identically, which
+ * is what a reader needs to match the lines of one report to each other.
+ * Across runs it does not, and that is the point: a low-entropy secret
+ * can only be protected by something the reader of the report does not
+ * have.
+ *
+ * Cross-run correlation is therefore given up DELIBERATELY for these
+ * columns. For `telegram_links` it was worth little anyway — the code is
+ * live for ten minutes, so a conflict that survives to the next
+ * reconciliation is a conflict about an expired credential.
+ */
+const RUN_FINGERPRINT_KEY = randomBytes(32);
+
+export function makeFingerprinter(key) {
+  return (v) =>
+    `fp:${createHmac('sha256', key).update(String(v)).digest('hex').slice(0, 12)}`;
+}
+
+const fingerprint = makeFingerprinter(RUN_FINGERPRINT_KEY);
 
 /**
  * The key as it may be PRINTED. Values in declared credential columns

@@ -9,6 +9,7 @@ import {
   classifyForReconcile,
   collapseOutsideLiterals,
   isMissingSequenceTable,
+  makeFingerprinter,
   readAll,
   safeKey,
   situationOf,
@@ -859,4 +860,51 @@ describe('a key that is itself a credential never reaches a report', () => {
       JSON.stringify([42]),
     );
   });
+});
+
+/**
+ * WHY THIS TEST EXISTS. The first redaction hashed the six-digit code
+ * with an unsalted sha256, which is an ENCODING and not a redaction: the
+ * whole domain is a million candidates, so a reader of the report
+ * recovers the live credential by enumerating it. That was demonstrated
+ * against the shipped code in about a second (#2267 r33).
+ *
+ * The properties below are what separate the two, so they are asserted
+ * rather than described.
+ */
+describe('a fingerprint of a low-entropy secret needs a key', () => {
+  const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
+  const CODE = '481920';
+
+  it('is stable within a run, so a reader can match report lines', () => {
+    const f = makeFingerprinter(randomBytes(32));
+    expect(f(CODE)).toBe(f(CODE));
+  });
+
+  it('distinguishes different codes', () => {
+    const f = makeFingerprinter(randomBytes(32));
+    expect(f(CODE)).not.toBe(f('654321'));
+  });
+
+  it('differs across runs, which is what defeats a precomputed table', () => {
+    expect(makeFingerprinter(randomBytes(32))(CODE)).not.toBe(
+      makeFingerprinter(randomBytes(32))(CODE),
+    );
+  });
+
+  it('does not yield the code to exhaustive search of the whole domain', () => {
+    // The actual attack: hold a fingerprint from one run, try every
+    // six-digit code under a different key. This is the test that fails
+    // if anyone replaces the HMAC with a plain hash again.
+    const fromAnotherRun = makeFingerprinter(randomBytes(32))(CODE);
+    const mine = makeFingerprinter(randomBytes(32));
+    let recovered: string | null = null;
+    for (let i = 0; i < 1_000_000; i += 1) {
+      if (mine(String(i).padStart(6, '0')) === fromAnotherRun) {
+        recovered = String(i).padStart(6, '0');
+        break;
+      }
+    }
+    expect(recovered).toBeNull();
+  }, 30_000);
 });
