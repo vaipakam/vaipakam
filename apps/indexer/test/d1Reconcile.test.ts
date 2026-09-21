@@ -2001,3 +2001,43 @@ describe('a run log holds several readings, and they may disagree', () => {
     expect(problems.some((p: string) => p.includes('this baseline does not'))).toBe(true);
   });
 });
+
+describe('a table set that changed is evidence too', () => {
+  // The sequence side learned this a round earlier; the digest side had
+  // the same hole. A table created between two recorded runs is absent
+  // from the first complete output and present in the second — one
+  // digest, no disagreement, a clean comparison — while the log records
+  // that the database gained a table in the window (#2281 r6).
+  it('refuses when a table appears in only some complete readings', () => {
+    const e = parseEvidence(
+      [
+        'a 1111111111111111',
+        'seq-listing complete',
+        'a 1111111111111111',
+        'b 2222222222222222',
+        'seq-listing complete',
+      ].join('\n'),
+    );
+    expect(e.conflicts).toHaveLength(1);
+    expect(e.conflicts[0]).toContain('appears in 1 of them');
+    expect(e.conflicts[0]).toContain('a database that');
+  });
+
+  it('accepts a table present in every complete reading', () => {
+    const e = parseEvidence(
+      [
+        'a 1111111111111111',
+        'seq-listing complete',
+        'a 1111111111111111',
+        'seq-listing complete',
+      ].join('\n'),
+    );
+    expect(e.conflicts).toEqual([]);
+  });
+
+  it('says nothing about table sets when there is only one reading', () => {
+    // One output cannot disagree with itself about which tables exist.
+    const e = parseEvidence(['a 1111111111111111', 'seq-listing complete'].join('\n'));
+    expect(e.conflicts).toEqual([]);
+  });
+});

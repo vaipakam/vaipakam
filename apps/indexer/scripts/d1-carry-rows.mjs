@@ -1813,7 +1813,9 @@ export function parseEvidence(text) {
   // that listing gave it a value, and a disagreement across listings is
   // reported like any other.
   const listings = [];
+  const digestListings = [];
   let current = new Map();
+  let currentDigests = new Map();
   let sawAnyComplete = false;
   const mentioned = new Set();
 
@@ -1821,8 +1823,10 @@ export function parseEvidence(text) {
     const line = raw.trim();
     if (line.startsWith('seq-listing complete')) {
       listings.push(current);
+      digestListings.push(currentDigests);
       sawAnyComplete = true;
       current = new Map();
+      currentDigests = new Map();
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
@@ -1843,12 +1847,33 @@ export function parseEvidence(text) {
     const dig = /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})$/.exec(line);
     if (dig) {
       mentioned.add(dig[1]);
+      currentDigests.set(dig[1], dig[2]);
       put(digests, 'digest', dig[1], dig[2]);
     }
   }
   // Trailing entries with no completeness marker are a listing whose
   // absences say nothing, so they contribute values but no zeros.
   const trailing = current;
+
+  // A TABLE SET THAT CHANGED IS EVIDENCE TOO (#2281 r6). The sequence
+  // side learned this a round ago; the digest side had the same hole. A
+  // table created between two recorded runs is ABSENT from the first
+  // complete output and present in the second, which yields one digest,
+  // no disagreement, and a clean comparison — while the log itself
+  // records that the database gained a table in the window. Each
+  // complete output is one reading of the whole database, so the set of
+  // tables it names is part of what it says.
+  for (const table of mentioned) {
+    const seenIn = digestListings.filter((l) => l.has(table)).length;
+    if (digestListings.length > 1 && seenIn > 0 && seenIn < digestListings.length) {
+      conflicts.push(
+        `${table}: the evidence has ${digestListings.length} complete ` +
+          `readings and this table appears in ${seenIn} of them. A table ` +
+          `that comes or goes between readings is a database that ` +
+          `changed, whatever the digests say`,
+      );
+    }
+  }
 
   const seqs = new Map();
   for (const table of mentioned) {
@@ -2090,6 +2115,37 @@ async function takeManifest(db) {
           `${digestAtRead.get(table)} and now reads ${now}.\n\nA baseline ` +
           `assembled from a moving database describes no moment that ever ` +
           `existed. This is what a source that has NOT stopped looks like.`,
+      );
+    }
+  }
+
+  // AND ONE MORE SCHEMA READING, AFTER THE ROWS (#2281 r6).
+  //
+  // Every check above happens BEFORE its table's rows are re-read, so a
+  // migration that adds and populates a column in the gap between them
+  // still slips through: the row query projects `entry.cols`, which no
+  // longer describes the table, and its digest is unchanged precisely
+  // because the new column is not in it. Nothing later looks again.
+  //
+  // So the row reads are BRACKETED. A schema read before them and
+  // another after, both fresh, both required to agree with what was
+  // recorded — which is the same shape as the two-pass row read, applied
+  // to the thing the row read depends on.
+  await declarations(db.id, { fresh: true });
+  for (const [table, entry] of Object.entries(manifest)) {
+    const after = await shapeOf(db.id, table);
+    const ddlAfter = await declarationOf(db.id, table);
+    if (
+      ddlAfter !== ddlAtRead.get(table) ||
+      JSON.stringify(after.cols) !== JSON.stringify(entry.cols) ||
+      JSON.stringify(after.key) !== JSON.stringify(entry.key)
+    ) {
+      fail(
+        `"${table}" was REDECLARED after its rows were re-read.\n\nThe ` +
+          `rows above were selected over the columns recorded for this ` +
+          `table, so a column added and populated in that gap changes ` +
+          `neither the projection nor its digest — the baseline would ` +
+          `simply not contain it, permanently, while every check passed.`,
       );
     }
   }
