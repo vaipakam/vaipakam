@@ -283,6 +283,11 @@
         "name": "consumedRecycled",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "consumedBeyondCaps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

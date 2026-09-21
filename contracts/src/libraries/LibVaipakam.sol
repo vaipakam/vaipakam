@@ -7833,6 +7833,16 @@ library LibVaipakam {
         bool released;
         uint256 consumedFresh;
         uint256 consumedRecycled;
+        /// @dev #1566 transport epochs PR 3b-ii-A, appended (Codex #2276 r6).
+        ///      What the epoch's draws spent that an attestation, arriving
+        ///      after them, showed to lie OUTSIDE both of the packet's recorded
+        ///      component caps — the scaling residual the two floored figures
+        ///      leave, at most one unit. Neither leg may carry it (each leg
+        ///      stays within its cap), and it is not lost: the identity
+        ///      `admitted == balance + parked + debited + consumedFresh +
+        ///      consumedRecycled + consumedBeyondCaps` holds, and the
+        ///      close-out's disposition path is where the record is settled.
+        uint256 consumedBeyondCaps;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

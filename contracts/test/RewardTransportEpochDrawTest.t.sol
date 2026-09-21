@@ -206,7 +206,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     function _legs(bytes32 h) internal view returns (uint256 f, uint256 r) {
-        (f, r) = _epoch().getTransportBatchLegs(h);
+        (f, r, ) = _epoch().getTransportBatchLegs(h);
+    }
+
+    function _beyond(bytes32 h) internal view returns (uint256 b) {
+        (, , b) = _epoch().getTransportBatchLegs(h);
     }
 
     function _balance(bytes32 h) internal view returns (uint256 b) {
@@ -702,6 +706,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
             bytes32 h = _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("dust", i)));
             _mut().parkTransportBatchRaw(h);
         }
+        // Arrives after the husks, so it is ordered behind them (same-block
+        // arrivals would be ordered by batch id — Codex #2276 r6).
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         _epochOf(NEED, _one(1), 300, keccak256("funded"));
         assertEq(_cursor(1), 0, "fixture: the window starts at the husks");
         assertEq(_claim(), 0, "deferred on the window, not reverted");
@@ -741,21 +748,76 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(tr, 5e18, "recycled from the flexible one");
     }
 
-    /// @dev A scaling residual never strands a unit (Codex #2276 r5 P2): a
-    ///      1F/2R split lands on 1e18, floors to F + R = 1e18 - 1 wei, and an
-    ///      epoch that drew the whole 1e18 fresh re-types to exactly F fresh
-    ///      and (landed - F) recycled — the recycled bound is what landed net
-    ///      of the fresh cap, so the residual wei has a cap to fit.
-    function test_ALateAttestation_NeverStrandsTheScalingResidual() public {
+    /// @dev A scaling residual is never carried by a leg past its recorded
+    ///      cap (Codex #2276 r5 P2, r6 P1): a 1F/2R split lands on 1e18 and
+    ///      floors to F + R = 1e18 - 1 wei; an epoch that drew the whole 1e18
+    ///      fresh before the split was known re-types to exactly F fresh and
+    ///      R recycled, and the residual wei is recorded beyond both caps for
+    ///      the close-out's disposition path — the identity still holds.
+    function test_ALateAttestation_KeepsBothLegsWithinTheRecordedCaps() public {
         _scene(1e18);
         bytes32 h = _epochOf(1e18, _one(1), 21, keccak256("dust"));
         assertEq(_claim(), 1e18, "the whole epoch drawn fresh");
         _attest(21, 1, 2);
         uint256 f = uint256(1e18) / 3;
+        uint256 r = uint256(2e18) / 3;
+        assertEq(f + r, 1e18 - 1, "fixture: the floors leave one wei");
         (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lf, f, "the fresh leg fits the attested fresh");
-        assertEq(lr, 1e18 - f, "the rest is recycled, the residual wei included");
-        assertEq(lf + lr, 1e18, "nothing stranded");
+        assertEq(lf, f, "the fresh leg is the recorded fresh cap");
+        assertEq(lr, r, "the recycled leg is the recorded recycled cap");
+        assertEq(_beyond(h), 1, "the residual wei is recorded beyond both caps");
+        assertEq(lf + lr + _beyond(h), 1e18, "the identity holds");
+    }
+
+    /// @dev Coverage a leg's cap rejects goes to the other leg (Codex #2276
+    ///      r6 P1): a recycled-only epoch, a 5F/5R day, live fresh and bucket
+    ///      each covering their leg — the tie rule asks fresh, the epoch can
+    ///      pay none of it, and the allocation offers the coverage to recycled
+    ///      instead of leaving the epoch untouched.
+    function test_CapRejectedCoverage_GoesToTheOtherLeg() public {
+        _epochOf(5e18, _one(1), 51, keccak256("recycled-only"));
+        _attest(51, 0, 5e18);
+        (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, type(uint256).max, type(uint256).max, 5e18, 5e18);
+        assertEq(tf, 0, "the epoch cannot pay fresh");
+        assertEq(tr, 5e18, "so it pays the recycled leg, transport first");
+    }
+
+    /// @dev Same-block arrivals are ordered by batch id whoever materializes
+    ///      first (Codex #2276 r6 P1): two deliveries in one block, indexed in
+    ///      the order that would put the larger id first, still read in id
+    ///      order.
+    function test_TheIndex_BreaksSameBlockTies_ByBatchId() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 61, REMITTER, 0, 0, keccak256("x"), false);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 62, REMITTER, 0, 0, keccak256("y"), false);
+        bytes32 hx = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("x")));
+        bytes32 hy = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("y")));
+        (bytes32 lo, bytes32 hi) = hx < hy ? (hx, hy) : (hy, hx);
+        _epoch().materializeTransportBatchPage(hi, d1);
+        _epoch().materializeTransportBatchPage(lo, d1);
+        (bytes32[] memory page, , , ) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(page[0], lo, "the smaller id leads, whoever indexed first");
+        assertEq(page[1], hi);
+    }
+
+    /// @dev A materialization call indexes at least one day and stops its page
+    ///      once the arrival-order shifts exceed the work budget (Codex #2276
+    ///      r6 P2): an old two-day epoch indexed after 70 newer ones on each
+    ///      day takes two calls, each landing its day at the front.
+    function test_Materialization_ProgressesOneDayPerCall_UnderTheWorkBudget() public {
+        uint256[] memory both = _two(1, 2);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, both, CHAIN_BASE, 70, REMITTER, 0, 0, keccak256("old"), false);
+        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("old")));
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        for (uint256 i; i < 70; ++i) {
+            _epochOf(1, both, 100 + i, keccak256(abi.encode("newer", i)));
+        }
+        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 1, "the first call indexes one day and stops");
+        (bytes32[] memory p1, , , ) = _epoch().getTransportDayBatches(1, 0, 1);
+        assertEq(p1[0], hOld, "at the front of day 1");
+        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 2, "the second call indexes the other");
+        (bytes32[] memory p2, , , ) = _epoch().getTransportDayBatches(2, 0, 1);
+        assertEq(p2[0], hOld, "at the front of day 2");
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

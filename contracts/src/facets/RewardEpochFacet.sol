@@ -307,11 +307,14 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function getTransportBatchLegs(bytes32 batchId)
         external
         view
-        returns (uint256 consumedFresh, uint256 consumedRecycled)
+        returns (uint256 consumedFresh, uint256 consumedRecycled, uint256 consumedBeyondCaps)
     {
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
         if (!LibRewardCustody.transportBatchExists(b)) revert TransportBatchUnknown(batchId);
-        return (b.consumedFresh, b.consumedRecycled);
+        // The third figure (Codex #2276 r6): what a late attestation showed to
+        // lie outside both recorded caps — in the epoch's identity, in neither
+        // leg, for the close-out's disposition path.
+        return (b.consumedFresh, b.consumedRecycled, b.consumedBeyondCaps);
     }
 
     /// @notice A batch's parked remainder, and what has left it.

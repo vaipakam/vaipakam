@@ -67,8 +67,9 @@ before, and a shortfall of it still defers.
 Every draw is recorded on the epoch as a fresh leg and a recycled leg, so
 the ledger's conservation identity — what was admitted equals what is
 held, plus what was parked, plus what left by classification, plus what
-the legs paid — holds after every draw, and a delivery's attested fresh
-cap is netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
+the legs paid, plus what a late attestation showed to lie outside both
+caps — holds after every draw, and a delivery's attested fresh cap is
+netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
 within that component's remaining cap; where the split arrives after
 draws, the legs already drawn are re-typed so the caps hold, the epoch's
 total unchanged. A deferred settlement's cursor move is progress the
@@ -77,15 +78,21 @@ exhausted window twice. The residual leg of an epoch's coverage is chosen
 on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's index is kept in **arrival order** whoever indexes it — an epoch
-indexed late takes its place by arrival, never behind the day's cursor —
+indexed late takes its place by arrival, never behind the day's cursor,
+same-block arrivals in a fixed order by delivery identity, and the work
+one indexing call takes on is budgeted so indexing always progresses —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
 **fewest days first**, the oldest arrival on ties. Each leg is served
 first from the epochs least able to serve the other leg, so a flexible
-epoch is not spent on a leg a constrained one could have paid; the
-recycled bound of an attested epoch is what landed net of its fresh cap,
-so a scaling residual can never strand a unit outside both caps; and a
+epoch is not spent on a leg a constrained one could have paid, and
+coverage one leg's cap rejects is offered to the other leg; an attested
+epoch pays each leg only within that component's recorded cap, and the
+one unit a scaling residual can leave outside both caps is never drawn
+once the split is known — drawn before it was, it is recorded beyond
+both caps, inside the epoch's identity, for the close-out's disposition
+path; and a
 forfeit's or an expiry's recycled slice is a commitment release, not a
 funding pull, so it draws no epoch value — the epoch's coverage goes to
 the legs that need funding. An epoch that lists fewer days has fewer other

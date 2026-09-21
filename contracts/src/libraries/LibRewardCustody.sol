@@ -1035,6 +1035,11 @@ library LibRewardCustody {
     ///      attested component caps hold (Codex #2276 r4): the epoch's total is
     ///      unchanged, one leg fell and the other rose by the same amount.
     event TransportLegsRetyped(bytes32 indexed batchId, uint256 freshToRecycled, uint256 recycledToFresh);
+    /// @dev A split attested after draws showed `amount` of what was drawn to
+    ///      lie outside BOTH recorded component caps (the scaling residual);
+    ///      recorded on the batch for the close-out's disposition path rather
+    ///      than carried by a leg past its cap (Codex #2276 r6).
+    event TransportLegsBeyondCaps(bytes32 indexed batchId, uint256 amount);
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
     ///         split of a d2 remittance was attested for the packet that
     ///         delivered it, both caps scaled to what actually landed.
@@ -1304,6 +1309,13 @@ library LibRewardCustody {
     ///         draws nothing on such a day, so there is nothing to stage or
     ///         unwind; 3b-ii-B's staging is what makes a wider day progress.
     uint256 internal constant TRANSPORT_DRAW_SCAN_CAP = 64;
+    /// @dev The arrival-order insertion work one materialization call takes on
+    ///      before it stops its page early (Codex #2276 r6 P2): an epoch
+    ///      indexed after newer ones shifts them, and the shift is bounded by
+    ///      how many newer epochs the day lists — but a page of many such days
+    ///      multiplies it. A call always indexes at least one day, so progress
+    ///      is guaranteed; the budget bounds what one call adds beyond that.
+    uint256 internal constant TRANSPORT_INDEX_WORK_CAP = 64;
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
     ///         EPOCH: one untyped balance, spendable only by the obligations
@@ -1697,17 +1709,29 @@ library LibRewardCustody {
         // so a live epoch placed behind it would be invisible to every draw.
         // The shift is bounded by how many newer epochs a day already lists,
         // which prompt indexing keeps near zero.
+        // Same-block arrivals share `arrivedAt`, so the batch id — the
+        // delivery's own immutable stamp — breaks the tie (Codex #2276 r6 P1):
+        // the index is totally ordered by (arrival, batch id) whoever
+        // materializes and in whatever order. The work one call takes on is
+        // budgeted (r6 P2): after a day whose insertion shifted past the
+        // budget, the page stops there — a call always indexes at least one
+        // day, and the next call resumes from it.
         uint64 arrived = s.ingressPackets[batchId].arrivedAt;
+        uint256 work;
         for (uint256 i = done; i < end; ++i) {
             bytes32[] storage idx = s.transportBatchesByDay[dayIds[i]];
             uint256 j = idx.length;
             idx.push(batchId);
             uint256 floor_ = s.transportDayCursor[dayIds[i]];
-            while (j > floor_ && s.ingressPackets[idx[j - 1]].arrivedAt > arrived) {
-                idx[j] = idx[j - 1];
-                unchecked { --j; }
+            while (j > floor_) {
+                bytes32 prev = idx[j - 1];
+                uint64 prevAt = s.ingressPackets[prev].arrivedAt;
+                if (prevAt < arrived || (prevAt == arrived && prev < batchId)) break;
+                idx[j] = prev;
+                unchecked { --j; ++work; }
             }
             idx[j] = batchId;
+            if (work >= TRANSPORT_INDEX_WORK_CAP && i + 1 < end) end = i + 1;
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
@@ -2056,16 +2080,17 @@ library LibRewardCustody {
     }
 
     /// @dev An epoch's two leg rooms: the balance where its packet is
-    ///      unattested; where attested, each component's cap net of the
-    ///      packet's classification of that component, the epoch's own draws
-    ///      of it, and the overlay's planned draws of it — never above the
-    ///      balance. The RECYCLED cap is what landed net of the fresh cap, not
-    ///      the floored recycled figure (Codex #2276 r5 P2): the two attested
-    ///      figures are floored independently and can sum to one unit less
-    ///      than what landed, and a unit outside both caps could be drawn and
-    ///      then fit neither at reconciliation. The evidence rule's direction
-    ///      decides where the residual counts: absent evidence, value is
-    ///      recycled.
+    ///      unattested; where attested, each component's RECORDED cap net of
+    ///      the packet's classification of that component, the epoch's own
+    ///      draws of it, and the overlay's planned draws of it — never above
+    ///      the balance. The two attested figures are floored independently
+    ///      and can sum to one unit less than what landed; that unit fits
+    ///      neither room and is never drawn once the split is known — it stays
+    ///      in the balance for the close-out's disposition path (Codex #2276
+    ///      r6 P1: round 5 redefined the recycled cap as what landed net of
+    ///      the fresh cap, which let a draw exceed the source-recorded cap;
+    ///      the ratified rule keeps both recorded caps and routes the excess
+    ///      through the disposition path).
     function _capRooms(
         LibVaipakam.Storage storage s,
         bytes32 id,
@@ -2079,8 +2104,7 @@ library LibRewardCustody {
         uint256 usedF = p.classifiedFresh + b.consumedFresh + ovF;
         uint256 usedR = p.classifiedRecycled + b.consumedRecycled + ovR;
         fr = p.freshAttested > usedF ? p.freshAttested - usedF : 0;
-        uint256 rCap = p.actualReceived > p.freshAttested ? p.actualReceived - p.freshAttested : 0;
-        rr = rCap > usedR ? rCap - usedR : 0;
+        rr = p.recycledAttested > usedR ? p.recycledAttested - usedR : 0;
         if (fr > bal) fr = bal;
         if (rr > bal) rr = bal;
     }
@@ -2246,6 +2270,21 @@ library LibRewardCustody {
         // a leg short, the covered legs are what the split could assign, and
         // the settle wrapper re-derives exactly these legs from the same plan.
         TransportTakes memory t = splitTransportTakes(plan, tf, tr);
+        // Coverage a leg's caps rejected is offered to the OTHER leg, up to
+        // its need (Codex #2276 r6 P1): a recycled-only epoch asked for fresh
+        // by the tie rule paid nothing and left the shared sources to pay both
+        // legs — the transport-first order inverted. The split is idempotent
+        // on its result, so re-asking for the covered leg and more of the
+        // other reproduces the first assignment and extends it.
+        if (t.coveredFresh < tf) {
+            uint256 tr2 = tr + (tf - t.coveredFresh);
+            if (tr2 > q.needRecycled) tr2 = q.needRecycled;
+            if (tr2 > tr) t = splitTransportTakes(plan, t.coveredFresh, tr2);
+        } else if (t.coveredRecycled < tr) {
+            uint256 tf2 = tf + (tr - t.coveredRecycled);
+            if (tf2 > needFresh) tf2 = needFresh;
+            if (tf2 > tf) t = splitTransportTakes(plan, tf2, t.coveredRecycled);
+        }
         r.transportFresh = t.coveredFresh;
         r.transportRecycled = t.coveredRecycled;
         r.planIds = plan.ids;
@@ -2581,29 +2620,37 @@ library LibRewardCustody {
         // bound them. Now that the caps are known, a leg past its cap is
         // re-typed into the other — the epoch's total and every settled
         // obligation unchanged — so `classifiedFresh + consumedFresh` never
-        // exceeds `freshAttested` (nor the recycled pair its cap), and the
-        // classification allowance {authenticatedFresh} derives is the cap net
-        // of the packet's REAL fresh use. Classification cannot have run yet
-        // (it needs the attestation), so only the transport legs can exceed,
-        // and at most one of them can: the recycled cap is what landed net of
-        // the fresh cap (Codex #2276 r5 P2 — the two floored figures can sum
-        // to a unit less than what landed, and that unit must have a cap to
-        // fit), so the two caps sum to exactly what landed and the legs, which
-        // sum to at most that, always fit after one move.
+        // exceeds `freshAttested` and `classifiedRecycled + consumedRecycled`
+        // never exceeds `recycledAttested`, and the classification allowance
+        // {authenticatedFresh} derives is the cap net of the packet's REAL
+        // fresh use. Classification cannot have run yet (it needs the
+        // attestation), so only the transport legs can exceed. Both caps are
+        // the source's RECORDED figures (Codex #2276 r6 P1): they are floored
+        // independently and can sum to a unit less than what landed, so what
+        // was drawn can exceed both together by that residual; the residual
+        // is moved to `consumedBeyondCaps` — outside both legs, inside the
+        // epoch's identity — for the close-out's disposition path.
         if (p.batchId != bytes32(0)) {
             LibVaipakam.TransportBatch storage b = s.transportBatches[p.batchId];
-            uint256 rCap = actual > freshAttested ? actual - freshAttested : 0;
+            uint256 toR;
+            uint256 toF;
             if (b.consumedFresh > freshAttested) {
-                uint256 x = b.consumedFresh - freshAttested;
-                b.consumedFresh -= x;
-                b.consumedRecycled += x;
-                emit TransportLegsRetyped(p.batchId, x, 0);
-            } else if (b.consumedRecycled > rCap) {
-                uint256 x = b.consumedRecycled - rCap;
-                b.consumedRecycled -= x;
-                b.consumedFresh += x;
-                emit TransportLegsRetyped(p.batchId, 0, x);
+                toR = b.consumedFresh - freshAttested;
+                b.consumedFresh = freshAttested;
+                b.consumedRecycled += toR;
             }
+            if (b.consumedRecycled > recycledAttested) {
+                uint256 y = b.consumedRecycled - recycledAttested;
+                b.consumedRecycled = recycledAttested;
+                uint256 room = freshAttested - b.consumedFresh;
+                toF = y < room ? y : room;
+                b.consumedFresh += toF;
+                if (y > toF) {
+                    b.consumedBeyondCaps += y - toF;
+                    emit TransportLegsBeyondCaps(p.batchId, y - toF);
+                }
+            }
+            if (toR + toF != 0) emit TransportLegsRetyped(p.batchId, toR, toF);
         }
     }
 

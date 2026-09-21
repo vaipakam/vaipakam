@@ -254,9 +254,9 @@ contract RewardCustodyInvariant is SetupTest {
             (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
             (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
-            (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
+            (uint256 legFresh, uint256 legRecycled, uint256 beyond) = ep.getTransportBatchLegs(h);
             assertEq(
-                balance + parked + debited + legFresh + legRecycled,
+                balance + parked + debited + legFresh + legRecycled + beyond,
                 admitted,
                 "transport epoch conserves"
             );
