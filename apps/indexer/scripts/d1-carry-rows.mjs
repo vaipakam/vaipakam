@@ -737,6 +737,17 @@ const CREDENTIAL_KEY_COLUMNS = new Map([
  * columns. For `telegram_links` it was worth little anyway — the code is
  * live for ten minutes, so a conflict that survives to the next
  * reconciliation is a conflict about an expired credential.
+ *
+ * THE PLATFORM ALREADY HAD THIS RIGHT, which is the part worth carrying
+ * forward: `apps/agent/src/diagHash.ts` pseudonymises wallets as
+ * `HMAC(wallet, DIAG_WALLET_HMAC_KEY)`, under a Secrets Store secret,
+ * for the same reason. This tool reinvented a weaker version of an
+ * existing convention rather than looking for it.
+ *
+ * The one difference is deliberate. That key is long-lived because the
+ * platform must match a pseudonym to the same wallet across requests;
+ * this one is per-run because nothing here needs to, and a key that
+ * never persists cannot leak from anywhere it is stored.
  */
 const RUN_FINGERPRINT_KEY = randomBytes(32);
 
