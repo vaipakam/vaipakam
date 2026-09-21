@@ -1776,7 +1776,6 @@ export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
  */
 export function parseEvidence(text) {
   const digests = new Map();
-  const seqs = new Map();
   // A RUN LOG HOLDS SEVERAL READINGS, AND THEY MAY DISAGREE (#2281 r4).
   // The documented barrier takes two digests ten minutes apart and a
   // third after the carry, so pasting the log in means repeated table
@@ -1799,24 +1798,92 @@ export function parseEvidence(text) {
     }
     map.set(table, value);
   };
-  let seqListingComplete = false;
+
+  // SEQUENCES ARE READ PER LISTING, NOT GLOBALLY (#2281 r5). A table
+  // that has never allocated has no line at all, so absence inside a
+  // listing that declares itself COMPLETE is a known zero. Flattening
+  // every reading into one map destroys exactly that fact: a first
+  // complete listing with no line for `t`, then a later one with
+  // `seq t 1`, is a log PROVING an allocation happened — and it parsed
+  // as the single value 1, with nothing to conflict against, so a
+  // reconstruction sitting at 1 sailed through.
+  //
+  // Each `seq-listing complete` closes a listing. Within a closed one,
+  // every table the evidence mentions anywhere is read as zero unless
+  // that listing gave it a value, and a disagreement across listings is
+  // reported like any other.
+  const listings = [];
+  let current = new Map();
+  let sawAnyComplete = false;
+  const mentioned = new Set();
+
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (line.startsWith('seq-listing complete')) {
-      seqListingComplete = true;
+      listings.push(current);
+      sawAnyComplete = true;
+      current = new Map();
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
     if (seq) {
-      put(seqs, 'sequence', seq[1], Number(seq[2]));
+      mentioned.add(seq[1]);
+      const had = current.get(seq[1]);
+      if (had !== undefined && had !== Number(seq[2])) {
+        conflicts.push(
+          `${seq[1]}: one sequence listing gives it twice, as ${had} and ` +
+            `${seq[2]}`,
+        );
+      }
+      current.set(seq[1], Number(seq[2]));
       continue;
     }
     // `<table> [rowcount] <16-hex>` — the digest command prints a count
     // between them, and a hand-kept note may not.
     const dig = /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})$/.exec(line);
-    if (dig) put(digests, 'digest', dig[1], dig[2]);
+    if (dig) {
+      mentioned.add(dig[1]);
+      put(digests, 'digest', dig[1], dig[2]);
+    }
   }
-  return { digests, seqs, seqListingComplete, conflicts };
+  // Trailing entries with no completeness marker are a listing whose
+  // absences say nothing, so they contribute values but no zeros.
+  const trailing = current;
+
+  const seqs = new Map();
+  for (const table of mentioned) {
+    let agreed;
+    for (const listing of listings) {
+      // Inside a COMPLETE listing, no line means zero.
+      const value = listing.has(table) ? listing.get(table) : 0;
+      if (agreed === undefined) {
+        agreed = value;
+      } else if (agreed !== value) {
+        conflicts.push(
+          `${table}: the evidence gives two different sequence readings — ` +
+            `${agreed} and ${value}. Something allocated between them, so ` +
+            `neither can stand for the mirror on its own`,
+        );
+        agreed = undefined;
+        break;
+      }
+    }
+    if (trailing.has(table)) {
+      const value = trailing.get(table);
+      if (agreed === undefined && listings.length === 0) agreed = value;
+      else if (agreed !== undefined && agreed !== value) {
+        conflicts.push(
+          `${table}: the evidence gives two different sequence readings — ` +
+            `${agreed} and ${value}. Something allocated between them, so ` +
+            `neither can stand for the mirror on its own`,
+        );
+        agreed = undefined;
+      }
+    }
+    if (agreed !== undefined) seqs.set(table, agreed);
+  }
+
+  return { digests, seqs, seqListingComplete: sawAnyComplete, conflicts };
 }
 
 /**
@@ -1878,7 +1945,12 @@ export function coverageProblems(tables, evidence) {
       );
     }
   }
-  for (const table of evidence.digests.keys()) {
+  // BOTH MAPS, NOT JUST THE DIGESTS (#2281 r5). A `seq <table> <n>` line
+  // for a table the baseline does not contain is the evidence itself
+  // saying the mirror held state this reconstruction does not represent
+  // — and checking only the digest side let that pass. At the limit an
+  // empty baseline plus one sequence line produced no findings at all.
+  for (const table of new Set([...evidence.digests.keys(), ...evidence.seqs.keys()])) {
     if (!(table in tables)) {
       problems.push(`${table}: the evidence names it and this baseline does not`);
     }

@@ -1948,8 +1948,56 @@ describe('a run log holds several readings, and they may disagree', () => {
     expect(problems.some((p: string) => p.includes('two different digest readings'))).toBe(true);
   });
 
-  it('refuses disagreeing sequence readings the same way', () => {
+  it('refuses disagreeing sequence readings inside one listing', () => {
     const e = parseEvidence(['seq t 46', 'seq t 47', 'seq-listing complete'].join('\n'));
+    expect(e.conflicts[0]).toContain('one sequence listing gives it twice');
+  });
+
+  it('refuses disagreeing sequence readings ACROSS listings', () => {
+    const e = parseEvidence(
+      [
+        't 1111111111111111',
+        'seq t 46',
+        'seq-listing complete',
+        't 1111111111111111',
+        'seq t 47',
+        'seq-listing complete',
+      ].join('\n'),
+    );
     expect(e.conflicts[0]).toContain('two different sequence readings');
+    expect(e.seqs.has('t')).toBe(false);
+  });
+
+  it('reads an absence in a COMPLETE listing as zero, and a later value as a conflict', () => {
+    // THE CASE A GLOBAL FLAG DESTROYED (#2281 r5). A first complete
+    // listing with no line for `t` says its sequence is zero. A later
+    // listing saying `seq t 1` is the log PROVING an allocation
+    // happened in between. Flattened into one map that parsed as the
+    // single value 1, with nothing to disagree with — so a
+    // reconstruction sitting at 1 passed, on evidence that contained
+    // the proof it should not.
+    const e = parseEvidence(
+      [
+        't 1111111111111111',
+        'seq-listing complete',
+        't 1111111111111111',
+        'seq t 1',
+        'seq-listing complete',
+      ].join('\n'),
+    );
+    expect(e.conflicts).toHaveLength(1);
+    expect(e.conflicts[0]).toContain('Something allocated between them');
+    expect(coverageProblems({ t: entry('1111111111111111', 1) }, e).length).toBeGreaterThan(0);
+  });
+
+  it('refuses a table the evidence knows about and the baseline does not, by sequence alone', () => {
+    // The digest line may simply be missing from a cropped paste. A
+    // sequence line still says the mirror held state this
+    // reconstruction does not represent — and checking only the digest
+    // side let an empty baseline pass with no findings at all.
+    const e = parseEvidence(['seq t 1', 'seq-listing complete'].join('\n'));
+    const problems = coverageProblems({}, e);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.some((p: string) => p.includes('this baseline does not'))).toBe(true);
   });
 });
