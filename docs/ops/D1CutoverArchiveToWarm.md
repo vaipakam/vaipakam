@@ -187,6 +187,36 @@ because step 3 below is the part of it that had to be re-learned.
       > they all say `vaipakam-warm` and they would too, but by then the
       > switch has already happened and the barrier is pointless.
       >
+      > **THE BARRIER COMMIT CARRIES THE GUARD THAT PERMITS IT.** This is
+      > the part that is easy to get wrong, because it is circular and the
+      > failure lands in the window. The two-shape
+      > `check-d1-name-consistency` described below ships in the cutover
+      > PR — which merges LAST — so a barrier commit cut from the `main`
+      > that exists before it meets the OLD, anchored guard and is
+      > rejected: *"apps/indexer/wrangler.jsonc has no complete `DB` d1
+      > binding … there is nothing to check against."* Verified against
+      > `6c0c0125a`. So the barrier commit contains BOTH the config strip
+      > and the guard rewrite, minus the `SUCCESSOR` generator entry,
+      > which names a file that branch does not have. Verified in a
+      > worktree cut from `main`:
+      >
+      > ```
+      > CUTOVER BARRIER — all 3 writers declare no D1 binding
+      > OK — vaipakam-archive agreed by 1 of 4 bindings (writers held),
+      >      43 `wrangler d1` command(s), 1 generator constant(s)   exit 0
+      > check-keep-vars / migration-prefixes / table-classification   OK
+      > ```
+      >
+      > The cutover PR then carries the same guard rewrite, so expect to
+      > resolve that file when bringing it up to date after the barrier
+      > merges. That is a textual conflict in one file, not a rethink.
+      >
+      > **The carry tool does NOT need to be on `main` for any of this.**
+      > It runs from the cutover PR's checkout throughout, and since both
+      > its endpoints are pinned constants it reads nothing from the tree
+      > it runs in — which is exactly why that dependency was removed
+      > (#2267 r22). No worktree to pin, no checkout to keep unsynced.
+      >
       > **`check-d1-name-consistency` permits exactly this shape and only
       > this shape** (#2267 r21). It used to anchor on the indexer's
       > binding as the single declaration, which made the barrier
