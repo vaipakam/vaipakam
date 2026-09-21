@@ -1916,3 +1916,40 @@ describe('coverage is checked, not asserted', () => {
     expect(coverageProblems(tables, evidence)[0]).toContain('records no digest');
   });
 });
+
+describe('a run log holds several readings, and they may disagree', () => {
+  // The documented barrier takes two digests ten minutes apart and a
+  // third after the carry, so pasting the log into --expect means
+  // repeated table names. Taking the LAST silently prefers the reading
+  // that agrees with the reconstruction — backwards, when a straggler
+  // changed a row during the mirror: the earlier reading differs, the
+  // later one matches, and coverage would be granted over the top of the
+  // recorded disagreement (#2281 r4).
+  const entry = (digest: string, seq: number) =>
+    manifestEntry({ key: ['id'], cols: ['id'], seq, rows: {}, digest });
+
+  it('accepts identical repeats, which is what a clean barrier produces', () => {
+    const e = parseEvidence(
+      ['t 1111111111111111', 't 1111111111111111', 'seq-listing complete'].join('\n'),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(coverageProblems({ t: entry('1111111111111111', 0) }, e)).toEqual([]);
+  });
+
+  it('refuses when two readings of the same table disagree', () => {
+    const e = parseEvidence(
+      ['t 1111111111111111', 't 2222222222222222', 'seq-listing complete'].join('\n'),
+    );
+    expect(e.conflicts).toHaveLength(1);
+    expect(e.conflicts[0]).toContain('two different digest readings');
+    // And it refuses even against the reading that WOULD have matched —
+    // which is the whole point: the disagreement is itself evidence.
+    const problems = coverageProblems({ t: entry('2222222222222222', 0) }, e);
+    expect(problems.some((p: string) => p.includes('two different digest readings'))).toBe(true);
+  });
+
+  it('refuses disagreeing sequence readings the same way', () => {
+    const e = parseEvidence(['seq t 46', 'seq t 47', 'seq-listing complete'].join('\n'));
+    expect(e.conflicts[0]).toContain('two different sequence readings');
+  });
+});

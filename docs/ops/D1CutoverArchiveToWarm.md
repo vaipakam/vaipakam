@@ -526,19 +526,27 @@ because step 3 below is the part of it that had to be re-learned.
       > run treats it as original and can never report it. The check is
       > not weakened; it is turned against itself.
       >
-      > What could substantiate the claim is evidence recorded **at** the
+      > What substantiates the claim is evidence recorded **at** the
       > mirror — the digests step 2 took, and the post-carry reading in
-      > step 4 — compared with what this reading finds. The tool cannot
-      > make that comparison, because the evidence is in the run log. So
-      > it requires `--stands-for` and writes the statement **into the
-      > artifact**, where a reader has it even if the log is elsewhere;
-      > `reconcile` then says "RECONSTRUCTED baseline" and repeats the
-      > claim rather than calling it "the mirror".
+      > step 4 — compared with what this reading finds.
       >
-      > If the evidence exists, name it. If it does not, say that —
-      > `--stands-for "archive as of this reading only; the interval
-      > since the mirror is NOT covered"`. A baseline that admits an
-      > uncovered interval is usable with care; one that hides it is not.
+      > **Two verbs, and only one of them can decide this** (#2281 r4, an
+      > earlier draft said flatly that "the tool cannot make that
+      > comparison", which contradicted the `cover` command printed
+      > above it). `manifest` cannot: it reads the database as it is now
+      > and has no access to anything recorded earlier, so it writes the
+      > baseline UNCOVERED and takes `--stands-for` only as a statement
+      > for a human reader, carried **in the artifact** rather than in a
+      > log that can be separated from it. `cover` can, and does: it is
+      > handed the mirror-time evidence and machine-checks it against the
+      > readings the artifact recorded, table by table, on both the
+      > digest and the sequence.
+      >
+      > So `--stands-for` is not the coverage decision and never was —
+      > it says which moment a reader should understand this baseline to
+      > be about. `reconcile` prints it, along with `RECONSTRUCTED
+      > baseline` and the coverage verdict, rather than calling any of it
+      > "the mirror".
       >
       > **[run] 2026-09-21** — taken from archive after the cutover and
       > compared against the manifest the mirror wrote at 19:56: 43

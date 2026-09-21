@@ -1777,6 +1777,28 @@ export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
 export function parseEvidence(text) {
   const digests = new Map();
   const seqs = new Map();
+  // A RUN LOG HOLDS SEVERAL READINGS, AND THEY MAY DISAGREE (#2281 r4).
+  // The documented barrier takes two digests ten minutes apart and a
+  // third after the carry, so pasting the log in means repeated table
+  // names. Taking the LAST silently prefers the reading that agrees with
+  // the reconstruction — which is precisely backwards when a straggler
+  // changed a row during the mirror: the earlier reading differs, the
+  // later one matches, and coverage would be granted over the top of the
+  // recorded disagreement. Identical repeats are fine and expected; a
+  // disagreement is evidence in itself and is kept as one.
+  const conflicts = [];
+  const put = (map, kind, table, value) => {
+    const had = map.get(table);
+    if (had !== undefined && had !== value) {
+      conflicts.push(
+        `${table}: the evidence gives two different ${kind} readings — ` +
+          `${had} and ${value}. Something changed between them, so ` +
+          `neither can stand for the mirror on its own`,
+      );
+      return;
+    }
+    map.set(table, value);
+  };
   let seqListingComplete = false;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -1786,15 +1808,15 @@ export function parseEvidence(text) {
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
     if (seq) {
-      seqs.set(seq[1], Number(seq[2]));
+      put(seqs, 'sequence', seq[1], Number(seq[2]));
       continue;
     }
     // `<table> [rowcount] <16-hex>` — the digest command prints a count
     // between them, and a hand-kept note may not.
     const dig = /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})$/.exec(line);
-    if (dig) digests.set(dig[1], dig[2]);
+    if (dig) put(digests, 'digest', dig[1], dig[2]);
   }
-  return { digests, seqs, seqListingComplete };
+  return { digests, seqs, seqListingComplete, conflicts };
 }
 
 /**
@@ -1815,7 +1837,9 @@ export function parseEvidence(text) {
  * Exported for `test/d1Reconcile.test.ts`.
  */
 export function coverageProblems(tables, evidence) {
-  const problems = [];
+  // A disagreement inside the evidence is reported before anything is
+  // compared against it: there is no single reading to compare with.
+  const problems = [...(evidence.conflicts ?? [])];
   for (const [table, entry] of Object.entries(tables)) {
     const expectedDigest = evidence.digests.get(table);
     if (expectedDigest === undefined) {
@@ -1953,6 +1977,28 @@ async function takeManifest(db) {
     );
   }
   for (const [table, entry] of Object.entries(manifest)) {
+    // THE COLUMNS TOO, because the first pass can be internally mixed
+    // (#2281 r4). `shapeOf` reads `PRAGMA table_info` and the
+    // declaration separately; a migration committing between them gives
+    // an entry with the OLD columns and the NEW declaration. The
+    // declaration then compares equal here, and the rows are re-read
+    // through those same old columns, so both checks pass while a newly
+    // added and populated column is omitted from the baseline forever.
+    const shapeNow = await shapeOf(db.id, table);
+    if (
+      JSON.stringify(shapeNow.cols) !== JSON.stringify(entry.cols) ||
+      JSON.stringify(shapeNow.key) !== JSON.stringify(entry.key)
+    ) {
+      fail(
+        `"${table}" changed COLUMNS or KEY while this manifest was being ` +
+          `taken.\n      recorded: cols ${entry.cols.join(', ')} | key ` +
+          `${entry.key.join(', ')}\n      now:      cols ` +
+          `${shapeNow.cols.join(', ')} | key ${shapeNow.key.join(', ')}\n\n` +
+          `A baseline built from one reading's columns and another's ` +
+          `contents describes no moment that ever existed, and a column ` +
+          `added in that window would be absent from it permanently.`,
+      );
+    }
     const ddlNow = await declarationOf(db.id, table);
     if (ddlNow !== ddlAtRead.get(table)) {
       fail(
@@ -2991,6 +3037,94 @@ function parseArgs(argv, { flags, switches }) {
 async function main() {
   const [mode, ...rest] = process.argv.slice(2);
 
+  // `cover` RUNS BEFORE THE CREDENTIAL CHECK, because it touches no
+  // database (#2281 r4). It reads a manifest and an evidence file, both
+  // local, and rewrites the manifest. Requiring an API token to do that
+  // would block the recovery promotion for exactly the operator this
+  // path exists for: someone holding the retained artifacts, later, in a
+  // session with no live access.
+  if (mode === 'cover') {
+    const opts = parseArgs(rest, {
+      flags: ['--manifest', '--expect'],
+      switches: [],
+    });
+    const path = opts['--manifest'];
+    const expect = opts['--expect'];
+    if (!path || !expect) {
+      fail(`cover needs --manifest <path> and --expect <path>\n\n${USAGE}`);
+    }
+    let doc;
+    try {
+      doc = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (err) {
+      fail(`could not read the manifest at ${path} — ${err.message}`);
+    }
+    const prov = doc?.provenance ?? {};
+    if (prov.producer === 'carry --mirror') {
+      fail(
+        `${path} was written by the mirror. It observed the moment it ` +
+          `describes, so there is no interval to cover and nothing here ` +
+          `to promote.`,
+      );
+    }
+    if (prov.interval === 'covered') {
+      fail(`${path} is already marked covered.`);
+    }
+    const evidence = parseEvidence(readFileSync(expect, 'utf8'));
+    if (evidence.digests.size === 0 && evidence.seqs.size === 0) {
+      fail(
+        `nothing usable was found in ${expect}. It should hold what was ` +
+          `recorded AT the mirror: lines of "<table> <digest>" — the ` +
+          `digest command's own output pastes in as-is — and lines of ` +
+          `"seq <table> <n>" for the allocation high-water marks.`,
+      );
+    }
+    const problems = coverageProblems(doc.tables ?? {}, evidence);
+    if (problems.length > 0) {
+      // NOT `reportProblems`, whose trailer explains digests, refusals
+      // and conflicts against a DESTINATION — the carry's vocabulary,
+      // and none of it true here. Borrowing it would have this command
+      // say things it does not mean, which is the defect this whole PR
+      // keeps being about.
+      console.error(`\n[d1-carry-rows] coverage REFUSED — ${problems.length} problem(s):`);
+      for (const line of problems) console.error(`  - ${line}`);
+      console.error(
+        `\n${path} is UNCHANGED and remains uncovered. Coverage is the ` +
+          `claim that this reconstruction equals what the mirror saw; the ` +
+          `evidence above does not support it, so the claim is not ` +
+          `recorded.\n\nA baseline that stays uncovered is still useful ` +
+          `for finding NEW differences. What it must not do is license ` +
+          `the rollback's reverse mirror.\n`,
+      );
+      process.exit(1);
+    }
+    // Promoted only here, with the comparison that licenses it recorded
+    // alongside — so the artifact says what was checked, not merely that
+    // something was.
+    doc.provenance = {
+      ...prov,
+      interval: 'covered',
+      coveredAt: new Date().toISOString(),
+      coveredBy: `${Object.keys(doc.tables ?? {}).length} table(s) matched ` +
+        `on digest and sequence against ${expect}`,
+    };
+    writeFileSync(`${path}.tmp-${process.pid}`, `${JSON.stringify(doc, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    chmodSync(`${path}.tmp-${process.pid}`, 0o600);
+    renameSync(`${path}.tmp-${process.pid}`, path);
+    console.log(
+      `${path} is now COVERED: every table in it matches ${expect} on ` +
+        `both the content digest and the allocation high-water mark.\n\n` +
+        `That is what licenses the rollback's reverse mirror. Record in ` +
+        `the run log where the evidence came from — this artifact now ` +
+        `says WHAT was compared, and only you know where it was written ` +
+        `down.`,
+    );
+    return;
+  }
+
+
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
   }
@@ -3186,87 +3320,6 @@ async function main() {
         `compares them with the readings in the artifact and promotes it ` +
         `only on exact agreement. An assertion made here instead would be ` +
         `made before the evidence existed.`,
-    );
-    return;
-  }
-
-  if (mode === 'cover') {
-    const opts = parseArgs(rest, {
-      flags: ['--manifest', '--expect'],
-      switches: [],
-    });
-    const path = opts['--manifest'];
-    const expect = opts['--expect'];
-    if (!path || !expect) {
-      fail(`cover needs --manifest <path> and --expect <path>\n\n${USAGE}`);
-    }
-    let doc;
-    try {
-      doc = JSON.parse(readFileSync(path, 'utf8'));
-    } catch (err) {
-      fail(`could not read the manifest at ${path} — ${err.message}`);
-    }
-    const prov = doc?.provenance ?? {};
-    if (prov.producer === 'carry --mirror') {
-      fail(
-        `${path} was written by the mirror. It observed the moment it ` +
-          `describes, so there is no interval to cover and nothing here ` +
-          `to promote.`,
-      );
-    }
-    if (prov.interval === 'covered') {
-      fail(`${path} is already marked covered.`);
-    }
-    const evidence = parseEvidence(readFileSync(expect, 'utf8'));
-    if (evidence.digests.size === 0 && evidence.seqs.size === 0) {
-      fail(
-        `nothing usable was found in ${expect}. It should hold what was ` +
-          `recorded AT the mirror: lines of "<table> <digest>" — the ` +
-          `digest command's own output pastes in as-is — and lines of ` +
-          `"seq <table> <n>" for the allocation high-water marks.`,
-      );
-    }
-    const problems = coverageProblems(doc.tables ?? {}, evidence);
-    if (problems.length > 0) {
-      // NOT `reportProblems`, whose trailer explains digests, refusals
-      // and conflicts against a DESTINATION — the carry's vocabulary,
-      // and none of it true here. Borrowing it would have this command
-      // say things it does not mean, which is the defect this whole PR
-      // keeps being about.
-      console.error(`\n[d1-carry-rows] coverage REFUSED — ${problems.length} problem(s):`);
-      for (const line of problems) console.error(`  - ${line}`);
-      console.error(
-        `\n${path} is UNCHANGED and remains uncovered. Coverage is the ` +
-          `claim that this reconstruction equals what the mirror saw; the ` +
-          `evidence above does not support it, so the claim is not ` +
-          `recorded.\n\nA baseline that stays uncovered is still useful ` +
-          `for finding NEW differences. What it must not do is license ` +
-          `the rollback's reverse mirror.\n`,
-      );
-      process.exit(1);
-    }
-    // Promoted only here, with the comparison that licenses it recorded
-    // alongside — so the artifact says what was checked, not merely that
-    // something was.
-    doc.provenance = {
-      ...prov,
-      interval: 'covered',
-      coveredAt: new Date().toISOString(),
-      coveredBy: `${Object.keys(doc.tables ?? {}).length} table(s) matched ` +
-        `on digest and sequence against ${expect}`,
-    };
-    writeFileSync(`${path}.tmp-${process.pid}`, `${JSON.stringify(doc, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    chmodSync(`${path}.tmp-${process.pid}`, 0o600);
-    renameSync(`${path}.tmp-${process.pid}`, path);
-    console.log(
-      `${path} is now COVERED: every table in it matches ${expect} on ` +
-        `both the content digest and the allocation high-water mark.\n\n` +
-        `That is what licenses the rollback's reverse mirror. Record in ` +
-        `the run log where the evidence came from — this artifact now ` +
-        `says WHAT was compared, and only you know where it was written ` +
-        `down.`,
     );
     return;
   }
