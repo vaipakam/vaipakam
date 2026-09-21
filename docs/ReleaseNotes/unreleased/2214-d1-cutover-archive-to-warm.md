@@ -4,14 +4,27 @@ The platform's three background services and its nightly backup all read one
 shared database. That database has been replaced with a different one. Nothing
 a user can see changes; what changes is which database is behind it.
 
-**The move had to be simultaneous, and a guard in the repository is what made
-it so.** The database is named in four service configurations, in forty-three
-operator commands spread across runbooks and deploy scripts, and in one script
-that builds its command rather than spelling it out. A move that reached the
-configurations but not the commands would leave a person applying schema
-changes to a database nothing reads — and both halves would look correct on
-their own. The guard refuses any state where those disagree, so the change
-could not be done in pieces even if somebody wanted to.
+**Every written reference to the database moves together, and a guard in the
+repository is what enforces that.** The database is named in four service
+configurations, in forty-three operator commands spread across runbooks and
+deploy scripts, and in one script that builds its command rather than spelling
+it out. A move that reached the configurations but not the commands would leave
+a person applying schema changes to a database nothing reads — and both halves
+would look correct on their own. The guard refuses any state where those
+disagree.
+
+**That is a guarantee about the written record, not about the running
+system**, and the distinction is the whole reason the rest of this note
+exists. The services deploy independently, so production necessarily passes
+through a state where some have moved and others have not, and a failed build
+can leave it there. Nothing in a repository can prevent that. What makes the
+live move safe is stopping the writers and then checking every service's
+actual binding afterwards — described below — and this note previously
+credited the guard with a safety it does not provide.
+
+The guard did earn something concrete here: it refused to let the retired
+database be exempted from its own check, which surfaced a rollout instruction
+still telling operators to apply migrations to it.
 
 **The new database was four schema changes behind and missing two tables.**
 Those were applied through the ordinary migration tool rather than by running
@@ -57,9 +70,27 @@ updates rows in place, which triggers no cascade, does not depend on the order
 tables happen to be named in, and can be run twice safely. The second run
 restored the lost row and every table then matched.
 
-The copy reported success both times. The only thing that caught it was
-comparing row counts on both sides afterwards, which is why that comparison is
-recorded here as part of the procedure rather than as a precaution someone took.
+The copy reported success both times. What caught it was comparing the number
+of rows on each side — which is how the missing row came to light, and is
+**not** the check the procedure now requires. Equal counts are exactly what the
+two tables described above had while holding different values, so a count can
+let a copy pass with the right number of wrong rows. The required check is the
+comparison of contents; the count is recorded here because it is how this was
+found, not because it is what to do.
+
+**And the copy itself is now a checked-in tool rather than a terminal
+session.** The first one was improvised — which tables, which key identifies a
+row, how many rows to send at once, and how to check afterwards all existed
+only in the operator's head — and it is the improvised copy that lost the row.
+Since the move requires running the copy again once the services stop, a step
+that cannot be repeated identically is a step that cannot be verified. The tool
+carries the three lessons as properties rather than instructions: it updates
+rows in place instead of replacing them, it compares contents rather than
+counts, and it has no setting that would let it write to the database being
+left behind — the destination is read from the services' own configuration.
+A table it cannot copy safely, because nothing identifies a row uniquely, is
+named and left alone rather than copied in a way that would duplicate on a
+second run.
 
 ### A previous decision was reversed, and is recorded as reversed
 
@@ -97,10 +128,25 @@ markers. The window is not theoretical.
 So the switch is performed with the writers stopped. The services are first put
 into the state where they cannot reach any database at all — the same mechanism
 built for exactly this, which makes them decline requests and skip scheduled
-work rather than half-finishing it — the final copy is taken while nothing can
-move, and only then do the services come back pointed at the new database.
-Callers see a short refusal that says plainly that nothing they sent was
-recorded, which is the intended behaviour and is why that mechanism exists.
+work rather than half-finishing it. Callers see a short refusal that says
+plainly that nothing they sent was recorded, which is the intended behaviour and
+is why that mechanism exists.
+
+**Being put into that state is not the same as having stopped**, and the
+procedure no longer treats it as though it were. Depriving a service of its
+database prevents anything new from starting, but work already under way still
+holds what it was given and can finish writing afterwards. How long that takes
+has never been measured here, and guessing a waiting time would be the same
+kind of unearned confidence this whole move keeps running into.
+
+So instead of waiting for a duration, the procedure waits for stillness it can
+see: the old database's contents are read, read again ten minutes later, and
+the copy proceeds only if the two readings are identical — then read a third
+time afterwards, to catch anything that committed while the copy ran. This
+rests on "a write changes what the database holds", which is true by
+construction. Its one gap is stated rather than glossed: a write that stores
+the value already stored changes nothing observable — which is harmless for a
+copy, because the destination already has that value.
 
 ### Rolling back is another move, not an undo
 

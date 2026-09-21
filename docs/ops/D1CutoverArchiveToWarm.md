@@ -18,18 +18,45 @@ because step 3 below is the part of it that had to be re-learned.
    record is its own, and copying the source's would have claimed migrations
    ran there that never did.
 
-   Two properties of the copy are load-bearing and were both learned the hard
-   way, so they are stated rather than left to whoever repeats it:
+   **That first copy was ad hoc, and the repeat is not.** It ran from a
+   terminal session — table set, conflict keys, batch sizing and comparison
+   all in the operator's head — it reported success, and it had lost a row.
+   A data step that cannot be re-run identically cannot be verified, and the
+   switch requires re-running it. So the step is now a checked-in tool:
 
+   ```
+   node apps/indexer/scripts/d1-copy-into-shared.mjs copy --from vaipakam-archive
+   node apps/indexer/scripts/d1-copy-into-shared.mjs digest --db vaipakam-archive
+   ```
+
+   Three of its properties are load-bearing, all three learned the hard way,
+   and all three are now enforced by the tool rather than left to whoever
+   repeats the step:
+
+   - **The target is not an argument.** It is read from
+     `apps/indexer/wrangler.jsonc` — the single declaration
+     `check-d1-name-consistency` guards. There is no flag that makes the copy
+     write anywhere else, which is a stronger guarantee than a flag that is
+     checked: an operator cannot aim it at the database being abandoned,
+     because that capability is absent.
    - **Upsert, never `INSERT OR REPLACE`.** `REPLACE` is `DELETE` + `INSERT`,
      and `notify_state` carries `ON DELETE CASCADE` to `user_thresholds`.
      Copying alphabetically wrote the child first, and rewriting the parent
      later cascaded the child away. `ON CONFLICT … DO UPDATE` mutates in place,
      fires no cascade, does not depend on table order, and is re-runnable —
-     which is what makes a repeat copy safe.
+     which is what makes a repeat copy safe. A table with no primary key has
+     no conflict target, so the tool **refuses it and names it** rather than
+     falling back to plain inserts that would duplicate on a second run.
    - **Compare CONTENT, never row counts.** The count check passed on two
      tables that were not equal (`indexer_cursor`, `recycle_backing_snapshot`).
-     Compare a canonical per-table digest of the rows themselves.
+     The tool canonicalises each table's rows and hashes them, and the
+     comparison is part of the copy rather than a step someone may skip.
+
+   **[run] 2026-09-21** — the digest of both sides immediately after the
+   copy, with the Workers still live, showed **three** tables differing:
+   `indexer_cursor`, `protocol_config`, `recycle_backing_snapshot`. None was
+   a copy fault; all three are tables the running services rewrite, and the
+   source had simply moved on. That is the evidence for step 3.
 3. **The switch — NOT DONE, and it requires the writers stopped first.**
 
    The bindings change is staged in the PR but must not land while anything is
@@ -44,10 +71,50 @@ because step 3 below is the part of it that had to be re-learned.
    rows. The writers are demonstrably live.
 
    So the order is: **stop the writers (the maintenance build the mechanism
-   provides), take the final copy while nothing can move, merge, let the
-   Workers come back on the target, then verify by binding id.** The refusal
-   callers see during that window states plainly that nothing they sent was
-   recorded, which is the whole reason that mechanism exists.
+   provides), wait for the source to be OBSERVED still, take the final copy,
+   merge, let the Workers come back on the target, then verify by binding
+   id.** The refusal callers see during that window states plainly that
+   nothing they sent was recorded, which is the whole reason that mechanism
+   exists.
+
+   **"Observed still" is the drain barrier, and it is deliberately not a
+   waiting time.** Removing the D1 binding stops any NEW invocation from
+   obtaining a handle, but an invocation already running — including
+   `waitUntil` work admitted before the gate — still holds the handle it was
+   given and can commit after the copy. How long that takes has never been
+   measured here, and §"Stopping the writers" refuses to invent a number for
+   it. A duration would be a guess; movement is a fact, so the barrier
+   observes movement instead:
+
+   1. Deploy the maintenance build (no `d1_databases`) to all three Workers.
+   2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
+      **If anything changed, the drain is not done — wait and repeat.** Only
+      two consecutive identical digests, ten minutes apart, allow the next
+      step.
+   3. Take the final copy.
+   4. `digest --db vaipakam-archive` once more. If it now differs from the
+      copy's source digest, something committed during the copy: discard the
+      claim, return to step 2. Only when it matches is the final copy final.
+   5. Merge.
+
+   The premise this barrier rests on is "a write changes the digest", which
+   is true by construction — unlike "every writer is on this list", which is
+   the unbounded predicate §"Stopping the writers" refuses. Its residual is
+   stated rather than absorbed: a write that stores a value **identical** to
+   the one already there moves no digest. That is harmless for the copy — the
+   target already holds that value — and it is not a claim that nothing is
+   running. The barrier's guarantee is that **no observed change was in
+   flight across the copy**, which is what the copy needs, and nothing
+   larger.
+
+   The ten minutes is not a derived bound and is not presented as one; it is
+   an observation interval long enough that ordinary movement shows up in it.
+   The **evidence** it is sized against is in step 2: three tables drifted
+   within minutes with the writers live, so a source that holds still for two
+   consecutive intervals is visibly not the source this document measured.
+   Tooling to produce the maintenance build without hand-editing production
+   config is still #2250; until it lands, that edit is an uncommitted,
+   operator-side change, and the operator restores the file afterwards.
 
    An earlier revision of this record listed the switch as done and described
    a "sync just before merging" as sufficient. It is not, and saying so was
@@ -88,7 +155,9 @@ That second decision is what made this document short. Earlier revisions
 carried a quiesce, a whole-database export/import, a reconciliation and a
 secure-destruction step for a file full of personal data. The copy that was
 actually performed is none of those: 1,384 rows through an idempotent upsert,
-verified by row count per table.
+verified by a per-table content digest. **The quiesce came back** — execution-
+record step 3 — because this decision removed the export/import, not the need
+to stop the writers before the last copy.
 
 ---
 
@@ -595,15 +664,25 @@ through — and they now cooperate with that state rather than crashing into it.
 "Off-Chain Data Services".
 
 **That is the mechanism, not the runbook.** Writing the step-by-step procedure
-around it needs four things this document does not yet have: tooling to produce
+around it needed four things this document did not have: tooling to produce
 a maintenance build without hand-editing production config (#2250), an owner
 decision on whether retained rows are archived or restored, a drain criterion
 that survives its own premise, and the contract-redeploy sequencing in §2.
-**#2255 carries that work and the open findings against the draft.** Until it
-lands the procedure is unspecified, and the paragraphs that follow explain why
-writing one anyway is worse than saying so. Their references have been moved
-from #2239 to #2255 so the distinction holds: the mechanism is settled, the
-procedure is not.
+**#2255 carries that work and the open findings against the draft.**
+
+**Two of the four are now settled, for THIS cutover** (2026-09-21, #2214).
+The owner decision was taken — the rows are carried across, recorded above as
+a superseded decision — and the drain criterion exists: the **observed-still**
+barrier in execution-record step 3. It survives its own premise because its
+premise is "a write changes the digest", true by construction, rather than
+"every writer is on this list", which is the unbounded predicate this section
+refuses. Its residual — an in-flight write storing a value identical to the
+one already stored — is named there, not absorbed.
+
+The other two remain open. #2250 is why the maintenance build is still an
+uncommitted operator-side edit, and §2's sequencing is untouched. So the
+general procedure is still #2255's to write; what is settled is the procedure
+for this one move.
 
 **Enumerating the ways code can reach a database is an unbounded predicate.**
 Writing a list here that reads authoritative and is incomplete is worse than
@@ -615,10 +694,13 @@ one formulation that does not depend on having enumerated the entry points
 correctly. That is shipped. What remains open is the procedure built on it —
 #2255.
 
-**Until #2255 lands, treat this cutover as requiring an operator who
-accepts that exposure** — the mechanism to avoid it exists, the procedure for
-applying it safely does not — which is what the next section describes, honestly
-labelled.
+**This paragraph described the state before 2026-09-21** and said the cutover
+required an operator willing to accept that exposure, because the mechanism to
+avoid it existed and the procedure did not. That is no longer the choice being
+made here: execution-record step 3 is the procedure, and the next section's
+watch-it-through alternative is **not** the route this cutover takes. It is
+retained because the reasoning for when it would be defensible is still the
+reasoning, and because reading it explains what step 3 is avoiding.
 
 ### The alternative, and when it is defensible
 

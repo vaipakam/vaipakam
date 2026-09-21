@@ -85,18 +85,36 @@ const OTHER_DATABASES = new Map([
     'vaipakam-lz-alerts-db',
     'retired ops/lz-watcher (#1440) — still named in the restore runbook',
   ],
-  [
-    'vaipakam-archive',
-    'the PREVIOUS shared database (#2214). Still exists, still holds its ' +
-      'rows, and is the rollback target — so commands naming it are ' +
-      'legitimate: the dated deploy plan records the one-time apply that ' +
-      'was run against it in May 2026, and the cutover runbook addresses ' +
-      'it directly. It is NOT bound by any Worker, which is the point: ' +
-      'check 1 is what proves that, and this entry only exempts it from ' +
-      'check 2. Remove this entry when the database is actually deleted, ' +
-      'and check 2 will then find every command that outlived it.',
-  ],
 ]);
+
+/**
+ * `vaipakam-archive` is DELIBERATELY ABSENT from the map above, and the
+ * reason is worth stating because an entry for it was added and then
+ * removed (#2214, round 2).
+ *
+ * The retired databases that ARE listed — the mesh-alerts and lz-alerts
+ * ones — were never the shared database. A command naming one of those
+ * cannot split the shared data, because it was never where the shared data
+ * lived. `vaipakam-archive` is the opposite case: it is the shared
+ * database's immediate PREDECESSOR, holding a full copy of the same tables
+ * under the same schema. A `wrangler d1 migrations apply` aimed at it today
+ * succeeds, changes a database no Worker reads, and leaves both halves
+ * looking correct — which is precisely the failure check 2 exists to
+ * catch. Listing it would have switched that check off for the one name it
+ * matters most for.
+ *
+ * So the exemption was not narrowed; it was removed, and the single
+ * command that needed it was fixed instead
+ * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`, §6 step 3, which
+ * was still instructing operators to apply migrations to the retired
+ * database). The runbooks that discuss the cutover hold the name in prose
+ * and in shell variables (`"$SOURCE_DB"`), neither of which check 2 reads,
+ * so nothing else required an allowance. Dated release notes are already
+ * exempt via HISTORICAL below.
+ *
+ * If a future command genuinely must name the retired database, fix the
+ * command or move the file under HISTORICAL — do not re-add the name here.
+ */
 
 /**
  * Scripts that build a `wrangler d1` command rather than spelling one out,
