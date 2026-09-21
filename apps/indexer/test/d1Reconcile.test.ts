@@ -2040,4 +2040,57 @@ describe('a table set that changed is evidence too', () => {
     const e = parseEvidence(['a 1111111111111111', 'seq-listing complete'].join('\n'));
     expect(e.conflicts).toEqual([]);
   });
+
+  // #2281 r7 — the same table arriving mid-log, one door over. The r6
+  // check compared complete readings against each other, so a table
+  // whose ONLY appearance is in the unterminated tail was seen in zero
+  // of them and skipped. The log still proves it was there after a
+  // reading that says it was not.
+  it('refuses a table named only after the last complete reading', () => {
+    const e = parseEvidence(
+      [
+        'a 1111111111111111',
+        'seq-listing complete',
+        'a 1111111111111111',
+        'b 2222222222222222',
+      ].join('\n'),
+    );
+    expect(e.conflicts).toHaveLength(1);
+    expect(e.conflicts[0]).toContain('b:');
+    expect(e.conflicts[0]).toContain('named after the last one');
+  });
+
+  it('refuses when the tail names a new table only in a sequence line', () => {
+    // A sequence line is a positive appearance too: `sqlite_sequence`
+    // loses a table's row when the table is dropped, so a line for `b`
+    // says `b` was there when it was written.
+    const e = parseEvidence(
+      ['a 1111111111111111', 'seq-listing complete', 'a 1111111111111111', 'seq b 5'].join(
+        '\n',
+      ),
+    );
+    // The sequence check independently reports `b` as 0-then-5, which
+    // is a second true statement about the same table. What this test
+    // pins is the TABLE-SET one, because that is the fact the sequence
+    // check cannot make on its own: a table with no allocations at all
+    // would arrive in the tail with no sequence line to disagree with.
+    expect(e.conflicts.some((c) => c.includes('named after the last one'))).toBe(true);
+  });
+
+  it('accepts a tail that names only tables the readings already had', () => {
+    const e = parseEvidence(
+      ['a 1111111111111111', 'seq-listing complete', 'a 1111111111111111'].join('\n'),
+    );
+    expect(e.conflicts).toEqual([]);
+  });
+
+  it('does not treat a sequence-only complete listing as an empty table set', () => {
+    // A listing that enumerated nothing is not a reading of the table
+    // set. Counting it as one would report every table in the database
+    // as missing from it.
+    const e = parseEvidence(
+      ['seq a 5', 'seq-listing complete', 'a 1111111111111111', 'seq a 5'].join('\n'),
+    );
+    expect(e.conflicts).toEqual([]);
+  });
 });

@@ -1854,25 +1854,56 @@ export function parseEvidence(text) {
   // Trailing entries with no completeness marker are a listing whose
   // absences say nothing, so they contribute values but no zeros.
   const trailing = current;
+  const trailingDigests = currentDigests;
 
-  // A TABLE SET THAT CHANGED IS EVIDENCE TOO (#2281 r6). The sequence
-  // side learned this a round ago; the digest side had the same hole. A
-  // table created between two recorded runs is ABSENT from the first
-  // complete output and present in the second, which yields one digest,
-  // no disagreement, and a clean comparison — while the log itself
-  // records that the database gained a table in the window. Each
-  // complete output is one reading of the whole database, so the set of
-  // tables it names is part of what it says.
+  // A TABLE SET THAT CHANGED IS EVIDENCE TOO (#2281 r6, widened r7).
+  // The sequence side learned this a round ago; the digest side had the
+  // same hole. A table created between two recorded runs is ABSENT from
+  // the first complete output and present in the second, which yields
+  // one digest, no disagreement, and a clean comparison — while the log
+  // itself records that the database gained a table in the window.
+  //
+  // THE RULE IS ASYMMETRIC, and that is the whole of it (#2281 r7). A
+  // reading that ENUMERATED the tables says two things: these tables
+  // existed, and — because the enumeration is of the whole database —
+  // no others did. An unterminated tail says only the first. So:
+  //
+  //   PRESENCE is proven by ANY appearance, in a complete reading or in
+  //   the tail, as a digest line or as a sequence line. All of them
+  //   name a table that was there when that line was written.
+  //
+  //   ABSENCE is proven ONLY by a complete reading that enumerated.
+  //
+  // The r6 check compared complete readings against each other and
+  // therefore skipped a table whose only appearance is in the tail —
+  // `seenIn === 0` read as "never seen" rather than as "appeared after
+  // every reading that says it was not there". That is the same table
+  // arriving mid-log, one door over: a complete run naming only `a`,
+  // then a cropped run naming `a` and a new `b`, produced no conflict
+  // at all, and `b`'s trailing digest plus the earlier reading's
+  // inferred zero let a matching reconstruction be marked COVERED and
+  // license the rollback.
+  //
+  // A listing that enumerated NOTHING is not a reading of the table set
+  // and cannot testify to absence — otherwise a sequence-only record
+  // would report every table in the database as missing from it.
+  const enumerations = digestListings.filter((l) => l.size > 0);
   for (const table of mentioned) {
-    const seenIn = digestListings.filter((l) => l.has(table)).length;
-    if (digestListings.length > 1 && seenIn > 0 && seenIn < digestListings.length) {
-      conflicts.push(
-        `${table}: the evidence has ${digestListings.length} complete ` +
-          `readings and this table appears in ${seenIn} of them. A table ` +
-          `that comes or goes between readings is a database that ` +
-          `changed, whatever the digests say`,
-      );
-    }
+    const seenIn = enumerations.filter((l) => l.has(table)).length;
+    const provenAtTail = trailingDigests.has(table) || trailing.has(table);
+    if (enumerations.length === 0) continue;
+    if (seenIn === enumerations.length) continue;
+    if (seenIn === 0 && !provenAtTail) continue;
+    const where =
+      seenIn > 0
+        ? `appears in ${seenIn} of them`
+        : `appears in none of them, but is named after the last one`;
+    conflicts.push(
+      `${table}: the evidence has ${enumerations.length} complete ` +
+        `reading(s) of the table set and this table ${where}. A table ` +
+        `that comes or goes between readings is a database that ` +
+        `changed, whatever the digests say`,
+    );
   }
 
   const seqs = new Map();
