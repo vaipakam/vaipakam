@@ -175,11 +175,53 @@ nothing the services have written since is disturbed. That repeats until two
 consecutive runs find nothing, and the old database is kept regardless, so a
 record noticed a week later is still recoverable.
 
+**A late arrival and a late change are different problems, and only one of
+them is obvious.** A straggler that creates a new record leaves the new
+database without it, and the reconciliation simply carries it over. A
+straggler that *changes an existing* record — an offer's status, a
+notification preference, how far the chain has been read — leaves a record
+that already exists on both sides, so a reconciliation that asks only "is
+this record present?" does nothing at all, reports that it carried nothing,
+and calls itself finished while the new database is stale. That is counting
+instead of comparing, one level up from where the same mistake was caught
+earlier in this move.
+
+Comparing the two databases against each other does not solve it either: by
+then the new one has legitimately moved on, so almost every active record
+differs. What identifies a straggler is that the record changed **on the old
+database, after the copy** — a question about that database and its own
+past. So the copy now writes down what it saw, and the reconciliation
+compares against that record. Anything it finds is **reported and left
+alone**: whether the late value or the newer one should win is a decision for
+a person, and choosing silently would be the same overwrite the mode exists
+to avoid.
+
 Two smaller gaps are stated rather than glossed: a write that stores the value
 already stored changes nothing observable — harmless for a copy, because the
 destination already has that value — and the reconciliation reports what it
-found rather than claiming the two sides are identical, because by then the
-new database has legitimately moved on.
+found rather than claiming the two sides are identical.
+
+### Nothing here reports success by staying quiet
+
+Three separate places were doing it, and all three now fail instead.
+
+A table the copy could not handle — missing on the far side, with nothing
+identifying its records uniquely, or shaped differently on the two sides — was
+printed as skipped and then followed by a success message and a success exit
+code. Anyone, or anything, reading that result would have carried the move
+forward having silently omitted an entire table.
+
+The check that confirms where a service ended up treated "attached to no
+database at all" as acceptable. That is the deliberate held-off state *during*
+the move and a failed deployment *after* it, and the check is what authorises
+going back to normal operation — so it now refuses unless the operator says
+explicitly that they are still inside the window.
+
+And the copying tool's safe mode had to be asked for by exact spelling, while
+anything it did not recognise was ignored. A mistyped request for the safe
+mode therefore ran the destructive one — against a live database, deleting
+records only it held. The mode must now be stated, and an unrecognised
+argument is an error rather than a shrug.
 
 ### The check that the move happened was itself reading the wrong thing
 

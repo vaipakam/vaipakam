@@ -126,8 +126,11 @@ because step 3 below is the part of it that had to be re-learned.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
       **If anything changed, do not proceed — wait and repeat.** Two
       consecutive identical digests, ten minutes apart, allow the next step.
-   3. `carry --from vaipakam-archive --to vaipakam-warm` — the mirror carry,
-      against a warm that nothing is writing to yet.
+   3. `carry --from vaipakam-archive --to vaipakam-warm --mirror --manifest
+      cutover-mirror.json` — the mirror carry, against a warm that nothing is
+      writing to yet. **Keep that manifest**: step 6 cannot do its job
+      without it, and the tool refuses to run step 6 without one rather than
+      reporting a reconciliation it did not perform.
    4. `digest --db vaipakam-archive` once more. If it differs from step 3's
       source digest, something committed during the carry: return to step 2.
    5. Merge. The Workers redeploy onto warm; verify with
@@ -135,12 +138,29 @@ because step 3 below is the part of it that had to be re-learned.
       not what its latest upload says (§3 explains why that distinction cost
       a false pass).
    6. **Reconcile, and keep reconciling.**
-      `carry --from vaipakam-archive --to vaipakam-warm --only-missing`,
-      which inserts anything that appeared in archive late and **touches
-      nothing warm has since written**. Repeat until two consecutive runs
-      carry zero rows. Only then is archive's content fully accounted for —
-      and archive is retained regardless, so a row found a week later is
-      still recoverable.
+      `carry --from vaipakam-archive --to vaipakam-warm --only-missing
+      --since cutover-mirror.json`, which inserts anything that appeared in
+      archive late and **touches nothing warm has since written**. Repeat
+      until a run carries zero rows AND reports no conflicts. Archive is
+      retained regardless, so a row found a week later is still recoverable.
+
+      **A late INSERT and a late UPDATE need different answers, which is why
+      `--since` is mandatory.** A straggler that inserts a new row leaves a
+      key warm lacks, and the reconciliation simply carries it. A straggler
+      that *updates* an existing row — an `offers` status, a cursor, a
+      threshold — leaves a key warm already has, so a carry keyed on
+      presence alone does nothing, reports zero rows, and calls itself
+      finished while warm is stale. That is counting instead of comparing,
+      one level up.
+
+      Comparing the two databases directly does not help either: after the
+      switch warm legitimately moves on, so almost every live row differs.
+      What identifies a straggler is that the row changed **on archive,
+      after the mirror** — a question about archive and its own past, which
+      is what the manifest is. The tool reports each such row and **exits
+      non-zero without applying it**: whether archive's late value or warm's
+      newer one should win is a decision, and guessing would be the exact
+      overwrite this mode exists to prevent.
 
    Step 6 is not a belt-and-braces precaution; it is the only part of this
    that covers work suspended across the whole barrier. It is possible
@@ -880,7 +900,14 @@ the one that authorises restoring normal operation:
    node apps/indexer/scripts/check-live-d1-bindings.mjs
    ```
 
-   A configuration check, labelled as such. It is the only check that
+   A configuration check, labelled as such. **After the merge, run it with
+   no flags.** A serving version with no D1 binding at all is a FAILURE
+   there — that is a Worker still on the maintenance build, which is what a
+   failed or unfinished deploy looks like, and passing it would authorise
+   traffic to a Worker that cannot reach any database. Inside the barrier,
+   where that state is deliberate, pass `--allow-maintenance` and say so in
+   the run log. The allowance is explicit in both directions, because the
+   check is the gate that authorises restoring normal operation. It is the only check that
    distinguishes "build still running" and "build failed" from "switched",
    since it reflects what is actually deployed — and the only one available at
    all if the writers have been stopped, because the write probes below go

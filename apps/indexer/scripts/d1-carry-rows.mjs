@@ -71,13 +71,21 @@
  *   # what a database holds, table by table
  *   node apps/indexer/scripts/d1-carry-rows.mjs digest --db vaipakam-archive
  *
- *   # the cutover copy: destination inert, made identical to the source
+ *   # the cutover copy: destination inert, made identical to the source.
+ *   # The manifest records what this carry saw; KEEP IT.
  *   node apps/indexer/scripts/d1-carry-rows.mjs carry \
- *     --from vaipakam-archive --to vaipakam-warm
+ *     --from vaipakam-archive --to vaipakam-warm \
+ *     --mirror --manifest cutover-mirror.json
  *
- *   # post-switch reconciliation: destination LIVE, nothing overwritten
+ *   # post-switch reconciliation: destination LIVE, nothing overwritten.
+ *   # --since is what lets it tell a straggler's late write from the
+ *   # destination's own progress.
  *   node apps/indexer/scripts/d1-carry-rows.mjs carry \
- *     --from vaipakam-archive --to vaipakam-warm --only-missing
+ *     --from vaipakam-archive --to vaipakam-warm \
+ *     --only-missing --since cutover-mirror.json
+ *
+ * The mode is never implied and unknown arguments are refused: a mistyped
+ * `--only-missing` must not fall back to mirroring over a live database.
  *
  * See `docs/ops/D1CutoverArchiveToWarm.md` for where each belongs in the
  * sequence, and for why `digest` run twice is the drain barrier.
@@ -90,7 +98,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -341,6 +349,10 @@ async function readAll(dbId, table, cols) {
 /** JSON of the values in declared column order — null and "" stay distinct. */
 const canonical = (row, cols) => JSON.stringify(cols.map((c) => row[c] ?? null));
 
+/** A row's identity-independent content, short enough to store per row. */
+const rowHash = (row, cols) =>
+  createHash('sha256').update(canonical(row, cols)).digest('hex').slice(0, 16);
+
 function digestOf(rows, cols) {
   const lines = rows.map((r) => canonical(r, cols)).sort();
   const h = createHash('sha256');
@@ -372,6 +384,60 @@ function printDigest(label, map) {
 // ------------------------------------------------------------------- carry
 
 const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
+
+/**
+ * THE MANIFEST — what the mirror carry saw, so the reconciliation after
+ * the switch has something to compare against.
+ *
+ * Without it, `--only-missing` can only ask "does the destination have
+ * this key?", and a straggler that UPDATES an existing row — an `offers`
+ * status, a cursor, a threshold — leaves the key present. Every pass then
+ * does nothing, reports zero rows carried, and the reconciliation calls
+ * itself finished while the destination is stale. That is the same
+ * shape as counting rows instead of comparing them.
+ *
+ * Comparing the two databases directly cannot fix it either: after the
+ * switch the destination legitimately moves on, so almost every row
+ * differs and the signal is buried. What identifies a straggler is that
+ * the row changed ON THE SOURCE after the mirror — which is a question
+ * about the source and its own past, and the manifest is that past.
+ *
+ * The tool does NOT resolve a conflict it finds. It cannot know whether
+ * the source's late value or the destination's newer one should win, and
+ * guessing would be exactly the overwrite `--only-missing` exists to
+ * prevent. It names the row and stops.
+ */
+function writeManifest(path, src, tables) {
+  const doc = {
+    source: { name: src.name, id: src.id },
+    takenAt: new Date().toISOString(),
+    tables,
+  };
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+  console.log(
+    `manifest written to ${path} — keep it; the post-switch reconciliation ` +
+      `needs it as --since`,
+  );
+}
+
+function readManifest(path, src) {
+  let doc;
+  try {
+    doc = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    fail(`could not read the manifest at ${path} — ${err.message}`);
+  }
+  if (doc?.source?.id !== src.id) {
+    fail(
+      `the manifest at ${path} was taken from ${doc?.source?.name} ` +
+        `(${doc?.source?.id}), but --from is ${src.name} (${src.id}). ` +
+        `Comparing a database against another database's past would ` +
+        `report every row as a conflict.`,
+    );
+  }
+  console.log(`  reconciling against the mirror of ${doc.takenAt}`);
+  return doc.tables ?? {};
+}
 
 /** Chunk so a statement never exceeds the bound-parameter cap. */
 function chunk(items, perBatch) {
@@ -421,7 +487,7 @@ async function deleteKeys(dst, table, keyRows, key) {
   return keyRows.length;
 }
 
-async function carry(src, dst, { onlyMissing }) {
+async function carry(src, dst, { onlyMissing, since }) {
   const tables = await orderByDependency(src.id, await tablesOf(src.id));
   const dstTables = new Set(await tablesOf(dst.id));
 
@@ -489,11 +555,44 @@ async function carry(src, dst, { onlyMissing }) {
     }
     const sourceKeys = new Set(rows.map((r) => keyOf(r, key)));
     const heldKeys = new Set(held.map((r) => keyOf(r, key)));
+
+    // What this carry saw, for the manifest a later reconciliation reads.
+    const seen = {};
+    for (const r of rows) seen[keyOf(r, key)] = rowHash(r, cols);
+
+    // In reconciliation, a row whose key the destination already has is
+    // only interesting if the SOURCE changed it since the mirror. That is
+    // a straggler's write, and it is reported rather than applied: which
+    // of the two values should win is not something this tool can know.
+    const wasSeen = since?.[table]?.rows ?? null;
+    const conflicts = [];
+    if (onlyMissing) {
+      if (wasSeen === null) {
+        conflicts.push({
+          table,
+          unknown:
+            'the manifest has no record of this table, so a late change ' +
+            'to a row the destination already has cannot be distinguished ' +
+            'from the destination moving on',
+        });
+      } else {
+        for (const r of rows) {
+          const k = keyOf(r, key);
+          if (!heldKeys.has(k)) continue;
+          if (wasSeen[k] !== undefined && wasSeen[k] !== rowHash(r, cols)) {
+            conflicts.push({ table, key: k, row: r, cols });
+          }
+        }
+      }
+    }
+
     plan.push({
       table,
       cols,
       key,
       all: rows,
+      seen,
+      conflicts,
       insert: rows.filter((r) => !heldKeys.has(keyOf(r, key))),
       surplus: onlyMissing
         ? []
@@ -523,17 +622,61 @@ async function carry(src, dst, { onlyMissing }) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
     }
   }
-  return { written, refused: plan.filter((s) => s.refused) };
+  const manifest = {};
+  for (const step of plan) {
+    if (step.refused) continue;
+    manifest[step.table] = { key: step.key, rows: step.seen };
+  }
+  return {
+    written,
+    refused: plan.filter((s) => s.refused),
+    conflicts: plan.flatMap((s) => s.conflicts ?? []),
+    manifest,
+  };
 }
 
 // -------------------------------------------------------------------- main
 
+const USAGE =
+  'usage:\n' +
+  '  d1-carry-rows.mjs digest --db <name>\n' +
+  '  d1-carry-rows.mjs carry  --from <name> --to <name> --mirror --manifest <path>\n' +
+  '  d1-carry-rows.mjs carry  --from <name> --to <name> --only-missing --since <path>';
+
+/**
+ * Strict parsing, because the destructive mode must never be something a
+ * typo falls back to. `--only-missing=true` is a conventional spelling
+ * this tool does not accept, and an exact-membership test would have read
+ * it as absent and mirrored instead — against a LIVE destination, which
+ * deletes rows it alone holds and overwrites its newer values. An unknown
+ * argument is therefore an error, and the mode is never implied.
+ */
+function parseArgs(argv, { flags, switches }) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (switches.includes(a)) {
+      out[a] = true;
+      continue;
+    }
+    if (flags.includes(a)) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) fail(`${a} needs a value.\n\n${USAGE}`);
+      out[a] = v;
+      i += 1;
+      continue;
+    }
+    fail(
+      `unrecognised argument "${a}". This tool refuses arguments it does ` +
+        `not know rather than ignoring them, because an ignored mode flag ` +
+        `falls back to the destructive mode.\n\n${USAGE}`,
+    );
+  }
+  return out;
+}
+
 async function main() {
   const [mode, ...rest] = process.argv.slice(2);
-  const arg = (flag) => {
-    const i = rest.indexOf(flag);
-    return i === -1 ? null : rest[i + 1];
-  };
 
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
@@ -541,24 +684,25 @@ async function main() {
   const shared = sharedDatabase();
 
   if (mode === 'digest') {
-    const name = arg('--db');
-    if (!name) fail('digest needs --db <name>');
+    const opts = parseArgs(rest, { flags: ['--db'], switches: [] });
+    const name = opts['--db'];
+    if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
     const db = name === shared.name ? shared : await resolveByName(name);
     printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
     return;
   }
 
-  if (mode !== 'carry') {
-    fail(
-      'usage:\n' +
-        '  d1-carry-rows.mjs digest --db <name>\n' +
-        '  d1-carry-rows.mjs carry  --from <name> --to <name> [--only-missing]',
-    );
-  }
+  if (mode !== 'carry') fail(USAGE);
 
-  const fromName = arg('--from');
-  const toName = arg('--to');
-  if (!fromName || !toName) fail('carry needs both --from <name> and --to <name>');
+  const opts = parseArgs(rest, {
+    flags: ['--from', '--to', '--manifest', '--since'],
+    switches: ['--mirror', '--only-missing'],
+  });
+  const fromName = opts['--from'];
+  const toName = opts['--to'];
+  if (!fromName || !toName) {
+    fail(`carry needs both --from <name> and --to <name>\n\n${USAGE}`);
+  }
   if (fromName === toName) fail('--from and --to name the same database');
   // The guarantee is not "the destination is fixed" — that version of this
   // tool could not perform the rollback the functional spec requires. It is
@@ -574,7 +718,43 @@ async function main() {
 
   const src = fromName === shared.name ? shared : await resolveByName(fromName);
   const dst = toName === shared.name ? shared : await resolveByName(toName);
-  const onlyMissing = rest.includes('--only-missing');
+
+  // The mode is stated, never defaulted. Neither is an error; both is an
+  // error; and the destructive one is not what a missing flag means.
+  const wantMirror = opts['--mirror'] === true;
+  const onlyMissing = opts['--only-missing'] === true;
+  if (wantMirror === onlyMissing) {
+    fail(
+      `carry needs exactly one of --mirror or --only-missing. The mode is ` +
+        `never implied: --mirror deletes destination rows the source no ` +
+        `longer has and overwrites the rest, which against a live ` +
+        `destination destroys its own newer values.\n\n${USAGE}`,
+    );
+  }
+
+  // A mirror RECORDS what it carried; a reconciliation READS that record.
+  // Without it, "the destination already has this key" cannot distinguish
+  // a row a straggler changed on the source after the mirror from one the
+  // destination has legitimately moved on from — see `reconcile`.
+  const manifestPath = opts['--manifest'];
+  const sincePath = opts['--since'];
+  if (wantMirror && !manifestPath) {
+    fail(
+      `--mirror needs --manifest <path>: the reconciliation that follows a ` +
+        `cutover is only meaningful against a record of what this carry ` +
+        `saw, and writing it afterwards from memory is how the first copy ` +
+        `of this database went unverified.\n\n${USAGE}`,
+    );
+  }
+  if (onlyMissing && !sincePath) {
+    fail(
+      `--only-missing needs --since <path>, the manifest the mirror wrote. ` +
+        `Without it this mode can insert rows the destination lacks but ` +
+        `CANNOT tell a late change on the source from the destination's ` +
+        `own progress — so it would report "reconciled" having checked ` +
+        `nothing of the kind.\n\n${USAGE}`,
+    );
+  }
 
   console.log(
     `carrying ${src.name} (${src.id})\n` +
@@ -582,13 +762,19 @@ async function main() {
       (onlyMissing
         ? `     mode: only-missing — rows absent from the destination are ` +
           `inserted; nothing it already holds is updated or removed, so a ` +
-          `LIVE destination is safe`
+          `LIVE destination is safe. Rows the source changed since ` +
+          `${sincePath} are reported as conflicts, not resolved`
         : `     mode: mirror — the destination is made identical to the ` +
           `source, INCLUDING removing rows the source no longer has. Run ` +
           `this only against a destination nothing is writing to`),
   );
 
-  const { written, refused } = await carry(src, dst, { onlyMissing });
+  const since = onlyMissing ? readManifest(sincePath, src) : null;
+  const { written, refused, conflicts, manifest } = await carry(src, dst, {
+    onlyMissing,
+    since,
+  });
+  if (wantMirror) writeManifest(manifestPath, src, manifest);
   console.log(`wrote ${written} row(s)`);
 
   // Verification is part of the carry, not a step someone may skip.
@@ -616,23 +802,36 @@ async function main() {
     }
   }
 
-  console.log('');
-  if (refused.length > 0) {
-    console.log(
-      `REFUSED, and therefore unverified: ` +
-        refused.map((r) => r.table).join(', ') +
-        ` — see above for why each.`,
+  // A REFUSED table is not a footnote. It is a table this carry did not
+  // move and cannot vouch for, so it FAILS — an earlier revision printed
+  // it and then exited zero with "VERIFIED", which would let an operator,
+  // or a script reading the exit code, carry the cutover forward having
+  // silently omitted an entire table.
+  for (const r of refused) problems.push(`${r.table}: NOT CARRIED — ${r.refused}`);
+
+  // Likewise a conflict: the source changed a row the destination already
+  // has, and which value should win is a decision, not a default.
+  for (const c of conflicts) {
+    problems.push(
+      c.unknown
+        ? `${c.table}: cannot be reconciled — ${c.unknown}`
+        : `${c.table} ${c.key}: changed on the source after the mirror, ` +
+          `while the destination already holds that row. Current source ` +
+          `value: ${canonical(c.row, c.cols).slice(0, 300)}`,
     );
   }
+
+  console.log('');
   if (problems.length > 0) {
     console.error(
       `\nVERIFICATION FAILED — ${problems.length} table(s):\n` +
         problems.map((p) => `  - ${p}`).join('\n') +
-        `\n\nA difference is not always a fault in the carry: a source with ` +
-        `live writers moves on while it runs. That is why the cutover takes ` +
-        `its mirror carry with the writers stopped and reconciles with ` +
-        `--only-missing afterwards — read the sequence in ` +
-        `docs/ops/D1CutoverArchiveToWarm.md before deciding which this is.\n`,
+        `\n\nA digest difference is not always a fault in the carry: a ` +
+        `source with live writers moves on while it runs. A REFUSED table ` +
+        `or a CONFLICT is different — the first was not carried at all, ` +
+        `the second needs somebody to decide which value is right. Read ` +
+        `the sequence in docs/ops/D1CutoverArchiveToWarm.md before ` +
+        `deciding which of the three this is.\n`,
     );
     process.exit(1);
   }

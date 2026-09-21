@@ -152,6 +152,18 @@ async function d1Of(script, versionId) {
 }
 
 async function main() {
+  const argv = process.argv.slice(2);
+  // Strict, for the same reason the carry tool is: a mistyped flag that is
+  // silently ignored turns a deliberate allowance into an accidental one.
+  const unknown = argv.filter((a) => a !== '--allow-maintenance');
+  if (unknown.length > 0) {
+    fail(
+      `unrecognised argument(s): ${unknown.join(', ')}\n\nusage:\n` +
+        `  check-live-d1-bindings.mjs [--allow-maintenance]`,
+    );
+  }
+  const allowMaintenance = argv.includes('--allow-maintenance');
+
   if (!ACCOUNT || !TOKEN) {
     fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
   }
@@ -192,13 +204,27 @@ async function main() {
       const bindings = await d1Of(script, v.id);
       const share = v.percentage == null ? '' : ` @ ${v.percentage}%`;
       if (bindings.length === 0) {
-        // A version with NO d1 binding is the maintenance build. That is a
-        // deliberate state during a cutover, so it is reported as what it
-        // is rather than as a mismatch.
-        console.log(
-          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  no D1 binding ` +
-            `— held off its database (maintenance build)`,
-        );
+        // A version with NO d1 binding is the maintenance build. That IS a
+        // deliberate state — during the barrier, before the switch. It is
+        // not a deliberate state AFTER the merge, where this command is the
+        // gate that authorises restoring normal operation: a failed build
+        // that left a Worker on the maintenance version looks exactly like
+        // this, and passing it would authorise traffic to a Worker that
+        // cannot reach any database. So it fails unless the operator says
+        // they are inside that window.
+        const note = allowMaintenance
+          ? 'no D1 binding — held off its database (allowed: --allow-maintenance)'
+          : 'no D1 binding — held off its database ← NOT ACCEPTABLE HERE';
+        console.log(`  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${note}`);
+        if (!allowMaintenance) {
+          problems.push(
+            `${script} version ${v.id}${share} serves NO D1 binding. If the ` +
+              `switch is done, this is a Worker still on the maintenance ` +
+              `build — a failed or unfinished deploy, not a success. If you ` +
+              `are inside the barrier on purpose, pass --allow-maintenance ` +
+              `and say so.`,
+          );
+        }
         continue;
       }
       for (const b of bindings) {
