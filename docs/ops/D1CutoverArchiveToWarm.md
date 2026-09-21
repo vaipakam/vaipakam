@@ -441,8 +441,10 @@ because step 3 below is the part of it that had to be re-learned.
       | `agreed` | either | yes | the SAME row | nothing to do, whatever the manifest says: an operator applied it after an earlier pass reported it, or resolved it some other way |
       | `destination-moved` | yes, = archive | yes | a different row | **only warm changed** — after the switch that is the live database doing its job, `indexer_cursor` advancing every minute. Not a conflict |
       | `source-changed` | yes, ≠ archive | yes | a different row | a straggler's write; which value wins is a decision |
-      | `destination-deleted` | yes | yes | absent | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
-      | (source-side) | yes | **no** | yes | archive deleted it after the mirror. It is not in archive's rows at all, so a loop over archive never sees it and warm keeps a row that should be gone |
+      | `destination-deleted` | yes, = archive | yes | absent | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
+      | `destination-deleted-source-changed` | yes, ≠ archive | yes | absent | **warm deleted it AND archive changed it since.** Both facts belong in the decision: restoring undoes a deliberate deletion, leaving it discards a late value that no reading of warm will show. Reported as one conflict naming both (#2267 r27) |
+      | (source-side) | yes, = warm's row | **no** | yes | archive deleted it after the mirror and warm still holds the row the mirror carried, so it is stale there. It is in none of archive's rows, so a loop over archive never sees it — this is a separate pass over the manifest |
+      | (source-side) | yes, ≠ warm's row | **no** | yes | archive deleted it AND warm has changed it since, so warm has its own newer value. Not a stale row: deleting it would discard a setting a user may have just changed, which `user_thresholds` makes concrete since it is keyed by the setting rather than an allocated id (#2267 r26) |
 
       **`agreed` and `destination-moved` are why "repeat until clean" can
       ever come clean**, and each was missing once. Without `agreed`, a row

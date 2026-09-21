@@ -807,7 +807,17 @@ async function deleteKeys(dst, table, keyRows, key) {
 export function situationOf({ mirroredHash, sourceHash, destRow, cols }) {
   const mirrored = mirroredHash !== undefined;
   if (destRow === undefined) {
-    return mirrored ? 'destination-deleted' : 'new-on-source';
+    if (!mirrored) return 'new-on-source';
+    // THE SOURCE'S OWN STATE STILL MATTERS WHEN THE DESTINATION HAS
+    // DELETED THE ROW, and asking only about the destination hid half of
+    // it (#2267 r27). If the source ALSO changed the row after the
+    // mirror, a report naming only the deletion — and warning that
+    // restoring it may undo a retention or privacy obligation — reads as
+    // "leave this alone", and the late source value is discarded on the
+    // way to a clean pass.
+    return mirroredHash === sourceHash
+      ? 'destination-deleted'
+      : 'destination-deleted-source-changed';
   }
   if (rowHash(destRow, cols) === sourceHash) return 'agreed';
   if (!mirrored) return 'key-collision';
@@ -943,6 +953,21 @@ export function classifyForReconcile({
             'has it, so it was deleted there — re-inserting it would undo ' +
             'that, and such a deletion may be a retention or privacy ' +
             'obligation',
+        });
+        break;
+
+      case 'destination-deleted-source-changed':
+        conflicts.push({
+          table,
+          key: k,
+          kind: 'deleted on the destination, and CHANGED on the source',
+          detail:
+            'the destination deleted this row — which may be a retention ' +
+            'or privacy obligation — AND the source has changed it since ' +
+            'the mirror, so there is a late source value here that no ' +
+            'reading of the destination will show. Both facts belong in ' +
+            'the decision: restoring the row undoes a deliberate deletion, ' +
+            'and leaving it discards the newer value',
         });
         break;
 

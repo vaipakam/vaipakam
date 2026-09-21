@@ -692,3 +692,37 @@ describe('a source-side deletion, against a destination that may have moved', ()
     expect(conflicts).toEqual([]);
   });
 });
+
+describe('a destination deletion does not hide a late source change', () => {
+  it('names both when the source also changed the row', () => {
+    const { insert, conflicts } = classify({
+      rows: [{ id: 1, value: 'source changed it late' }],
+      held: [], // destination deleted it
+      mirrored: [{ id: 1, value: 'as mirrored' }],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe(
+      'deleted on the destination, and CHANGED on the source',
+    );
+    expect(conflicts[0].detail).toContain('no reading of the destination will show');
+  });
+
+  it('still names only the deletion when the source did not change it', () => {
+    const row = { id: 1, value: 'untouched on the source' };
+    const { conflicts } = classify({ rows: [row], held: [], mirrored: [row] });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe('deleted on the destination');
+  });
+});
+
+describe('situationOf names the seventh case', () => {
+  it('separates a plain destination deletion from one with a late source change', () => {
+    expect(
+      situationOf({ mirroredHash: 'a', sourceHash: 'a', destRow: undefined, cols }),
+    ).toBe('destination-deleted');
+    expect(
+      situationOf({ mirroredHash: 'a', sourceHash: 'b', destRow: undefined, cols }),
+    ).toBe('destination-deleted-source-changed');
+  });
+});
