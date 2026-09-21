@@ -7157,7 +7157,13 @@ on the live era alone.
 >   whose side totals are still zero, and the r1 guard above then admits
 >   the same empty walk it was added to refuse. The proof therefore
 >   requires `lenderFrontierDay >= d` AND `borrowerFrontierDay >= d` in
->   addition to the close stamp. Catching a frontier up is permissionless
+>   addition to the close stamp. **And B adds a permissionless, resumable
+>   frontier-advance entry** (Codex #2274 r4 P1): today `advanceLenderThrough`
+>   / `advanceBorrowerThrough` run only inside `closeDay`, which stamps the
+>   day after one clamped advance and cannot be retried, so a gap wider
+>   than one advance would leave the frontier short of a stamped day with
+>   no call able to move it — the guard would then block closure for every
+>   batch listing that day. With the entry, catching a frontier up is permissionless
 >   and already chunked, so the condition is always reachable by whoever
 >   wants the day closed — it delays a proof, it cannot block one.
 > - **A walk is the STARTER's, keyed `(day, starter, nonce)`, not a shared
@@ -7252,7 +7258,12 @@ on the live era alone.
 > The primitive stays a view (the preview shares it); the
 > settle wrapper then DRAWS exactly `transportPaid` from the batches — the
 > read and the debit are one transaction, so a claim needs no staging.
-> `_persistDay` and the pool-budget debits then see only the residual legs.
+> `_persistDay` persists the FULL slices — the entitlement paid, whatever
+> funded it, so the D1 allowance, the loan-side lifetime allowance, the
+> rewarded-day counts and the entry cursors all record it (Codex #2274 r4
+> P1; the code does this: the transport-covered fresh is inside the kept
+> amount the loop writes) — and only the pool-budget debits that follow
+> see the residual legs.
 >
 > *The allocation DOMAIN is the settlement call, and the deficits are
 > totalled over it* (Codex #2274 r2 P1 and r3 P1, together). §5c rules
@@ -7284,7 +7295,17 @@ on the live era alone.
 > previews row 13 reads run the same domain pass, so the predicate and
 > the settlement split a day identically.
 >
-> *Row 13.* `_entryExecutableNow` tests an aggregate need against
+> *Row 13.* In A1 the predicate's need comes through the same bounded
+> per-day coverage read the settle makes — the dry run prices each day
+> against its cursor-visible epochs, within the scan window, and reports
+> the net armed need — so with transport as the only backing the
+> executable-now reading is TRUE, the expiry clock accrues, and an
+> abandoned entry expires and absorbs from the epoch (pinned by the A1
+> suite's expiry test). What the preparation operation adds in A2 is the
+> O(1) staged figure for a day WIDER than one window; §5c's "the
+> predicate cannot run the bounded batch scan" is a statement about that
+> case, not about a day one window covers (Codex #2274 r4 P1 read it as
+> the general case). Concretely: `_entryExecutableNow` tests an aggregate need against
 > `deliveredFreshBound` and the bucket. It gains the same per-day allowance
 > through the dry-run walk the previews already use, so the predicate and
 > the settlement price a day identically; the drought and delivered tests
@@ -7304,7 +7325,21 @@ on the live era alone.
 > coverage itself, the three settle wrappers draw what the charge reports,
 > and the dry-run wrapper draws nothing. No new walk. The legacy slice's
 > days predate the arming and are funded by the schedule; they take no
-> transport term in A, which is stated rather than implied. Cost: one
+> transport term in A, which is stated rather than implied — **and there
+> is a population that leaves waiting** (Codex #2274 r4 P1): an active
+> mirror can receive an untyped old-wire remittance listing a pre-`D*`
+> day, since the canonical send passes pre-cutover days through, and 3b-i
+> opens an epoch for it. Closure 2 bounds the legacy claim and sweep
+> branches by delivered headroom, which that packet does not feed until
+> it is classified, and classification is gated on the release, which
+> the owner closed until B (#2258). So that obligation waits — but it
+> waits on the RELEASE, not on A's draws: before 3b-i it would have been
+> funded by classifying the packet, and that door is the one #2258 shut.
+> A per-day transport draw for the whole-window legacy slice is a
+> different piece of work (the slice is priced in O(1) off the cumulative
+> curves and has no per-day loop to hook), and it is recorded as A2's
+> beside the staging, with the population named; the value stays in its
+> epoch meanwhile, exactly as a wide day's does. Cost: one
 > storage read per settled day when no batch lists it, and **a global
 > short-circuit — no batch ever admitted on this chain — makes it zero**,
 > which is every chain without a legacy delivery.
