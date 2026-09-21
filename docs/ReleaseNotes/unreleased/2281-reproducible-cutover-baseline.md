@@ -34,6 +34,25 @@ and deleted again after the move leaves every table's content identical while
 the counter has moved on, so content alone can never establish that nothing
 happened.
 
+A record is also refused outright if the database moves while it is being read.
+Reading a database table by table takes time, and a record assembled across a
+database that is still changing describes no moment that ever existed — it would
+hold one table as it was at the start and another as it was at the end. So
+everything it reads is read twice and has to agree: the set of tables, each
+table's contents, the counters that hand out new identifiers, and the shape of
+each table, which is checked both before its rows are read and again afterwards.
+A column added and filled in between those two readings would otherwise leave
+the contents looking identical, because the new column is simply not in what was
+read.
+
+The same care applies to the figures recorded at the time of the move, which may
+be several runs' worth of output. Two runs that disagree are not a later reading
+correcting an earlier one; they are proof that something changed in between, and
+neither can then stand for the moment of the move. A table that one run lists and
+another does not is the same proof — including a table named only in a final,
+cut-off run, which is still a table that was not there when the database was last
+listed in full.
+
 The promotion is refused outright, and the file left untouched, if any table is
 short of either kind of evidence. A record that stays un-promoted is still
 useful for spotting new differences; what it must not do is authorise the step
