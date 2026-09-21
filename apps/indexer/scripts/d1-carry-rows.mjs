@@ -1671,12 +1671,19 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // default, and was disabled on the single path it was written for. It
   // could not have been caught by reading the check, only by reading the
   // exit it never came through.
+  // Tables whose rows this run could NOT match across the two sides, and
+  // compared against the manifest alone instead. The verdict has to know:
+  // a count comparison between two sides that were never lined up is not
+  // evidence of anything (#2267 r46).
+  const manifestOnly = new Set();
+
   const result = (written) => ({
     written,
     refused,
     conflicts,
     pending,
     classifiedSource,
+    manifestOnly,
     manifest: manifestOf(),
   });
 
@@ -1980,6 +1987,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // having not looked. A blind spot that is merely printed is not a
     // blind spot that is handled.
     const destOutOfComparison = destTableGone || destKeyless || destKeyColumnsGone;
+    if (destOutOfComparison) manifestOnly.add(table);
     const held = destOutOfComparison
       ? []
       : await readAll(dst.id, table, heldCols, query, {
@@ -2393,6 +2401,13 @@ export function verdictProblems({
   conflicts = [],
   reconciling,
   classifiedSource = new Map(),
+  // Tables whose rows were never matched across the two sides — the
+  // destination dropped the table, its key, or the columns this run
+  // matches by — and which were therefore compared against the manifest
+  // alone. Their late writes are already reported by that comparison;
+  // what must NOT happen is a second verdict drawn from putting the two
+  // sides' row counts next to each other (#2267 r46).
+  manifestOnly = new Set(),
 }) {
   const refusedNames = new Set(refused.map((r) => r.table));
   const problems = [];
@@ -2447,7 +2462,18 @@ export function verdictProblems({
         `${table}: source ${s.digest} (${s.count} rows) != destination ` +
           `${d.digest} (${d.count} rows)`,
       );
-    } else if (reconciling && d.count < s.count) {
+    } else if (reconciling && d.count < s.count && !manifestOnly.has(table)) {
+      // THE COUNT COMPARISON ASSUMES THE TWO SIDES WERE LINED UP, and
+      // for a manifest-only table they never were. A migration that
+      // re-keyed the destination — or filtered rows as it went, or a
+      // retention cron since — leaves it legitimately holding fewer,
+      // and reading that as "rows are still missing" fails the weekly
+      // run every week over a difference this run has already said it
+      // cannot interpret.
+      //
+      // The dropped-table and keyless paths avoided it only by having
+      // no destination digest at all. That was luck, not a rule, and
+      // this is the rule.
       problems.push(
         `${table}: destination holds ${d.count} rows, fewer than the ` +
           `source's ${s.count} — rows are still missing`,
@@ -2710,7 +2736,7 @@ async function main() {
   );
 
   const since = reconciling ? readManifest(sincePath, src) : null;
-  const { written, refused, conflicts, manifest, pending, classifiedSource } =
+  const { written, refused, conflicts, manifest, pending, classifiedSource, manifestOnly } =
     await carry(
     src,
     dst,
@@ -2801,6 +2827,7 @@ async function main() {
       conflicts,
       reconciling,
       classifiedSource,
+      manifestOnly,
     }),
     // A mirror compares the two databases' sequences, because it is
     // about to make one match the other. A reconcile compares the

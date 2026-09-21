@@ -1634,3 +1634,50 @@ describe('a deletion on the source is a late write too', () => {
     expect(conflicts[0].detail).toContain('1 row(s) added, 1 changed and 1 DELETED');
   });
 });
+
+describe('a count comparison assumes the two sides were lined up', () => {
+  // For a table whose rows were never matched — the destination dropped
+  // its table, its key, or the columns this run matches by — putting the
+  // two row counts side by side is not evidence of anything. A migration
+  // that re-keyed and filtered, or a retention cron since, leaves the
+  // destination legitimately holding fewer, and reading that as "rows
+  // are still missing" fails the weekly run every week over a difference
+  // the run has already said it cannot interpret (#2267 r46).
+  const d = (digest: string, count: number) => ({ digest, count });
+
+  it('does not read a smaller destination as missing rows when nothing was matched', () => {
+    expect(
+      verdictProblems({
+        srcD: new Map([['rekeyed', d('aaa', 40)]]),
+        dstD: new Map([['rekeyed', d('bbb', 12)]]),
+        reconciling: true,
+        manifestOnly: new Set(['rekeyed']),
+      }),
+    ).toEqual([]);
+  });
+
+  it('still reads it as missing rows for a table that WAS matched', () => {
+    const problems = verdictProblems({
+      srcD: new Map([['ordinary', d('aaa', 40)]]),
+      dstD: new Map([['ordinary', d('bbb', 12)]]),
+      reconciling: true,
+      manifestOnly: new Set(['rekeyed']),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('rows are still missing');
+  });
+
+  it('does not suppress the source-moved check for such a table', () => {
+    // Suppressing the count comparison must not suppress the question
+    // about the SOURCE, which is answerable for every table.
+    const problems = verdictProblems({
+      srcD: new Map([['rekeyed', d('now', 40)]]),
+      dstD: new Map([['rekeyed', d('bbb', 12)]]),
+      reconciling: true,
+      manifestOnly: new Set(['rekeyed']),
+      classifiedSource: new Map([['rekeyed', 'when-classified']]),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('CHANGED while this run was working');
+  });
+});
