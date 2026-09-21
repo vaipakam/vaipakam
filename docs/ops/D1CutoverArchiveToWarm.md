@@ -362,14 +362,16 @@ because step 3 below is the part of it that had to be re-learned.
 
       **With the manifest there are THREE facts per row, not two**, and
       reading it as two is how several defects got in. Was the row in the
-      manifest; is it on archive now; is it on warm now. Only one
-      combination is safe to act on without a person:
+      manifest; is it on archive now; is it on warm now. Those three
+      answers are what let each situation be NAMED correctly. `reconcile`
+      applies none of them — it writes to neither database — so every row
+      below is reported for a person to apply:
 
       | situation | manifest | archive | warm | what it means |
       | --- | --- | --- | --- | --- |
-      | `new-on-source` | no | yes | absent | a straggler inserted it → **carried**, the only automatic case |
+      | `new-on-source` | no | yes | absent | a straggler inserted it → **reported for manual application**. The simplest case, and still not an automatic one |
       | `key-collision` | no | yes | a DIFFERENT row | both sides allocated the same key after the mirror — `notifications` and `diag_legal_hold_audit` are `AUTOINCREMENT`, so this is two different records wearing one id, and an insert would drop archive's |
-      | `agreed` | either | yes | the SAME row | nothing to do, whatever the manifest says: a previous pass carried it, or an operator has already resolved it |
+      | `agreed` | either | yes | the SAME row | nothing to do, whatever the manifest says: an operator applied it after an earlier pass reported it, or resolved it some other way |
       | `destination-moved` | yes, = archive | yes | a different row | **only warm changed** — after the switch that is the live database doing its job, `indexer_cursor` advancing every minute. Not a conflict |
       | `source-changed` | yes, ≠ archive | yes | a different row | a straggler's write; which value wins is a decision |
       | `destination-deleted` | yes | yes | absent | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
@@ -431,10 +433,18 @@ because step 3 below is the part of it that had to be re-learned.
    The ten minutes is not a derived bound and is not presented as one; it is
    an observation interval long enough that ordinary movement shows up in it.
    The **evidence** it is sized against is in step 2 of the execution record:
-   three tables drifted within minutes with the writers live. Tooling to
-   produce the maintenance build without hand-editing production config is
-   still #2250; until it lands, that edit is an uncommitted, operator-side
-   change, and the operator restores the file afterwards.
+   three tables drifted within minutes with the writers live.
+
+   > **SUPERSEDED (#2267 r22).** This paragraph used to say the binding
+   > removal was an uncommitted, operator-side edit that the operator
+   > restored afterwards, with tooling to avoid hand-editing production
+   > config tracked as #2250. An uncommitted edit produces no merge, and
+   > these Workers have no deploy route other than a merge — so following
+   > it would have left every writer attached while the operator went on
+   > to the copy believing they were held. The barrier is a COMMIT, cut
+   > from `main` before this change and merged; step 1 above is the
+   > executable version. #2250 is unaffected: it is about not hand-editing
+   > the config, which is still worth having.
 
    An earlier revision of this record listed the switch as done and described
    a "sync just before merging" as sufficient. It is not, and saying so was
@@ -999,10 +1009,13 @@ premise is "a write changes the digest", true by construction, rather than
 refuses. Its residual — an in-flight write storing a value identical to the
 one already stored — is named there, not absorbed.
 
-The other two remain open. #2250 is why the maintenance build is still an
-uncommitted operator-side edit, and §2's sequencing is untouched. So the
-general procedure is still #2255's to write; what is settled is the procedure
-for this one move.
+The other two remain open, and §2's sequencing is untouched. So the general
+procedure is still #2255's to write; what is settled is the procedure for
+this one move. #2250 remains open too, but it is no longer what makes the
+maintenance build an operator-side edit — **it is not one**. The barrier is
+a commit, merged, because a merge is the only route these Workers have to
+production; #2250 is about generating that commit rather than hand-editing
+the config to produce it.
 
 **Enumerating the ways code can reach a database is an unbounded predicate.**
 Writing a list here that reads authoritative and is incomplete is worse than

@@ -15,9 +15,11 @@
  * seam from a different side, are why it looks like this rather than like
  * a one-way copy:
  *
- *   - **BOTH ends are pinned** — the shared database, as
- *     `apps/indexer/wrangler.jsonc` declares it, and its recorded
- *     predecessor, by id as well as name. Either direction between those
+ *   - **BOTH ends are pinned**, as constants in this file — the shared
+ *     database and its recorded predecessor, by id as well as name.
+ *     Neither is read from a Worker binding: a binding says what the
+ *     Workers are attached to right now, and the barrier this tool runs
+ *     behind deliberately removes all three. Either direction between those
  *     two is allowed, which is what leaves the documented ROLLBACK
  *     performable; nothing else is, in either direction. Two weaker
  *     versions of this came first and both are worth remembering:
@@ -126,9 +128,6 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
 
-/** The single declaration of the shared database. */
-const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
-
 /**
  * THE OTHER END. This tool exists for ONE move — the #2214 cutover — and
  * both of its endpoints are named here rather than left to an argument.
@@ -231,22 +230,36 @@ function checked(value, pattern, what) {
   return value;
 }
 
+/**
+ * THE OTHER END, pinned the same way and for a second reason.
+ *
+ * This used to be read from `apps/indexer/wrangler.jsonc`'s `DB` binding,
+ * on the reasoning that the shared database is declared once and every
+ * consumer should agree with that declaration. It is the wrong source for
+ * THIS tool, and the barrier is where that shows: the maintenance build
+ * removes `d1_databases` from all three writers, so during the only window
+ * in which the carry runs, the anchor does not exist and the tool exits
+ * before `digest` or `carry` can do anything (#2267 r22).
+ *
+ * A Worker binding says what the Workers are attached to RIGHT NOW, which
+ * across a cutover is precisely the thing in motion. The two endpoints of
+ * this move are not in motion — they are the two databases the move is
+ * between — so they are pinned here, both of them, by id as well as name.
+ *
+ * Drift between this constant and the live configuration is still caught,
+ * in the place that owns that question: `check-d1-name-consistency`
+ * validates it as a command generator, so a tree where the Workers bind
+ * one database and this tool would carry into another is red in CI.
+ */
+const SUCCESSOR = {
+  name: 'vaipakam-warm',
+  id: 'e5e927cf-56c3-42c7-9820-179a235cc84f',
+};
+
 function sharedDatabase() {
-  const cfg = parseJsonc(
-    readFileSync(join(REPO, DECLARING_FILE), 'utf8'),
-    DECLARING_FILE,
-  );
-  const entry = (cfg.d1_databases ?? []).find((e) => e.binding === 'DB');
-  if (!entry?.database_name || !entry?.database_id) {
-    fail(
-      `${DECLARING_FILE} has no complete "DB" d1 binding. That file is the ` +
-        `single declaration of the shared database, so this tool has no ` +
-        `anchor it is willing to trust.`,
-    );
-  }
   return {
-    name: checked(entry.database_name, DB_NAME, `${DECLARING_FILE} database_name`),
-    id: checked(entry.database_id, UUID, `${DECLARING_FILE} database_id`),
+    name: checked(SUCCESSOR.name, DB_NAME, 'SUCCESSOR.name'),
+    id: checked(SUCCESSOR.id, UUID, 'SUCCESSOR.id'),
   };
 }
 
@@ -1316,7 +1329,7 @@ async function main() {
   if (!ends.has(shared.name) || !ends.has(PREDECESSOR.name)) {
     fail(
       `this tool carries rows between exactly two databases: the shared ` +
-        `one (${shared.name}, per ${DECLARING_FILE}) and its recorded ` +
+        `one (${shared.name}) and its recorded ` +
         `predecessor (${PREDECESSOR.name}). It was asked for ` +
         `"${fromName}" → "${toName}". Either direction between those two ` +
         `is allowed; nothing else is, in either direction.`,

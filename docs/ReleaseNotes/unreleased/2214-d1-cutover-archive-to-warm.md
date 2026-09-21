@@ -398,3 +398,25 @@ services naming different databases — directly rather than as a comparison
 against a privileged file. The three services are additionally all-attached
 or all-detached, because one left attached while the others are paused keeps
 writing through a window every later step treats as closed.
+
+### The copying tool read its own endpoint from the thing the pause removes
+
+One end of the move was read from a service's configuration — the reasoning
+being that the shared database is written down once and everything should
+agree with it. That is the wrong source for this tool, and the pause is
+where it shows: pausing the services removes exactly that entry, so during
+the only window in which the copy ever runs, the tool could not tell which
+databases it was between and stopped before doing anything.
+
+A service's configuration says what that service is attached to right now,
+which across a move is the thing in motion. The two ends of the move are
+not in motion — they are what the move is between — so both are now written
+in the tool itself. Drift between the tool and the live configuration is
+still caught, by the consistency check, which is where that question
+belongs.
+
+The same check was also accepting a pause that had not happened: it looked
+for the absence of one named attachment, so a service that kept a complete
+attachment under a different name was counted as paused. It now requires
+the attachments to be genuinely absent — a handle under another name is
+still a handle.

@@ -127,6 +127,15 @@ const COMMAND_GENERATORS = [
     constant: 'ARCHIVE_DATABASE',
     why: 'emits the restore `wrangler d1 execute` lines by interpolation',
   },
+  {
+    file: 'apps/indexer/scripts/d1-carry-rows.mjs',
+    constant: 'SUCCESSOR',
+    field: 'name',
+    why:
+      'pins both ends of the cutover as constants rather than reading the ' +
+      'shared one from a Worker binding — it has to run during the barrier, ' +
+      'when no writer declares a binding at all',
+  },
 ];
 
 /** Paths whose D1 names record history and must not be rewritten. */
@@ -223,8 +232,32 @@ for (const { file, binding } of SHARED_CONSUMERS) {
   else unbound.push({ file, binding, entry });
 }
 
-const unboundWriters = unbound.filter((c) => WRITERS.has(c.file));
-const heldForCutover = unboundWriters.length === WRITERS.size;
+// THE BARRIER IS AN EMPTY `d1_databases`, NOT A MISSING `DB` ENTRY, and
+// the two are not the same test (#2267 r22). Keying on the named entry
+// let a writer keep a complete attachment under any other binding name —
+// rename `DB` to `DB_OLD` on all three and the check reported the barrier
+// held while every writer could still reach the database. What the
+// barrier claims is that no invocation can obtain a handle, and a handle
+// under a different name is still a handle.
+const heldWriters = [...WRITERS].filter((f) => d1Entries(f).length === 0);
+const heldForCutover = heldWriters.length === WRITERS.size;
+
+// A writer with a d1 array that has no `DB` in it is neither bound nor
+// held: it is attached to something under another name, which the
+// barrier does not permit and the normal shape does not describe.
+for (const file of WRITERS) {
+  const entries = d1Entries(file);
+  if (entries.length === 0) continue;
+  if (entries.some((e) => e.binding === 'DB')) continue;
+  problems.push(
+    `${file}: has ${entries.length} d1 binding(s) — ` +
+      `${entries.map((e) => `"${e.binding}"`).join(', ')} — but none named ` +
+      `"DB".\n    That is neither shape: not the normal one, which binds ` +
+      `the shared database as "DB", and not the cutover barrier, which is ` +
+      `an EMPTY d1_databases. A handle under another name is still a ` +
+      `handle, and this Worker can still reach a database.`,
+  );
+}
 
 for (const { file, binding, entry } of unbound) {
   if (heldForCutover && WRITERS.has(file)) continue;
@@ -232,11 +265,11 @@ for (const { file, binding, entry } of unbound) {
     entry === undefined
       ? `${file}: no d1 binding named "${binding}"` +
         (WRITERS.has(file)
-          ? `.\n    ${unboundWriters.length} of ${WRITERS.size} writers are ` +
-            `unbound, so this is not the cutover barrier — that shape needs ` +
-            `ALL of them unbound. A writer left bound while the others are ` +
-            `held keeps writing through a window the procedure believes is ` +
-            `closed.`
+          ? `.\n    ${heldWriters.length} of ${WRITERS.size} writers declare ` +
+            `no d1_databases at all, so this is not the cutover barrier — ` +
+            `that shape needs ALL of them empty. A writer left attached ` +
+            `while the others are held keeps writing through a window the ` +
+            `procedure believes is closed.`
           : '')
       : `${file} (binding ${binding}) declares an incomplete d1 binding: ` +
         `name ${entry.database_name ?? '(missing)'}, id ` +
@@ -368,14 +401,21 @@ for (const file of tracked) {
 }
 
 // ---------------------------------------------------------------- check 4
-for (const { file, constant, why } of COMMAND_GENERATORS) {
+for (const { file, constant, field, why } of COMMAND_GENERATORS) {
   const src = readFileSync(join(REPO, file), 'utf8');
   const decl = src.match(
-    new RegExp(`const\\s+${constant}\\s*=\\s*['"\`]([^'"\`]+)['"\`]`),
+    field === undefined
+      ? new RegExp(`const\\s+${constant}\\s*=\\s*['"\`]([^'"\`]+)['"\`]`)
+      : // An object constant: match the named field inside its literal.
+        new RegExp(
+          `const\\s+${constant}\\s*=\\s*\\{[^}]*?\\b${field}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`,
+          's',
+        ),
   );
   if (decl === null) {
     problems.push(
-      `${file}: no \`const ${constant} = '…'\` declaration found. That ` +
+      `${file}: no \`const ${constant}${field ? ` = { ${field}: '…' }` : " = '…'"}\` ` +
+        `declaration found. That ` +
         `file ${why}, so its target must be a single named constant this ` +
         `check can validate — not a literal repeated at each use.`,
     );
@@ -384,7 +424,8 @@ for (const { file, constant, why } of COMMAND_GENERATORS) {
   if (decl[1] !== SHARED_NAME) {
     const line = src.slice(0, decl.index).split('\n').length;
     problems.push(
-      `${file}:${line}: ${constant} is "${decl[1]}", but the shared ` +
+      `${file}:${line}: ${constant}${field ? `.${field}` : ''} is ` +
+        `"${decl[1]}", but the shared ` +
         `database is "${SHARED_NAME}".\n    That file ${why} — a cutover ` +
         `that moved the bindings but not this constant would leave an ` +
         `incident restore writing to the retired database.`,
