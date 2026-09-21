@@ -7065,12 +7065,32 @@ on the live era alone.
 >
 > 1. An obligation is a `RewardEntry`, a DAY RANGE `[startDay, endDay)`
 >    per user and side; there is no per-day index of entries. A per-day
->    counter maintained on the settlement paths is therefore O(window) per
->    whole-window settlement: the forfeit and expiry sweeps price the
+>    counter maintained on the settlement paths costs O(window) wherever a
+>    settlement prices a whole window at once — and **that is only the
+>    PRE-ARMING legacy slice** (corrected, Codex #2274 r2 P2). The first
+>    draft of this fact said the forfeit and expiry sweeps price the
 >    remaining window in O(1) off the cumulative curves and never loop
 >    days, so a 365-day loan swept would write 365 cold slots (about 8M
->    gas) — or the sweeps become resumable, a new partial state on a path
->    that has none.
+>    gas), or the sweeps would have to become resumable. The blueprint
+>    below establishes the opposite for ARMED days: both sweeps already
+>    settle ONE DAY PER CALL through `processUserSideDay`
+>    (`_forfeitEntryChunk` and `sweepExpiredEntry` each build a
+>    single-entry set at the entry's cursor day), so a terminated-per-day
+>    accumulator could ride the existing armed-day chunk — no new
+>    resumable state, no O(window) transaction. Only the pre-arming
+>    slice, which predates these transport batches and takes no transport
+>    term in A, is priced whole-window.
+>
+>    **This reprices mechanism (i), and the repricing is an OWNER
+>    question this note does not take.** The scout's rejection of per-day
+>    counters rested on the O(window) premise this correction removes.
+>    What survives it is narrower and still real: a hot-path write on
+>    every armed day of every loan on every chain, for a check only a
+>    mirror with a legacy delivery ever runs. Whether that is still
+>    dearer than the closure proof is the owner's call — the
+>    recommendation below is left standing rather than reversed inside a
+>    scout note, with its cheapest rejected alternative now honestly
+>    priced.
 > 2. **A past day's covering set is FIXED.** Registration stamps
 >    `startDay = today + 1` on every entry (new and re-registered), and
 >    `_closeEntry` only ever SHRINKS `endDay` to `today + 1` — so no entry
@@ -7122,6 +7142,24 @@ on the live era alone.
 >   a day closed with every covering entry unsettled. The send path
 >   already refuses the report on exactly this race; the proof refuses
 >   the same way, and a day never locally closed can never be stamped.
+>
+>   **The close stamp alone is NOT that guarantee — the fold frontier
+>   must have REACHED the day** (Codex #2274 r2, P1; verified in code).
+>   `hasLocalInterestClose` is `s.chainReportSentAt[d] != 0`
+>   (`LibCommitmentReport.sol:194-199`), and `closeDay` stamps it
+>   unconditionally after calling `advanceLenderThrough(d)` /
+>   `advanceBorrowerThrough(d)` ONCE. Each helper advances at most
+>   `MAX_FRONTIER_ADVANCE_DAYS` (730) and CLAMPS rather than reverting —
+>   `if (through > cap) through = cap`, then stores the CLAMPED value as
+>   the frontier — and `closeDay` never checks that either frontier
+>   arrived at `d`. So after a deployment or reporter gap wider than 730
+>   days, a permissionless caller can locally "close" a farther past day
+>   whose side totals are still zero, and the r1 guard above then admits
+>   the same empty walk it was added to refuse. The proof therefore
+>   requires `lenderFrontierDay >= d` AND `borrowerFrontierDay >= d` in
+>   addition to the close stamp. Catching a frontier up is permissionless
+>   and already chunked, so the condition is always reachable by whoever
+>   wants the day closed — it delays a proof, it cannot block one.
 > - **A walk is the STARTER's, keyed `(day, starter, nonce)`, not a shared
 >   per-day cursor.** With one shared cursor, a caller who submits a high
 >   id while omitting a lower covering one advances the cursor past the
@@ -7195,12 +7233,51 @@ on the live era alone.
 > enters as a PER-DAY allowance on the day primitive's budget: `PoolBudget`
 > gains `transportFresh` / `transportRecycled`, set for the day being
 > priced from that day's cursor-visible epoch coverage, and
-> `_attributeLegs` draws them FIRST per component before the fresh/delivered
+> `_attributeLegs` draws them per component BEFORE the delivered-ledger
 > and bucket bounds it applies today, reporting `DayCharge.transportPaid`
-> as two legs. The primitive stays a view (the preview shares it); the
+> as two legs — but **AFTER the `PoolBudget.fresh` term, which binds the
+> FULL fresh entitlement** (Codex #2274 r2, P1). `fresh` is not a funding
+> ledger: it carries the 69M lifetime emission cap and the D1 ceiling
+> (`LibInteractionRewards.sol:5690-5708`, which says so and explains why
+> the delivered bound is kept out of it), and a transport-funded payout
+> is still emission — which is why the chokepoint paragraph below has
+> `interactionPoolPaidOut` taking the full fresh figure. Deducting
+> transport from the component first would invert that: a 5-fresh day
+> with 5 matching transport passes a zero-headroom bound on a zero
+> residual, then raises `interactionPoolPaidOut` by 5 past the cap. So
+> the lifetime cap and the D1 ceiling are applied to the whole fresh
+> entitlement before transport is attributed, and only the delivered
+> ledger and the bucket operate on residuals.
+>
+> The primitive stays a view (the preview shares it); the
 > settle wrapper then DRAWS exactly `transportPaid` from the batches — the
 > read and the debit are one transaction, so a claim needs no staging.
 > `_persistDay` and the pool-budget debits then see only the residual legs.
+>
+> *The allocation is WHOLE-OBLIGATION, and a per-day allowance alone is
+> not it* (Codex #2274 r2, P1). §5c already rules that the per-day pass
+> runs over decrementing shared typed capacities with scarce transport
+> allocated by **system-wide typed-source contention, "not local
+> shortfall alone"** — the pass FIRST totals each typed source's
+> remaining demand across the whole obligation, and each day's matching
+> transport relieves the leg carrying the greater system-wide deficit
+> (ties fresh-first). `processUserSideDay` sees ONE day and the remaining
+> budgets, so deriving the allowance inside `_attributeLegs` from that
+> day's own cursor-visible coverage reinstates precisely the local tie
+> rule §5c rejects — and reproduces §5c's own counterexample: day A
+> needing 5F/5R and holding a matching 5-batch, day B needing 5R, shared
+> live fresh 5 and bucket 5. A's local shortfalls are both zero,
+> fresh-first parks the transport on fresh, the bucket drains on A, and B
+> reverts against nothing although transport→A-recycled, live→A-fresh,
+> bucket→B settles everything.
+>
+> So A must carry a whole-obligation allocation PREPASS — shared by
+> settlement and by the previews row 13 reads, run before any day is
+> persisted or drawn — and the per-day `transportFresh` /
+> `transportRecycled` figures are what that prepass HANDS the day
+> primitive, not a substitute for it. This is a correction to this
+> blueprint, not a new decision: the rule is the merged plan's already,
+> and the blueprint simply failed to carry it across.
 >
 > *Row 13.* `_entryExecutableNow` tests an aggregate need against
 > `deliveredFreshBound` and the bucket. It gains the same per-day allowance
@@ -7271,6 +7348,24 @@ on the live era alone.
 >    carrying both would not fit under the round cap, and the cap-hit
 >    refusal is the conservative side (value stays in the epoch; the
 >    obligation waits).
+>
+>    **What "the obligation waits" costs, stated rather than implied**
+>    (Codex #2274 r2, P1). Nothing bounds how many batches may list one
+>    day — the legacy lane can legitimately produce arbitrarily many
+>    small batches for a single day — so a day listed past the scan cap
+>    does not merely defer: NO call can make progress on it. Every claim
+>    and every permissionless sweep reaching that day waits until A2
+>    lands, however well backed the obligation is, and the retry faces
+>    the same live batches each time. The cap hit is conservative about
+>    VALUE (nothing is drawn, nothing is stranded) and not about
+>    LIVENESS, and the earlier "bounded to days wider than the cap"
+>    described the trigger, not the duration. Codex reads this as making
+>    the staging machinery a correctness prerequisite rather than a later
+>    slice — i.e. that A1 and A2 should ship as one deployment.
+>    **That is a question about the A1/A2 cut, which a scout note does
+>    not get to settle; it is recorded here for the owner** alongside the
+>    CONTESTED deferral below. Note the answer is additive either way: if
+>    they ship together, A1 as written is unchanged, it simply gains A2.
 > 2. **"Contested" is read as the plan's own definition of KNOWN.** The
 >    plan refuses a draw when the batch is listed by the day of another
 >    known unmet obligation. There is no per-day enumeration of unmet
@@ -7286,6 +7381,19 @@ on the live era alone.
 >    and the other days cannot close without drawing. This is the same
 >    owner question the plan carries (defer contested to 3c), stated with
 >    the reading A takes, so a different answer changes A2, not A1.
+>
+>    **And what "never true in A1" costs, stated** (Codex #2274 r2, P1).
+>    With no staging references in A1 the contention guard is
+>    unreachable, so every A1 draw settles at once — including a draw on
+>    a batch that a second, less flexible obligation was the only
+>    feasible claimant of. First caller wins, and the other obligation is
+>    stranded until 3c's challenge machinery can reorder them: the
+>    cross-obligation failure §5c's machinery exists to prevent. The
+>    narrow reading is still the one A takes, because the wider one
+>    deadlocks every multi-day batch until 3c (above) — but it is taken
+>    KNOWING this, not on the premise that A1 has no contention to guard.
+>    Both readings are now recorded with their cost, and which one A1
+>    ships with is the owner's open question, not this note's.
 >
 **Transport epochs PR 3c — the contested-allocation machinery.** The
 bonded exclusive challenger slot as one O(1) transport-domain flag; plans
