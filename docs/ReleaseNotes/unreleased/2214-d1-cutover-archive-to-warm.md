@@ -128,9 +128,13 @@ would have discarded current data, including the markers that tell the indexing
 service how far through the chain it had read. Without those, it either re-reads
 from the beginning or quietly starts from the present and leaves a hole.
 
-If a fresh contract deployment does land later, the carried-over data becomes
-stale exactly as the original decision anticipated, and clearing it then is one
-statement per table. The original reasoning was sound for the situation it was
+If a fresh contract deployment does land later, the data **derived from the
+chain** becomes stale exactly as the original decision anticipated, and
+clearing that is one statement per table — naming those tables individually.
+Not all of it goes: support requests and a user's alert settings describe a
+person rather than a deployment, and a new contract address makes neither of
+them stale. A blanket clear would take them with it, which is precisely the
+instruction found and retired elsewhere in this move. The original reasoning was sound for the situation it was
 written in; what changed is that the situation did not arrive. The planning
 document records this as superseded rather than quietly rewritten, so the
 earlier judgement stays readable.

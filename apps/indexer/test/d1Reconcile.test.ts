@@ -76,7 +76,12 @@ function classify(opts: {
 }
 
 describe('reconciliation decision table', () => {
-  it('carries a row the source gained after the mirror — the only automatic case', () => {
+  it('identifies a row the source gained after the mirror as the one to apply', () => {
+    // `classifyForReconcile` returns it under `insert` — the candidate
+    // set. That is NOT the tool carrying it: `main()` runs reconcile with
+    // `reportOnly`, so this becomes a reported row for a person to apply.
+    // The old name said "the only automatic case", which described the
+    // write path removed in r14 (#2267 r29).
     const row = { id: 1, value: 'new' };
     const { insert, conflicts } = classify({ rows: [row], held: [], mirrored: [] });
     expect(insert).toEqual([row]);

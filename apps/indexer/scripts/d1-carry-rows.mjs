@@ -1163,13 +1163,19 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // RECONCILIATION IS A THREE-WAY COMPARISON, and reading it as a
     // two-way one is how three separate defects got in. For a given key
     // there are three facts — was it in the MANIFEST (so the mirror
-    // carried it), is it in the SOURCE now, is it in the DESTINATION now —
-    // and only ONE of the eight combinations is safe to act on
-    // automatically. Everything else is somebody's decision.
+    // carried it), is it in the SOURCE now, is it in the DESTINATION now.
+    // The three answers are what let each case be NAMED correctly.
+    //
+    // NONE of them is applied. `reconcile` runs with `reportOnly`, reads
+    // both databases and writes to neither, so every case below is
+    // reported for a person to act on — including the simplest. This
+    // comment said "only ONE is safe to act on automatically" until
+    // #2267 r29, describing the write path r14 removed, and it is the
+    // surface a maintainer reads before the runbook.
     //
     //   manifest source dest
-    //      no      yes   no   → a straggler inserted it. CARRY IT. The
-    //                          only automatic case.
+    //      no      yes   no   → a straggler inserted it. The simplest
+    //                          case, and still REPORTED, not carried.
     //      no      yes  yes   → both sides independently allocated the
     //                          same key after the mirror. `notifications`
     //                          and `diag_legal_hold_audit` are

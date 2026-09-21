@@ -1536,10 +1536,18 @@ the omissions bite harder on the way back than on the way out:
   its bundle carries nothing the rollback changes (see above).
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
-SOURCE, so a write must land there, and the discriminator is the source's
-accumulated rows rather than the target's emptiness. Running them as written
-would pass a Worker still bound to the target, which is the failure this
-rollback is trying to escape.
+SOURCE, so `check-live-d1-bindings.mjs --expect vaipakam-archive` is the check,
+comparing the pinned binding id. Running the forward probe as written would
+pass a Worker still bound to the target, which is the failure this rollback is
+trying to escape.
+
+**The discriminator is the binding id, not accumulated rows**, and this
+paragraph said otherwise until #2267 r29 while §3 said the opposite fifteen
+hundred lines earlier. After the copy both databases hold the same rows, so
+neither emptiness nor accumulation tells them apart in either direction. Where
+a data-level tell is wanted once traffic resumes, write a **unique sentinel**
+through a Worker's own surface and look for it by that exact value — a
+sentinel discriminates because you chose it.
 
 **After that it is not free.** New support tickets, thresholds, signed
 offers, notification state and cursors exist only in the target. Reverting
