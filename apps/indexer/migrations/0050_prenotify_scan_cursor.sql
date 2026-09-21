@@ -59,7 +59,7 @@ STRICT;
 -- cannot promise to have removed. An operator who wants it gone runs the same
 -- DELETE after the agent cutover has landed:
 --
---   wrangler d1 execute vaipakam-archive --remote \
+--   wrangler d1 execute vaipakam-warm --remote \
 --     --command="DELETE FROM indexer_cursor WHERE kind = 'prenotify_scan'"
 --
 -- Deleting it here anyway is still worth doing: it clears the row on every

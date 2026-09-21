@@ -1,17 +1,60 @@
 # D1 cutover — `vaipakam-archive` → `vaipakam-warm`
 
-**Status:** planned, not executed.
+**Status: EXECUTED 2026-09-21.** Schema parity applied, data copied, bindings
+moved. What follows the execution record is the plan as written beforehand,
+kept because its reasoning is still the reasoning.
+
+## Execution record (2026-09-21)
+
+1. **Schema parity.** `vaipakam-warm` was four migrations behind — `0049`,
+   `0050`, `0052`, `0053` — and missing two tables (`loan_reconcile_quarantine`,
+   `prenotify_scan_cursor`). Applied with `wrangler d1 migrations apply`, so the
+   `d1_migrations` record is wrangler's own rather than hand-written. Both
+   databases now report **53 migrations and 46 tables**, with nothing in one
+   that is absent from the other.
+2. **Data copied** — 1,384 rows across 17 tables, verified equal table-by-table
+   against the source. `d1_migrations` was deliberately **not** copied: warm's
+   record is its own, and copying the source's would have claimed migrations
+   ran on warm that never did.
+3. **Bindings moved** in all four consumers, with every `wrangler d1` command,
+   runbook line and generator constant moved in the same change — the
+   `check-d1-name-consistency` guard is what forces that to be simultaneous.
+
+### Decision 2 below was SUPERSEDED, and that is worth stating plainly
+
+The 2026-08-03 decision was *do not migrate the data*, on the reasoning that
+fresh contract deployments were expected and would make the indexed data stale
+anyway. The owner delegated this decision again on 2026-09-21 ("proceed as
+required, I will go with your recommendations"), and the data **was** copied.
+
+The reason for reversing it: **the fresh contract deployment has not happened.**
+The Diamond addresses in `packages/contracts/src/deployments.json` are
+unchanged, so the 38 loans, 49 offers and 1,125 activity rows describe the
+deployment that is live right now. Starting warm empty today would not discard
+stale data — it would discard current data, and with it the 19 `indexer_cursor`
+rows that tell the indexer where it had scanned to. An empty cursor table means
+re-scanning from the configured start block or silently beginning from now.
+
+If a fresh contract deployment does land later, this copied data becomes stale
+exactly as the original decision anticipated, and clearing it then is a
+`DELETE FROM` per table — cheap, and a decision that can be taken with the
+redeploy in hand rather than in advance of it.
+
+**This is recorded as a superseded decision rather than an edited one.** The
+original reasoning was sound for the world it was written in; what changed is
+that the world did not arrive.
 
 **Owner decisions (2026-08-03):**
 1. Proceed with the cutover — the platform is pre-live.
-2. **Do not migrate the data.** Fresh contract deployments are expected, so
-   the new database starts empty and captures new data only.
+2. ~~**Do not migrate the data.** Fresh contract deployments are expected, so
+   the new database starts empty and captures new data only.~~ **Superseded
+   2026-09-21 — see above.**
 
-That second decision is what makes this document short. Earlier revisions
+That second decision is what made this document short. Earlier revisions
 carried a quiesce, a whole-database export/import, a reconciliation and a
-secure-destruction step for a file full of personal data. None of that is
-needed to move to an empty database, and every one of those steps was a
-place to get it wrong.
+secure-destruction step for a file full of personal data. The copy that was
+actually performed is none of those: 1,384 rows through an idempotent upsert,
+verified by row count per table.
 
 ---
 

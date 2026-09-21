@@ -3,7 +3,7 @@
  * (DatabaseSync) — a straight port of the indexer's test shim
  * (apps/indexer/test/helpers/sqliteD1.ts) for keeper tests whose
  * behaviour IS the SQL: the HF-band pass (#1213 PR 2b) reads/writes
- * the SAME shared `vaipakam-archive` tables the indexer migrations
+ * the SAME shared `vaipakam-warm` tables the indexer migrations
  * define, so an in-memory SQLite running the real migration DDL is a
  * faithful query engine. Only the tiny prepare/bind/first/all/run
  * surface the keeper uses is adapted.

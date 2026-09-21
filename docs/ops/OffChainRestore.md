@@ -150,7 +150,7 @@ then deploy.
    — you'll paste these into the wrangler configs in step 5.
 
    ```bash
-   wrangler d1 create vaipakam-archive
+   wrangler d1 create vaipakam-warm
    ```
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
@@ -172,10 +172,10 @@ then deploy.
 5. Update every `wrangler.jsonc` in the monorepo that carries a
    `database_id` to the new IDs from step 3. The bound paths:
 
-   - `apps/indexer/wrangler.jsonc`     → vaipakam-archive
-   - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
-   - `apps/agent/wrangler.jsonc`       → vaipakam-archive
-   - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-archive
+   - `apps/indexer/wrangler.jsonc`     → vaipakam-warm
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm
+   - `apps/agent/wrangler.jsonc`       → vaipakam-warm
+   - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
 
    > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
    > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not
@@ -473,7 +473,7 @@ then deploy.
 7. Apply migrations:
 
    ```bash
-   ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
+   ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-warm --remote )
    ```
 
 8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
@@ -1213,7 +1213,7 @@ wrangler d1 execute <that database> --file=/tmp/lz.sql --remote
 `24641f98` is the last commit on `main` that still carried the file; any
 commit before #1440 merged works. Only then run the row import.
 
-**Critical**: `d1.archive[]` entries go to `vaipakam-archive`. Restoring
+**Critical**: `d1.archive[]` entries go to `vaipakam-warm`. Restoring
 another database's tables into it lands data in the wrong place and leaves
 the originating database empty after the restore. Match by source.
 
@@ -1286,7 +1286,7 @@ For each table:
 
 3. Apply via wrangler — targeting the matching D1 binding:
 
-   **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
+   **`vaipakam-warm` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
@@ -1320,7 +1320,7 @@ For each table:
    > re-run is not a substitute.
 
    ```bash
-   wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote
+   wrangler d1 execute vaipakam-warm --file=restore/d1/<table>.sql --remote
    ```
 
    **`vaipakam-lz-alerts-db` tables** (lz-watcher): `lz_alert_state`,
@@ -1413,7 +1413,7 @@ from the archive. Why:
 ```bash
 # Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
-wrangler d1 execute vaipakam-archive --remote --command="\
+wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
@@ -1964,7 +1964,7 @@ caught at the cheapest stage.
    - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
      `apps/indexer/migrations/`, so §1 step 7 applied it with every other
      migration. Confirm:
-     `wrangler d1 migrations list vaipakam-archive --remote`.
+     `wrangler d1 migrations list vaipakam-warm --remote`.
    - **The on-chain authority.** Two of them, and they are not the same —
      this is the part that is easy to get wrong. `remitRewardBudget`
      authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**

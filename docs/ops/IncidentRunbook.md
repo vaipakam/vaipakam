@@ -1354,7 +1354,7 @@ it moves nothing, and no automated response is wired to it.
 Three properties of the rail matter during an incident:
 
 - **It is trust-isolated on purpose.** Its own D1
-  (`vaipakam-mesh-alerts-db`, NOT the shared `vaipakam-archive`) and its
+  (`vaipakam-mesh-alerts-db`, NOT the shared `vaipakam-warm`) and its
   own Telegram identity (`TG_OPS_BOT_TOKEN` → `TG_OPS_CHAT_ID`, the
   ops-internal bot, never the user-facing one). A compromise of the
   user-alert bot cannot spoof these pages, and vice versa.

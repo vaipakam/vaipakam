@@ -107,7 +107,7 @@ as a privilege boundary:
 
   **The blast-radius ordering below does not survive contact with the
   shared D1 binding, and "cannot move funds" is not the boundary it
-  looks like.** All three Workers bind the same `vaipakam-archive`
+  looks like.** All three Workers bind the same `vaipakam-warm`
   database, and **a D1 binding is database-scoped, not table-scoped** —
   there is no per-table grant, so any Worker with the binding can write
   any table regardless of what its own code does today. Which Worker
@@ -207,7 +207,7 @@ Operator has provisioned (verified via Cloudflare API
 D1 databases:
 
 - `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
-- `vaipakam-archive`   (`3cffebf5-…`) — staging D1 for the new
+- `vaipakam-warm`   (`3cffebf5-…`) — staging D1 for the new
   Workers. Migrations not yet applied (one-time step).
 
 Pre-existing primary infra (untouched until staging is proven):
@@ -261,7 +261,7 @@ NO secrets — the frontend bundle is static.
   (serving 200). This is the ONE config in the tree that owns its own
   hostname; every other surface is bound out-of-band, which is why
   `docs/ops/DeploymentRunbook.md` warns against hand-binding this one.
-- **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
+- **D1:** `vaipakam-warm`, `migrations_dir: "migrations"`.
 - **Cron:** `* * * * *` — chain-event scan + cancelled-offer
   retention prune.
 - **Secrets** — all Secrets Store entries (§4.5(a)); this Worker has no
@@ -286,7 +286,7 @@ NO secrets — the frontend bundle is static.
 ### 4.3 `vaipakam-agent`
 
 - **Custom domain:** `agent.vaipakam.com` ✓
-- **D1:** `vaipakam-archive`. **Seven** tables reachable from live code
+- **D1:** `vaipakam-warm`. **Seven** tables reachable from live code
   (#1713): `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
   `loans`, `support_tickets`, `telegram_links`, `user_thresholds`.
   **Not read-mostly** — the agent writes every table it touches,
@@ -368,7 +368,7 @@ NO secrets — the frontend bundle is static.
 ### 4.4 `vaipakam-keeper`
 
 - No public domain (cron-only, no fetch handler).
-- **D1:** `vaipakam-archive`. Writes **twelve** tables of its own
+- **D1:** `vaipakam-warm`. Writes **twelve** tables of its own
   (`hf_band_state`, `notify_state`, `pre_grace_notify_state`,
   `notifications`, `telegram_links`, `liquidity_confidence`,
   `oracle_snapshot_state`, and the `keeper_commitment_*` /
@@ -562,8 +562,8 @@ Stage 3 PR5.
 | Step | Owner | What happens |
 |---|---|---|
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
-| 2 | Author | **DONE.** Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) — both are in `apps/indexer/wrangler.jsonc` and the hostname is live (verified 2026-08-27) |
-| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
+| 2 | Author | **DONE.** Patch wrangler.jsonc with `vaipakam-warm` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) — both are in `apps/indexer/wrangler.jsonc` and the hostname is live (verified 2026-08-27) |
+| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote` (one-time schema apply) |
 | 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for `apps/indexer`, and the packaged scripts **`pnpm --filter @vaipakam/agent run deploy`** and **`pnpm --filter @vaipakam/keeper run deploy`** for the other two (#1896) — the packaged scripts are canonical and carry `--keep-vars`. **Since #1995 a bare `wrangler deploy` is no longer destructive here**: all five var-carrying Workers declare `"keep_vars": true`, which wrangler reads on both the `deploy` and `versions upload` paths, so dashboard-managed values survive every spelling of a deploy. That covers the keeper's `FRONTEND_ORIGIN` and optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning from §4.4, and the agent's `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`, which `apps/agent/src/env.ts` reads and its config does not declare. The trade is that a deploy can no longer *remove* a var — deleting one is a dashboard action. This activates crons + binds `indexer.vaipakam.com`. **HOLD (#1896): the keeper no longer has a cron to activate** — `apps/keeper/wrangler.jsonc` commits `"crons": []` deliberately, because the Worker was being terminated for exceeding CPU on ~100% of invocations. Deploying it is still correct (it keeps the script and bindings current); it simply leaves the keeper unscheduled. Do not "fix" the empty list here. |
 | 6 | Operator | Update `apps/app/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; then `cd apps/app && pnpm run deploy` — **not** `pnpm build && wrangler deploy`. The packaged script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled `VITE_INDEXER_ORIGIN` into a hard failure; a bare build only warns and will publish a configuration-empty Worker (no offer book, push rail or config snapshot). That is not hypothetical — it happened during #1854. |
@@ -584,7 +584,7 @@ Stage 3 PR5.
    STAGING tokens (operator verified 2026-05-08).
 
 3. **D1 cost** — running two D1 instances (`vaipakam-alerts-db`
-   for prod + `vaipakam-archive` for staging) doubles the
+   for prod + `vaipakam-warm` for staging) doubles the
    Workers Free Tier rows quota. Both have retention prunes
    (`CANCELLED_OFFER_RETENTION_DAYS=30`, `DIAG_RETENTION_DAYS=90`)
    so growth is bounded. If quota tightens, lower retention

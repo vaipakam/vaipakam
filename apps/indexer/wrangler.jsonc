@@ -70,7 +70,7 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — `vaipakam-archive` is the STAGING database for
+  // D1 binding — `vaipakam-warm` is the STAGING database for
   // the new 3-Worker split. Distinct from `vaipakam-alerts-db`
   // (primary/production, untouched). See
   // docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
@@ -92,12 +92,12 @@
   // (apps/indexer is the primary writer of offers / loans /
   // activity / claimables; keeper + agent Workers read them
   // via the same shared D1 binding). Apply with:
-  //   cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote
+  //   cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "vaipakam-archive",
-      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
+      "database_name": "vaipakam-warm",
+      "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
       "migrations_dir": "migrations",
     },
   ],

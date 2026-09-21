@@ -3,7 +3,7 @@
  * Migration sequence-number guardrail (#1441).
  *
  * `apps/indexer/migrations/` is the single source of truth for every table
- * on the shared `vaipakam-archive` D1 (CLAUDE.md, "Cloudflare D1 schema
+ * on the shared `vaipakam-warm` D1 (CLAUDE.md, "Cloudflare D1 schema
  * discipline") — explicitly so that a fresh environment can be bootstrapped
  * by replaying it. This check protects that guarantee.
  *
