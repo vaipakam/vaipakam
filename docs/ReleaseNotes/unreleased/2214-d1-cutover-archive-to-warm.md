@@ -420,3 +420,24 @@ for the absence of one named attachment, so a service that kept a complete
 attachment under a different name was counted as paused. It now requires
 the attachments to be genuinely absent — a handle under another name is
 still a handle.
+
+### A name is a label; an identity is not — and only one tool knew it
+
+Both ends of the copy are named in advance and each is identified by more
+than its name, because a name can be reissued to a different database after
+a deletion. The check that confirms which database each service is actually
+attached to did not follow that rule: given a name, it asked the account
+which database currently owns it and trusted the answer.
+
+That matters in one direction in particular. Going back means confirming the
+services are attached to the database being returned to — and if that
+database had been deleted and recreated under the same name, every service
+attached to the replacement would have passed the confirmation while the
+retained records sat somewhere nothing was pointing at. The check would have
+reported the return complete, and the data it exists to protect would have
+been the part left behind.
+
+The pair is now written down once and read by every tool that needs it,
+rather than by each separately, so the rule cannot hold in one tool and not
+another. A name that is neither of the two is refused outright, and the
+refusal says why rather than falling back to a lookup.

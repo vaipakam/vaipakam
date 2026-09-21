@@ -124,34 +124,18 @@ import { createHash } from 'node:crypto';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
 
 /**
- * THE OTHER END. This tool exists for ONE move — the #2214 cutover — and
- * both of its endpoints are named here rather than left to an argument.
- *
- * An earlier revision required only that the SHARED database be one end,
- * and described that as preventing rows being moved through databases the
- * repository does not account for. It did not: with any other
- * schema-compatible database in the account, `--from <that> --to
- * vaipakam-warm --mirror` would delete and overwrite live shared data from
- * an unrelated clone, and `--from vaipakam-warm --to <that>` would copy
- * support requests, thresholds and signed offers into an arbitrary
- * database. Both directions passed the check while doing exactly what the
- * check claimed to stop.
- *
- * So the pair is pinned, by id as well as name — a name can be reused, an
- * id cannot — and the tool refuses anything else in either direction.
- * When the predecessor is finally deleted, this constant and the tool go
- * together.
+ * BOTH ENDPOINTS come from one pinned pair — see
+ * `lib/cutover-databases.mjs` for why they are pinned by id as well as
+ * name, and why they are not read from a Worker binding. Either direction
+ * between the two is allowed, which is what leaves the documented ROLLBACK
+ * performable; nothing else is, in either direction.
  */
-const PREDECESSOR = {
-  name: 'vaipakam-archive',
-  id: '3cffebf5-b652-4da7-953c-9e1d143ad2fe',
-};
-
 const NEVER_CARRIED = (t) =>
   t.startsWith('sqlite_') || t.startsWith('_cf_') || t === 'd1_migrations';
 
@@ -229,32 +213,6 @@ function checked(value, pattern, what) {
   }
   return value;
 }
-
-/**
- * THE OTHER END, pinned the same way and for a second reason.
- *
- * This used to be read from `apps/indexer/wrangler.jsonc`'s `DB` binding,
- * on the reasoning that the shared database is declared once and every
- * consumer should agree with that declaration. It is the wrong source for
- * THIS tool, and the barrier is where that shows: the maintenance build
- * removes `d1_databases` from all three writers, so during the only window
- * in which the carry runs, the anchor does not exist and the tool exits
- * before `digest` or `carry` can do anything (#2267 r22).
- *
- * A Worker binding says what the Workers are attached to RIGHT NOW, which
- * across a cutover is precisely the thing in motion. The two endpoints of
- * this move are not in motion — they are the two databases the move is
- * between — so they are pinned here, both of them, by id as well as name.
- *
- * Drift between this constant and the live configuration is still caught,
- * in the place that owns that question: `check-d1-name-consistency`
- * validates it as a command generator, so a tree where the Workers bind
- * one database and this tool would carry into another is red in CI.
- */
-const SUCCESSOR = {
-  name: 'vaipakam-warm',
-  id: 'e5e927cf-56c3-42c7-9820-179a235cc84f',
-};
 
 function sharedDatabase() {
   return {

@@ -24,11 +24,12 @@
  *      pass with one tenth of requests still writing to the old database.
  *   3. That version's own `resources.bindings`.
  *
- * The expected id is not a parameter either: it is read from
- * `apps/indexer/wrangler.jsonc`, the single declaration that
- * `check-d1-name-consistency` holds every other reference to. The Workers
- * to ask about are read from their own committed configs, so a Worker
- * added later is covered without editing a list here.
+ * The expected id is not a free parameter: it is one of the two
+ * databases this move is between, pinned by id in
+ * `lib/cutover-databases.mjs` — never a name resolved against the
+ * account, which is a label the account can reassign. The Workers to ask
+ * about are read from their own committed configs, so a Worker added
+ * later is covered without editing a list here.
  *
  * This is a LIVE check against the Cloudflare API — it needs credentials
  * and it is not wired into CI. Run it after a cutover, and after any
@@ -43,11 +44,15 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  PREDECESSOR,
+  SUCCESSOR,
+  knownDatabase,
+} from './lib/cutover-databases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
 
-const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
 
 /**
  * The Workers that bind the shared database, by the config that declares
@@ -286,32 +291,42 @@ async function main() {
     return;
   }
 
-  const declared = (cfgOf(DECLARING_FILE).d1_databases ?? []).find(
-    (e) => e.binding === 'DB',
-  );
-  if (!declared?.database_id) {
-    fail(`${DECLARING_FILE} has no complete "DB" d1 binding to check against.`);
-  }
-  // The default expectation is the declared shared database, which is the
-  // forward direction. A ROLLBACK inverts it: the Workers are meant to be
-  // back on the database being left behind, and a probe that can only
-  // expect the shared one would reject every correctly rolled-back Worker
-  // — leaving the reverse switch with no serving-version check at all,
-  // which is the half of the move where one is needed most.
-  let EXPECT = declared.database_id;
-  let expectLabel = `${declared.database_name} (${EXPECT}), per ${DECLARING_FILE}`;
-  if (expectName && expectName !== declared.database_name) {
-    const found = await cf(
-      `/d1/database?name=${encodeURIComponent(expectName)}`,
-    );
-    const hit = (found ?? []).find((d) => d.name === expectName);
-    if (!hit) fail(`no D1 database named "${expectName}" in this account`);
-    EXPECT = hit.uuid;
+  // The default expectation is the successor, which is the forward
+  // direction. A ROLLBACK inverts it: the Workers are meant to be back on
+  // the database being left behind, and a probe that can only expect the
+  // successor would reject every correctly rolled-back Worker — leaving
+  // the reverse switch with no serving-version check at all, which is the
+  // half of the move where one is needed most.
+  //
+  // THE EXPECTATION IS PINNED BY ID, AND NOT RESOLVED FROM THE ACCOUNT.
+  // This used to ask Cloudflare which database owns the given name and
+  // trust the answer, which makes the gate only as strong as a label the
+  // account can reassign: delete the predecessor and recreate it under the
+  // same name, and every Worker attached to the REPLACEMENT passes a
+  // rollback check while the retained data sits in a database nothing is
+  // bound to (#2267 r23). The carry tool has pinned both ends by id since
+  // r3 for the same reason; this probe was the other half of that pair and
+  // had not been.
+  let expected = SUCCESSOR;
+  let expectLabel = `${SUCCESSOR.name} (${SUCCESSOR.id})`;
+  if (expectName && expectName !== SUCCESSOR.name) {
+    const hit = knownDatabase(expectName);
+    if (!hit) {
+      fail(
+        `--expect "${expectName}" is neither database this move is ` +
+          `between (${SUCCESSOR.name}, ${PREDECESSOR.name}).\n\nThis probe ` +
+          `does not resolve a name against the account: a name is a label ` +
+          `the account can reassign, and trusting one would let a Worker ` +
+          `attached to a replacement database pass a rollback check while ` +
+          `the retained data is elsewhere.`,
+      );
+    }
+    expected = hit;
     expectLabel =
-      `${expectName} (${EXPECT}) — NOT the database ${DECLARING_FILE} ` +
-      `declares (${declared.database_name}). This is the rollback ` +
-      `direction; say so in the run log`;
+      `${hit.name} (${hit.id}) — NOT the successor (${SUCCESSOR.name}). ` +
+      `This is the rollback direction; say so in the run log`;
   }
+  const EXPECT = expected.id;
   console.log(`expecting ${expectLabel}\n`);
 
   const problems = [];

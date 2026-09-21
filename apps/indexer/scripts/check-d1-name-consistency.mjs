@@ -128,13 +128,13 @@ const COMMAND_GENERATORS = [
     why: 'emits the restore `wrangler d1 execute` lines by interpolation',
   },
   {
-    file: 'apps/indexer/scripts/d1-carry-rows.mjs',
+    file: 'apps/indexer/scripts/lib/cutover-databases.mjs',
     constant: 'SUCCESSOR',
     field: 'name',
     why:
-      'pins both ends of the cutover as constants rather than reading the ' +
-      'shared one from a Worker binding — it has to run during the barrier, ' +
-      'when no writer declares a binding at all',
+      'is the one pinned pair the cutover tools read, rather than each ' +
+      'reading the shared one from a Worker binding — they have to run ' +
+      'during the barrier, when no writer declares a binding at all',
   },
 ];
 
