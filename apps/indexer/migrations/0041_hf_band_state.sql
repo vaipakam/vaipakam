@@ -5,7 +5,7 @@
 -- liquidator pass piggybacks band classification on the full-book HF
 -- multicall it already performs every tick); the schema lives here
 -- because apps/indexer/migrations owns every table on the shared
--- `vaipakam-archive` D1 (CLAUDE.md "Cloudflare D1 schema discipline").
+-- `vaipakam-warm` D1 (CLAUDE.md "Cloudflare D1 schema discipline").
 --
 -- Distinct from `notify_state` on purpose: that table is the
 -- SUBSCRIBER alert rail — keyed by (wallet, chain, loan) with the

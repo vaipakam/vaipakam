@@ -67,10 +67,10 @@
     "crons": ["17 3 * * *"],
   },
   // D1 — read-only bindings to the two production databases this
-  // Worker backs up. The shared vaipakam-archive holds the indexer
+  // Worker backs up. The shared vaipakam-warm holds the indexer
   // tables + the diag / legal-hold registers. (vaipakam-lz-alerts-db
   // was the lz-watcher's separate alerts DB, kept distinct from
-  // vaipakam-archive for the trust-boundary reasons documented in
+  // vaipakam-warm for the trust-boundary reasons documented in
   // CLAUDE.md's D1-schema-discipline section).
   //
   // The Worker NEVER writes to either DB; the bindings are present
@@ -81,8 +81,8 @@
   "d1_databases": [
     {
       "binding": "DB_ARCHIVE",
-      "database_name": "vaipakam-archive",
-      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
+      "database_name": "vaipakam-warm",
+      "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
       "remote": false,
     },
     // #1440 — the DB_LZ_ALERTS binding to `vaipakam-lz-alerts-db` was

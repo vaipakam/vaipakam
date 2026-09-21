@@ -70,7 +70,7 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — `vaipakam-archive` is the STAGING database for
+  // D1 binding — `vaipakam-warm` is the STAGING database for
   // the new 3-Worker split. Distinct from `vaipakam-alerts-db`
   // (primary/production, untouched). See
   // docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
@@ -92,22 +92,15 @@
   // (apps/indexer is the primary writer of offers / loans /
   // activity / claimables; keeper + agent Workers read them
   // via the same shared D1 binding). Apply with:
-  //   cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote
-  // CUTOVER BARRIER (#2214) — DELIBERATELY NO D1 BINDING.
-  //
-  // This Worker is being moved from `vaipakam-archive` to `vaipakam-warm`,
-  // and for the length of that move it must not be able to reach EITHER.
-  // A binding is the only handle it has, so removing it is the only thing
-  // this repository can do that actually stops the writes — a deploy with
-  // no binding cannot write to a database it cannot name.
-  //
-  // This is a temporary state and it is not the end state. The binding
-  // comes back pointing at `vaipakam-warm` when the cutover PR merges.
-  // If you are reading this on `main` days later, the cutover did not
-  // finish: see docs/ops/D1CutoverArchiveToWarm.md §4 before doing
-  // anything else, and do NOT simply restore the old binding — that puts
-  // the writers back on the database being left behind.
-
+  //   cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-warm",
+      "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
+      "migrations_dir": "migrations",
+    },
+  ],
 
   // T-078 — per-chain RPC URLs are read from the account-level
   // Cloudflare Secrets Store (store `vaipakam-credentials`, id

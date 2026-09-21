@@ -9,6 +9,19 @@ the read-API + chain-event scan carved into a dedicated Worker
 for resource isolation.
 **Owner:** Vaipakam protocol team
 
+> **The shared D1 named throughout this document is no longer the one in
+> use.** Every mention of `vaipakam-archive` below records the state at the
+> date beside it — it was the shared database from May 2026, and #2214
+> replaced it with `vaipakam-warm`. The provisioning and binding sections are
+> left naming it rather than rewritten, because rewriting a dated record
+> produces a hybrid state that never existed. The one place that was not a
+> record but a live instruction — §6 step 3, the schema apply — **has** been
+> corrected, since following it today would apply migrations to a database no
+> Worker reads. For the current shared database, its id, and the move itself,
+> see [`docs/ops/D1CutoverArchiveToWarm.md`](../ops/D1CutoverArchiveToWarm.md);
+> `apps/indexer/wrangler.jsonc` is the single declaration, and
+> `check-d1-name-consistency` is what holds every other reference to it.
+
 ## 1. Goal
 
 Stand up parallel Worker deployments alongside the existing
@@ -209,6 +222,9 @@ D1 databases:
 - `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
 - `vaipakam-archive`   (`3cffebf5-…`) — staging D1 for the new
   Workers. Migrations not yet applied (one-time step).
+  **As of 2026-05-07, and superseded:** #2214 moved the Workers to
+  `vaipakam-warm` (`e5e927cf-…`, 53 migrations applied). The archive
+  database still exists and still holds its rows; no Worker binds it.
 
 Pre-existing primary infra (untouched until staging is proven):
 
@@ -563,7 +579,7 @@ Stage 3 PR5.
 |---|---|---|
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
 | 2 | Author | **DONE.** Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) — both are in `apps/indexer/wrangler.jsonc` and the hostname is live (verified 2026-08-27) |
-| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
+| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote` (one-time schema apply). **CORRECTED (#2214):** this row named `vaipakam-archive` until the cutover. That is the retired database — running it there today succeeds, updates a database no Worker reads, and leaves both halves looking correct, which is the exact split this repo's D1 name check exists to prevent. The May-2026 run did target the archive database; that fact belongs to §3's provisioning record, not to an instruction anyone may still follow. Take the name from `apps/indexer/wrangler.jsonc` rather than from this table |
 | 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for `apps/indexer`, and the packaged scripts **`pnpm --filter @vaipakam/agent run deploy`** and **`pnpm --filter @vaipakam/keeper run deploy`** for the other two (#1896) — the packaged scripts are canonical and carry `--keep-vars`. **Since #1995 a bare `wrangler deploy` is no longer destructive here**: all five var-carrying Workers declare `"keep_vars": true`, which wrangler reads on both the `deploy` and `versions upload` paths, so dashboard-managed values survive every spelling of a deploy. That covers the keeper's `FRONTEND_ORIGIN` and optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning from §4.4, and the agent's `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`, which `apps/agent/src/env.ts` reads and its config does not declare. The trade is that a deploy can no longer *remove* a var — deleting one is a dashboard action. This activates crons + binds `indexer.vaipakam.com`. **HOLD (#1896): the keeper no longer has a cron to activate** — `apps/keeper/wrangler.jsonc` commits `"crons": []` deliberately, because the Worker was being terminated for exceeding CPU on ~100% of invocations. Deploying it is still correct (it keeps the script and bindings current); it simply leaves the keeper unscheduled. Do not "fix" the empty list here. |
 | 6 | Operator | Update `apps/app/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; then `cd apps/app && pnpm run deploy` — **not** `pnpm build && wrangler deploy`. The packaged script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled `VITE_INDEXER_ORIGIN` into a hard failure; a bare build only warns and will publish a configuration-empty Worker (no offer book, push rail or config snapshot). That is not hypothetical — it happened during #1854. |

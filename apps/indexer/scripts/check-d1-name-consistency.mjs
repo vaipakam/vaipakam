@@ -113,6 +113,16 @@ const COMMAND_GENERATORS = [
     constant: 'ARCHIVE_DATABASE',
     why: 'emits the restore `wrangler d1 execute` lines by interpolation',
   },
+  {
+    file: 'apps/indexer/scripts/lib/cutover-databases.mjs',
+    constant: 'SUCCESSOR',
+    field: 'name',
+    idField: 'id',
+    why:
+      'is the one pinned pair the cutover tools read, rather than each ' +
+      'reading the shared one from a Worker binding — they have to run ' +
+      'during the barrier, when no writer declares a binding at all',
+  },
 ];
 
 /** Paths whose D1 names record history and must not be rewritten. */
