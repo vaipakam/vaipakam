@@ -7109,21 +7109,69 @@ on the live era alone.
 > every visited entry must be terminated (fact 4) or the call reverts
 > naming the entry, and completion stamps `dayObligationsClosed[d]`. Zero
 > cost on any settlement path; paid once per day, ever, by whoever wants
-> the batch closed; reused by every batch that lists the day. Parking then
+> the batch closed; reused by every batch that lists the day. Two
+> conditions the accumulation already carries apply here with more force,
+> because this stamp is irreversible (Codex #2274 r1, two P1s):
+>
+> - **Admissible only after the mirror's OWN day close.** The side totals
+>   the completeness test compares against are final only once
+>   `RewardReporterFacet.closeDay` has folded the day
+>   (`hasLocalInterestClose`); a Base grace/force-finalize stamps this
+>   mirror's funding before that, and until the fold a busy day reads
+>   as two zero totals — an EMPTY walk would pass conservation and stamp
+>   a day closed with every covering entry unsettled. The send path
+>   already refuses the report on exactly this race; the proof refuses
+>   the same way, and a day never locally closed can never be stamped.
+> - **A walk is the STARTER's, keyed `(day, starter, nonce)`, not a shared
+>   per-day cursor.** With one shared cursor, a caller who submits a high
+>   id while omitting a lower covering one advances the cursor past the
+>   omission and the walk can never complete — every batch listing the
+>   day is blocked, and the accumulation's remedy for that
+>   (`resetCommitmentAccumulation`) is ADMIN-only. Per-starter walks
+>   make the omission cost only its author: the poisoned walk is
+>   abandoned, a fresh nonce starts another, and the day is stamped by
+>   the first walk that completes. No reset entry, no admin in the loop,
+>   and no way for one caller to spoil another's proof. Parking then
 > re-supplies the batch's day list against its 3a commitment and requires
 > every listed day stamped closed — paged with a cursor for a pre-cap
 > batch whose list exceeds one page, which is the resumable RETIRING path
 > the plan already names.
 >
-> **Residue, stated rather than implied.** A day whose entries can never
-> terminate — a funding stamp that never arrives leaves them unpriceable,
-> so neither claimable nor sweepable — keeps every batch that lists it
-> unparkable, and therefore unclassifiable and unrepatriable, for as long
-> as that holds. That is the conservative side, and it is the owner's
-> chosen side (#2258, Reading B): the value stays protected and visible in
-> `Unclassified`. The lane's own remedies for a missing stamp
-> (force-finalize, the manual budget path) are the exit, not a bypass in
-> the release.
+> **Residue, stated rather than implied — every condition that leaves an
+> entry unterminated, and so a day unclosed** (the first draft named only
+> the missing stamp; Codex #2274 r1 P2 named the rest). A day closes only
+> when every entry covering it has terminated, and an entry terminates
+> only by claim, forfeit or expiry. Each of these leaves it standing
+> indefinitely:
+>
+> - a funding stamp that never arrives — the entry is unpriceable, so
+>   neither claimable nor sweepable; exit: the lane's own remedies
+>   (force-finalize, the manual budget path);
+> - the protocol paused — the expiry clock is blocked and no claim runs;
+>   exit: unpause, the clock resumes;
+> - aggregate backing short of the entry's transfer test — the expiry
+>   clock is blocked until funding lands; exit: funding;
+> - `rewardClaimHorizonDays` disabled — no entry ever expires; exit: a
+>   configuration act, with the horizon activation epoch guarding the
+>   restart;
+> - **the entry's owner sanctioned** — the claim refuses them and the
+>   expiry clock does not advance while they are flagged, so the entry
+>   can stand for as long as the flag does, and nothing the platform
+>   controls clears it.
+>
+> While any of these holds, every batch listing that day is unparkable,
+> and therefore unclassifiable and unrepatriable: the value stays
+> protected and visible in `Unclassified`. That is the conservative side
+> the owner chose (#2258, Reading B). The first four have exits the
+> platform or its operator already holds. The fifth does not, and it is
+> recorded here as an OWNER QUESTION for 3b-ii-B rather than decided: a
+> single flagged claimant on one listed day holds a whole batch's
+> release indefinitely. The two answers are to accept that (the
+> earmark outlives the flag, value is never lost), or to give B one
+> named, explicit exception — an operator disposition that may stamp a
+> day closed over entries blocked ONLY by a sanctions flag, with the
+> write-off recorded — which is the kind of machine-bypass B otherwise
+> exists to remove. B proceeds on the first absent a different answer.
 >
 > Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
 > allocations to 3c (the plan recommends yes, and A is written that way);
