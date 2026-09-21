@@ -106,26 +106,42 @@ contract RefreshReaderProbe is RefreshAllFacetsInPlace {
  *         would have sent those to the canonical tree while everything else
  *         from the same run went to the scratch tree.
  *
- *         **What these tests can and cannot prove.** The library helpers are
- *         covered directly, and so are TWO of the four call sites — the
- *         ceremony record and the refresh reader. Both are mutation targets:
- *         restore the hand-built root in either and its test fails.
+ *         **What these tests cover.** After the #2261 r2 collapse there are
+ *         THREE composition sites among the scripts this PR touched, and the
+ *         enumeration below is the output of
+ *         `grep -rn 'Deployments\.\(namedPath\|pathForSlug\|path()\|dirFor\)'
+ *         script/`, not a list written from memory:
  *
- *         `Handover._resolveAddressesPath` is the one call site NOT covered.
- *         `Handover is Script` only, so it carries no artifact-root override;
- *         a probe would have to mix {IArtifactRoot} into it and the test would
- *         then assert the probe's own wiring rather than Handover's. It is
- *         correct by construction — the hand-built root is gone — and that is
- *         stated rather than dressed up as coverage.
+ *         | Site | Covered by |
+ *         | --- | --- |
+ *         | `RewardCustodyCeremonyBase._recordPath` | `test_CeremonyRecord_FollowsTheRedirect` |
+ *         | `RefreshAllFacetsInPlace._readAddrOptional` | `test_RefreshReader_FollowsTheRedirect` |
+ *         | `Handover._resolveAddressesPath` | NOTHING — see below |
  *
- *         An earlier revision of this header made that same excuse for
- *         `RefreshAllFacetsInPlace._readAddrOptional`, and it was false
- *         (#2261 r1 P2): `RefreshAllFacetsInPlace is DeployDiamond`, and
- *         `DeployDiamond is Script, ArtifactRootBase`, so it is ALREADY
- *         redirect-capable and a derived probe needs no new capability. The
- *         claim is recorded here rather than quietly deleted because it is
- *         exactly the shape of excuse that turns a missing test into a
- *         justified one.
+ *         `_recordPath` serves BOTH ceremony writers: `ActivateRewardCustody`'s
+ *         durable receipt used to compose its own path inline and now routes
+ *         through it, so one test covers both. That is why the count fell from
+ *         four to three rather than a fourth probe appearing.
+ *
+ *         `Handover._resolveAddressesPath` is genuinely uncovered. `Handover is
+ *         Script` only, so it carries no artifact-root override; a probe would
+ *         have to mix {IArtifactRoot} into it and the test would then assert
+ *         the probe's own wiring rather than Handover's. Correct by
+ *         construction — the hand-built root is gone — and stated rather than
+ *         dressed up as coverage.
+ *
+ *         **Why this section is a derived table and not a paragraph.** Three
+ *         successive revisions of this header claimed coverage the tests did
+ *         not have, each caught in review: first that `RefreshAllFacetsInPlace`
+ *         could not be covered (false — it inherits `ArtifactRootBase` through
+ *         `DeployDiamond`, r1 P2), then that `Handover` was the SOLE uncovered
+ *         site (false — `ActivateRewardCustody` had its own inline path
+ *         expression, r2 P2). Both were hand-written enumerations that drifted
+ *         from the code. The recurring defect was the enumeration, not any one
+ *         claim, so the fix is to derive it and to keep the composition sites
+ *         few enough to enumerate — hence the collapse above. An unfounded
+ *         reason not to test something reads exactly like a sound one, which is
+ *         why the wrong claims are recorded here rather than quietly replaced.
  *
  *         **What the sweep leaves behind, and why none of it is a defect.**
  *         `grep -rn '"deployments/' contracts/script/` still returns matches

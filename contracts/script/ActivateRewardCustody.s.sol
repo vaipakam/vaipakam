@@ -68,6 +68,21 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
 contract ActivateRewardCustody is RewardCustodyCeremonyBase {
     string internal constant KIND = "activation";
 
+    /// @dev The DURABLE record's kind, distinct from {KIND}: the pending
+    ///      record (`reward-custody-activation.json`) is consumed and removed
+    ///      by `record()`, while this one (`reward-custody-activated.json`)
+    ///      outlives the ceremony as its receipt. Two files, never one.
+    ///
+    ///      A kind rather than a path (#2261 r2 P2). This receipt used to
+    ///      compose its own `Deployments.namedPath(...)` inline, which made it
+    ///      a SECOND place that decided where a ceremony artifact lives — so a
+    ///      regression here could not be caught by the test covering
+    ///      {RewardCustodyCeremonyBase._recordPath}, and the PR claimed a
+    ///      coverage it did not have. Routing it through the base class's one
+    ///      composition point removes the second site instead of adding a
+    ///      second probe for it.
+    string internal constant DURABLE_KIND = "activated";
+
     struct Figures {
         uint8 role;
         uint256 received;
@@ -454,8 +469,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         console.log("Confirmed -- received / paid:", received, paid);
         console.log("Confirmed rows -- live / recycled:", live, recycled);
         console.log("Confirmed rows -- recovery / overage:", recovery, overage);
-        string memory durable =
-            Deployments.namedPath("reward-custody-activated.json");
+        string memory durable = _recordPath(DURABLE_KIND);
         if (_nonBroadcastWritesEnabled()) {
             string memory obj = "confirmed";
             vm.serializeAddress(obj, "confirmedHolder", liveHolder);
