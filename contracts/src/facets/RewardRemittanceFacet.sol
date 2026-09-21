@@ -136,6 +136,40 @@ contract RewardRemittanceFacet is
     ///      (all filters passed, slice non-zero pre-clamp) — including an
     ///      armed day whose Σcommitments clamp lands at ZERO, whose
     ///      commitments must still retire exactly once.
+    /// @notice ONE plan of a remittance batch, produced by {_planBatch} and
+    ///         read by the send and by every quote view.
+    /// @dev    #1566 transport epochs PR 3b (#2232 r16 root arrest). The day
+    ///         walk - dedupe, finalization, per-day plan, the net recycled-
+    ///         backing gate, the funded and closed lists, the totals - used to
+    ///         be hand-copied FOUR times (the send, {quoteRemitDayPlans},
+    ///         {quoteRewardBudget}, {quoteRemittanceFee}), and each copy
+    ///         enforced a different subset of the rules. That is why a quote
+    ///         priced what the send refused three separate times in this
+    ///         programme: a rule added to one copy missed another. There is
+    ///         one walk now. It REPORTS what it would refuse rather than
+    ///         throwing, because its callers legitimately differ in what they
+    ///         do about a refusal: the send and the fee quote revert (a dry
+    ///         run must fail where the run fails), while the discovery views
+    ///         stay tolerant (the keeper scans a window and relies on a
+    ///         non-remittable day reading zero, not reverting).
+    ///
+    ///         `dl` and `st` are the send's own working structs, populated
+    ///         here so its apply phase and everything after it read exactly
+    ///         what they always read. `perDay` / `closeable` are aligned to
+    ///         the INPUT list; `closedSlices` / `residuals` to `dl.closedDays`.
+    struct BatchPlan {
+        RemitDayLists dl;
+        RemitSplitTotals st;
+        uint256[] perDay;
+        bool[] closeable;
+        uint256[] closedSlices;
+        uint256[] residuals;
+        /// @dev The first unfinalized day in INPUT order, reported rather than
+        ///      thrown; `anyUnfinalized` says whether it is meaningful.
+        uint256 firstUnfinalized;
+        bool anyUnfinalized;
+    }
+
     struct DayRemitPlan {
         bool close;
         uint256 fresh;
@@ -404,112 +438,38 @@ contract RewardRemittanceFacet is
         // (One memory struct for the four day-list locals — the w4 split
         // moved this function's compilation shape and four stack slots
         // became one; same lever as {RemitSplitTotals} below.)
-        RemitDayLists memory dl = RemitDayLists({
-            fundedDays: new uint256[](dayIds.length),
-            fundedCount: 0,
-            closedDays: new uint256[](dayIds.length),
-            closedCount: 0
-        });
-        // B2-d2 — reserve the delivered-backing id up front: the day-close
-        // markers written in the loop reference it, and the reservation
-        // itself is written BEFORE the external send (CEI).
+        // #2232 r16 root arrest - ONE plan, then apply it. Every refusal a
+        // dry run must reproduce is decided on the plan before any write, so
+        // the fee quote, which calls the same {_planBatch}, cannot price a
+        // batch this refuses. See {BatchPlan}.
+        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds);
+        if (plan.anyUnfinalized) revert RewardDayNotFinalized(plan.firstUnfinalized);
+        RemitDayLists memory dl = plan.dl;
+        RemitSplitTotals memory st = plan.st;
+        if (dl.closedCount == 0) revert NothingToRemit();
         uint256 remitId = ++s.remitReservationNonce;
-        // PR-3c (#1217) — track the funding-source decomposition: the FRESH
-        // share reserves against the 69M cap; the RECYCLED share debits the
-        // bucket at remit (governor §3.2 — the tokens leave Base custody
-        // here); armed-day fresh retires its finalize-time commitment.
-        // (Memory struct: keeps the viaIR stack under the ceiling.)
-        RemitSplitTotals memory st;
-        st.armedFrom = s.governorCommitArmedFromDay;
-        st.bucketLeft = s.recycleBucket;
-        st.outRecycledLeft = s.outstandingCommitRecycled;
-        for (uint256 i; i < dayIds.length; ) {
-            uint256 dayId = dayIds[i];
-            if (!s.dailyGlobalFinalized[dayId]) {
-                revert RewardDayNotFinalized(dayId);
-            }
-            DayRemitPlan memory p = _planDay(s, dstChainId, dayId, st.armedFrom);
-            // r2/r6 net backing gate (see {RemitSplitTotals.bucketLeft}).
-            if (
-                p.close
-                    && st.bucketLeft + p.recycledFull
-                        >= st.outRecycledLeft + p.recycled
-            ) {
-                st.bucketLeft -= p.recycled;
-                st.outRecycledLeft = st.outRecycledLeft > p.recycledFull
-                    ? st.outRecycledLeft - p.recycledFull
-                    : 0;
-                // Terminal close: a duplicate of this day later in the batch
-                // re-enters {_planDay} and finds the marker, so each day
-                // closes at most once.
-                s.dayClosedByRemitId[dstChainId][dayId] = remitId;
-                dl.closedDays[dl.closedCount] = dayId;
-                unchecked {
-                    ++dl.closedCount;
-                }
-                uint256 slice = p.fresh + p.recycled;
-                if (slice > 0) {
-                    s.rewardBudgetRemitted[dstChainId][dayId] = slice;
-                    st.totalAll += slice;
-                    st.fresh += p.fresh;
-                    st.recycled += p.recycled;
-                    dl.fundedDays[dl.fundedCount] = dayId;
-                    unchecked {
-                        ++dl.fundedCount;
-                    }
-                }
-                st.armedFresh += p.armedFreshFull;
-                st.recycledFull += p.recycledFull;
-                // B2-d2 — the Σcommitments clamp residual will never be paid
-                // on the mirror (the reported liability is the supremum of
-                // its eventual capped claims), so the closed day releases the
-                // residual RECYCLED commitment here — otherwise
-                // `outstandingCommitRecycled` leaks it forever and `fundable`
-                // under-states availability. The fresh residual retires via
-                // `consumeArmedFresh(st.armedFresh)` below (full pre-clamp).
-                uint256 residualRecycled = p.recycledFull - p.recycled;
-                if (residualRecycled > 0) {
-                    LibVpfiRecycle.releaseCommitment(
-                        LibVpfiRecycle.RecycleSource.RemitClampResidual,
-                        dayId,
-                        residualRecycled
-                    );
-                }
+        // APPLY - the writes the walk used to interleave, in the same per-day
+        // order: close the day under this remit, record what it funds, and
+        // release the clamp residual its commitment does not send.
+        for (uint256 k; k < dl.closedCount; ) {
+            uint256 dayId = dl.closedDays[k];
+            s.dayClosedByRemitId[dstChainId][dayId] = remitId;
+            uint256 slice = plan.closedSlices[k];
+            if (slice > 0) s.rewardBudgetRemitted[dstChainId][dayId] = slice;
+            uint256 residual = plan.residuals[k];
+            if (residual > 0) {
+                LibVpfiRecycle.releaseCommitment(
+                    LibVpfiRecycle.RecycleSource.RemitClampResidual,
+                    dayId,
+                    residual
+                );
             }
             unchecked {
-                ++i;
+                ++k;
             }
         }
-        if (dl.closedCount == 0) revert NothingToRemit();
-        // Trim the collection arrays to their filled lengths (shrink the
-        // memory arrays' lengths in place — safe, we only ever reduce them;
-        // the annotation keeps solc's memoryguard active so viaIR can spill
-        // this function's locals).
-        {
-            uint256[] memory fundedDays_ = dl.fundedDays;
-            uint256 fundedCount_ = dl.fundedCount;
-            uint256[] memory closedDays_ = dl.closedDays;
-            uint256 closedCount_ = dl.closedCount;
-            assembly ("memory-safe") {
-                mstore(fundedDays_, fundedCount_)
-                mstore(closedDays_, closedCount_)
-            }
-        }
-        // #1566 transport epochs PR 3b — the fan-out bound, on the list the
-        // DESTINATION will actually receive (Codex #2232 r2).
-        //
-        // It was applied to the REQUEST until this round, which broke the
-        // documented idempotence of a retry: a caller re-sending a partially
-        // delivered batch of 40 days, of which 30 remain unsent, was refused
-        // even though the payload would have carried 30. The filters above —
-        // already-remitted, duplicate, zero-slice — are what decide the wire's
-        // length, so the bound belongs after them, where that length is final.
-        //
-        // The cost it bounds is the destination's: the mirror walks this list
-        // to fund its days, and a transport epoch's retirement writes one index
-        // update per member day (§5c's atomic rule for a within-cap batch).
-        // {quoteRemittanceFee} applies it to its own filtered count, so the
-        // quote can never price a batch the send refuses.
+        // The fan-out bound on the list the destination will receive, by the
+        // same rule the fee quote applies to the same plan.
         LibRewardCustody.requireRemittableFanout(dl.fundedCount);
         if (st.totalAll > perRemittanceCap) {
             revert RemittanceExceedsCap(st.totalAll, perRemittanceCap);
@@ -674,6 +634,111 @@ contract RewardRemittanceFacet is
     }
 
 
+
+    /// @notice THE day walk. See {BatchPlan} for why there is exactly one.
+    /// @dev    Pure planning: reads state, writes none, so the same call serves
+    ///         a view and the send's planning phase alike. The send applies
+    ///         the plan afterwards ({remitRewardBudget}); planning is
+    ///         write-independent within a batch because {_planDay} reads only
+    ///         the CURRENT day's cells and the send writes only the current
+    ///         day's cells, which is also the assumption the quotes have
+    ///         always silently made - it is now the stated contract of one
+    ///         function instead of a coincidence across four.
+    ///
+    ///         Duplicates are dropped by an explicit scan (the send used to
+    ///         rely on its own just-written state to plan a repeated day
+    ///         empty; the same outcome, now by one rule). An unfinalized day
+    ///         is skipped and REPORTED, not thrown: the send and the fee
+    ///         quote revert on it with the first such day in input order,
+    ///         exactly as the send did mid-walk, and the discovery views keep
+    ///         reading it as zero.
+    function _planBatch(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256[] calldata dayIds
+    ) private view returns (BatchPlan memory plan) {
+        uint256 n = dayIds.length;
+        plan.dl.fundedDays = new uint256[](n);
+        plan.dl.closedDays = new uint256[](n);
+        plan.perDay = new uint256[](n);
+        plan.closeable = new bool[](n);
+        plan.closedSlices = new uint256[](n);
+        plan.residuals = new uint256[](n);
+        plan.st.armedFrom = s.governorCommitArmedFromDay;
+        plan.st.bucketLeft = s.recycleBucket;
+        plan.st.outRecycledLeft = s.outstandingCommitRecycled;
+        for (uint256 i; i < n; ) {
+            uint256 dayId = dayIds[i];
+            bool seen;
+            for (uint256 j; j < i; ) {
+                if (dayIds[j] == dayId) {
+                    seen = true;
+                    break;
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            if (!seen) {
+                if (!s.dailyGlobalFinalized[dayId]) {
+                    if (!plan.anyUnfinalized) {
+                        plan.anyUnfinalized = true;
+                        plan.firstUnfinalized = dayId;
+                    }
+                } else {
+                    DayRemitPlan memory p = _planDay(s, dstChainId, dayId, plan.st.armedFrom);
+                    // The net recycled-backing gate, applied identically for
+                    // every caller because it is applied HERE (Codex #1426
+                    // r2/r6): a closed day funds only when the post-close
+                    // invariant `bucket' >= outstanding'` still holds.
+                    if (
+                        p.close
+                            && plan.st.bucketLeft + p.recycledFull
+                                >= plan.st.outRecycledLeft + p.recycled
+                    ) {
+                        plan.st.bucketLeft -= p.recycled;
+                        plan.st.outRecycledLeft = plan.st.outRecycledLeft > p.recycledFull
+                            ? plan.st.outRecycledLeft - p.recycledFull
+                            : 0;
+                        uint256 slice = p.fresh + p.recycled;
+                        plan.perDay[i] = slice;
+                        plan.closeable[i] = true;
+                        uint256 c = plan.dl.closedCount;
+                        plan.dl.closedDays[c] = dayId;
+                        plan.closedSlices[c] = slice;
+                        plan.residuals[c] = p.recycledFull - p.recycled;
+                        plan.dl.closedCount = c + 1;
+                        if (slice > 0) {
+                            plan.dl.fundedDays[plan.dl.fundedCount] = dayId;
+                            unchecked {
+                                ++plan.dl.fundedCount;
+                            }
+                            plan.st.totalAll += slice;
+                            plan.st.fresh += p.fresh;
+                            plan.st.recycled += p.recycled;
+                        }
+                        plan.st.armedFresh += p.armedFreshFull;
+                        plan.st.recycledFull += p.recycledFull;
+                    }
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        // Truncate the two lists to what was written (memory-safe: lengths
+        // only ever shrink), so every consumer reads exact arrays.
+        {
+            uint256[] memory fundedDays_ = plan.dl.fundedDays;
+            uint256 fundedCount_ = plan.dl.fundedCount;
+            uint256[] memory closedDays_ = plan.dl.closedDays;
+            uint256 closedCount_ = plan.dl.closedCount;
+            assembly ("memory-safe") {
+                mstore(fundedDays_, fundedCount_)
+                mstore(closedDays_, closedCount_)
+            }
+        }
+    }
 
     /**
      * @dev #1222 M3 B2-d2 — the SINGLE per-day eligibility + gate + clamp
@@ -1469,46 +1534,11 @@ contract RewardRemittanceFacet is
         view
         returns (uint256[] memory amounts, bool[] memory closeable)
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        amounts = new uint256[](dayIds.length);
-        closeable = new bool[](dayIds.length);
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        // r2/r6 net backing gate — identical to the send: an under-backed
-        // day reads NOT actionable (it waits for the recovery ceremony).
-        uint256 bucketLeft = s.recycleBucket;
-        uint256 outRecycledLeft = s.outstandingCommitRecycled;
-        for (uint256 i; i < dayIds.length; ) {
-            uint256 dayId = dayIds[i];
-            bool seen;
-            for (uint256 j; j < i; ) {
-                if (dayIds[j] == dayId) {
-                    seen = true;
-                    break;
-                }
-                unchecked {
-                    ++j;
-                }
-            }
-            if (!seen && s.dailyGlobalFinalized[dayId]) {
-                DayRemitPlan memory p =
-                    _planDay(s, dstChainId, dayId, armedFrom);
-                if (
-                    p.close
-                        && bucketLeft + p.recycledFull
-                            >= outRecycledLeft + p.recycled
-                ) {
-                    bucketLeft -= p.recycled;
-                    outRecycledLeft = outRecycledLeft > p.recycledFull
-                        ? outRecycledLeft - p.recycledFull
-                        : 0;
-                    amounts[i] = p.fresh + p.recycled;
-                    closeable[i] = true;
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
+        // #2232 r16 - the same plan the send applies (see {BatchPlan}).
+        // Tolerant by contract: an unfinalized, repeated or already-remitted
+        // day reads as zero and not closeable, never as a revert.
+        BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
+        return (plan.perDay, plan.closeable);
     }
 
 
@@ -1541,53 +1571,20 @@ contract RewardRemittanceFacet is
         uint32 dstChainId,
         uint256[] calldata dayIds
     ) external view returns (uint256 total, uint256[] memory perDay) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        perDay = new uint256[](dayIds.length);
-        // r2/r6 net backing gate — identical to the send (see
-        // {RemitSplitTotals.bucketLeft}).
-        uint256 bucketLeft = s.recycleBucket;
-        uint256 outRecycledLeft = s.outstandingCommitRecycled;
-        for (uint256 i; i < dayIds.length; ) {
-            uint256 dayId = dayIds[i];
-            // Skip a day already seen earlier in THIS call — the send path
-            // marks the first occurrence and no-ops the rest.
-            bool seen;
-            for (uint256 j; j < i; ) {
-                if (dayIds[j] == dayId) {
-                    seen = true;
-                    break;
-                }
-                unchecked {
-                    ++j;
-                }
-            }
-            if (!seen && s.dailyGlobalFinalized[dayId]) {
-                // B2-d2 — the shared {_planDay} carries every send-path
-                // filter (already-funded/closed, remit-ineligible, the armed
-                // commitment gate) plus the Σcommitments clamp, so this
-                // quote's per-day figure is exactly what the send would move.
-                DayRemitPlan memory p = _planDay(
-                    s, dstChainId, dayId, s.governorCommitArmedFromDay
-                );
-                uint256 slice;
-                if (
-                    p.close
-                        && bucketLeft + p.recycledFull
-                            >= outRecycledLeft + p.recycled
-                ) {
-                    bucketLeft -= p.recycled;
-                    outRecycledLeft = outRecycledLeft > p.recycledFull
-                        ? outRecycledLeft - p.recycledFull
-                        : 0;
-                    slice = p.fresh + p.recycled;
-                }
-                perDay[i] = slice;
-                total += slice;
-            }
-            unchecked {
-                ++i;
-            }
-        }
+        // #2232 r16 - the same plan the send applies (see {BatchPlan}), so a
+        // per-day figure here IS the slice the send would fund for that day.
+        //
+        // This is the DISCOVERY view and it stays tolerant on purpose: the
+        // keeper scans a recent window every tick and relies on an
+        // unfinalized, repeated or already-remitted day reading ZERO here, not
+        // reverting. What it does NOT do is claim the send would accept the
+        // whole list: the send funds at most `TRANSPORT_DAY_FANOUT_CAP`
+        // days per remittance, and the number of days this list would fund is
+        // the count of NON-ZERO entries in `perDay`. A caller sizing a batch
+        // counts them and chunks at the cap; {quoteRemittanceFee} is the
+        // strict dry run and refuses the same lists the send refuses.
+        BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
+        return (plan.st.totalAll, plan.perDay);
     }
 
     /**
@@ -1622,82 +1619,20 @@ contract RewardRemittanceFacet is
         address messenger = s.crossChainMessenger;
         if (vpfi == address(0) || messenger == address(0)) return (0, 0);
 
-        uint256[] memory fundedDays = new uint256[](dayIds.length);
-        uint256 fundedCount;
-        uint256 totalFresh; // PR-3c — fresh share for the cap guard below.
-        uint256 totalArmedFresh; // r6 — commitments this batch would retire.
-        // r2/r6 net backing gate — identical to the send.
-        uint256 bucketLeft = s.recycleBucket;
-        uint256 outRecycledLeft = s.outstandingCommitRecycled;
-        for (uint256 i; i < dayIds.length; ) {
-            uint256 dayId = dayIds[i];
-            // Mirror remit's revert on any unfinalized day so this quote never
-            // reports a valid fee for a batch remit would reject.
-            if (!s.dailyGlobalFinalized[dayId]) {
-                revert RewardDayNotFinalized(dayId);
-            }
-            bool seen;
-            for (uint256 j; j < i; ) {
-                if (dayIds[j] == dayId) {
-                    seen = true;
-                    break;
-                }
-                unchecked {
-                    ++j;
-                }
-            }
-            if (!seen) {
-                // B2-d2 — shared plan (filters + gate + clamp), so the quoted
-                // fee prices the EXACT payload + token amount the send builds.
-                DayRemitPlan memory p = _planDay(
-                    s, dstChainId, dayId, s.governorCommitArmedFromDay
-                );
-                // r2 backing filter — identical to the send.
-                uint256 slice;
-                if (
-                    p.close
-                        && bucketLeft + p.recycledFull
-                            >= outRecycledLeft + p.recycled
-                ) {
-                    bucketLeft -= p.recycled;
-                    outRecycledLeft = outRecycledLeft > p.recycledFull
-                        ? outRecycledLeft - p.recycledFull
-                        : 0;
-                    slice = p.fresh + p.recycled;
-                    // r6 — this day would terminally close in the send,
-                    // retiring its full armed-fresh commitment.
-                    totalArmedFresh += p.armedFreshFull;
-                }
-                if (slice > 0) {
-                    fundedDays[fundedCount] = dayId;
-                    unchecked {
-                        ++fundedCount;
-                    }
-                    total += slice;
-                    totalFresh += p.fresh;
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
+        // #2232 r16 root arrest - the STRICT dry run: the same plan the send
+        // applies, refused on the same terms and in the same order, so this
+        // can never price a batch the send would reject. See {BatchPlan}.
+        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds);
+        if (plan.anyUnfinalized) revert RewardDayNotFinalized(plan.firstUnfinalized);
+        total = plan.st.totalAll;
         if (total == 0) return (0, 0);
-        // Mirror remit's 69M pool-cap guard so a quote can't succeed for a batch
-        // remit would reject near pool exhaustion. PR-3c — fresh share only,
-        // mirroring the send path.
-        uint256 remaining = _headroom(s, totalArmedFresh);
+        uint256 totalFresh = plan.st.fresh;
+        uint256 remaining = _headroom(s, plan.st.armedFresh);
         if (totalFresh > remaining) {
             revert RewardPoolCapExceeded(totalFresh, remaining);
         }
-        assembly ("memory-safe") {
-            mstore(fundedDays, fundedCount)
-        }
-        // #1566 transport epochs PR 3b — the same bound the send applies, on
-        // the same quantity: this quote's own FILTERED count, at the point the
-        // payload's day list becomes final (Codex #2232 r1, r2). A bound on the
-        // request would refuse a fee for a retry the send would accept, which
-        // is the divergence in the other direction.
-        LibRewardCustody.requireRemittableFanout(fundedCount);
+        uint256[] memory fundedDays = plan.dl.fundedDays;
+        LibRewardCustody.requireRemittableFanout(plan.dl.fundedCount);
 
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);

@@ -521,10 +521,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // implementation deploys, which under `--slow` are minutes of separate
         // transactions, and immediately before the cuts.
         //
-        // The REMOVE of the retired selector stays where it is, last: it is
-        // the durable completion marker (the M1 lesson), and this probe is
-        // generation-gated and therefore idempotent, so a rerun that re-enters
-        // that block re-does only the Remove.
+        // The retired ingress selectors are Removed immediately BELOW, before
+        // the first cut (Codex #2232 r4), and swept again after the cuts as
+        // the interrupted-run pass - NOT last. An earlier revision of this
+        // comment kept the "remove last, it is the completion marker"
+        // rationale after the code had moved the removal forward; a future
+        // edit reading it could have restored the unsafe order. The marker
+        // argument no longer applies, and {_removeRetiredIngress} says why.
+        // This probe is generation-gated and therefore idempotent on a rerun.
         _upgradeRemitReceiverAhead(diamond, signer);
 
         // ─── the RETIRED ingress selectors go BEFORE the first cut too ────

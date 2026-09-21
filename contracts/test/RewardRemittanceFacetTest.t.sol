@@ -380,6 +380,16 @@ contract RewardRemittanceFacetTest is SetupTest {
         );
         remit.quoteRemittanceFee(CHAIN_ARB, _dayList(cap + 1));
 
+        // The discovery view does NOT refuse - it is what a caller chunks
+        // FROM - and it exposes exactly the chunking figure: as many non-zero
+        // per-day entries as the list would fund (#2232 r16, one plan).
+        (, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, _dayList(cap + 1));
+        uint256 funded;
+        for (uint256 i; i < perDay.length; ++i) {
+            if (perDay[i] != 0) ++funded;
+        }
+        assertEq(funded, cap + 1, "the budget quote shows how many days the list would fund");
+
         // At the cap the quote gets past the bound, exactly as the send does.
         (bool ok, bytes memory err) = address(remit).staticcall(
             abi.encodeCall(RewardRemittanceFacet.quoteRemittanceFee, (CHAIN_ARB, _dayList(cap)))
@@ -390,6 +400,63 @@ contract RewardRemittanceFacetTest is SetupTest {
                 "a list exactly at the cap is admitted by the bound"
             );
         }
+    }
+
+    // ─── #2232 r16 root arrest: ONE plan for the send and every quote ────────
+
+    /// One list, four readers, one answer. The send, the fee quote and the two
+    /// discovery views walk the SAME plan (`_planBatch`), so their figures
+    /// agree by construction: a repeated day reads once, the two discovery
+    /// views agree per day, the fee quote's total is the budget quote's, and
+    /// the send then funds per day exactly what was quoted. Before this, four
+    /// hand-copied walks each enforced a different subset of the rules - which
+    /// is how a quote priced what the send refused three times running.
+    function test_OnePlan_TheSendAndEveryQuoteAgree() public {
+        _finalizeDays(3);
+        uint256[] memory list = new uint256[](4);
+        list[0] = 1;
+        list[1] = 2;
+        list[2] = 2; // a duplicate in the middle
+        list[3] = 3;
+        (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, list);
+        (uint256[] memory amounts, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
+        (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, list);
+        assertEq(perDay[2], 0, "a repeated day reads once");
+        assertFalse(closeable[2], "and is not closeable twice");
+        uint256 sum;
+        for (uint256 i; i < list.length; ++i) {
+            assertEq(amounts[i], perDay[i], "the two discovery views agree per day");
+            sum += perDay[i];
+        }
+        assertGt(total, 0, "the fixture funds something");
+        assertEq(total, sum, "the budget quote's total is its per-day sum");
+        assertEq(feeTotal, total, "the fee quote's total is the same plan");
+
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, list, CAP);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), perDay[0], "day 1 funded exactly what was quoted");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 2), perDay[1], "day 2 likewise");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 3), perDay[3], "day 3 likewise");
+        assertEq(rlens.getRewardBudgetRemittedTotal(CHAIN_ARB), total, "and the send moved exactly the quoted total");
+    }
+
+    /// An unfinalized day: the send and the fee quote refuse it by name, with
+    /// the same day; the discovery views read it as zero - the tolerance the
+    /// keeper's window scan relies on, now a stated rule of one walk rather
+    /// than an accident of a separate one.
+    function test_OnePlan_AnUnfinalizedDayRefusesTheSendAndTheFeeQuote_ReadsZeroInDiscovery() public {
+        _finalizeDay1();
+        uint256[] memory list = new uint256[](2);
+        list[0] = 1;
+        list[1] = 2; // not finalized
+        vm.expectRevert(abi.encodeWithSelector(RewardRemittanceFacet.RewardDayNotFinalized.selector, 2));
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, list, CAP);
+        vm.expectRevert(abi.encodeWithSelector(RewardRemittanceFacet.RewardDayNotFinalized.selector, 2));
+        remit.quoteRemittanceFee(CHAIN_ARB, list);
+        (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, list);
+        assertEq(perDay[1], 0, "discovery reads the unfinalized day as zero");
+        assertEq(total, perDay[0], "and its total counts only what is fundable");
+        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
+        assertFalse(closeable[1], "and does not call it closeable");
     }
 
     /// @dev A day list of `n` consecutive days from 1. The single-day `_days`

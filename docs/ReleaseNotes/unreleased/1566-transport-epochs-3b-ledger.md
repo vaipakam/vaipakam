@@ -188,6 +188,25 @@ reconcilable the moment someone produces the list. That is the conservative
 direction, and the alternative is reconciling value while the days that
 delivery named can still draw on it.
 
+### One plan for the send and every quote
+
+A reward remittance and the three views that describe one — the discovery
+view an operator sizes a batch from, the per-day plan view, and the fee quote —
+used to each walk the day list on their own, and each walk enforced a different
+subset of the rules. Three times in this programme a quote priced a batch the
+send would then refuse, and each time the rule had been added to one walk and
+not another. There is one walk now. The send plans its batch with it and then
+applies the writes; the fee quote refuses exactly what the send refuses, in the
+same order; the two discovery views report the same per-day figures the send
+would fund. A rule added once applies everywhere, and the four cannot disagree
+because they run one piece of code. The discovery view keeps its tolerant
+reading — a day that cannot be remitted shows as zero rather than failing the
+call — because the automation that scans for fundable days depends on that;
+what it no longer does is imply the send would accept the whole list. A
+remittance funds at most thirty-two days, and the number of days a list would
+fund is the count of non-zero per-day figures; the operations runbook now says
+so beside the lane cap.
+
 ### Reading what has left an epoch
 
 The ledger now states, separately, how much has been reconciled out of a parked
