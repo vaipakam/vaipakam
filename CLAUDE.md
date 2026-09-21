@@ -1335,17 +1335,24 @@ Two practical consequences:
   allocated `bytes memory` the block already holds and `add(err, 0x20)` /
   `mload(err)` stay within it — not because it only reads (#2253 r7).
 
-  **There is a SECOND condition, and a block can fail it with no `mload` or
-  `mstore` anywhere in sight:** assigning to a Solidity variable of
-  memory-reference type — handing a `bytes memory` or a `struct` a pointer the
-  block computed — puts a value into the memory model without going through
-  it, so such a block is not memory-safe either. Read "touches memory"
-  throughout this section as shorthand for **fails either condition**, never as
-  "contains a memory opcode". The `x.slot := position` idiom is exempt on both
-  counts precisely because the pointer it assigns is a STORAGE pointer: nothing
-  about the memory model is asserted or disturbed. A block that computes a
-  memory offset and assigns it out is the opposite case and needs the audit,
-  however few opcodes it has.
+  **A block can be in scope for that audit with no `mload` or `mstore`
+  anywhere in sight:** assigning to a Solidity variable of memory-reference
+  type — handing a `bytes memory` or a `struct` a pointer the block computed —
+  puts a value into the memory model without going through it. **That does not
+  make the block unsafe; it makes it un-assumable.** The pointer still has to
+  be audited against the same allocation bound, and one that satisfies it —
+  aliasing an existing allocation, say — is memory-safe and SHOULD carry the
+  annotation. Withholding it there leaves the guard down for the whole
+  contract, which is the failure this section exists to prevent, arrived at
+  from the cautious direction.
+
+  So read "touches memory" throughout this section as shorthand for **needs
+  the audit** — never as "contains a memory opcode", and never as a verdict.
+  The verdict is the audit's. The `x.slot := position` idiom is outside it on
+  both counts precisely because the pointer it assigns is a STORAGE pointer:
+  nothing about the memory model is asserted or disturbed, so there is nothing
+  to audit. A block that computes a MEMORY offset and assigns it out is inside
+  it however few opcodes it has — and may well come out annotated.
 - **Retrofitting an existing bare block is a TRADE, and it can be expensive.**
   Turning the guard on lets solc emit the stack-to-memory mover, and the mover
   *is code*. MEASURED (#2268): a sweep of 24 blocks took `OfferCreateFacet`
