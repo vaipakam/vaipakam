@@ -914,6 +914,16 @@ the one that authorises restoring normal operation:
    `MISMATCH` on `3cffebf5…` (archive) at 100%, which is the correct
    pre-cutover answer and is what a probe that works looks like when the
    thing it checks has not happened yet.
+
+   **And the behaviour agreed, which is how the false pass was caught.**
+   `indexer_cursor` was sampled on BOTH databases three minutes apart:
+   archive's `97/diamond` moved 132243152 → 132243829 while warm's stayed at
+   132242539. The indexer writes to archive; warm is inert. Note which way
+   round this went — §"THE ORDER MATTERS" says the write probe "can still
+   find something the binding read could not", and here the write
+   observation is what **disproved** a binding read that said the move was
+   already done. Two probes that can contradict each other are worth more
+   than one that cannot, and neither is a formality.
 2. **Write probes — behaviour.** Run them once traffic is flowing again. They
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
