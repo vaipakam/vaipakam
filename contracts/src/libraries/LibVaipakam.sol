@@ -7553,6 +7553,16 @@ library LibVaipakam {
         mapping(uint256 => bytes32[]) transportBatchesByDay;
         mapping(uint256 => uint256) transportDayCursor;
         mapping(bytes32 => TransportRemainder) transportRemainders;
+        /// @dev #1566 transport epochs PR 3b-ii-A — how many transport epochs
+        ///      this chain has ever admitted. The draw's global SHORT-CIRCUIT:
+        ///      a chain that never received an old-wire delivery has no epoch
+        ///      any day could draw from, and the day primitive that reads a
+        ///      day's coverage is on every claim's and sweep's hot path on
+        ///      every chain — so the read costs one storage load here, and
+        ///      nothing else, until the legacy lane actually delivers. Never
+        ///      decremented: an admitted epoch stays one through its close-out.
+        ///      APPENDED at the end of the struct, as every field must be.
+        uint256 transportBatchesAdmitted;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

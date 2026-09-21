@@ -1023,6 +1023,14 @@ library LibRewardCustody {
     ///         whole history to know what is still parked.
     /// @custom:event-category state-change/reward-custody
     event TransportRemainderDebited(bytes32 indexed batchId, uint256 amount, uint256 left);
+    /// @notice #1566 transport epochs PR 3b-ii-A — an obligation on `dayId`
+    ///         drew from this epoch: `fresh` covered a fresh-typed need and
+    ///         `recycled` a recycled-typed one, both leaving the batch's
+    ///         untyped balance (design §5c: the two legs of `transportPaid`).
+    event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
+    /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
+    ///         moved past exhausted epochs at the front of its index.
+    event TransportDayCursorAdvanced(uint256 indexed dayId, uint256 cursor);
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
     ///         split of a d2 remittance was attested for the packet that
     ///         delivered it, both caps scaled to what actually landed.
@@ -1281,6 +1289,17 @@ library LibRewardCustody {
     ///         batch takes exactly one such call; it does not skip the step,
     ///         because admission writes no membership for any batch.
     uint256 internal constant TRANSPORT_INDEX_PAGE = 32;
+
+    /// @notice #1566 transport epochs PR 3b-ii-A — how many of a day's indexed
+    ///         epochs one coverage read, and the draw that follows it, scans.
+    /// @dev    Twice the fan-out cap, so a day funded by one remittance a day
+    ///         for two months is still read in one window. Past it the read
+    ///         reports the cap HIT and the day primitive DEFERS the day rather
+    ///         than pull era/live funding for a residual that unseen epochs
+    ///         may cover — transport-first is not optional (§5c). 3b-ii-A
+    ///         draws nothing on such a day, so there is nothing to stage or
+    ///         unwind; 3b-ii-B's staging is what makes a wider day progress.
+    uint256 internal constant TRANSPORT_DRAW_SCAN_CAP = 64;
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
     ///         EPOCH: one untyped balance, spendable only by the obligations
@@ -1593,6 +1612,8 @@ library LibRewardCustody {
         // wrong, and a truncated `dayCount` would then quietly declare an
         // oversize batch fully indexed.
         b.dayCount = SafeCast.toUint32(count);
+        // 3b-ii-A — the global short-circuit the draw reads (see the field).
+        s.transportBatchesAdmitted += 1;
         p.batchId = batchId;
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
@@ -1847,6 +1868,347 @@ library LibRewardCustody {
         if (dayCount > TRANSPORT_DAY_FANOUT_CAP) {
             revert IVaipakamErrors.TransportDayFanoutExceeded(dayCount, TRANSPORT_DAY_FANOUT_CAP);
         }
+    }
+
+    // ─── Transport epochs PR 3b-ii-A: the draws ─────────────────────────────
+
+    /// @notice What `dayId`'s epochs can fund right now: the summed balances
+    ///         of the epochs its index holds from the consumption cursor on,
+    ///         within one scan window of `TRANSPORT_DRAW_SCAN_CAP`.
+    /// @dev    The READ half of the draw. {drawTransportForDay} is the write
+    ///         half and scans the SAME window in the SAME order, so what the
+    ///         day primitive priced against is exactly what the settle wrapper
+    ///         then draws. `capHit` says the window ended before the index
+    ///         did: unseen epochs may hold more, and `available` is then not
+    ///         the day's whole coverage — the day primitive defers such a day
+    ///         when a residual would otherwise fall through to era/live
+    ///         funding while unseen transport sits parked (§5c's
+    ///         transport-first rule). Exhausted epochs inside the window are
+    ///         skipped, not counted; the cursor is moved past LEADING
+    ///         exhausted ones by the draw or by {pruneTransportDayCursor},
+    ///         never by this view. Zero, with no scan, on a chain that has
+    ///         never admitted an epoch.
+    function transportCoverageForDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal view returns (uint256 available, bool capHit) {
+        if (s.transportBatchesAdmitted == 0) return (0, false);
+        bytes32[] storage index = s.transportBatchesByDay[dayId];
+        uint256 len = index.length;
+        uint256 i = s.transportDayCursor[dayId];
+        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
+        if (end > len) end = len;
+        for (; i < end; ) {
+            available += s.transportBatches[index[i]].balance;
+            unchecked {
+                ++i;
+            }
+        }
+        capHit = end < len;
+    }
+
+    /// @notice §5c's two-rule split of `dayId`'s cursor-visible epoch coverage
+    ///         across an obligation's fresh and recycled legs.
+    /// @dev    The day primitive's ONE call (3b-ii-A): the coverage scan and
+    ///         the split live together so what a day is priced against is one
+    ///         read. First the SHORTFALLS — each leg's need net of its own
+    ///         typed source (fresh: the smaller of the pool headroom and the
+    ///         delivered bound; recycled: the bucket), fresh first on ties.
+    ///         Then whatever coverage remains goes to the legs' remaining needs
+    ///         in the same order: transport-first is not optional, so a
+    ///         typed-covered leg still draws matching transport before it
+    ///         pulls the shared source (claims A and B sharing 10 of live
+    ///         funding, with A alone holding a matching 10-token epoch, settle
+    ///         as A-from-transport and B-from-live). The fresh need is read net
+    ///         of the pool-cap trim — coverage is never assigned to fresh the
+    ///         69M headroom would not let anyone pay — and the epoch-paid
+    ///         fresh still counts against that headroom, which is why the
+    ///         caller passes it and this never inflates it. Blind fresh-first
+    ///         was rejected by the design's own counter-example: 5 fresh /
+    ///         5 recycled, 5 live fresh, an empty bucket and a 5-token epoch
+    ///         is fully backed only if live pays fresh and transport pays
+    ///         recycled. Pure over the figures, so the settle and the dry run
+    ///         split identically.
+    /// @param  poolFresh     The 69M pool headroom left for this day.
+    /// @param  deliveredCap  The day's delivered bound (max on an unarmed day).
+    /// @param  bucket        The recycle bucket.
+    function transportAllocateForDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 needFresh,
+        uint256 needRecycled,
+        uint256 domainFresh,
+        uint256 domainRecycled,
+        uint256 poolFresh,
+        uint256 deliveredCap,
+        uint256 bucket
+    ) internal view returns (uint256 tf, uint256 tr, bool capHit) {
+        uint256 avail;
+        (avail, capHit) = transportCoverageForDay(s, dayId);
+        if (avail == 0) return (0, 0, capHit);
+        if (needFresh > poolFresh) needFresh = poolFresh;
+        uint256 liveF = poolFresh < deliveredCap ? poolFresh : deliveredCap;
+        // The day's OWN shortfalls first — it cannot settle otherwise.
+        uint256 sF = needFresh > liveF ? needFresh - liveF : 0;
+        uint256 sR = needRecycled > bucket ? needRecycled - bucket : 0;
+        tf = sF < avail ? sF : avail;
+        avail -= tf;
+        tr = sR < avail ? sR : avail;
+        avail -= tr;
+        if (avail == 0) return (tf, tr, capHit);
+        // Then the leg carrying the greater DOMAIN deficit against the shared
+        // sources, fresh first on ties: the domain is what this call settles
+        // (a sweep's single day when the caller passed `max`), and the
+        // deficits are read against the sources as they stand now.
+        if (domainFresh == type(uint256).max) domainFresh = needFresh;
+        if (domainRecycled == type(uint256).max) domainRecycled = needRecycled;
+        uint256 dF = domainFresh > liveF ? domainFresh - liveF : 0;
+        uint256 dR = domainRecycled > bucket ? domainRecycled - bucket : 0;
+        uint256 moreF = needFresh - tf;
+        uint256 moreR = needRecycled - tr;
+        if (dR > dF) {
+            uint256 a = moreR < avail ? moreR : avail;
+            tr += a;
+            avail -= a;
+            tf += moreF < avail ? moreF : avail;
+        } else {
+            uint256 a = moreF < avail ? moreF : avail;
+            tf += a;
+            avail -= a;
+            tr += moreR < avail ? moreR : avail;
+        }
+    }
+
+    /// @notice Draw `fresh + recycled` for an obligation on `dayId` out of the
+    ///         day's epochs, front of the index first, recording which leg
+    ///         each epoch paid.
+    /// @dev    The WRITE half of {transportCoverageForDay}: same window, same
+    ///         order. Reverts {TransportDrawExceedsCoverage} if the window
+    ///         cannot cover the request — unreachable from a settle wrapper,
+    ///         which draws what the day primitive priced against the same
+    ///         read in the same transaction, and kept as the assertion of that
+    ///         agreement.
+    ///
+    ///         Per epoch taken from: `balance` falls and the leg counters rise
+    ///         (the FRESH leg is filled first, so {transportConsumedFresh} —
+    ///         which {authenticatedFresh} nets from the attested caps — is
+    ///         never understated by the order); the PACKET's untyped
+    ///         remainder and the holder's uncounted aggregates fall by the
+    ///         same amount, exactly as a classification's take steps them
+    ///         down, but WITHOUT typing anything: a draw spends untyped value
+    ///         on an obligation, it does not classify it. The custody move
+    ///         itself — out of the holder's `Unclassified` row to the
+    ///         claimant, or into `Recycled` for an absorption — is the settle
+    ///         path's, through the epoch entries beside this one, so the row
+    ///         and this ledger fall together in one transaction.
+    ///
+    ///         Afterwards the day's cursor moves past every LEADING exhausted
+    ///         epoch — the exhaustion transition, immediate here because
+    ///         3b-ii-A has no staging that could restore a balance into an
+    ///         epoch a cursor has passed (§5c defers it only while references
+    ///         stand, and A has none).
+    function drawTransportForDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 fresh,
+        uint256 recycled
+    ) internal {
+        uint256 left = fresh + recycled;
+        bytes32[] storage index = s.transportBatchesByDay[dayId];
+        uint256 len = index.length;
+        uint256 cursor = s.transportDayCursor[dayId];
+        // A draw of nothing is the PRUNE: the settle wrappers reach it on a
+        // cap-hit deferral through the same entry they draw through, so each
+        // facet that inlines a wrapper carries one encode rather than two.
+        if (left == 0) {
+            _pruneTransportDayCursor(s, dayId, index, len, cursor);
+            return;
+        }
+        uint256 end = cursor + TRANSPORT_DRAW_SCAN_CAP;
+        if (end > len) end = len;
+        uint256 freshLeft = fresh;
+        for (uint256 i = cursor; i < end && left != 0; ) {
+            bytes32 batchId = index[i];
+            LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+            uint256 bal = b.balance;
+            if (bal != 0) {
+                uint256 take = bal < left ? bal : left;
+                uint256 bf = take < freshLeft ? take : freshLeft;
+                uint256 br = take - bf;
+                b.balance = bal - take;
+                b.consumedFresh += bf;
+                b.consumedRecycled += br;
+                _spendUntypedForDraw(s, batchId, take);
+                freshLeft -= bf;
+                left -= take;
+                emit TransportDrawn(batchId, dayId, bf, br);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (left != 0) {
+            uint256 asked = fresh + recycled;
+            revert IVaipakamErrors.TransportDrawExceedsCoverage(dayId, asked, asked - left);
+        }
+        _pruneTransportDayCursor(s, dayId, index, len, cursor);
+    }
+
+    /// @dev The packet half of a draw: the batch is keyed by its packet's
+    ///      ingress stamp, so `batchId` names the packet whose untyped
+    ///      remainder this value leaves. Steps the same figures down that a
+    ///      classification's take does, through the same function, and none
+    ///      of the classified ones.
+    function _spendUntypedForDraw(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) private {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
+        uint256 have = p.unclassified;
+        if (amount > have) {
+            revert IVaipakamErrors.ReconciliationExceedsPacketRemainder(batchId, amount, have);
+        }
+        p.unclassified = have - amount;
+        _stepDownUncounted(s, p.kind, amount);
+    }
+
+    /// @notice Advance `dayId`'s consumption cursor past every exhausted epoch
+    ///         at the front of its index — at most one scan window per call.
+    /// @dev    Run by every draw, and permissionless through the facet. The
+    ///         case that needs the standalone entry: an epoch drained by
+    ///         ANOTHER day's draws still sits in this day's index (a batch's
+    ///         day list is a hash, not an enumerable set, so a draw cannot
+    ///         advance its sibling days), and a window full of such husks
+    ///         would read as a cap hit with zero coverage — a day that defers
+    ///         forever because nothing ever draws on it. So the settle
+    ///         wrapper prunes on its way out of a deferred day, and a keeper
+    ///         may prune any day at any time; both are idempotent.
+    function pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) internal {
+        bytes32[] storage index = s.transportBatchesByDay[dayId];
+        _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
+    }
+
+    function _pruneTransportDayCursor(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32[] storage index,
+        uint256 len,
+        uint256 cursor
+    ) private {
+        uint256 i = cursor;
+        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
+        if (end > len) end = len;
+        while (i < end && s.transportBatches[index[i]].balance == 0) {
+            unchecked {
+                ++i;
+            }
+        }
+        if (i != cursor) {
+            s.transportDayCursor[dayId] = i;
+            emit TransportDayCursorAdvanced(dayId, i);
+        }
+    }
+
+    /// @dev {transportAllocateForDay} through the epoch facet, as a STATICCALL
+    ///      so the day primitive stays a view and the four facets that inline
+    ///      it carry only this encode/decode rather than the scan and the
+    ///      split (they sit within 1.3–2.8 KB of EIP-170; `RewardEpochFacet`
+    ///      has 18 KB). The short-circuit is read HERE, before the call, so a
+    ///      chain with no epochs pays one storage load per settled day and no
+    ///      call at all.
+    function callTransportAllocateForDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 needFresh,
+        uint256 needRecycled,
+        uint256 domainFresh,
+        uint256 domainRecycled,
+        uint256 poolFresh,
+        uint256 deliveredCap,
+        uint256 bucket
+    ) internal view returns (uint256 tf, uint256 tr, bool capHit) {
+        if (s.transportBatchesAdmitted == 0) return (0, 0, false);
+        bytes memory ret = _selfStatic(
+            abi.encodeWithSignature(
+                "getTransportAllocationForDay(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
+                dayId,
+                needFresh,
+                needRecycled,
+                domainFresh,
+                domainRecycled,
+                poolFresh,
+                deliveredCap,
+                bucket
+            )
+        );
+        (tf, tr, capHit) = abi.decode(ret, (uint256, uint256, bool));
+    }
+
+    /// @dev The preview's dry run of `user`'s ShareOfPool days, through the
+    ///      epoch facet ({RewardEpochFacet.getDryRunShareOfPoolDays}); see
+    ///      {LibInteractionRewards.dryRunShareOfPoolDaysView} for why it is
+    ///      hosted there.
+    function callDryRunShareOfPoolDays(
+        address user,
+        uint256 deliveredCap,
+        uint256 freshBudget
+    ) internal view returns (uint256 userTotal, uint256 armedTotal) {
+        bytes memory ret = _selfStatic(
+            abi.encodeWithSignature(
+                "getDryRunShareOfPoolDays(address,uint256,uint256)", user, deliveredCap, freshBudget
+            )
+        );
+        (userTotal, armedTotal) = abi.decode(ret, (uint256, uint256));
+    }
+
+    /// @dev The allocation DOMAIN's gross needs for `user`'s next claim call,
+    ///      through the epoch facet ({RewardEpochFacet.getObligationDomainNeeds}).
+    ///      `max` — "the day is the domain" — on a chain with no epochs, where
+    ///      no call is made at all.
+    function callDomainNeeds(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal view returns (uint256 domainFresh, uint256 domainRecycled) {
+        if (s.transportBatchesAdmitted == 0) return (type(uint256).max, type(uint256).max);
+        bytes memory ret = _selfStatic(abi.encodeWithSignature("getObligationDomainNeeds(address)", user));
+        (domainFresh, domainRecycled) = abi.decode(ret, (uint256, uint256));
+    }
+
+    /// @dev The claim's forfeit legs settled through the epoch facet
+    ///      ({RewardEpochFacet.epochSettleForfeitLegs}): the live-funded fresh
+    ///      absorbed, the epoch-funded legs recycled in place, the recycled
+    ///      commitment released. Hosted off `RewardClaimFacet` for its
+    ///      EIP-170 headroom.
+    function callSettleForfeitLegs(uint256 liveFresh, uint256 epochLegs, uint256 recycledRelease) internal {
+        if (liveFresh + epochLegs + recycledRelease == 0) return;
+        _custody(
+            abi.encodeWithSignature(
+                "epochSettleForfeitLegs(uint256,uint256,uint256)", liveFresh, epochLegs, recycledRelease
+            )
+        );
+    }
+
+    /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
+    ///      it is the PRUNE (a cap-hit deferral); `prune` is what asks for
+    ///      that, so an ordinary day with nothing to draw makes no call.
+    function callDrawTransportForDay(uint256 dayId, uint256 fresh, uint256 recycled, bool prune) internal {
+        if (fresh + recycled == 0 && !prune) return;
+        _custody(abi.encodeWithSignature("epochDrawForDay(uint256,uint256,uint256)", dayId, fresh, recycled));
+    }
+
+    /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
+    ///      the claimant's vault when asked and creditable, else to their
+    ///      wallet. Returns whether the vault took it.
+    function callDeliverClaim(
+        address user,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 epoch,
+        bool toVault
+    ) internal returns (bool vaulted) {
+        bytes memory ret = _custodyReturning(
+            abi.encodeWithSignature(
+                "custodyDeliverClaim(address,uint256,uint256,uint256,bool)", user, fresh, recycled, epoch, toVault
+            )
+        );
+        vaulted = abi.decode(ret, (bool));
     }
 
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
@@ -2131,7 +2493,17 @@ library LibRewardCustody {
         p.unclassified -= total;
         p.classifiedFresh += freshShare;
         p.classifiedRecycled += recycledShare;
-        if (p.kind <= PACKET_KIND_COMPENSATION) {
+        _stepDownUncounted(s, p.kind, total);
+    }
+
+    /// @dev The holder-side aggregates that fall when untyped value leaves a
+    ///      packet's remainder — by a classification's take above, or by an
+    ///      epoch DRAW ({_spendUntypedForDraw}). ONE implementation for both
+    ///      (3b-ii-A): whoever changes what "left the untyped remainder"
+    ///      means changes it here for every exit, and the `Unclassified` row
+    ///      invariant (row == uncounted held + returned held) keeps holding.
+    function _stepDownUncounted(LibVaipakam.Storage storage s, uint8 kind, uint256 total) private {
+        if (kind <= PACKET_KIND_COMPENSATION) {
             uint256 have = s.rewardCustodyUnclassifiedUncounted;
             if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(0, total, have);
             s.rewardCustodyUnclassifiedUncounted = have - total;
@@ -2272,6 +2644,18 @@ library LibRewardCustody {
     function callRelocateFreshIngress(uint256 amount) internal {
         if (amount == 0) return;
         _custody(abi.encodeWithSignature("custodyRelocateFreshIngress(uint256)", amount));
+    }
+
+    /// @dev Like {_custodyReturning} for a VIEW: a staticcall into the Diamond,
+    ///      the callee's revert data bubbled unchanged.
+    function _selfStatic(bytes memory data) private view returns (bytes memory ret) {
+        bool ok;
+        (ok, ret) = address(this).staticcall(data);
+        if (ok) return ret;
+        if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+        assembly ("memory-safe") {
+            revert(add(ret, 0x20), mload(ret))
+        }
     }
 
     /// @dev Like {_custody}, returning the callee's data.

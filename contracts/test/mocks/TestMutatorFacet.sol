@@ -1233,7 +1233,10 @@ contract TestMutatorFacet {
                 // those cases into defers. Delivered-bound behaviour is
                 // covered through the real walk instead, where the bound is
                 // read from storage.
-                deliveredFresh: type(uint256).max
+                deliveredFresh: type(uint256).max,
+                // 3b-ii-A — the direct primitive harness prices one day: the day is the domain.
+                domainFresh: type(uint256).max,
+                domainRecycled: type(uint256).max
             }),
             LibInteractionRewards._noDryRun()
         );

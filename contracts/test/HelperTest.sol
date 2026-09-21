@@ -2368,7 +2368,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](41);
+        selectors = new bytes4[](42);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2417,6 +2417,7 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        selectors[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
@@ -2471,7 +2472,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](15);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2480,6 +2481,14 @@ contract HelperTest {
         selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
         selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
         selectors[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
+        // 3b-ii-A — the draws (mirrors `DeployDiamond._getRewardEpochSelectors`).
+        selectors[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        selectors[9] = RewardEpochFacet.epochDrawForDay.selector;
+        selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        selectors[12] = RewardEpochFacet.getObligationDomainNeeds.selector;
+        selectors[13] = RewardEpochFacet.epochSettleForfeitLegs.selector;
+        selectors[14] = RewardEpochFacet.getDryRunShareOfPoolDays.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

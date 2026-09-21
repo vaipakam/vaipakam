@@ -568,7 +568,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address user,
         address token,
         uint256 fresh,
-        uint256 recycled
+        uint256 recycled,
+        uint256 epoch
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = _creditableVault(s, user);
@@ -576,7 +577,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (token != vpfi) revert IVaipakamErrors.RewardCustodyPayoutTokenMismatch(vpfi, token);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, proxy);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, proxy);
-        uint256 amount = fresh + recycled;
+        // #1566 transport epochs PR 3b-ii-A — the claim's epoch-paid legs,
+        // released from the `Unclassified` row where an epoch's value rests.
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, proxy);
+        uint256 amount = fresh + recycled + epoch;
         LibRewardCustody.releaseMeasured(vpfi, holder, proxy, amount);
         _recordVaultCredit(s, user, token, proxy, amount);
     }

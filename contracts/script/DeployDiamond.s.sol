@@ -3047,13 +3047,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
     /// lifecycle: paged indexing, the parked remainder and its acknowledgment,
-    /// and the ledger's reads.
+    /// and the ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage
+    /// read, the Diamond-internal draw and the two custody moves the settle
+    /// paths reach through it, and the permissionless cursor prune.
     function _getRewardEpochSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](15);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3062,6 +3064,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = RewardEpochFacet.getTransportRemainder.selector;
         s[6] = RewardEpochFacet.getTransportDayBatches.selector;
         s[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
+        s[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        s[9] = RewardEpochFacet.epochDrawForDay.selector;
+        s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        s[12] = RewardEpochFacet.getObligationDomainNeeds.selector;
+        s[13] = RewardEpochFacet.epochSettleForfeitLegs.selector;
+        s[14] = RewardEpochFacet.getDryRunShareOfPoolDays.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -3118,7 +3127,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](41);
+        s = new bytes4[](42);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3167,6 +3176,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        s[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.

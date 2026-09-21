@@ -896,7 +896,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
         vm.expectRevert(VaultFactoryFacet.OnlyDiamondInternal.selector);
         vm.prank(alice);
-        _vault().vaultCreditFromRewardCustodyERC20(alice, address(vpfi), 1, 0);
+        _vault().vaultCreditFromRewardCustodyERC20(alice, address(vpfi), 1, 0, 0);
     }
 
     // ─── 5. the mirror's ingress ─────────────────────────────────────────────

@@ -102,6 +102,7 @@ contract RewardHorizonSweepFacet is
         uint256 paidOut = s.interactionPoolPaidOut;
         uint256 headroom;
         bool freshRecoverable;
+        uint256 backingCap;
         {
         // Block-scoped so `reserved` and `backingRoom` die before the loop —
         // the loop frame sits exactly at the viaIR stack ceiling.
@@ -113,9 +114,10 @@ contract RewardHorizonSweepFacet is
         // within the bucket's BACKING headroom — {LibVpfiRecycle.credit}
         // reverts unless `balance >= recycleBucket + freshTotal`, and a
         // reverting credit would poison the whole permissionless batch
-        // (Codex #1317 r9). Cap fresh to the smaller of the pool cap and
-        // the backing room; both shrink by the same credited amount, so a
-        // single running minimum tracks them.
+        // (Codex #1317 r9). The pool cap bounds ALL credited fresh; the
+        // backing room bounds the LIVE-paid fresh, so since 3b-ii-A it is
+        // folded into the delivered allowance, which the loop depletes by
+        // exactly that live-paid figure.
         //
         // #1498 — the un-earmarked figure comes from
         // {LibVpfiRecycle.backingPosition}, the ONE definition the bucket's
@@ -144,7 +146,12 @@ contract RewardHorizonSweepFacet is
         // shrink by the same `freshCredited`, so the batch-start minimum
         // stays the minimum throughout the loop.
         freshRecoverable = backingRoom < headroom;
-        if (backingRoom < headroom) headroom = backingRoom;
+        // 3b-ii-A — backing bounds the LIVE-paid fresh only, so it rides the
+        // delivered term below rather than the pool budget: an epoch-paid
+        // expiry is backed by the epoch's own custody and must be able to
+        // settle while the live row is empty. A backing shortfall still
+        // DEFERS, now as a delivered-caused one.
+        backingCap = backingRoom;
         }
         // Loop accumulators packed into ONE stack slot (a memory pointer) —
         // the sweep loop frame sits exactly at the viaIR stack ceiling, and
@@ -163,14 +170,18 @@ contract RewardHorizonSweepFacet is
         // bound already answers for every role, and the negation's "not a
         // mirror" arm handed `Detached` an unbounded expiry allowance.
         uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
+        if (backingCap < allowance) allowance = backingCap;
+        // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.
+        LibInteractionRewards.TransportLegs memory tp;
         for (uint256 i = 0; i < entryIds.length; ) {
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh;
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited,
                 /* armedDelivered — the engine's per-day attribution; the
                    allowance depletes by the fresh credited (#1566 closure 2) */
             ) = LibInteractionRewards.sweepExpiredEntry(
-                entryIds[i], headroom, allowance, freshRecoverable
+                entryIds[i], headroom, allowance, freshRecoverable, tp
             );
             headroom -= freshCredited;
             // #1566 closure 2 — the allowance depletes by the FRESH credited,
@@ -179,7 +190,10 @@ contract RewardHorizonSweepFacet is
             // #1699 r5 P2 had it deplete by the armed share the engine
             // attributed — right while only armed fresh was charged; the
             // credited figure is already the cap-trimmed amount that moves.)
-            allowance = allowance > freshCredited ? allowance - freshCredited : 0;
+            // 3b-ii-A — and NET of the epoch-paid fresh, which the delivered
+            // ledger never received.
+            uint256 liveFresh = freshCredited - (tp.treasuryFresh + tp.userFresh - tBefore);
+            allowance = allowance > liveFresh ? allowance - liveFresh : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;
             t.armedFresh += ex.armedFresh;
@@ -236,13 +250,20 @@ contract RewardHorizonSweepFacet is
         // vintage, and the accumulator that fed it is gone with it; the
         // per-entry `allowance` decrement above is the only consumer of
         // `armedDelivered` now.
-        if (t.fresh > 0) {
+        // 3b-ii-A — the LIVE-funded fresh absorbs as before; the epoch-funded
+        // legs recycle in place from the epochs' custody (§5c); see the
+        // forfeit sweep for why the user legs are folded in.
+        uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
+        if (t.fresh > epochFresh) {
             LibVpfiRecycle.absorbRewardFresh(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
-                t.fresh
+                t.fresh - epochFresh
             );
         }
+        LibVpfiRecycle.absorbTransportFunded(
+            LibVpfiRecycle.RecycleSource.ExpiredReward, 0, epochFresh + tp.treasuryRecycled + tp.userRecycled
+        );
         if (t.recycled > 0) {
             LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,

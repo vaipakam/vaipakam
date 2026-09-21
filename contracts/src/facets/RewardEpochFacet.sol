@@ -3,6 +3,8 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -476,5 +478,108 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         // envelope is what attributes them.
         if (!LibRewardCustody.active(s)) revert RewardCustodyNotActivated();
         batchId = LibRewardCustody.admitLegacyTransportBatch(s, packetHash, dayIds);
+    }
+
+    // ─── Transport epochs PR 3b-ii-A: the draws ─────────────────────────────
+
+    /// @notice What `dayId`'s epochs can fund right now, within one scan
+    ///         window, and whether the window ended before the index did.
+    /// @dev    The read every armed-day settlement and preview makes, through
+    ///         {LibRewardCustody.callTransportCoverageForDay}; see
+    ///         {LibRewardCustody.transportCoverageForDay} for what the two
+    ///         figures mean and why a cap hit defers a day.
+    function getTransportCoverageForDay(uint256 dayId) external view returns (uint256 available, bool capHit) {
+        return LibRewardCustody.transportCoverageForDay(LibVaipakam.storageSlot(), dayId);
+    }
+
+    /// @notice What `dayId`'s epochs would pay of an obligation's two legs,
+    ///         given the legs' needs and their typed sources — §5c's split,
+    ///         applied to the day's cursor-visible coverage.
+    /// @dev    The ONE read every armed-day settlement and preview makes,
+    ///         through {LibRewardCustody.callTransportAllocateForDay}; the
+    ///         rule is {LibRewardCustody.transportAllocateForDay}.
+    function getTransportAllocationForDay(
+        uint256 dayId,
+        uint256 needFresh,
+        uint256 needRecycled,
+        uint256 domainFresh,
+        uint256 domainRecycled,
+        uint256 poolFresh,
+        uint256 deliveredCap,
+        uint256 bucket
+    ) external view returns (uint256 tf, uint256 tr, bool capHit) {
+        return LibRewardCustody.transportAllocateForDay(
+            LibVaipakam.storageSlot(),
+            dayId,
+            needFresh,
+            needRecycled,
+            domainFresh,
+            domainRecycled,
+            poolFresh,
+            deliveredCap,
+            bucket
+        );
+    }
+
+    /// @notice The preview's dry run of `user`'s ShareOfPool days against the
+    ///         given delivered cap and fresh budget — what a claim would pay
+    ///         and the armed fresh it would charge.
+    /// @dev    Hosted here: see {LibInteractionRewards.dryRunShareOfPoolDaysView}.
+    function getDryRunShareOfPoolDays(
+        address user,
+        uint256 deliveredCap,
+        uint256 freshBudget
+    ) external view returns (uint256 userTotal, uint256 armedTotal) {
+        return LibInteractionRewards.dryRunShareOfPoolDaysView(user, deliveredCap, freshBudget);
+    }
+
+    /// @notice The allocation DOMAIN's gross needs for `user`'s next claim
+    ///         call — the fresh and recycled the days it would settle need
+    ///         before any source is applied.
+    /// @dev    Hosted here because the dry run it runs is the preview's whole
+    ///         pricing walk, which the claim and lens facets cannot inline
+    ///         again; see {LibInteractionRewards.userDomainNeedsView}.
+    function getObligationDomainNeeds(address user) external view returns (uint256 needFresh, uint256 needRecycled) {
+        return LibInteractionRewards.userDomainNeedsView(user);
+    }
+
+    /// @notice Diamond-internal: settle a claim's forfeit legs — the
+    ///         live-funded fresh absorbed through the bounding operation, the
+    ///         epoch-funded legs recycled in place, and the recycled
+    ///         commitment released.
+    /// @dev    Hosted here for `RewardClaimFacet`'s EIP-170 headroom (3b-ii-A);
+    ///         the three operations are the claim's own, unchanged.
+    function epochSettleForfeitLegs(uint256 liveFresh, uint256 epochLegs, uint256 recycledRelease) external {
+        _requireDiamondInternal();
+        LibVpfiRecycle.absorbRewardFresh(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, liveFresh);
+        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, epochLegs);
+        if (recycledRelease > 0) {
+            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, recycledRelease);
+        }
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.drawTransportForDay} — and,
+    ///         with both legs zero, the cursor prune a deferred day asks for.
+    /// @dev    Hosted here and reached by the settle wrappers through a
+    ///         self-call, because a library draw would be inlined into each
+    ///         facet that settles an armed day, and those four sit within
+    ///         1.3–2.8 KB of EIP-170 (design §5d, the 3b-ii-A note). Gated to
+    ///         the Diamond itself: a draw with no settlement behind it would
+    ///         spend an epoch on nothing.
+    function epochDrawForDay(uint256 dayId, uint256 fresh, uint256 recycled) external {
+        _requireDiamondInternal();
+        LibRewardCustody.drawTransportForDay(LibVaipakam.storageSlot(), dayId, fresh, recycled);
+    }
+
+    /// @notice Advance `dayId`'s consumption cursor past exhausted epochs at
+    ///         the front of its index. Permissionless and idempotent — see
+    ///         {LibRewardCustody.pruneTransportDayCursor} for the day it
+    ///         rescues.
+    function epochPruneTransportDayCursor(uint256 dayId) external nonReentrant {
+        LibRewardCustody.pruneTransportDayCursor(LibVaipakam.storageSlot(), dayId);
+    }
+
+    function _requireDiamondInternal() private view {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
     }
 }

@@ -640,6 +640,12 @@ interface IVaipakamErrors {
     ///         payload is immutable once sent: a receive-side refusal would
     ///         retry the same over-cap message forever.
     error TransportDayFanoutExceeded(uint256 dayCount, uint256 cap);
+    /// @notice #1566 transport epochs PR 3b-ii-A — a draw asked a day's epochs
+    ///         for more than the cursor-visible coverage holds. Unreachable
+    ///         from the settle paths, which draw exactly what the day
+    ///         primitive priced against the same read in the same
+    ///         transaction; kept as the assertion that the two agree.
+    error TransportDrawExceedsCoverage(uint256 dayId, uint256 requested, uint256 available);
     /// @notice A split attestation arrived from a chain that is not this
     ///         deployment's canonical (Base) chain. Messenger authentication
     ///         proves a message came from a configured peer, never that the

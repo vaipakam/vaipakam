@@ -38,6 +38,187 @@
   },
   {
     "type": "function",
+    "name": "epochDrawForDay",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "epochPruneTransportDayCursor",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "epochSettleForfeitLegs",
+    "inputs": [
+      {
+        "name": "liveFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "epochLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledRelease",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getDryRunShareOfPoolDays",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deliveredCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "userTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "armedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getObligationDomainNeeds",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "needFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportAllocationForDay",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "domainFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "domainRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "poolFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deliveredCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tf",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tr",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capHit",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTransportBatch",
     "inputs": [
       {
@@ -100,6 +281,30 @@
         "name": "consumedRecycled",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportCoverageForDay",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capHit",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -232,6 +437,31 @@
   },
   {
     "type": "event",
+    "name": "RewardCommitmentReleased",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TransportBatchAdmitted",
     "inputs": [
       {
@@ -282,6 +512,112 @@
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransportDayCursorAdvanced",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransportDrawn",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycled",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycledPreLaunch",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1336,6 +1672,22 @@
     "type": "error",
     "name": "InsufficientProceeds",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3599,6 +3951,27 @@
         "name": "supplied",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportDrawExceedsCoverage",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

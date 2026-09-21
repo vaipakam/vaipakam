@@ -226,17 +226,15 @@ contract RewardClaimFacet is
             ? freshBudget - windowReward
             : 0;
 
-        (
-            LibInteractionRewards.EntrySplit memory userSplit,
-            LibInteractionRewards.EntrySplit memory forfeitSplit,
-            bool walkAdvanced
-        ) = LibInteractionRewards.claimForUserEntries(
+        // One memory result (3b-ii-A): the two splits, the walk flag and the
+        // epoch-paid legs, read in place — see {ClaimEntriesResult}.
+        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.claimForUserEntries(
             msg.sender, freshBudget, windowReward // #1566 closure 2 — the window reserves delivered headroom too
         );
-        uint256 entryReward = userSplit.total;
-        uint256 treasuryDelta = forfeitSplit.total;
-        uint256 paidRecycled = userSplit.recycled;
-        uint256 forfeitRecycled = forfeitSplit.recycled;
+        uint256 entryReward = res.toUser.total;
+        uint256 treasuryDelta = res.toTreasury.total;
+        uint256 paidRecycled = res.toUser.recycled;
+        uint256 forfeitRecycled = res.toTreasury.recycled;
         uint256 pending = entryReward + windowReward;
         // #1353 (M2 PR-5c) — a fully loan-side-capped entry pays 0 yet still
         // carries a finalized `armedFresh` commitment that MUST be retired
@@ -256,9 +254,9 @@ contract RewardClaimFacet is
         if (
             pending == 0 &&
             treasuryDelta == 0 &&
-            userSplit.armedFresh == 0 &&
-            forfeitSplit.armedFresh == 0 &&
-            !walkAdvanced
+            res.toUser.armedFresh == 0 &&
+            res.toTreasury.armedFresh == 0 &&
+            !res.advancedAnyDay
         ) {
             // No legacy claim possible AND nothing to sweep — surface the
             // same waiting / empty states the prior API used.
@@ -399,7 +397,12 @@ contract RewardClaimFacet is
         // because remittance is itself bounded by the same pool cap. So the
         // gate runs on the post-truncation figures, which are the amounts
         // that actually transfer.
-        uint256 payableFresh = freshPending + freshTreasury;
+        // 3b-ii-A — the LIVE-paid fresh alone needs live backing; the
+        // epoch-paid legs are backed by the epochs' own custody (the
+        // `Unclassified` row) and reach no live-backing check. The
+        // subtractions are the guard that the walk bounded them.
+        uint256 payableFresh =
+            freshPending + freshTreasury - res.transport.userFresh - res.transport.treasuryFresh;
         if (payableFresh > backingRoom) {
             revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }
@@ -415,11 +418,14 @@ contract RewardClaimFacet is
         // again, so any truncated remainder is gone for good — leaving its
         // commitment outstanding would permanently depress freshAvailable
         // for value nobody can ever draw.
+        // The commitment retires in full whichever ledger paid it (3b-ii-A).
         LibInteractionRewards.consumeArmedFresh(
-            userSplit.armedFresh + forfeitSplit.armedFresh
+            res.toUser.armedFresh + res.toTreasury.armedFresh
         );
-        if (paidRecycled > 0) {
-            LibVpfiRecycle.consume(paidRecycled, false, 0);
+        // The bucket is debited NET of the recycled the epochs paid (3b-ii-A):
+        // that share never sat in the bucket.
+        if (paidRecycled > res.transport.userRecycled) {
+            LibVpfiRecycle.consume(paidRecycled - res.transport.userRecycled, false, 0);
         }
 
         if (paid > 0) {
@@ -427,7 +433,7 @@ contract RewardClaimFacet is
             // delivery so the chokepoint can bound and charge it before the
             // transfer; `paid` itself includes the recycled share the bucket
             // backs and must never be the operand.
-            _deliverReward(vpfi, paid, freshPending, deliverTo, today);
+            _deliverReward(vpfi, paid, freshPending, res.transport, deliverTo, today);
         }
         if (treasuryDelta > 0) {
             // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split:
@@ -435,25 +441,18 @@ contract RewardClaimFacet is
             // recycle bucket; the RECYCLED-funded share never physically
             // left the bucket, so it is a pure commitment RELEASE with
             // ZERO new credit (crediting it would inflate Ā on every
-            // forfeit while absorbing nothing).
-            if (freshTreasury > 0) {
-                // #1566 closure 2 — reward absorption goes through the
-                // bounding operation: rejected if it exceeds the remaining
-                // delivered headroom, charged to the paid ledger, credited —
-                // one call. The generic credit no longer exists.
-                LibVpfiRecycle.absorbRewardFresh(
-                    LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                    0,
-                    freshTreasury
-                );
-            }
-            if (forfeitRecycled > 0) {
-                LibVpfiRecycle.releaseCommitment(
-                    LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                    0,
-                    forfeitRecycled
-                );
-            }
+            // forfeit while absorbing nothing). #1566 closure 2 — the fresh
+            // absorption goes through the bounding operation. 3b-ii-A — the
+            // LIVE-funded fresh absorbs as before; the epoch-funded legs
+            // recycle in place from the epochs' custody and reach no
+            // delivered-ledger charge (§5c). The three operations are hosted
+            // on the epoch facet ({epochSettleForfeitLegs}) because this
+            // facet has no room to inline them.
+            LibRewardCustody.callSettleForfeitLegs(
+                freshTreasury - res.transport.treasuryFresh,
+                res.transport.treasuryFresh + res.transport.treasuryRecycled,
+                forfeitRecycled
+            );
         }
         emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
     }
@@ -486,6 +485,7 @@ contract RewardClaimFacet is
         address vpfi,
         uint256 amount,
         uint256 fresh,
+        LibInteractionRewards.TransportLegs memory tp,
         LibVaipakam.RewardDelivery deliverTo,
         uint256 claimDayId
     ) private {
@@ -494,8 +494,10 @@ contract RewardClaimFacet is
         // and charge the paid ledger, before either delivery route runs. A
         // legacy (pre-`D*`) slice reaches here without ever consulting the
         // bound in the walk, which is precisely the over-draw this closes.
+        // 3b-ii-A — the delivered ledger is charged for the LIVE-paid fresh
+        // only; the epoch-paid share was never delivered to it.
         LibInteractionRewards.chargeDeliveredFresh(
-            LibVaipakam.storageSlot(), fresh
+            LibVaipakam.storageSlot(), fresh - tp.userFresh
         );
         bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
             || (
@@ -516,24 +518,25 @@ contract RewardClaimFacet is
         // holder release back before the wallet fallback pays — exactly one
         // destination is ever paid.
         if (LibRewardCustody.active(s)) {
-            uint256 recycled = amount - fresh;
-            if (toVault) {
-                // slither-disable-next-line low-level-calls
-                (bool okHolder, ) = address(this).call(
-                    abi.encodeWithSignature(
-                        "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)",
-                        msg.sender,
-                        vpfi,
-                        fresh,
-                        recycled
-                    )
-                );
-                if (okHolder) {
-                    emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
-                    return;
-                }
+            // 3b-ii-A — three legs: live-fresh and recycled from their rows,
+            // the epoch-paid share from the holder's `Unclassified` row, where
+            // an epoch's value rests. The epoch ledger was debited by the walk
+            // in this same transaction; this is the row-and-token half, and
+            // the custody facet composes it ({custodyDeliverClaim}) because
+            // this facet has no room to inline it. The subtractions are the
+            // guard: the walk bounded every epoch-paid leg by the same headroom
+            // this facet's scaling applies, so they cannot exceed the figures.
+            if (
+                LibRewardCustody.callDeliverClaim(
+                    msg.sender,
+                    fresh - tp.userFresh,
+                    amount - fresh - tp.userRecycled,
+                    tp.userFresh + tp.userRecycled,
+                    toVault
+                )
+            ) {
+                emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
             }
-            LibRewardCustody.callPayoutToWallet(msg.sender, fresh, recycled);
             return;
         }
         if (toVault) {
