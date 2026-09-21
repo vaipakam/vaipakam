@@ -1022,6 +1022,70 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
 }
 
 /**
+ * THE VERDICT, as a pure function — no network, no database.
+ *
+ * It is extracted because of how the crash in r15 got in and how long it
+ * survived: the success path of this tool had NEVER EXECUTED. Every live
+ * run had conflicts and left on the failure path, so three stale
+ * references sat in the branch that prints VERIFIED, and the live-run
+ * evidence reported round after round covered only half the code.
+ *
+ * Reaching that branch against the real pair requires a source that is
+ * holding still, which is the cutover condition itself — so waiting for a
+ * live run to exercise it means discovering a defect there DURING the
+ * cutover. A test can reach it today.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function verdictProblems({
+  srcD,
+  dstD,
+  refused = [],
+  conflicts = [],
+  reconciling,
+}) {
+  const refusedNames = new Set(refused.map((r) => r.table));
+  const problems = [];
+  for (const [table, s] of srcD) {
+    if (refusedNames.has(table)) continue;
+    const d = dstD.get(table);
+    if (!d) {
+      problems.push(`${table}: absent from the destination`);
+    } else if (!reconciling && d.digest !== s.digest) {
+      problems.push(
+        `${table}: source ${s.digest} (${s.count} rows) != destination ` +
+          `${d.digest} (${d.count} rows)`,
+      );
+    } else if (reconciling && d.count < s.count) {
+      problems.push(
+        `${table}: destination holds ${d.count} rows, fewer than the ` +
+          `source's ${s.count} — rows are still missing`,
+      );
+    }
+  }
+
+  // A REFUSED table is not a footnote. It is a table this carry did not
+  // move and cannot vouch for, so it FAILS — an earlier revision printed
+  // it and then exited zero with "VERIFIED", which would let an operator,
+  // or a script reading the exit code, carry the cutover forward having
+  // silently omitted an entire table.
+  for (const r of refused) problems.push(`${r.table}: NOT CARRIED — ${r.refused}`);
+
+  // Likewise a conflict, and it names the TABLE and the KEY and nothing
+  // else: `support_tickets` puts the user's message and email immediately
+  // after the key, `diag_errors` carries whatever a stack trace held, and
+  // cutover output gets pasted into run logs and issues.
+  for (const c of conflicts) {
+    problems.push(
+      c.key === undefined
+        ? `${c.table}: cannot be reconciled — ${c.detail}`
+        : `${c.table} ${c.key}: ${c.kind} — ${c.detail}.`,
+    );
+  }
+  return problems;
+}
+
+/**
  * One report, one exit code, whether the run stopped at planning or after
  * verifying. Two spellings of "here is what is wrong" drift apart, and the
  * one an operator sees least is the one that goes stale.
@@ -1264,50 +1328,13 @@ async function main() {
   printDigest(`source  ${src.name}`, srcD);
   printDigest(`target  ${dst.name}`, dstD);
 
-  const refusedNames = new Set(refused.map((r) => r.table));
-  const problems = [];
-  for (const [table, s] of srcD) {
-    if (refusedNames.has(table)) continue;
-    const d = dstD.get(table);
-    if (!d) {
-      problems.push(`${table}: absent from the destination`);
-    } else if (!reconciling && d.digest !== s.digest) {
-      problems.push(
-        `${table}: source ${s.digest} (${s.count} rows) != destination ` +
-          `${d.digest} (${d.count} rows)`,
-      );
-    } else if (reconciling && d.count < s.count) {
-      problems.push(
-        `${table}: destination holds ${d.count} rows, fewer than the ` +
-          `source's ${s.count} — rows are still missing`,
-      );
-    }
-  }
-
-  // A REFUSED table is not a footnote. It is a table this carry did not
-  // move and cannot vouch for, so it FAILS — an earlier revision printed
-  // it and then exited zero with "VERIFIED", which would let an operator,
-  // or a script reading the exit code, carry the cutover forward having
-  // silently omitted an entire table.
-  for (const r of refused) problems.push(`${r.table}: NOT CARRIED — ${r.refused}`);
-
-  // Likewise a conflict: the source changed a row the destination already
-  // has, and which value should win is a decision, not a default.
-  // A conflict names the TABLE and the KEY, and nothing else. It used to
-  // print the first 300 characters of the row, which for `support_tickets`
-  // is the user's message and email — the schema puts them straight after
-  // the key — and for `diag_errors` whatever a stack trace carried. A
-  // cutover's terminal output gets pasted into run logs and issues, so a
-  // routine reconciliation conflict would have copied private content into
-  // places nobody chose to put it. An operator who needs the value queries
-  // for it deliberately, which is a decision with a record.
-  for (const c of conflicts) {
-    problems.push(
-      c.key === undefined
-        ? `${c.table}: cannot be reconciled — ${c.detail}`
-        : `${c.table} ${c.key}: ${c.kind} — ${c.detail}.`,
-    );
-  }
+  const problems = verdictProblems({
+    srcD,
+    dstD,
+    refused,
+    conflicts,
+    reconciling,
+  });
 
   console.log('');
   if (problems.length > 0) reportProblems(problems, dst);

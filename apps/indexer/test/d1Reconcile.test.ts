@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // by path; the module guards its own `main()` behind a direct-execution
 // check precisely so this import cannot start carrying rows.
 // @ts-expect-error — untyped .mjs operator script, imported for its pure exports
-import { classifyForReconcile, situationOf } from '../scripts/d1-carry-rows.mjs';
+import { classifyForReconcile, situationOf, verdictProblems } from '../scripts/d1-carry-rows.mjs';
 
 /**
  * WHY THIS TEST EXISTS. Post-switch reconciliation decides, per row,
@@ -291,5 +291,92 @@ describe('situationOf — the three facts as one name', () => {
       'source-changed',
     ]);
     expect(exercised.size).toBe(6);
+  });
+});
+
+/**
+ * THE SUCCESS PATH, which had never executed. Three stale references sat
+ * in the branch that prints VERIFIED through four review rounds, because
+ * every live run had conflicts and left on the failure path — so the
+ * live-run evidence reported each round covered only half the code.
+ * Reaching that branch against the real databases needs a source holding
+ * still, which is the cutover condition itself; a test reaches it now.
+ */
+describe('verdict', () => {
+  const d = (digest: string, count: number) => ({ digest, count });
+  const both = (digest: string, count: number) =>
+    [new Map([['t', d(digest, count)]]), new Map([['t', d(digest, count)]])] as const;
+
+  it('reports NOTHING when a mirror left both sides identical', () => {
+    const [srcD, dstD] = both('aaaa', 3);
+    expect(
+      verdictProblems({ srcD, dstD, refused: [], conflicts: [], reconciling: false }),
+    ).toEqual([]);
+  });
+
+  it('reports NOTHING when a reconciliation finds the destination complete', () => {
+    // The destination may legitimately hold MORE than the source by then.
+    const srcD = new Map([['t', d('aaaa', 3)]]);
+    const dstD = new Map([['t', d('bbbb', 5)]]);
+    expect(
+      verdictProblems({ srcD, dstD, refused: [], conflicts: [], reconciling: true }),
+    ).toEqual([]);
+  });
+
+  it('reports a digest difference after a mirror', () => {
+    const srcD = new Map([['t', d('aaaa', 3)]]);
+    const dstD = new Map([['t', d('bbbb', 3)]]);
+    const problems = verdictProblems({
+      srcD,
+      dstD,
+      refused: [],
+      conflicts: [],
+      reconciling: false,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('!=');
+  });
+
+  it('reports a destination holding fewer rows than the source', () => {
+    const srcD = new Map([['t', d('aaaa', 5)]]);
+    const dstD = new Map([['t', d('bbbb', 2)]]);
+    expect(
+      verdictProblems({ srcD, dstD, refused: [], conflicts: [], reconciling: true }),
+    ).toHaveLength(1);
+  });
+
+  it('fails on a refused table rather than reporting success', () => {
+    const [srcD, dstD] = both('aaaa', 3);
+    const problems = verdictProblems({
+      srcD,
+      dstD,
+      refused: [{ table: 't', refused: 'no primary key' }],
+      conflicts: [],
+      reconciling: false,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('NOT CARRIED');
+  });
+
+  it('names a conflict by table and key, and never by its contents', () => {
+    const [srcD, dstD] = both('aaaa', 3);
+    const problems = verdictProblems({
+      srcD,
+      dstD,
+      refused: [],
+      conflicts: [
+        {
+          table: 'support_tickets',
+          key: '["tk_1"]',
+          kind: 'changed on the source after the mirror',
+          detail: 'the destination holds a different row under that key',
+        },
+      ],
+      reconciling: true,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('support_tickets ["tk_1"]');
+    // The row's values must never reach a report that gets pasted into logs.
+    expect(problems[0]).not.toContain('@');
   });
 });
