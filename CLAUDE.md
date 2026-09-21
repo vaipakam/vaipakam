@@ -1326,9 +1326,11 @@ Two practical consequences:
   exported pointer.) The annotation licenses the mover to relocate stack slots into
   memory, so a block that steps outside Solidity's memory model invites
   corruption or optimizer-dependent behaviour — a far worse failure than a
-  build error. It is an audit, not a find-and-replace. A block that touches no
-  memory at all (the `x.slot := position` idiom) needs nothing — see the
-  measurement below.
+  build error. It is an audit, not a find-and-replace. A block of NEITHER
+  shape above — the `x.slot := position` storage-pointer idiom — needs nothing;
+  see the measurement below. ("Touches no memory" is the wrong test, and it is
+  the one this section kept reaching for: a block with no memory opcode in it
+  still qualifies if it exports a computed pointer.)
 
   **What counts as memory-safe is SOLIDITY'S SPECIFICATION, and this document
   deliberately does not restate it.** Read it in the Solidity docs under
@@ -1377,8 +1379,10 @@ Two practical consequences:
   needs the guard, and check its headroom in the same change. #2260 tracks the
   remaining blocks.
 
-  **A block that touches no memory needs no annotation** — the storage-pointer
-  idiom (`x.slot := position`). Solidity does not require the annotation for
+  **A block of neither shape needs no annotation** — that is the
+  storage-pointer idiom (`x.slot := position`), and naming the idiom is the
+  claim; "touches no memory" is not, since an exported pointer needs no memory
+  opcode. Solidity does not require the annotation for
   assembly that cannot affect memory safety; that is the compiler's rule, not
   an inference from this repo (established in #2260 r4 review).
 
@@ -1497,12 +1501,19 @@ Two practical consequences:
   build, which is the failure mode that cost #2253 those five revisions.
 
 **Scope of what is actually left** (#2260, re-measured). `src/` carries 25 bare
-blocks, but **6 are the no-memory storage-pointer idiom and need nothing**. The
-real remainder is **19** — 18 memory-touching blocks plus the `VaipakamDiamond`
-fallback, whose `calldatacopy(0, 0, …)` clobbers memory from offset 0 and wants
-its own verification rather than a bulk annotation — plus 9 under `test/`. They
-are LATENT, not broken: those contracts compile today, and #2268 showed a
-blanket sweep is not the remedy.
+blocks, but **6 are the `x.slot := position` storage-pointer idiom and need
+nothing**. The real remainder is **19** — 18 in-scope blocks plus the
+`VaipakamDiamond` fallback, whose `calldatacopy(0, 0, …)` clobbers memory from
+offset 0 and wants its own verification rather than a bulk annotation — plus 9
+under `test/`. They are LATENT, not broken: those contracts compile today, and
+#2268 showed a blanket sweep is not the remedy.
+
+**Caveat on that 18, stated rather than smoothed over.** It was counted when
+this section's test was "touches memory", so it is a count of blocks with a
+memory opcode. The live test is EITHER shape, and a block exporting a computed
+pointer without a memory opcode would have been filed under the 6 rather than
+the 18. Nobody has re-counted against the corrected criterion, so treat 18 as a
+lower bound on the in-scope set and 6 as an upper bound on the exempt one.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
