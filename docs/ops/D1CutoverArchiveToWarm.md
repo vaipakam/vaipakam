@@ -543,6 +543,17 @@ because step 3 below is the part of it that had to be re-learned.
       > | the source-side *stale row* case | decide warm's row stays as it is | the same again — archive still deleted it after the mirror |
       > | `source-changed` | apply archive's value to warm | **clean** — this one converges, because applying it is a data change |
       >
+      > **A fourth line behaves the same way, and it is not a row at all**
+      > (#2267 r39): a reported **sequence advance** on archive. If a
+      > straggler allocated an id and then deleted the row, nothing can be
+      > applied — the identifier is simply spent on one side. The run used
+      > to fall silent once warm's own sequence reached the same number,
+      > which is not evidence of anything: warm allocates identifiers for
+      > its own records every minute, and by number that is
+      > indistinguishable from having applied archive's. The report now
+      > shows warm's figure as context and keeps reporting. Record and
+      > carry on, exactly as above.
+      >
       > So a run is as resolved as it is going to get once every line it
       > reports is one **already recorded, by table and key, with the
       > decision taken**. That is the test, and it is deliberately by key
@@ -593,7 +604,12 @@ because step 3 below is the part of it that had to be re-learned.
       the database that would reject the insert this run's report leads
       an operator to make; one naming a column the source lacks cannot be
       evaluated at all and is named in the output rather than dropped
-      quietly. And a reconciliation **no longer stops at the conflict
+      quietly. A table that exists **only on warm** — what a migration
+      creating one looks like from archive's side — is printed as drift
+      rather than failing the run: it cannot hold a late write from
+      archive, which is the only thing the run is looking for, and
+      failing on it would end the weekly check at the first schema
+      change. And a reconciliation **no longer stops at the conflict
       list**: its two remaining late-write checks — the sequence
       comparison and the re-read that notices the source moved — come
       afterwards, and with #2279 making a conflict permanent, stopping

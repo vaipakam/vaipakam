@@ -705,25 +705,42 @@ export function compareSequences(now, since, held = new Map()) {
     const then = since?.[table]?.seq;
     if (then === undefined || then === null) continue;
     if (seq <= then) continue;
-    // THE DESTINATION IS WHAT MAKES THIS CONVERGE (#2267 r38). The
-    // mirror baseline never moves, so `seq > then` stays true forever
-    // once anything has allocated — and the procedure's two consecutive
-    // clean runs would be unreachable after a single reported advance.
+    // NUMERICAL CATCH-UP IS NOT EVIDENCE OF RESOLUTION, and treating it
+    // as such was wrong (#2267 r39, reversing r38).
     //
-    // What resolves it is the destination catching up: applying the late
-    // row advances the destination's own sequence, and an operator who
-    // decides the identifier is spent can advance it deliberately. Either
-    // way the two agree and there is nothing left to report. This is the
-    // same rule the row comparison uses for a conflict an operator has
-    // already resolved.
-    if ((held.get(table) ?? -1) >= seq) continue;
+    // r38 skipped the report once the destination's own sequence reached
+    // the source's, reasoning that applying the late row advances it. It
+    // does — but so does the LIVE destination allocating an identifier of
+    // its own, for an unrelated record, which is the ordinary case for a
+    // database taking writes every minute. The two are indistinguishable
+    // by number, and the second is not resolution: it is the state where
+    // one identifier names two different records, which a reverse mirror
+    // would then collapse. Bought convergence, sold the claim.
+    //
+    // So the advance is REPORTED, and the destination's own value is
+    // reported with it as context rather than as an answer. What would
+    // actually resolve it is a record that a person reviewed this
+    // allocation — which is #2279, the same missing decision record that
+    // leaves three row situations unable to come clean. Until it exists
+    // this line repeats, and the runbook says so where it asserts the
+    // two-clean-runs rule.
+    //
+    // This does not make ordinary runs noisy. The source of a
+    // reconciliation is the database the writers LEFT, so its sequence
+    // only moves if a straggler allocated on it after the mirror — the
+    // exact event worth a standing line until somebody decides about it.
+    const there = held.get(table);
     problems.push(
       `${table}: the source has allocated identifiers up to ${seq}, and ` +
         `the mirror recorded ${then}.\n      Something inserted ${seq - then} ` +
         `row(s) here after the mirror. If they are still present they are ` +
         `reported above; if they are NOT, they were inserted and deleted, ` +
         `and the identifiers are spent on the source while the destination ` +
-        `still considers them free.`,
+        `still considers them free.\n      The destination has ` +
+        `${there === undefined ? 'never allocated here' : `reached ${there}`}` +
+        `, which is CONTEXT and not resolution: it advances on its own ` +
+        `writes, so reaching the same number says nothing about whether ` +
+        `this allocation was ever applied (#2279).`,
     );
   }
   return problems;
@@ -1855,8 +1872,18 @@ export function verdictProblems({
   // way it is a schema difference, which this tool treats as a migration
   // decision rather than something to resolve on its own — it will not
   // drop the table, and it will not pass over it in silence.
+  //
+  // A RECONCILIATION IS THE ONE CASE WHERE THIS IS EXPECTED (#2267 r39).
+  // After the switch the destination keeps taking migrations and the
+  // retained source never will, so the first migration that CREATES a
+  // table puts the two permanently in this state — and a table the
+  // source does not have cannot hold a late source write, which is the
+  // only thing a reconciliation is looking for. Failing on it would end
+  // the weekly run for good at the first schema change, which is the
+  // check-that-can-never-pass shape again. It is reported as drift by
+  // the caller instead, so it stays visible without being fatal.
   for (const table of dstD.keys()) {
-    if (srcD.has(table) || refusedNames.has(table)) continue;
+    if (srcD.has(table) || refusedNames.has(table) || reconciling) continue;
     problems.push(
       `${table}: present on the destination and ABSENT from the source. ` +
         `This tool does not drop tables — that is a migration decision — ` +
@@ -2191,6 +2218,23 @@ async function main() {
   const [srcD, dstD] = [await digestDatabase(src), await digestDatabase(dst)];
   printDigest(`source  ${src.name}`, srcD);
   printDigest(`target  ${dst.name}`, dstD);
+
+  // NOT FATAL WHEN RECONCILING, AND NOT SILENT EITHER. A table only the
+  // destination has is what a post-cutover migration looks like from the
+  // retained source's side; it cannot hold a late source write, so it is
+  // drift to see rather than a difference to resolve (#2267 r39).
+  if (reconciling) {
+    const destinationOnly = [...dstD.keys()].filter((t) => !srcD.has(t));
+    if (destinationOnly.length > 0) {
+      console.log(
+        `\nDRIFT (not a finding): ${destinationOnly.length} table(s) exist ` +
+          `only on ${dst.name} — ${destinationOnly.join(', ')}.\n  Expected ` +
+          `once it has taken a migration ${src.name} never will. Nothing ` +
+          `here can hold a late write from ${src.name}, which is what this ` +
+          `run is looking for.`,
+      );
+    }
+  }
 
   const problems = [
     ...verdictProblems({

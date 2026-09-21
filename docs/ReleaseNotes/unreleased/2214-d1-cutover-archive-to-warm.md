@@ -202,15 +202,22 @@ operator adds on the strength of a report; one the old database cannot be
 measured against is named in the output rather than passed over. And a
 comparison run no longer stops at its list of differences: two of its checks
 look for late writes that leave no visible difference at all, and they come
-afterwards.
+afterwards. A table that exists only on the new database — what a migration
+creating one looks like from the old one's side — is shown as drift rather than
+failing the run, since it cannot hold a late write from the old database and
+failing on it would end the weekly check at the first schema change.
 
-**Three kinds of difference will keep being reported no matter what the
+**Four kinds of difference will keep being reported no matter what the
 operator does about them, and the runbook now says so rather than leaving
 someone to discover it.** The comparison reports differences in data; some
 differences are resolved by a decision that changes no data — a deletion that
 should stand, a clash resolved by keeping both records under separate
 identifiers, a stale copy the operator decides to keep — and the next
-comparison therefore finds the same difference again. Those are recorded once
+comparison therefore finds the same difference again. The fourth is not a
+record at all but an identifier: one the old database allocated and released
+after the copy, which leaves nothing to apply. The new database reaching the
+same number is no longer read as an answer, since it allocates identifiers for
+its own records constantly and by number the two are indistinguishable. Those are recorded once
 with the decision taken and the weekly comparison continues, since its job is
 to surface what is new. Making a decided difference stop reporting means
 recording decisions somewhere, which is a change to the one tool whose entire

@@ -586,17 +586,25 @@ describe('verdict — a table only the destination has', () => {
     expect(problems[0]).toContain('ABSENT from the source');
   });
 
-  it('fails in the read-only direction too', () => {
-    // reconcile compares against a manifest taken when the two sides were
-    // in parity; an extra table means that premise no longer holds.
+  it('does NOT fail a reconciliation, where it is what a migration looks like', () => {
+    // REVERSED at #2267 r39, and the reversal is the point. This used to
+    // fail in both directions, on the reasoning that reconcile compares
+    // against a manifest taken in parity. But after the switch the
+    // destination keeps taking migrations and the retained source never
+    // will, so the first one that CREATES a table puts the two here
+    // permanently — and the weekly run could never come clean again. A
+    // table the source does not have cannot hold a late source write,
+    // which is the only thing this run looks for, so it is drift the
+    // caller prints rather than a finding. Losing the weekly check at
+    // the first schema change is the larger failure by far.
     const srcD = new Map([['t', d('aaaa', 3)]]);
     const dstD = new Map([
       ['t', d('zzzz', 9)],
-      ['left_behind', d('bbbb', 40)],
+      ['added_by_migration', d('bbbb', 40)],
     ]);
     expect(
       verdictProblems({ srcD, dstD, refused: [], conflicts: [], reconciling: true }),
-    ).toHaveLength(1);
+    ).toEqual([]);
   });
 
   it('does not double-report a table already refused', () => {
@@ -1104,17 +1112,35 @@ describe('a never-allocated baseline is zero, not unknown', () => {
   });
 });
 
-describe('a reported sequence advance can be resolved', () => {
-  it('stops reporting once the destination has caught up', () => {
-    // The mirror baseline never moves, so `seq > then` stays true
-    // forever once anything allocates. Applying the late row advances
-    // the destination's own sequence, and that is what makes the two
-    // required clean runs reachable again (#2267 r38).
+describe('a sequence advance is not resolved by the destination counting up', () => {
+  it('still reports when the destination has reached the same number', () => {
+    // REVERSED at #2267 r39. r38 read the destination catching up as
+    // proof the late row had been applied. It is not: the live
+    // destination allocates identifiers for its own records every
+    // minute, and by number that is indistinguishable from having
+    // applied this one. The state it silently blessed — one identifier
+    // naming two different records — is the one a reverse mirror would
+    // collapse.
+    const problems = compareSequences(
+      new Map([['notifications', 52]]),
+      { notifications: { seq: 46 } },
+      new Map([['notifications', 52]]),
+    );
+    expect(problems).toHaveLength(1);
+    // The destination's own figure is still shown, as context.
+    expect(problems[0]).toContain('reached 52');
+    expect(problems[0]).toContain('not resolution');
+  });
+
+  it('is quiet when the source has not allocated since the mirror', () => {
+    // The reason reversing r38 does not make ordinary runs noisy: the
+    // source of a reconciliation is the database the writers LEFT, so
+    // its sequence moves only if a straggler allocated on it.
     expect(
       compareSequences(
-        new Map([['notifications', 52]]),
+        new Map([['notifications', 46]]),
         { notifications: { seq: 46 } },
-        new Map([['notifications', 52]]),
+        new Map([['notifications', 91]]),
       ),
     ).toEqual([]);
   });
