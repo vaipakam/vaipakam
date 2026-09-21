@@ -429,6 +429,26 @@ because step 3 below is the part of it that had to be re-learned.
       nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
       runs report nothing at all.
 
+      > **TWO CLEAN RUNS PAUSE THIS STEP. THEY DO NOT END IT** (#2267
+      > r34/r35). There is no fence on archive — see the banner at the
+      > head of §4 — so a suspended invocation can commit after both
+      > clean runs and leave a support ticket, a threshold or a signed
+      > offer sitting in archive and absent from warm indefinitely.
+      > Retaining archive makes that record **recoverable**; it does not
+      > make it **found**.
+      >
+      > So while archive is retained, **re-run this reconciliation
+      > weekly** — by whoever holds this runbook, from the switch until
+      > the predecessor is deleted. It is a read against both databases
+      > that writes to neither, so it costs minutes. Record every run in
+      > the run log, clean ones included: the value of the record is that
+      > a gap in it is visible.
+      >
+      > Nothing else in this procedure discovers a late write, and until
+      > the predecessor is deleted there is no point at which one becomes
+      > impossible. §5's checklist agrees — its box reads "is CURRENT",
+      > not "completed", for exactly this reason.
+
       **It used to insert, and that capability was removed rather than
       guarded** (#2267 r14). Inserting into warm meant inserting into a
       LIVE database, and review found that unsafe from a new direction
