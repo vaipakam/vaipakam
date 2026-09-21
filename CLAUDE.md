@@ -1351,14 +1351,29 @@ Two practical consequences:
   exist because of that squeeze).
 
   **The guard flips only when the LAST unannotated block in a contract's
-  COMPILATION CONTEXT is annotated** — its own blocks plus every one inlined
-  into it. Until then a retrofit is INERT: no mover, no benefit, and no
-  bytecode growth either. `OfferMatchFacet` is the worked example in this
-  tree — bare blocks at `:588` and `:701` *and* it reaches
-  `LibVaipakam.storageSlot`'s bare block, so annotating any one or two of the
-  three changes nothing at all. Do not expect a partial retrofit to show up
-  in either direction, and do not read "it got no bigger" as "it was safe to
-  annotate" (#2260 r2 P2).
+  COMPILATION CONTEXT is annotated** — its own blocks plus every one reachable
+  through inheritance, modifiers, libraries and internal calls. Until then a
+  retrofit is INERT: no mover, no benefit, and no bytecode growth either. Do
+  not expect a partial retrofit to show up in either direction, and **do not
+  read "it got no bigger" as "it was safe to annotate"** — that inference is
+  the trap (#2260 r2).
+
+  **DO NOT try to enumerate a compilation context by reading the source.** It
+  is transitive and the count is always larger than it looks. `OfferMatchFacet`
+  is the cautionary example rather than a worked one: this note first said
+  ONE block, review made it THREE (its own `:588`/`:701` plus
+  `LibVaipakam.storageSlot`), and the next round made it at least FIVE —
+  it is `DiamondReentrancyGuard, DiamondPausable`, so every `nonReentrant` /
+  `whenNotPaused` method also pulls in `LibReentrancyGuard._storage` `:31`
+  and `LibPausable._storage` `:78`. Each count was produced by careful
+  reading and each was wrong, because the predicate is unbounded in prose —
+  the #1995 / #2066 pattern (#2260 r3).
+
+  **MEASURE instead.** Compile and diff `deployedBytecode` before and after,
+  the way #2268's numbers above were produced. A size change means the guard
+  flipped; no change means the retrofit was inert. That test is bounded,
+  needs no inventory, and is how every correct claim in this section was
+  actually established.
 
   **This does NOT contradict the annotate-new-blocks rule above, because the
   two directions are not symmetric.** Writing a NEW block into a contract
@@ -1374,10 +1389,25 @@ Two practical consequences:
 - **A clean compile is NOT evidence for an annotation change — EIP-170 is a
   TEST, not a compiler error.** `forge build --skip test` reported "Compiler
   run successful" on the sweep above while two facets sat over the limit.
-  Run **`forge test --match-path "test/deploy/*" -vv`** (or
-  `bash script/predeploy-check.sh`, which passes `-vv` for this reason) for
-  anything that moves bytecode size — which explicitly includes adding or
-  removing a `("memory-safe")` annotation, not just adding selectors.
+  For anything that moves bytecode size — which explicitly includes adding or
+  removing a `("memory-safe")` annotation, not just adding selectors — run:
+
+  ```bash
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    forge test --match-path "test/deploy/*" -vv
+  # or, same two requirements, through the gate:
+  FOUNDRY_PROFILE=default bash script/predeploy-check.sh
+  ```
+
+  **Both prefixes are required, and each closes a way this check can pass
+  without checking anything** (#2260 r3). `FOUNDRY_PROFILE=default` because an
+  inner loop leaves `quick` EXPORTED, and quick skips `test/**` — the note at
+  "Do NOT use `FOUNDRY_PROFILE=quick` with `forge test`" above is about
+  exactly this: discovery empties and the run goes green having executed no
+  test. `run-regression.sh` forces the profile for the same reason. And the
+  `nice`/`ionice` prefix because the "Executing forge" rule requires it on
+  every build/test/script; a 5–15 minute viaIR run at default priority is the
+  2–3× slowdown that rule exists to prevent.
 
   **`-vv` is load-bearing, not verbosity.** `FacetSizeLimitTest` enforces the
   limit in `test_EveryFacetUnderEip170SizeLimit`, but the HEADROOM figures
