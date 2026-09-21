@@ -7216,15 +7216,25 @@ on the live era alone.
 >   restart;
 > - **a remainder that prices to zero** (Codex #2274 r5 P1) — a closed,
 >   non-forfeited entry whose remaining window rounds to nothing (a last
->   day that rounds away, a cap already exhausted) is marked unpriced by
->   the pricing core, so the expiry sweep returns without processing it
->   and the executability gate never starts its clock; unless its owner
+>   day that rounds away, a cap already exhausted) prices to nothing
+>   payable — and the two ways it does so leave DIFFERENT marks in the
+>   pricing core (Codex #2274 r7 P1): an empty raw window is marked
+>   UNPRICED (the core's empty-window state), while a remainder the
+>   loan-side cap trims to zero is PRICED, with a zero capped user split
+>   and its raw split standing. In both the expiry sweep returns without
+>   processing it (nothing is pool-capped payable) and the executability
+>   gate never starts its clock; unless its owner
 >   submits a zero-value claim it is never `processed`, and a proof
 >   testing `processed` would refuse the day forever over an obligation
 >   that owes nothing. Exit: **B adds a permissionless retirement for
 >   exactly this state**, and it is NOT a bare flag (Codex #2274 r6 P1):
 >   the two ways a remainder prices to zero differ in what they leave
->   outstanding. A genuinely empty raw window owes nothing and is marked
+>   outstanding, and B tests them by TWO predicates, never by a single
+>   "unpriced" reading — the core's empty-window mark for the first, the
+>   priced-with-zero-payable state for the second (Codex #2274 r7 P1: a
+>   retirement keyed on "unpriced" alone would retire raw dust and leave
+>   every cap-exhausted entry, its days and its batches unclosable). A
+>   genuinely empty raw window owes nothing and is marked
 >   processed, moving nothing. A remainder trimmed to zero by a CAP still
 >   carries its raw armed entitlement and the commitment behind it, so
 >   the retirement runs the day primitive's ordinary terminal accounting
@@ -7234,6 +7244,16 @@ on the live era alone.
 >   over a commitment left outstanding forever. Either way the proof's
 >   termination test stays "processed, or the claim cursor past the day"
 >   and needs no second notion of done;
+> - **the loan still open** (Codex #2274 r7 P2) — an entry whose loan is
+>   `Active` or `FallbackPending` and whose window was not explicitly
+>   closed is neither claimable nor sweepable: the claimability test
+>   refuses it and the expiry sweep returns before processing it, so an
+>   elapsed window stands until the loan itself ends. Exit: the loan's
+>   own terminal — repayment, default, liquidation, the fallback's
+>   resolution — or the lender sale that closes the entry; the entry then
+>   routes by the terminal reason (a defaulted or liquidated loan forfeits
+>   the borrower's side to treasury; a clean terminal and the lender's
+>   side pay out). Until then every batch listing its days waits with it;
 > - **the entry's owner sanctioned** — the claim refuses them and the
 >   expiry clock does not advance while they are flagged, so the entry
 >   can stand for as long as the flag does, and nothing the platform
@@ -7242,7 +7262,7 @@ on the live era alone.
 > While any of these holds, every batch listing that day is unparkable,
 > and therefore unclassifiable and unrepatriable: the value stays
 > protected and visible in `Unclassified`. That is the conservative side
-> the owner chose (#2258, Reading B). Five of these have exits the
+> the owner chose (#2258, Reading B). Six of these have exits the
 > platform or its operator already holds, or that B adds. The sanctioned
 > owner does not, and it is
 > recorded here as an OWNER QUESTION for 3b-ii-B rather than decided: a
@@ -7317,7 +7337,18 @@ on the live era alone.
 > every draw defeats the gas bound the settlement model rests on. The
 > domain is therefore the one the model already has: **the days one call
 > prices for one claimant** — at most `MAX_INTERACTION_CLAIM_DAYS` for a
-> claim, exactly one for a sweep. Typed demand is totalled over that
+> claim, exactly one for a sweep's SETTLEMENT. That is the ALLOCATION
+> domain — how one epoch's coverage is divided between a day's two legs
+> as that call settles it — and nothing else (Codex #2274 r7 P1): row
+> 13's executability reading, in the sweep's own pre-removal gate exactly
+> as in the view, is always taken over the CLAIM's domain — the
+> claimant's whole chunk, every entry and the legacy window — through the
+> claim's dry run (the armed-need view → the hosted dry run → the claim's
+> domain pass; A1's code does this and nothing else), so an entry with
+> matching transport whose sibling is unfunded reads non-executable
+> exactly as it does today, and the terminal sweep's one-day domain
+> changes only how that day's coverage is split when it is settled.
+> Typed demand is totalled over that
 > domain ONCE per call, through the same dry-run pricing the previews
 > already run (hosted on the epoch facet, and skipped entirely on a chain
 > with no epochs); the walk carries the remaining domain needs down, and
@@ -7418,6 +7449,27 @@ on the live era alone.
 > claim's backing check reads the fresh net of the epoch-paid legs, and
 > row 13's need comes through the same netted dry run.
 >
+> *Replacement funding has its own provenance* (Codex #2274 r7 P1). B's
+> "batch-bound replacement funding that clears a disposition by amount"
+> arrives AFTER a disposition has stepped the original packet's untyped
+> remainder and the uncounted aggregates down, so a later draw backed by
+> it cannot take the packet half above: the original packet is depleted
+> by exactly the disposed amount, so the step-down would underflow, and
+> crediting that packet again would fabricate ingress under its
+> immutable `actualReceived` anchor and break the identity. B therefore
+> records replacement value as a SECOND packet bound to the batch — its
+> own `IngressPacket`, kind `Replacement`, keyed by the batch it clears,
+> with its own `actualReceived` and untyped remainder — and the batch
+> carries `replacementFunded` beside `admitted`. The conservation
+> identity gains it on the funded side: `admitted + replacementFunded ==
+> balance + parked + debited + consumedFresh + consumedRecycled`. A draw
+> spends the original packet's untyped remainder first and the
+> replacement packet's after it, each through the same step-down
+> function, so every unit drawn debits the packet that holds it and the
+> `Unclassified` row identity holds as before. Nothing in A1 changes:
+> A1 admits no replacement, and the second packet is a B addition the
+> identity above already has room for.
+>
 > *Hosted where.* The draw and the leg-counter writes live on
 > `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
 > `LibInteractionRewards` carries the coverage read in the day primitive,
@@ -7491,6 +7543,21 @@ on the live era alone.
 >    KNOWING this, not on the premise that A1 has no contention to guard.
 >    Both readings are now recorded with their cost, and which one A1
 >    ships with is the owner's open question, not this note's.
+>
+>    **And across chunks** (Codex #2274 r7 P1, recorded with the two
+>    above). A1 persists no allocation across settlement chunks and
+>    settles every draw at once, so an early chunk's split can spend a
+>    scarce shared epoch on a leg the live sources could have paid and
+>    leave a later chunk — the same obligation's later days, or another
+>    claimant's — short, with nothing staged for 3c to displace once the
+>    value is paid. A1's two mitigations are real and partial: each day
+>    relieves its own shortfalls first, and the draw order spends the
+>    epoch listing the fewest days first, keeping a wide epoch for the
+>    days only it can fund. What they do not cover is the cross-chunk
+>    case, and the remedy named — persist the full-domain decision, or
+>    defer a draw whose feasibility depends on later chunks — is the
+>    staging record A2 adds. It is the same A1/A2 cut question, and it
+>    stands with the other two for the owner.
 >
 **Transport epochs PR 3c — the contested-allocation machinery.** The
 bonded exclusive challenger slot as one O(1) transport-domain flag; plans
