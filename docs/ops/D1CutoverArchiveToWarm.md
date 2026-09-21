@@ -99,7 +99,8 @@ because step 3 below is the part of it that had to be re-learned.
    a manifest of 1,384 row hashes stamped `02:30:20Z`; its own verification
    then failed on `indexer_cursor` and `recycle_backing_snapshot`, both
    still being written. The reconciliation that followed —
-   `--only-missing --since` that manifest — reported **`wrote 0 row(s)`**,
+   `--only-missing --since` that manifest (the verb has since become the
+   read-only `reconcile`) — reported **`wrote 0 row(s)`**,
    because nothing was missing, and then **17 conflicts**, each a named
    `indexer_cursor` row archive had changed since the mirror, with its
    current value. Before this round's fix that same run printed `wrote 0`
@@ -166,11 +167,24 @@ because step 3 below is the part of it that had to be re-learned.
       when every writer switched correctly. That is the probe being right
       and the sequence being wrong, and the sequence is what moved.
    6. **Reconcile, and keep reconciling.**
-      `carry --from vaipakam-archive --to vaipakam-warm --only-missing
-      --since cutover-mirror.json`, which inserts anything that appeared in
-      archive late and **touches nothing warm has since written**. Repeat
-      until **TWO CONSECUTIVE** runs carry zero rows and report no
-      conflicts. Archive is retained regardless, so a row found a week
+      `reconcile --from vaipakam-archive --to vaipakam-warm --since
+      cutover-mirror.json`, which **reads both sides and reports. It writes
+      nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      runs report nothing at all.
+
+      **It used to insert, and that capability was removed rather than
+      guarded** (#2267 r14). Inserting into warm meant inserting into a
+      LIVE database, and review found that unsafe from a new direction
+      every round — most recently that a secondary unique index can be
+      filled between the preflight read and the statement, which no
+      preflight can close, because a check against a live database is a
+      statement about the moment it read and not a lock. So the write is
+      gone. Anything reconcile finds — including a row archive gained that
+      warm lacks, which is the one case that used to be automatic — is
+      **named for a person to apply deliberately**. With the expected
+      straggler count at zero, that is a better trade than a race nobody
+      can close, and it puts a human decision on every row that moves after
+      the switch. Archive is retained regardless, so a row found a week
       later is still recoverable.
 
       **Two, not one**, and the difference is the whole reason this step
@@ -1115,6 +1129,35 @@ stranding precisely what §"Rolling back" adds the reverse carry to preserve.
 Two orders for one operation, in one section, the earlier one lossy. The
 sequence is:
 
+0. **Bring the rollback target's schema back to parity FIRST:**
+
+   ```
+   ROLLBACK_TARGET=vaipakam-archive     # the database being returned to
+   (cd apps/indexer && npx wrangler d1 migrations apply "$ROLLBACK_TARGET" --remote)
+   (cd apps/indexer && npx wrangler d1 migrations list  "$ROLLBACK_TARGET" --remote)  # expect none pending
+   ```
+
+   The name goes in a variable here for the same reason as everywhere else
+   in this document: `check-d1-name-consistency` scans `wrangler d1`
+   commands, and a literal retired-database name in one is the split-brain
+   shape it exists to catch. It caught this block when it was first written
+   with the name inline — which is the guard working, not an obstacle to
+   route around, and the reason the exemption removed in r2 stays removed.
+
+   **This step is not optional and it is easy to forget, because archive
+   looks untouched.** It is: no Worker binds it after the switch, so no
+   migration reaches it, and from the first post-cutover indexer migration
+   onward it is on an older schema than warm. The carry tool refuses a
+   destination whose tables or constraints differ from the source — which
+   is correct, and means an urgent rollback would stop dead at step 3 with
+   the bindings still on warm. "The old database still exists" is not the
+   same as "the old database is a usable rollback target", and the
+   difference is one migration.
+
+   If the pending migrations cannot be applied for any reason, **stop and
+   say so** rather than working around the refusal: a reverse carry across
+   a schema difference is a migration decision, not a copy.
+
 1. **Stop the writers** — the maintenance build, as in execution-record
    step 3. Nothing below is safe while warm is being written to.
 2. **Observe warm still** — `digest --db vaipakam-warm` twice, ten minutes
@@ -1129,9 +1172,10 @@ sequence is:
    merge, and only then run the gate:
    `check-live-d1-bindings.mjs --expect vaipakam-archive`.
 6. **Reconcile** —
-   `carry --from vaipakam-warm --to vaipakam-archive --only-missing --since
-   rollback-mirror.json` until **two consecutive** runs carry nothing and
-   report no conflicts.
+   `reconcile --from vaipakam-warm --to vaipakam-archive --since
+   rollback-mirror.json` until **two consecutive** runs report nothing. It
+   reads and reports; it writes nothing, so anything it finds is applied by
+   a deliberate human step.
 
 Steps 1–3 before step 4 is not a preference. Reverting first is the same
 defect as switching forward without a final carry, in the other direction,

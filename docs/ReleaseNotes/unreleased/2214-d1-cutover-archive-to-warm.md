@@ -98,15 +98,19 @@ someone has to remember:
   other and removes it from the destination. Without that, an expired or
   cancelled record left over from an earlier copy can never be cleared, and
   the two sides can never be made to match at all.
-- It has a second mode for copying into a database that is **live**, which
-  adds only records the destination does not have and never overwrites or
-  removes anything. That is what makes the reconciliation described below
-  possible.
+- It has a **separate, read-only** step for examining a database that is
+  **live**: it compares and reports, and has no ability to write at all.
+  That is what makes the reconciliation described below possible, and the
+  inability is the point — see below.
 - It compares contents rather than counts, as part of the copy.
-- It works in **either direction**, with one rule: one end of a copy is
-  always the platform's shared database. An earlier version fixed the
-  destination instead, which read as safer and quietly made the documented
-  way back impossible to perform.
+- It works in **either direction**, between **two named databases** — the
+  platform's shared one and the specific database being moved to or from,
+  each identified by more than its name. Two weaker rules came first and
+  both are worth remembering: fixing the destination read as safer and
+  quietly made the documented way back impossible to perform, and requiring
+  only that the shared database be *one* end would have allowed an
+  unrelated database to be copied over it — while being described as the
+  restriction that prevented exactly that.
 - A table it cannot copy safely, because nothing identifies a record
   uniquely, is named and left alone rather than copied in a way that would
   duplicate it next time.
@@ -253,6 +257,24 @@ Two smaller gaps are stated rather than glossed: a write that stores the value
 already stored changes nothing observable — harmless for a copy, because the
 destination already has that value — and the reconciliation reports what it
 found rather than claiming the two sides are identical.
+
+### The step that runs against the live database no longer writes to it
+
+The reconciliation after the switch used to add the records it found
+missing. Review kept finding that unsafe from new directions — most
+recently that another record can claim a uniqueness the platform enforces
+in the moment between checking and writing, which no amount of checking
+first can prevent, because a check against a database other things are
+writing to describes the instant it ran and holds nothing still.
+
+So the ability to write was removed rather than guarded. The step now reads
+both databases and **reports every difference**, including the one case it
+used to apply on its own — a record the old database gained that the new one
+lacks. A person applies those, deliberately. Since the expected number is
+zero, and any that appear are records written in the seconds after a
+service was told to stop, that trade buys a human decision on every record
+that moves after the switch and gives up an automation nobody should want
+racing a live database.
 
 ### Nothing here reports success by staying quiet
 

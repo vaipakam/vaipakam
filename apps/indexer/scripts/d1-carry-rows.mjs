@@ -52,12 +52,21 @@
  *     default. A shape difference is a migration decision, not a copy, so
  *     the table is refused and both shapes are printed.
  *
- *   - **A live destination gets `--only-missing` instead.** Reconciling
- *     into a database that is being written to must not overwrite what it
- *     has: rows are inserted only where the key is absent, nothing is
- *     updated and nothing is deleted. This is the post-switch
- *     reconciliation mode, and it is the reason the cutover does not have
- *     to claim its drain barrier is a proof.
+ *   - **Nothing is ever written to a LIVE database.** `carry --mirror`
+ *     writes, and runs only against a destination nothing is writing to.
+ *     The post-switch step is `reconcile`, which READS BOTH SIDES AND
+ *     REPORTS — it has no write path at all.
+ *
+ *     That is a deliberate reduction. `reconcile` was `carry
+ *     --only-missing`, which inserted the rows the destination lacked, and
+ *     review found the insert unsafe from a new direction every round: a
+ *     secondary unique index can be filled between the preflight read and
+ *     the statement, and no preflight closes that — a check against a live
+ *     database is a statement about the moment it read, not a lock. Rather
+ *     than a better preflight, the write is gone. The one case that used
+ *     to be applied mechanically is now reported with the rest, and a
+ *     person applies it. For a straggler count expected to be zero, that
+ *     is a better trade than a race nobody can close.
  *
  * Never carried: `sqlite_*` and `_cf_*` (the engine's and the platform's
  * own — `_cf_KV` refuses to be read at all), and `d1_migrations`, because
@@ -89,15 +98,15 @@
  *     --from vaipakam-archive --to vaipakam-warm \
  *     --mirror --manifest cutover-mirror.json
  *
- *   # post-switch reconciliation: destination LIVE, nothing overwritten.
+ *   # post-switch: destination LIVE. READ ONLY — reports, never writes.
  *   # --since is what lets it tell a straggler's late write from the
  *   # destination's own progress.
- *   node apps/indexer/scripts/d1-carry-rows.mjs carry \
+ *   node apps/indexer/scripts/d1-carry-rows.mjs reconcile \
  *     --from vaipakam-archive --to vaipakam-warm \
- *     --only-missing --since cutover-mirror.json
+ *     --since cutover-mirror.json
  *
  * The mode is never implied and unknown arguments are refused: a mistyped
- * `--only-missing` must not fall back to mirroring over a live database.
+ * flag must not fall back to mirroring over a live database.
  *
  * See `docs/ops/D1CutoverArchiveToWarm.md` for where each belongs in the
  * sequence, and for why `digest` run twice is the drain barrier.
@@ -349,7 +358,13 @@ async function shapeOf(dbId, table) {
       columns: columns.map((c) => checked(c, IDENT, `unique column in ${table}`)),
     });
   }
-  return { cols, key, uniques };
+  // Foreign keys, as the destination must also declare them: a missing
+  // cascade changes what a delete does, which is a schema difference even
+  // though every column name matches.
+  const fks = (await query(dbId, `PRAGMA foreign_key_list("${table}")`))
+    .map((f) => `${f.from}->${f.table}.${f.to}:${f.on_delete ?? ''}`)
+    .sort();
+  return { cols, key, uniques, fks };
 }
 
 /**
@@ -762,13 +777,13 @@ export function classifyForReconcile({
   return { insert, conflicts };
 }
 
-async function carry(src, dst, { onlyMissing, since }) {
+async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   const tables = await orderByDependency(src.id, await tablesOf(src.id));
   const dstTables = new Set(await tablesOf(dst.id));
 
   const plan = [];
   for (const table of tables) {
-    const { cols, key, uniques } = await shapeOf(src.id, table);
+    const { cols, key, uniques, fks } = await shapeOf(src.id, table);
     if (!dstTables.has(table)) {
       plan.push({ table, refused: 'the destination has no such table' });
       continue;
@@ -788,14 +803,28 @@ async function carry(src, dst, { onlyMissing, since }) {
     // columns the source lacks, quietly carry rows that leave those
     // columns at their defaults while reporting the tables identical.
     const dstShape = await shapeOf(dst.id, table);
-    if (
-      dstShape.cols.join() !== cols.join() ||
-      dstShape.key.join() !== key.join()
-    ) {
+    // Column names and primary key are not the whole shape. A destination
+    // with the same columns but MISSING `notifications`' deduplication
+    // index, or `notify_state`'s cascading foreign key, would pass a
+    // name-only comparison and then permit duplicate notifications or
+    // retain child rows the source would have cascaded away — while the
+    // digest reported the two sides identical. The runbook says a schema
+    // difference is a migration decision, so the constraints are part of
+    // what is compared.
+    const shapeKey = (sh) =>
+      JSON.stringify({
+        cols: sh.cols,
+        key: sh.key,
+        uniques: (sh.uniques ?? [])
+          .map((u) => u.columns.join('+'))
+          .sort(),
+        fks: (sh.fks ?? []).slice().sort(),
+      });
+    if (shapeKey(dstShape) !== shapeKey({ cols, key, uniques, fks })) {
       plan.push({
         table,
         refused:
-          `the two sides declare different shapes — source columns ` +
+          `the two sides declare different shapes (columns, primary key, unique indexes or foreign keys) — source columns ` +
           `[${cols.join(', ')}] key [${key.join(', ')}], destination ` +
           `columns [${dstShape.cols.join(', ')}] key ` +
           `[${dstShape.key.join(', ')}]. Carrying rows across a schema ` +
@@ -914,6 +943,28 @@ async function carry(src, dst, { onlyMissing, since }) {
     }
     return m;
   };
+  // Rows the source has and the destination does not. In a mirror these
+  // are carried; in a reconciliation they are REPORTED, because reconcile
+  // writes nothing at all.
+  const pending = reportOnly
+    ? plan.flatMap((s) =>
+        (s.insert ?? []).map((row) => ({ table: s.table, row, key: s.key })),
+      )
+    : [];
+
+  if (reportOnly) {
+    for (const r of refused) {
+      console.log(`  ${r.table.padEnd(32)} REFUSED — ${r.refused}`);
+    }
+    console.log(
+      `\nnothing was written, and nothing would have been: reconcile is ` +
+        `read-only. ${refused.length} refusal(s), ${conflicts.length} ` +
+        `conflict(s), ${pending.length} row(s) present on the source and ` +
+        `absent from the destination.`,
+    );
+    return { written: 0, refused, conflicts, pending, manifest: manifestOf() };
+  }
+
   if (refused.length > 0 || conflicts.length > 0) {
     for (const r of refused) {
       console.log(`  ${r.table.padEnd(32)} REFUSED — ${r.refused}`);
@@ -923,7 +974,7 @@ async function carry(src, dst, { onlyMissing, since }) {
         `${conflicts.length} conflict(s) were found while planning, and a ` +
         `run that cannot do all of what it was asked does none of it.`,
     );
-    return { written: 0, refused, conflicts, manifest: manifestOf() };
+    return { written: 0, refused, conflicts, pending, manifest: manifestOf() };
   }
 
   // Deletes run children-first, which is the reverse of the insert order,
@@ -944,7 +995,7 @@ async function carry(src, dst, { onlyMissing, since }) {
       console.log(`  ${step.table.padEnd(32)} ${note}`);
     }
   }
-  return { written, refused, conflicts, manifest: manifestOf() };
+  return { written, refused, conflicts, pending, manifest: manifestOf() };
 }
 
 /**
@@ -978,9 +1029,11 @@ function reportProblems(problems, dst) {
 
 const USAGE =
   'usage:\n' +
-  '  d1-carry-rows.mjs digest --db <name>\n' +
-  '  d1-carry-rows.mjs carry  --from <name> --to <name> --mirror --manifest <path>\n' +
-  '  d1-carry-rows.mjs carry  --from <name> --to <name> --only-missing --since <path>';
+  '  d1-carry-rows.mjs digest    --db <name>\n' +
+  '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
+  '      WRITES. Only ever against a destination nothing is writing to.\n' +
+  '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
+  '      READ ONLY. Reports every difference; writes nothing, ever.';
 
 /**
  * Strict parsing, because the destructive mode must never be something a
@@ -1031,11 +1084,11 @@ async function main() {
     return;
   }
 
-  if (mode !== 'carry') fail(USAGE);
+  if (mode !== 'carry' && mode !== 'reconcile') fail(USAGE);
 
   const opts = parseArgs(rest, {
     flags: ['--from', '--to', '--manifest', '--since'],
-    switches: ['--mirror', '--only-missing'],
+    switches: ['--mirror'],
   });
   const fromName = opts['--from'];
   const toName = opts['--to'];
@@ -1075,59 +1128,92 @@ async function main() {
 
   // The mode is stated, never defaulted. Neither is an error; both is an
   // error; and the destructive one is not what a missing flag means.
+  // TWO VERBS, AND ONLY ONE OF THEM WRITES.
+  //
+  // `carry --mirror` writes, and is only ever run against a destination
+  // nothing is writing to — the barrier and `--writers-held` are what
+  // establish that.
+  //
+  // `reconcile` NEVER writes. It was `carry --only-missing`, which
+  // inserted into the LIVE destination, and every round of review found
+  // another way that was unsafe: a secondary unique index can be filled
+  // between the preflight read and the insert, and no preflight can close
+  // that gap — a check against a live database is a statement about the
+  // moment it read. Rather than a better preflight, the write is gone.
+  // What remains is the classification, reported. The one case that used
+  // to be applied automatically is now reported with the rest, and a
+  // person applies it: for a straggler count expected to be zero, that is
+  // a better trade than a race nobody can close.
   const wantMirror = opts['--mirror'] === true;
-  const onlyMissing = opts['--only-missing'] === true;
-  if (wantMirror === onlyMissing) {
+  const reconciling = mode === 'reconcile';
+  if (reconciling && wantMirror) {
+    fail(`reconcile never writes, so it takes no --mirror.\n\n${USAGE}`);
+  }
+  if (!reconciling && !wantMirror) {
     fail(
-      `carry needs exactly one of --mirror or --only-missing. The mode is ` +
-        `never implied: --mirror deletes destination rows the source no ` +
-        `longer has and overwrites the rest, which against a live ` +
-        `destination destroys its own newer values.\n\n${USAGE}`,
+      `carry needs --mirror, and the mode is never implied: it deletes ` +
+        `destination rows the source no longer has and overwrites the ` +
+        `rest, which against a live destination destroys its own newer ` +
+        `values. To examine a LIVE destination without writing to it, use ` +
+        `\`reconcile\`.\n\n${USAGE}`,
     );
   }
 
   // A mirror RECORDS what it carried; a reconciliation READS that record.
   // Without it, "the destination already has this key" cannot distinguish
   // a row a straggler changed on the source after the mirror from one the
-  // destination has legitimately moved on from — see `reconcile`.
+  // destination has legitimately moved on from.
   const manifestPath = opts['--manifest'];
   const sincePath = opts['--since'];
   if (wantMirror && !manifestPath) {
     fail(
-      `--mirror needs --manifest <path>: the reconciliation that follows a ` +
-        `cutover is only meaningful against a record of what this carry ` +
-        `saw, and writing it afterwards from memory is how the first copy ` +
-        `of this database went unverified.\n\n${USAGE}`,
+      `carry --mirror needs --manifest <path>: the reconciliation that ` +
+        `follows a cutover is only meaningful against a record of what ` +
+        `this carry saw, and writing it afterwards from memory is how the ` +
+        `first copy of this database went unverified.\n\n${USAGE}`,
     );
   }
-  if (onlyMissing && !sincePath) {
+  if (reconciling && !sincePath) {
     fail(
-      `--only-missing needs --since <path>, the manifest the mirror wrote. ` +
-        `Without it this mode can insert rows the destination lacks but ` +
-        `CANNOT tell a late change on the source from the destination's ` +
-        `own progress — so it would report "reconciled" having checked ` +
-        `nothing of the kind.\n\n${USAGE}`,
+      `reconcile needs --since <path>, the manifest the mirror wrote. ` +
+        `Without it it can see that a key is present but CANNOT tell a ` +
+        `late change on the source from the destination's own progress — ` +
+        `so it would report "reconciled" having checked nothing of the ` +
+        `kind.\n\n${USAGE}`,
     );
   }
 
   console.log(
-    `carrying ${src.name} (${src.id})\n` +
-      `     into ${dst.name} (${dst.id})\n` +
-      (onlyMissing
-        ? `     mode: only-missing — rows absent from the destination are ` +
-          `inserted; nothing it already holds is updated or removed, so a ` +
-          `LIVE destination is safe. Rows the source changed since ` +
-          `${sincePath} are reported as conflicts, not resolved`
-        : `     mode: mirror — the destination is made identical to the ` +
+    (reconciling ? `reconciling ` : `carrying `) +
+      `${src.name} (${src.id})\n` +
+      (reconciling ? `     against ` : `     into `) +
+      `${dst.name} (${dst.id})\n` +
+      (reconciling
+        ? `     reconcile — READ ONLY. Nothing is written to either ` +
+          `database. Every difference against ${sincePath} is reported ` +
+          `for a person to act on, including rows the source gained`
+        : `     carry --mirror — the destination is made identical to the ` +
           `source, INCLUDING removing rows the source no longer has. Run ` +
           `this only against a destination nothing is writing to`),
   );
 
-  const since = onlyMissing ? readManifest(sincePath, src) : null;
-  const { written, refused, conflicts, manifest } = await carry(src, dst, {
-    onlyMissing,
-    since,
-  });
+  const since = reconciling ? readManifest(sincePath, src) : null;
+  const { written, refused, conflicts, manifest, pending } = await carry(
+    src,
+    dst,
+    { onlyMissing: reconciling, reportOnly: reconciling, since },
+  );
+  for (const p of pending ?? []) {
+    conflicts.push({
+      table: p.table,
+      key: keyOf(p.row, p.key),
+      kind: 'present on the source and absent from the destination',
+      detail:
+        'it appeared on the source after the mirror. This is the one case ' +
+        'that could be applied mechanically, and reconcile does not write ' +
+        '— apply it deliberately, then re-run',
+    });
+  }
   if (wantMirror) writeManifest(manifestPath, src, manifest);
   console.log(`wrote ${written} row(s)`);
 
