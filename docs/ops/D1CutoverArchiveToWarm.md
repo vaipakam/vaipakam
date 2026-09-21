@@ -381,6 +381,21 @@ because step 3 below is the part of it that had to be re-learned.
       running it before that manual deploy fails on the backup Worker even
       when every writer switched correctly. That is the probe being right
       and the sequence being wrong, and the sequence is what moved.
+
+      **[run] 2026-09-21 — this deploy is pre-flighted, because it is the
+      one step in the window that needs a credential rather than a merge.**
+      `npx wrangler deploy --dry-run` in `ops/offchain-data-warm` builds
+      clean at 46.26 KiB and resolves its bindings to
+      `env.DB_ARCHIVE (vaipakam-warm)` and
+      `env.R2_LEGAL_VAULT (vaipakam-legal-vault)` — so the config is
+      already pointed at the successor and the build is not what will
+      fail. It declares **no Secrets Store secrets**, which is why this
+      one is deployable with a `Workers Scripts: Edit` token while the
+      three writers are not (see step 1's box).
+
+      The command is `( cd ops/offchain-data-warm && npm ci && npm run
+      deploy )`, which is `wrangler deploy` — the same form used at lines
+      621 and 979 of this document, so there is one spelling of it.
    6. **Reconcile, and keep reconciling.**
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
       cutover-mirror.json`, which **reads both sides and reports. It writes
