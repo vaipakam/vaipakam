@@ -7208,18 +7208,24 @@ on the live era alone.
 > the settlement price a day identically; the drought and delivered tests
 > run on the residual legs, as the matrix requires.
 >
-> *Rows 1 and 5 (the sweeps).* Both price an entry's remaining window in
-> O(1) off the capped cumulative curves and never loop days
-> (`_forfeitEntryChunk`, `sweepExpiredEntry` via `_entryPriceCore`). A
-> per-day transport term here is new work: the sweep walks the entry's
-> remaining ARMED days, prices each day's two legs the way the commitment
-> accumulation does (`perDayNumeraire18 × Δ_d`, capped — the cumulative
-> figure is the sum of exactly these by construction, #1008 Option B), and
-> draws per day; the residual of the whole-window figure goes to the
-> chokepoints. Cost: one storage read per remaining day when no batch lists
-> it. **A global short-circuit — no batch ever admitted on this chain — makes
-> every site O(1)**, which is every chain without a legacy delivery; the walk
-> is paid only where the legacy lane actually delivered.
+> *Rows 1 and 5 (the sweeps).* CORRECTED on a second read of the sweeps
+> (the first draft of this paragraph said they price whole windows and
+> would need a new per-day walk): only the PRE-ARMING legacy slice is
+> priced whole-window in O(1) off the cumulative curves. For ARMED days
+> both sweeps already settle ONE DAY PER CALL through the same
+> `processUserSideDay` the claim uses — `_forfeitEntryChunk` builds a
+> single-entry set at the entry's cursor day and `sweepExpiredEntry` does
+> the same — and persist it with `_persistDay`. So the four sites (the
+> claim walk, the preview walk row 13 reads, the forfeit chunk, the
+> expiry sweep) reach ONE function for an armed day, and the transport
+> term enters there once: the day primitive reads the day's cursor-visible
+> coverage itself, the three settle wrappers draw what the charge reports,
+> and the dry-run wrapper draws nothing. No new walk. The legacy slice's
+> days predate the arming and are funded by the schedule; they take no
+> transport term in A, which is stated rather than implied. Cost: one
+> storage read per settled day when no batch lists it, and **a global
+> short-circuit — no batch ever admitted on this chain — makes it zero**,
+> which is every chain without a legacy delivery.
 >
 > *The chokepoints, with what each sees.* Read from `RewardClaimFacet`'s
 > settlement sequence and the two sweep facets:
@@ -7238,10 +7244,12 @@ on the live era alone.
 > claim) becomes the in-holder `Unclassified → Recycled` move with the
 > bucket credited and no delivered-ledger charge.
 >
-> *Hosted where.* The per-day coverage read, the draw, the sweep's day
-> walk and the leg-counter writes live on `RewardEpochFacet` (21.7 KB
-> free); `LibInteractionRewards` carries the two budget fields, the
-> `_attributeLegs` ordering and one cross-facet call per site. The
+> *Hosted where.* The draw and the leg-counter writes live on
+> `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
+> `LibInteractionRewards` carries the coverage read in the day primitive,
+> the `_attributeLegs` ordering, the two-leg `transportPaid` figure on
+> `DayCharge`, and one cross-facet draw call in each of the three settle
+> wrappers. The
 > `eraBalance(era)` read is one interface returning zero, in the middle
 > position, so PR C changes a body and not an order.
 >
