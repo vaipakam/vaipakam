@@ -1300,12 +1300,13 @@ somewhere else in the same contract.
 
 viaIR rescues a deep frame with a **stack-to-memory mover**, which solc emits
 only behind a `memoryguard` — and it withholds that guard from the **whole
-contract** when ANY inline-assembly block in it is unannotated. So a single
-`assembly { … }` without `("memory-safe")` un-rescues every frame in that
-contract, and solc reports the frame that overflowed rather than the block that
-caused it. The two can be far apart: in #2253 the block was in a `catch` inside
-a library, and the named frame was `DeployDiamond.runWith`, which neither
-contains nor calls it.
+contract** when an inline-assembly block in it that TOUCHES MEMORY is
+unannotated. So a single such `assembly { … }` without `("memory-safe")`
+un-rescues every frame in that contract, and solc reports the frame that
+overflowed rather than the block that caused it. (A block that touches no
+memory is not a blocker — see below.) The two can be far apart: in #2253 the
+block was in a `catch` inside a library, and the named frame was
+`DeployDiamond.runWith`, which neither contains nor calls it.
 
 Verified by single-variable experiment on that PR — deleting only the two words
 `("memory-safe")` reproduces the error; restoring them compiles, nothing else
@@ -1347,22 +1348,23 @@ Two practical consequences:
   needs the guard, and check its headroom in the same change. #2260 tracks the
   remaining blocks.
 
-  **A block that touches no memory needs no annotation.** The storage-pointer
-  idiom (`x.slot := position`) does not withhold the guard: annotating only
-  the 18 memory-touching blocks, leaving 6 storage-pointer blocks bare,
-  produced deployed-bytecode of **identical length** to annotating all 24, on
-  every facet measured (#2260 r4). Equal length is not byte equality — solc's
-  metadata hash moves when sources change — but it is enough to say those 6
-  changed no code generation, and they are not what holds a guard down.
+  **A block that touches no memory needs no annotation** — the storage-pointer
+  idiom (`x.slot := position`). Solidity does not require the annotation for
+  assembly that cannot affect memory safety; that is the compiler's rule, not
+  an inference from this repo (established in #2260 r4 review). Corroborating
+  but weaker: leaving those 6 bare while annotating the 18 memory-touching
+  blocks produced **no size change at all** against annotating all 24. That is
+  a length comparison and supports only what it says — equal size, not equal
+  bytes and not a statement about code generation.
 
-  **Do not try to work out which blocks gate a given contract by reading.**
-  The context is transitive through inheritance, modifiers and libraries, and
-  compiler behaviour decides what counts. `OfferMatchFacet`'s blocker count
-  was successively called ONE, THREE, FIVE and TWO across four review rounds;
-  every count came from careful reading and only the measured one was right.
-  Compile and diff instead — and note what that shows: a size change is
-  evidence code generation changed, while no change is not proof the guard is
-  still down (a contract whose stack already fits needs no spill code).
+  **Do not work out which blocks gate a contract by reading.** The context is
+  transitive through inheritance, modifiers and libraries.
+  `OfferMatchFacet`'s blocker count was called ONE, THREE, FIVE and TWO across
+  four review rounds; every count came from careful reading and none of the
+  read ones was right. Compile the contract both ways and compare instead —
+  reading the resulting sizes as evidence, not as proof: a size change says
+  code generation changed, while no change says only that, since a contract
+  whose stack already fits needs no spill code either way.
 
 - **Verify with the deploy-sanity suite, not with a clean compile.** EIP-170 is
   enforced by `FacetSizeLimitTest`, not by solc — `forge build --skip test`
@@ -1387,11 +1389,14 @@ Two practical consequences:
   `test_ReportFacetsNearSizeLimit`, which always passes by design, and Foundry
   hides logs from passing tests below `-vv`.
 
-  Two limits on what a green suite proves: it stops at the FIRST violation, so
-  its message understates the damage (it named one facet when #2268 had put two
-  over), and it iterates `cutFacetNames()` plus `DiamondCutFacet` only — a
-  non-facet deployable (`VaipakamVaultImplementation`, `crosschain/`) is not
-  size-checked at all.
+  Two limits on what a green suite proves. It stops at the FIRST violation, so
+  its message understates the damage — it named one facet when #2268 had put
+  two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet` only
+  (`FacetSizeLimitTest.t.sol:75-84`), so a **non-facet deployable**
+  (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
+  size-checked by it at all: for a change touching one of those, read its
+  `deployedBytecode` length out of `out/<Name>.sol/<Name>.json` and compare
+  against the pre-change build yourself. The suite is not a substitute there.
 - **`forge build --skip test` cannot see a test contract doing this.** A probe
   or helper under `test/` that inherits a script and carries an unannotated
   block fails only in the test build, which is the failure mode that cost #2253
