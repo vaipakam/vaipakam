@@ -7254,30 +7254,35 @@ on the live era alone.
 > read and the debit are one transaction, so a claim needs no staging.
 > `_persistDay` and the pool-budget debits then see only the residual legs.
 >
-> *The allocation is WHOLE-OBLIGATION, and a per-day allowance alone is
-> not it* (Codex #2274 r2, P1). §5c already rules that the per-day pass
-> runs over decrementing shared typed capacities with scarce transport
-> allocated by **system-wide typed-source contention, "not local
-> shortfall alone"** — the pass FIRST totals each typed source's
-> remaining demand across the whole obligation, and each day's matching
-> transport relieves the leg carrying the greater system-wide deficit
-> (ties fresh-first). `processUserSideDay` sees ONE day and the remaining
-> budgets, so deriving the allowance inside `_attributeLegs` from that
-> day's own cursor-visible coverage reinstates precisely the local tie
-> rule §5c rejects — and reproduces §5c's own counterexample: day A
-> needing 5F/5R and holding a matching 5-batch, day B needing 5R, shared
-> live fresh 5 and bucket 5. A's local shortfalls are both zero,
-> fresh-first parks the transport on fresh, the bucket drains on A, and B
-> reverts against nothing although transport→A-recycled, live→A-fresh,
-> bucket→B settles everything.
->
-> So A must carry a whole-obligation allocation PREPASS — shared by
-> settlement and by the previews row 13 reads, run before any day is
-> persisted or drawn — and the per-day `transportFresh` /
-> `transportRecycled` figures are what that prepass HANDS the day
-> primitive, not a substitute for it. This is a correction to this
-> blueprint, not a new decision: the rule is the merged plan's already,
-> and the blueprint simply failed to carry it across.
+> *The allocation DOMAIN is the settlement call, and the deficits are
+> totalled over it* (Codex #2274 r2 P1 and r3 P1, together). §5c rules
+> that scarce transport is split by typed-source contention — each day's
+> matching transport relieves the leg carrying the greater deficit against
+> the shared typed sources, fresh first on ties — and not by that day's
+> local shortfalls alone: with day A needing 5F/5R and holding a matching
+> 5-batch, day B needing 5R, shared live fresh 5 and bucket 5, a local
+> rule parks A's transport on fresh, drains the bucket on A, and B reverts
+> against nothing although transport→A-recycled, live→A-fresh, bucket→B
+> settles everything. But a WHOLE-OBLIGATION prepass is not the rule
+> either (r3): an obligation is a whole `RewardEntry` and a long one
+> settles across many calls, so scanning its 31–365-day remainder before
+> every draw defeats the gas bound the settlement model rests on. The
+> domain is therefore the one the model already has: **the days one call
+> prices for one claimant** — at most `MAX_INTERACTION_CLAIM_DAYS` for a
+> claim, exactly one for a sweep. Typed demand is totalled over that
+> domain ONCE per call, through the same dry-run pricing the previews
+> already run (hosted on the epoch facet, and skipped entirely on a chain
+> with no epochs); the walk carries the remaining domain needs down, and
+> each day's allocation relieves the day's own shortfalls first — a day
+> cannot settle otherwise — then hands the rest to the leg with the
+> greater remaining domain deficit, fresh first on ties. Nothing is
+> persisted and nothing crosses a chunk. What crosses a chunk — a long
+> obligation's later days, and other claimants' demand on the same
+> shared sources — is the overlapping-membership matching §5c assigns to
+> an off-chain plan verified on chain, which is 3c; A states that residue
+> in those words rather than implying a scan it cannot afford. The
+> previews row 13 reads run the same domain pass, so the predicate and
+> the settlement split a day identically.
 >
 > *Row 13.* `_entryExecutableNow` tests an aggregate need against
 > `deliveredFreshBound` and the bucket. It gains the same per-day allowance
@@ -7320,6 +7325,26 @@ on the live era alone.
 > (`absorbRewardFresh` at rows 1 and 5 and on the forfeit branch of a
 > claim) becomes the in-holder `Unclassified → Recycled` move with the
 > bucket credited and no delivered-ledger charge.
+>
+> *What a draw steps down, and what backs what* (Codex #2274 r3, two
+> P1s; both verified against the code). A draw's packet half steps
+> `IngressPacket.unclassified`, `rewardCustodyUnclassifiedUncounted` and
+> `rewardBudgetFreshUncounted` down through the SAME function a
+> classification's take uses — extracted so the two exits cannot drift —
+> and touches none of the classified figures: a draw spends untyped value
+> on an obligation, it does not type it. The `Unclassified` row identity
+> (row == uncounted held + returned held) therefore holds after every
+> draw, and the batch's conservation identity is `admitted == balance +
+> parked + debited + consumedFresh + consumedRecycled`, which the
+> invariant suite already carries. And live BACKING is separated from the
+> emission cap at all three sites: the 69M/D1 term stays the pool budget
+> applied to the FULL fresh leg (an epoch-paid payout is still emission),
+> while live backing bounds only the live-paid residual — the sweep
+> facets fold it into the delivered term rather than into the pool budget
+> (a backing shortfall still defers, now as a delivered-caused one, and an
+> epoch-paid forfeit or expiry settles while the live row is empty), the
+> claim's backing check reads the fresh net of the epoch-paid legs, and
+> row 13's need comes through the same netted dry run.
 >
 > *Hosted where.* The draw and the leg-counter writes live on
 > `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
