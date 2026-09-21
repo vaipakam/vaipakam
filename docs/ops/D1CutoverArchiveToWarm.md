@@ -343,6 +343,24 @@ because step 3 below is the part of it that had to be re-learned.
       without it, and the tool refuses to run step 6 without one rather than
       reporting a reconciliation it did not perform.
 
+      **[run] 2026-09-21 — the schemas agree today, so step 3 will not
+      refuse on shape.** The carry refuses any table whose declaration
+      differs between the two sides, which would stop the cutover dead
+      inside the window. Compared directly, using the tool's own
+      normalisation over `sqlite_master` on both databases:
+
+      ```
+      46 tables compared — 0 DDL difference(s), 0 archive-only, 0 warm-only
+      ```
+
+      That is 46 tables plus their indexes agreeing exactly, which also
+      exercises the r25 change that stopped whitespace being collapsed
+      inside quoted literals: applied to real declarations on both sides
+      it produces identical strings, so it is neither over- nor
+      under-normalising in practice. Re-run this on the day — a migration
+      applied to one side between now and then is exactly what it would
+      catch.
+
       **A failed mirror leaves the previous manifest alone**, and that is
       deliberate (#2267 r18). The manifest is written only by a run that
       succeeded. An earlier revision wrote it as soon as the carry
