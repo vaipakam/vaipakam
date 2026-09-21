@@ -107,6 +107,22 @@ because step 3 below is the part of it that had to be re-learned.
    and `VERIFIED`. The rehearsal is what shows the difference: the work the
    reconciliation exists to find is invisible to a check that asks only
    whether a key is present.
+
+   **[run] 2026-09-21, the read-only `reconcile`.** Against the same
+   manifest, with archive still live:
+
+   ```
+   reconcile — READ ONLY. Nothing is written to either database.
+   nothing was written, and nothing would have been: reconcile is read-only.
+     0 refusal(s), 17 conflict(s), 0 row(s) present on the source and
+     absent from the destination.
+   STOPPED — 17 problem(s)
+   ```
+
+   Not one write verb appears in the output. The seventeen are the same
+   `indexer_cursor` rows every run has found — now reported rather than
+   partly acted on.
+
 3. **The switch — NOT DONE, and it requires the writers stopped first.**
 
    The bindings change is staged in the PR but must not land while anything is
