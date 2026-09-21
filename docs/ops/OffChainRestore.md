@@ -11,6 +11,27 @@ produced by [`ops/offchain-data-warm`](../../ops/offchain-data-warm/README.md).
 > unaffected by anything in this document — what we're restoring is
 > the off-chain convenience layer.
 
+> **"ARCHIVE" MEANS THE BACKUP HERE — never the database called
+> `vaipakam-archive`** (#2267). That word is overloaded as of the
+> 2026-09-21 cutover and this is the one place it must not be misread.
+>
+> - **The archive** / `d1.archive[]` / "the archive's `schema[]`" — the
+>   B2 tarball this runbook restores FROM. Every such use below means
+>   the backup.
+> - **`vaipakam-archive`** — a RETIRED D1 database, the predecessor of
+>   the live one. It is retained for rollback and holds data frozen at
+>   the cutover. **It is not a restore source and it is not a restore
+>   target**, and a restore aimed at it writes to a database nothing
+>   reads.
+>
+> The live shared database is **`vaipakam-warm`**, which is why every
+> `wrangler d1` command below names it. If you are reading this during
+> the cutover window itself — the writers stopped, the rows not yet
+> carried — the live data is still in `vaipakam-archive` and this
+> runbook does not cover that state; see
+> [`D1CutoverArchiveToWarm.md`](D1CutoverArchiveToWarm.md) before
+> restoring anything.
+
 ---
 
 ## 0. Prerequisites
