@@ -487,10 +487,13 @@ because step 3 below is the part of it that had to be re-learned.
 
    Step 6 is not a belt-and-braces precaution; it is the only part of this
    that covers work suspended across the whole barrier. It is possible
-   because the carry tool has a mode that is safe against a live
-   destination — reconciling with a mirror carry would roll warm's newer
-   rows back to archive's stale ones, which is a worse outcome than the
-   problem.
+   because the carry tool has a mode that **cannot write at all** —
+   reconciling with a mirror carry would roll warm's newer rows back to
+   archive's stale ones, which is a worse outcome than the problem. Read
+   "safe against a live destination" as the absence of a write path and
+   not as a careful one: a guarded write against a live database is what
+   review removed, round after round, and the phrasing should not invite
+   putting it back.
 
    What steps 2 and 4 do rest on is "a write changes the digest", true by
    construction — unlike "every writer is on this list", the unbounded
@@ -535,10 +538,23 @@ stale data — it would discard current data, and with it the 19 `indexer_cursor
 rows that tell the indexer where it had scanned to. An empty cursor table means
 re-scanning from the configured start block or silently beginning from now.
 
-If a fresh contract deployment does land later, this copied data becomes stale
-exactly as the original decision anticipated, and clearing it then is a
-`DELETE FROM` per table — cheap, and a decision that can be taken with the
-redeploy in hand rather than in advance of it.
+If a fresh contract deployment does land later, the **chain-derived** data
+becomes stale exactly as the original decision anticipated, and clearing that
+is a `DELETE FROM` per table — cheap, and a decision that can be taken with
+the redeploy in hand rather than in advance of it.
+
+**Not every table is chain-derived, and a blanket clear would take user data
+with it.** §5 records the two that a contract redeploy does not obsolete:
+`support_tickets` (4 open) and `user_thresholds` (per-wallet alert
+configuration carrying a Telegram chat id). Loans, offers, activity and
+cursors describe a deployment; a support request and a user's alert settings
+describe a person, and a new Diamond address makes neither of them stale. So
+"clear it then" means the chain-derived tables, named individually at the
+time — never `DELETE FROM` across the schema.
+
+This is the same shape as the retired Step 0 above, which is why it is
+spelled out here rather than left to judgment: a clearing instruction that
+does not say what it excludes gets carried out in full.
 
 **This is recorded as a superseded decision rather than an edited one.** The
 original reasoning was sound for the world it was written in; what changed is
@@ -1157,9 +1173,18 @@ r2 P2). On the cutover the intended database is `$TARGET_DB`; during a
 rollback it is the SOURCE. The probes below are written for the cutover
 direction and **must be inverted for a rollback** — reading them literally
 there makes a correctly rolled-back Worker fail its check, and, far worse,
-makes a Worker still stuck on the target appear to pass. The discriminator
-also inverts: on the way out the target's EMPTINESS is what proves the
-switch; on the way back it is the source's accumulated rows.
+makes a Worker still stuck on the target appear to pass.
+
+**The discriminator does NOT invert, because it is not a property of the
+data.** An earlier version of this paragraph said the target's emptiness
+proves the switch on the way out and the source's accumulated rows prove it
+on the way back — which contradicted the box fifteen lines below, where the
+emptiness tell is retired outright. Both databases hold the same rows after
+the copy, so neither emptiness nor accumulation distinguishes them in either
+direction. The binding id does, and it does so identically both ways: read
+it from the control plane and compare it against the database you intend.
+That is the whole of the inversion — `--expect` names the other end, and
+nothing else about the check changes.
 
 Wherever this step says "the target", read "the intended database", and pick
 the discriminator that can only be true of it.
