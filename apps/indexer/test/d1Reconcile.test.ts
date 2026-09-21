@@ -10,6 +10,7 @@ import {
   collapseOutsideLiterals,
   isMissingSequenceTable,
   readAll,
+  safeKey,
   situationOf,
   verdictProblems,
 } from '../scripts/d1-carry-rows.mjs';
@@ -765,5 +766,97 @@ describe('situationOf names the seventh case', () => {
     expect(
       situationOf({ mirroredHash: 'a', sourceHash: 'b', destRow: undefined, cols }),
     ).toBe('destination-deleted-source-changed');
+  });
+});
+
+/**
+ * WHY THIS TEST EXISTS. `telegram_links` is keyed BY the six-digit
+ * handshake code — the credential itself is the primary key. Conflict
+ * reports name the row and withhold its contents precisely because they
+ * get pasted into run logs and issues, and for this one table that rule
+ * published the secret and kept the harmless part.
+ *
+ * The test asserts the PROPERTY — no report carries the raw code — rather
+ * than checking the sites that build one, because the first fix covered
+ * the conflict paths and missed the pending-row path (#2267 r31).
+ */
+describe('a key that is itself a credential never reaches a report', () => {
+  const CODE = '481920';
+  const tkCols = ['code', 'wallet'];
+  const tkKey = ['code'];
+  const tkRow = (code: string, wallet: string) => ({ code, wallet });
+  const kOf = (code: string) => JSON.stringify([code]);
+
+  function classifyTelegram(opts: {
+    rows: Record<string, unknown>[];
+    held: Record<string, unknown>[];
+    mirrored: Record<string, unknown>[];
+  }) {
+    const { createHash } = require('node:crypto');
+    const h = (r: Record<string, unknown>) =>
+      createHash('sha256')
+        .update(JSON.stringify(tkCols.map((c) => r[c] ?? null)))
+        .digest('hex')
+        .slice(0, 16);
+    const wasSeen: Record<string, string> = {};
+    for (const r of opts.mirrored) wasSeen[kOf(r.code as string)] = h(r);
+    return classifyForReconcile({
+      table: 'telegram_links',
+      cols: tkCols,
+      key: tkKey,
+      rows: opts.rows,
+      sourceKeys: new Set(opts.rows.map((r) => kOf(r.code as string))),
+      heldByKey: new Map(opts.held.map((r) => [kOf(r.code as string), r])),
+      wasSeen,
+      uniques: [],
+    });
+  }
+
+  const cases: [string, Parameters<typeof classifyTelegram>[0]][] = [
+    [
+      'changed on the source',
+      {
+        rows: [tkRow(CODE, 'after')],
+        held: [tkRow(CODE, 'before')],
+        mirrored: [tkRow(CODE, 'before')],
+      },
+    ],
+    [
+      'deleted on the destination',
+      { rows: [tkRow(CODE, 'w')], held: [], mirrored: [tkRow(CODE, 'w')] },
+    ],
+    [
+      'key allocated on both sides',
+      { rows: [tkRow(CODE, 'a')], held: [tkRow(CODE, 'b')], mirrored: [] },
+    ],
+    [
+      'deleted on the source',
+      { rows: [], held: [tkRow(CODE, 'w')], mirrored: [tkRow(CODE, 'w')] },
+    ],
+  ];
+
+  for (const [name, opts] of cases) {
+    it(`fingerprints the code in the "${name}" report`, () => {
+      const { conflicts } = classifyTelegram(opts);
+      expect(conflicts.length).toBeGreaterThan(0);
+      for (const c of conflicts) {
+        expect(JSON.stringify(c)).not.toContain(CODE);
+        expect(c.key).toContain('fp:');
+      }
+    });
+  }
+
+  it('fingerprints the pending-row key the same way the report path does', () => {
+    // The pending path (a row present only on the source) builds its key
+    // separately in `main()`. That is the site the first fix missed, so
+    // this asserts the same transformation applies to it.
+    expect(safeKey('telegram_links', tkKey, kOf(CODE))).not.toContain(CODE);
+    expect(safeKey('telegram_links', tkKey, kOf(CODE))).toContain('fp:');
+  });
+
+  it('leaves an ordinary table"s key readable, which is the point of the report', () => {
+    expect(safeKey('support_tickets', ['id'], JSON.stringify([42]))).toBe(
+      JSON.stringify([42]),
+    );
   });
 });

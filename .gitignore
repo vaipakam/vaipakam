@@ -131,8 +131,12 @@ ops/lz-watcher/generated/
 # D1 cutover manifests (#2214). `d1-carry-rows.mjs --mirror --manifest`
 # writes a record of every row it carried, KEYED BY PRIMARY KEY — wallet
 # addresses, support-ticket ids, Telegram handshake codes. It is data, not
-# a build artefact: the file is written 0600 and is deleted once the
-# cutover is complete. These are the paths the runbook's commands produce,
+# a build artefact: the file is written 0600 and is kept until the
+# ROLLBACK window closes — the rollback reconciles against this same file
+# before its reverse mirror, so deleting it when the cutover finishes
+# removes the only baseline that rollback has. It goes when the
+# predecessor database is retired, with it. These are the paths the
+# runbook's commands produce,
 # ignored so that a `git add .` from the repository root cannot commit a
 # complete key inventory of the off-chain data.
 /cutover-mirror.json

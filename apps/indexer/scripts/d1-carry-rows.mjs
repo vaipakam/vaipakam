@@ -1321,6 +1321,37 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       }
       hashCols = mirroredCols;
     }
+
+    // THE SAME ARGUMENT APPLIES TO THE KEY, and the columns check alone
+    // did not cover it (#2267 r31). Every row in the manifest is indexed
+    // by a key serialised from the columns the mirror used. If a
+    // migration changed which columns form the primary key, today's rows
+    // are indexed under a different serialisation, so the manifest scan
+    // for keys the source no longer has looks them up under a key nobody
+    // uses — finds nothing, concludes the destination dropped them too,
+    // and lets the run pass while a stale row survives for the reverse
+    // mirror to keep.
+    const mirroredKey = since?.[table]?.key ?? null;
+    if (
+      wasSeen !== null &&
+      mirroredKey !== null &&
+      JSON.stringify(mirroredKey) !== JSON.stringify(key)
+    ) {
+      plan.push({
+        table,
+        key,
+        cols,
+        refused:
+          `the manifest keyed this table by ` +
+          `${mirroredKey.map((c) => `"${c}"`).join(', ')} and it is now ` +
+          `keyed by ${key.map((c) => `"${c}"`).join(', ')}.\n      Every ` +
+          `row in the manifest is indexed under the old serialisation, so ` +
+          `nothing here can be matched against it. Take a fresh mirror as ` +
+          `the baseline — a primary-key change is a migration decision, ` +
+          `not a copy`,
+      });
+      continue;
+    }
     const { insert, conflicts } = onlyMissing
       ? classifyForReconcile({
           table,
@@ -1746,7 +1777,10 @@ async function main() {
   for (const p of pending ?? []) {
     conflicts.push({
       table: p.table,
-      key: keyOf(p.row, p.key),
+      // safeKey, not keyOf: this is a REPORT. `telegram_links` is keyed
+      // by the live handshake code, and a row present only on the source
+      // is exactly a fresh one (#2267 r31).
+      key: safeKey(p.table, p.key, keyOf(p.row, p.key)),
       kind: 'present on the source and absent from the destination',
       detail:
         'it appeared on the source after the mirror. This is the one case ' +
