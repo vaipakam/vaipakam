@@ -1331,6 +1331,32 @@ Two practical consequences:
   rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
   allocated `bytes memory` the block already holds and `add(err, 0x20)` /
   `mload(err)` stay within it — not because it only reads (#2253 r7).
+- **The annotation is a TRADE, not a free improvement — it costs BYTECODE**
+  (#2260, measured in #2268). Enabling the guard is what lets solc emit the
+  stack-to-memory mover, and the mover *is code*. Measured on this tree,
+  `main` vs a sweep of 24 verified-safe blocks: `OfferCreateFacet`
+  21,720 → **33,026** (+11,306, a 52% growth, over EIP-170 by 8,450) and
+  `OfferAcceptFacet` 22,042 → **26,381** (+4,339, over by 1,805). Both had
+  been comfortably under. 51 contracts changed size; a few *shrank*, so it is
+  not uniformly additive.
+
+  **Two consequences.** An `internal` library helper is inlined into every
+  caller, so annotating one is not a local change — annotating
+  `LibVaipakam`'s storage-pointer helper is a de-facto GLOBAL switch, because
+  nearly every facet inlines it. And the trade bites hardest exactly where
+  the benefit is greatest: the facets most likely to hit the stack ceiling
+  are the big ones, which are the ones with no room (this file records
+  `OfferAcceptFacet` shipping at 24,412 — 164 bytes clear — and #1835/#1780
+  exist because of that squeeze). So annotate where a contract NEEDS the
+  guard, checking headroom in the same change; do not sweep.
+- **A clean compile is NOT evidence for an annotation change — EIP-170 is a
+  TEST, not a compiler error.** `forge build --skip test` reported "Compiler
+  run successful" on the sweep above while two facets sat over the limit;
+  `FacetSizeLimitTest` in the deploy-sanity suite is what catches it, and it
+  stops at the FIRST violation, so its message understates the damage. Run
+  `forge test --match-path "test/deploy/*"` for anything that moves bytecode
+  size — which now explicitly includes adding or removing a `("memory-safe")`
+  annotation, not just adding selectors.
 - **`forge build --skip test` cannot see a test contract doing this.** A probe
   or helper under `test/` that inherits a script and carries an unannotated
   block fails only in the test build, which is the failure mode that cost #2253
