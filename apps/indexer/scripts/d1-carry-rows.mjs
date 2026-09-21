@@ -1340,7 +1340,6 @@ async function main() {
         '— apply it deliberately, then re-run',
     });
   }
-  if (wantMirror) writeManifest(manifestPath, src, manifest);
   console.log(`wrote ${written} row(s)`);
 
   // A run that wrote nothing has nothing to verify, so it says what it
@@ -1377,6 +1376,23 @@ async function main() {
 
   console.log('');
   if (problems.length > 0) reportProblems(problems, dst);
+
+  // THE MANIFEST IS WRITTEN ONLY BY A RUN THAT SUCCEEDED, and this is the
+  // last thing before the success line for that reason.
+  //
+  // It used to be written as soon as the carry returned — including when
+  // the carry had refused and written NOTHING. A failed mirror therefore
+  // replaced the baseline with archive's CURRENT values, uncarried, and a
+  // later reconciliation comparing archive against that baseline would
+  // find them equal and classify warm's differing row as
+  // `destination-moved`: the late source update disappears, silently, in
+  // the one step built to find it.
+  //
+  // A run that stops leaves the previous manifest untouched, which is
+  // still a true record of the last carry that actually happened. Re-run
+  // the mirror and a fresh one is written on success.
+  if (wantMirror) writeManifest(manifestPath, src, manifest);
+
   console.log(
     reconciling
       ? `VERIFIED — every table the source holds is present in ${dst.name} ` +

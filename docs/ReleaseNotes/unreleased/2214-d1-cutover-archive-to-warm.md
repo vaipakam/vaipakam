@@ -293,6 +293,22 @@ definition the database itself stores for the table and each of its
 indexes. Anything the two sides declare differently shows up, including
 things nobody thought to look for.
 
+### A failed copy must not rewrite the record of what was copied
+
+The copy writes down what it carried, and the later reconciliation reads
+that record to tell a late change apart from the destination's own
+progress. A copy that **stopped** — because it found something it would
+not resolve on its own — used to write that record anyway, describing
+values it had just declined to carry.
+
+The consequence is quiet and bad: the reconciliation would compare the old
+database against that record, find them the same, and conclude that any
+difference must be the new database moving on by itself. A record changed
+late on the old side would be classified as someone else's progress and
+skipped — in the exact step that exists to catch it. Now only a copy that
+succeeded writes the record, and a copy that stops leaves the last true
+one in place.
+
 ### Nothing here reports success by staying quiet
 
 Three separate places were doing it, and all three now fail instead.

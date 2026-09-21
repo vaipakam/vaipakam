@@ -212,6 +212,18 @@ because step 3 below is the part of it that had to be re-learned.
       writing to yet. **Keep that manifest**: step 6 cannot do its job
       without it, and the tool refuses to run step 6 without one rather than
       reporting a reconciliation it did not perform.
+
+      **A failed mirror leaves the previous manifest alone**, and that is
+      deliberate (#2267 r18). The manifest is written only by a run that
+      succeeded. An earlier revision wrote it as soon as the carry
+      returned — including when the carry had refused and written nothing —
+      which replaced the baseline with archive's CURRENT, uncarried values.
+      A later reconciliation comparing archive against that baseline would
+      find them equal and classify warm's differing row as
+      `destination-moved`: the late source update vanishes, silently, in
+      the step built to find it. So if a mirror stops, the last good
+      manifest is still on disk and still true; re-run the mirror for a
+      fresh one.
    4. `digest --db vaipakam-archive` once more. If it differs from step 3's
       source digest, something committed during the carry: return to step 2.
    5. Merge. The three Workers redeploy onto warm (#2237). **Then deploy
