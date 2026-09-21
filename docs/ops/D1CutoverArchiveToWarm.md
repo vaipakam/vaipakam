@@ -473,9 +473,28 @@ because step 3 below is the part of it that had to be re-learned.
       >
       > ```
       > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
-      >   --db vaipakam-archive --out cutover-mirror.json \
-      >   --stands-for "<which moment, and what establishes it>"
+      >   --db vaipakam-archive --out cutover-mirror-reconstructed.json \
+      >   --stands-for "<which moment, and what establishes it>" \
+      >   --interval covered|uncovered
       > ```
+      >
+      > **A NEW PATH, not the one the mirror used.** The verb refuses an
+      > existing `--out`, and that refusal is the point: replacing a
+      > manifest the mirror wrote with a reconstruction destroys the only
+      > baseline that was ever a direct observation, and no error is
+      > needed to do it (#2281 r2).
+      >
+      > **`--interval` is a separate flag because prose cannot gate
+      > anything.** `covered` means evidence recorded at the mirror has
+      > been compared with this reading and agrees; `uncovered` means it
+      > has not. An `uncovered` baseline still surfaces NEW differences
+      > and **must not license the rollback’s reverse mirror** — see the
+      > box at rollback step 2b for the sequence that destroys data.
+      >
+      > **The verb prints the per-table digest of the reading it
+      > accepted**, which is the evidence this comparison needs. Running
+      > `digest` separately afterwards observes a different interval and
+      > says nothing about the rows in the artifact.
       >
       > Read-only; it writes no database.
       >
