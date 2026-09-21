@@ -14,6 +14,8 @@ import {
   readAll,
   safeKey,
   situationOf,
+  splitUniquesByEvaluability,
+  stopsBeforeVerification,
   verdictProblems,
 } from '../scripts/d1-carry-rows.mjs';
 
@@ -54,6 +56,8 @@ function classify(opts: {
   held: (number | Record<string, unknown>)[];
   mirrored: Record<string, unknown>[];
   uniques?: { name: string; columns: string[] }[];
+  /** The destination's OWN columns, when they differ from the source's. */
+  destCols?: string[];
 }) {
   const wasSeen: Record<string, string> = {};
   for (const r of opts.mirrored) wasSeen[k(r.id as number)] = hashOf(r);
@@ -75,6 +79,7 @@ function classify(opts: {
     heldByKey,
     wasSeen,
     uniques: opts.uniques ?? [],
+    destCols: opts.destCols ? new Set(opts.destCols) : null,
   });
 }
 
@@ -333,6 +338,45 @@ describe('reconciliation decision table', () => {
     expect(before.conflicts[0].kind).toBe('changed on the source after the mirror');
     expect(after.conflicts).toEqual([]);
     expect(after.insert).toEqual([]);
+  });
+
+  // A COLUMN THE DESTINATION DROPPED IS NOT A COLUMN HOLDING NULL
+  // (#2267 r39). Both of these arise only in the weekly reconciliation,
+  // where the two sides may legitimately declare a table differently
+  // because the live destination took a migration the retained source
+  // never will.
+  it('does not read a dropped destination column as agreement with a late NULL', () => {
+    // The straggler set `value` to NULL on the source after the mirror —
+    // a real late write. The destination has since dropped that column,
+    // so its row carries no such field. Projected as NULL the two rows
+    // hash identically and the run reports clean, which is the late write
+    // vanishing inside the only check still looking for it.
+    const mirrored = { id: 1, value: 'before' };
+    const args = {
+      rows: [{ id: 1, value: null }],
+      held: [{ id: 1 }],
+      mirrored: [mirrored],
+    };
+    expect(classify(args).conflicts).toEqual([]);
+    expect(classify({ ...args, destCols: ['id'] }).conflicts.map((c) => c.kind)).toEqual([
+      'changed on the source after the mirror',
+    ]);
+  });
+
+  it('stays quiet about a dropped destination column when the source has not moved', () => {
+    // The other half of the same rule, and the reason it is a projection
+    // rather than a refusal: a dropped column must not turn every row of
+    // that table into a permanent report. The source is exactly as the
+    // mirror saw it, so this is the destination having moved on.
+    const row = { id: 1, value: 'as mirrored' };
+    const { insert, conflicts } = classify({
+      rows: [row],
+      held: [{ id: 1 }],
+      mirrored: [row],
+      destCols: ['id'],
+    });
+    expect(insert).toEqual([]);
+    expect(conflicts).toEqual([]);
   });
 
   it('refuses to reconcile a table the manifest has no record of', () => {
@@ -1091,5 +1135,66 @@ describe('a reported sequence advance can be resolved', () => {
         notifications: { seq: 46 },
       }),
     ).toHaveLength(1);
+  });
+});
+
+describe('whose unique indexes decide what a reported row would hit', () => {
+  // The destination is the database that would reject — or silently
+  // duplicate — a row the operator applies on the strength of a run.
+  // After the switch the two sides may declare a table differently, so
+  // the retained source's indexes are not a safe stand-in (#2267 r39).
+  it('keeps an index the source row can be projected onto', () => {
+    const idx = { name: 'idx_dedup', columns: ['dedup_key'] };
+    const { usable, unevaluable } = splitUniquesByEvaluability([idx], ['id', 'dedup_key']);
+    expect(usable).toEqual([idx]);
+    expect(unevaluable).toEqual([]);
+  });
+
+  it('names an index it cannot evaluate rather than dropping it quietly', () => {
+    // The tuple is built from a SOURCE row, so an index over a column the
+    // source lacks cannot be looked up at all. Silently ignoring it would
+    // report a row as plainly missing while the destination's own new
+    // constraint already holds it — and send the operator at an insert
+    // that fails.
+    const idx = { name: 'idx_added_later', columns: ['added_by_migration'] };
+    const { usable, unevaluable } = splitUniquesByEvaluability([idx], ['id', 'value']);
+    expect(usable).toEqual([]);
+    expect(unevaluable).toEqual([idx]);
+  });
+
+  it('splits a mixed set both ways', () => {
+    const ok = { name: 'idx_ok', columns: ['value'] };
+    const no = { name: 'idx_no', columns: ['value', 'added_by_migration'] };
+    const { usable, unevaluable } = splitUniquesByEvaluability([ok, no], ['id', 'value']);
+    expect(usable).toEqual([ok]);
+    expect(unevaluable).toEqual([no]);
+  });
+});
+
+describe('a reconciliation never stops before its late-write checks', () => {
+  // THE TRAPDOOR THIS CLOSES. The sequence comparison and the re-read
+  // that notices the source moved both run after the report — and #2279
+  // means a reconciliation can carry a conflict permanently, because
+  // three situations are resolved by a decision that changes no data.
+  // Stopping on a conflict therefore switched both checks off for good,
+  // on the one procedure still looking for late writes (#2267 r39).
+  const conflict = [{ table: 't', kind: 'k', detail: 'd' }];
+  const refusal = [{ table: 't', refused: 'r' }];
+
+  it('carries on through a conflict that will report every week', () => {
+    expect(stopsBeforeVerification({ reconciling: true, conflicts: conflict })).toBe(false);
+  });
+
+  it('carries on through a refusal too', () => {
+    expect(stopsBeforeVerification({ reconciling: true, refused: refusal })).toBe(false);
+  });
+
+  it('still stops a CARRY, which wrote nothing and has minutes of digests ahead', () => {
+    expect(stopsBeforeVerification({ reconciling: false, conflicts: conflict })).toBe(true);
+    expect(stopsBeforeVerification({ reconciling: false, refused: refusal })).toBe(true);
+  });
+
+  it('does not stop a clean carry', () => {
+    expect(stopsBeforeVerification({ reconciling: false })).toBe(false);
   });
 });

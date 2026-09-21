@@ -192,6 +192,18 @@ arrive after both. Keeping the old database makes such a record
 has a named owner and every run is written down, clean ones included, because
 the value of that record is that a gap in it is visible.
 
+**The comparison holds up once the two databases stop being the same shape.**
+The new database keeps taking migrations; the old one never will. So a column
+the new one has dropped is compared as *absent* rather than as empty — the two
+are different facts, and reading absence as emptiness would let a late write of
+an empty value read as the two sides agreeing. The uniqueness rules consulted
+are the new database's, because it is the one that would reject the record an
+operator adds on the strength of a report; one the old database cannot be
+measured against is named in the output rather than passed over. And a
+comparison run no longer stops at its list of differences: two of its checks
+look for late writes that leave no visible difference at all, and they come
+afterwards.
+
 **Three kinds of difference will keep being reported no matter what the
 operator does about them, and the runbook now says so rather than leaving
 someone to discover it.** The comparison reports differences in data; some

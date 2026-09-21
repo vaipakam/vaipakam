@@ -55,6 +55,7 @@ import {
   WRITERS,
   assertClassified,
 } from './lib/d1-workers.mjs';
+import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
@@ -308,12 +309,31 @@ for (const { file, binding, entry } of bound) {
 }
 
 // ---------------------------------------------------------------- check 3
+//
+// BOTH ENDS OF THE CUTOVER ARE FORBIDDEN, NOT JUST THE LIVE ONE
+// (#2267 r39). The agreed pair is whatever the Workers bind today, which
+// after the switch is the successor — so checking only that would let an
+// internal ops Worker be pointed at the PREDECESSOR and pass. The
+// predecessor is a full copy of the same user-facing tables, retained as
+// the rollback source, so co-locating ops alert state there breaks the
+// same separation for the same reason; and applying that Worker's
+// migrations to it would mutate the copy the rollback depends on.
+//
+// Listed by id as well as name, since either identifies the database.
+const FORBIDDEN_TO_OPS = [
+  { name: SHARED_NAME, id: SHARED_ID, what: 'the SHARED database' },
+  { name: SUCCESSOR.name, id: SUCCESSOR.id, what: 'the cutover SUCCESSOR' },
+  { name: PREDECESSOR.name, id: PREDECESSOR.id, what: 'the RETAINED cutover predecessor' },
+];
 for (const { file, reason } of MUST_NOT_SHARE) {
   for (const entry of d1Entries(file)) {
-    if (entry.database_name === SHARED_NAME || entry.database_id === SHARED_ID) {
+    const hit = FORBIDDEN_TO_OPS.find(
+      (f) => entry.database_name === f.name || entry.database_id === f.id,
+    );
+    if (hit) {
       problems.push(
-        `${file} binds the SHARED database (${SHARED_NAME}) as ` +
-          `"${entry.binding}" — it must not: ${reason}.`,
+        `${file} binds ${hit.what} (${hit.name}) as "${entry.binding}" — ` +
+          `it must not: ${reason}.`,
       );
     }
   }

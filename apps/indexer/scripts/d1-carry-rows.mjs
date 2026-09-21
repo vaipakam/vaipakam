@@ -536,12 +536,39 @@ export async function readAll(dbId, table, cols, run = query) {
   );
 }
 
-/** JSON of the values in declared column order — null and "" stay distinct. */
-const canonical = (row, cols) => JSON.stringify(cols.map((c) => row[c] ?? null));
+/**
+ * A COLUMN THE ROW'S TABLE DOES NOT HAVE, which is not the same fact as a
+ * column holding NULL (#2267 r39).
+ *
+ * It matters only on one side of one comparison — the destination's row,
+ * projected onto the manifest's columns, in the weekly reconciliation —
+ * and there it matters a lot. A post-cutover migration can DROP a column
+ * the retained source still has; `row[c] ?? null` then reports the same
+ * value for "this table no longer has that column" and for "a straggler
+ * set it to NULL", so a late write of NULL reads as the two sides
+ * agreeing and is never reported.
+ *
+ * An object cannot collide with any value D1 returns — those are JSON
+ * scalars — and its serialisation cannot collide with a string either,
+ * since a string holding this same text serialises quoted.
+ */
+const ABSENT_COLUMN = { __columnNotInTable: true };
+
+/**
+ * JSON of the values in declared column order — null and "" stay distinct.
+ *
+ * `present`, when given, is the set of columns the row's own table has;
+ * anything outside it serialises as absent rather than as NULL. Callers
+ * that are comparing rows from ONE table leave it out.
+ */
+const canonical = (row, cols, present = null) =>
+  JSON.stringify(
+    cols.map((c) => (present !== null && !present.has(c) ? ABSENT_COLUMN : (row[c] ?? null))),
+  );
 
 /** A row's identity-independent content, short enough to store per row. */
-const rowHash = (row, cols) =>
-  createHash('sha256').update(canonical(row, cols)).digest('hex').slice(0, 16);
+const rowHash = (row, cols, present = null) =>
+  createHash('sha256').update(canonical(row, cols, present)).digest('hex').slice(0, 16);
 
 function digestOf(rows, cols) {
   const lines = rows.map((r) => canonical(r, cols)).sort();
@@ -1018,7 +1045,7 @@ async function deleteKeys(dst, table, keyRows, key) {
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
-export function situationOf({ mirroredHash, sourceHash, destRow, cols }) {
+export function situationOf({ mirroredHash, sourceHash, destRow, cols, destCols = null }) {
   const mirrored = mirroredHash !== undefined;
   if (destRow === undefined) {
     if (!mirrored) return 'new-on-source';
@@ -1033,9 +1060,57 @@ export function situationOf({ mirroredHash, sourceHash, destRow, cols }) {
       ? 'destination-deleted'
       : 'destination-deleted-source-changed';
   }
-  if (rowHash(destRow, cols) === sourceHash) return 'agreed';
+  // THE DESTINATION'S ROW IS PROJECTED AS ITS OWN TABLE ACTUALLY IS
+  // (#2267 r39). `destCols` is the destination's column set when the two
+  // sides may declare the table differently — which after the first
+  // post-cutover migration they may. A column it has dropped serialises
+  // as absent, never as NULL, so "the destination no longer carries this
+  // field" cannot be mistaken for "a straggler set this field to NULL"
+  // and reported as the two sides agreeing.
+  if (rowHash(destRow, cols, destCols) === sourceHash) return 'agreed';
   if (!mirrored) return 'key-collision';
   return mirroredHash === sourceHash ? 'destination-moved' : 'source-changed';
+}
+
+/**
+ * Which of a destination's unique indexes this run can actually evaluate,
+ * and which it can only warn about.
+ *
+ * The tuple being looked up is built from a SOURCE row, so an index naming
+ * a column the source does not have cannot be evaluated at all. Dropping
+ * such an index silently would leave the run reporting a row as plainly
+ * missing while the destination's own constraint already holds it — so the
+ * caller names them instead, and the operator knows the comparison is
+ * narrower than the destination's real constraints.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function splitUniquesByEvaluability(uniques, sourceCols) {
+  const has = new Set(sourceCols);
+  const usable = [];
+  const unevaluable = [];
+  for (const u of uniques) (u.columns.every((c) => has.has(c)) ? usable : unevaluable).push(u);
+  return { usable, unevaluable };
+}
+
+/**
+ * Does this run report and stop, or report and carry on verifying?
+ *
+ * A CARRY stops: it wrote nothing, so there is nothing to verify, and the
+ * digests it would otherwise run take minutes out of a cutover window to
+ * describe a decision made before they started.
+ *
+ * A RECONCILE never stops here, and that is the whole point of the
+ * predicate existing (#2267 r39). Its two late-write checks — the sequence
+ * comparison and the re-read that notices the source moved — sit AFTER
+ * this point, and #2279 means a reconciliation can carry a conflict
+ * permanently. Stopping on a conflict would therefore switch both checks
+ * off for good, on the one procedure still looking for late writes.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function stopsBeforeVerification({ reconciling, refused = [], conflicts = [] }) {
+  return !reconciling && (refused.length > 0 || conflicts.length > 0);
 }
 
 export function classifyForReconcile({
@@ -1047,6 +1122,7 @@ export function classifyForReconcile({
   heldByKey,
   wasSeen,
   uniques = [],
+  destCols = null,
 }) {
   const conflicts = [];
   const insert = [];
@@ -1086,6 +1162,7 @@ export function classifyForReconcile({
       sourceHash: rowHash(r, cols),
       destRow: heldByKey.get(k),
       cols,
+      destCols,
     });
 
     // Every situation is NAMED and every name is HANDLED — see
@@ -1410,7 +1487,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // both onto the manifest's columns, so a column the destination no
     // longer has reads as absent and shows up as a difference to look
     // at rather than as a crash.
-    const heldCols = reportOnly ? (await shapeOf(dst.id, table)).cols : cols;
+    const heldShape = reportOnly ? await shapeOf(dst.id, table) : null;
+    const heldCols = heldShape ? heldShape.cols : cols;
     const missingKey = key.filter((c) => !heldCols.includes(c));
     if (missingKey.length > 0) {
       plan.push({
@@ -1424,6 +1502,33 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           `nothing this run said about this table would mean anything`,
       });
       continue;
+    }
+    // WHOSE UNIQUE INDEXES DECIDE. When reporting, the destination's —
+    // it is the database that would reject the insert an operator makes
+    // on the strength of this run. When mirroring, the two declarations
+    // have already been required to match, so the source's are the same
+    // list and cost no extra round trip.
+    //
+    // An index is only usable here if the SOURCE row can be projected
+    // onto it, since that is the tuple being looked up. One naming a
+    // column the source does not have is named in the report rather
+    // than dropped quietly — the operator is then told the comparison
+    // is narrower than the destination's real constraints, instead of
+    // being left to infer it.
+    const { usable: evaluableUniques, unevaluable } = splitUniquesByEvaluability(
+      heldShape ? heldShape.uniques : uniques,
+      cols,
+    );
+    if (unevaluable.length > 0) {
+      driftNotes.push({
+        table,
+        detail:
+          `the destination declares unique index(es) ` +
+          `${unevaluable.map((u) => `"${u.name}"`).join(', ')} over ` +
+          `column(s) the source does not have, so this run cannot say ` +
+          `whether a row it reports as missing would collide there. ` +
+          `Check before applying one`,
+      });
     }
     const held = await readAll(dst.id, table, heldCols);
     // THE SOURCE AS THIS RUN CLASSIFIED IT. The verdict re-reads the
@@ -1579,7 +1684,20 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           sourceKeys,
           heldByKey: new Map(held.map((r) => [keyOf(r, key), r])),
           wasSeen,
-          uniques,
+          // THE UNIQUENESS THAT WOULD ACTUALLY JUDGE THE INSERT IS THE
+          // DESTINATION'S (#2267 r39). The source's list is the right one
+          // for a mirror, where parity is required before anything is
+          // written. For the weekly reconciliation the two sides may
+          // legitimately differ, and it is the destination that would
+          // reject — or silently duplicate — a row the operator applies.
+          // Using the retained source's indexes there reports a row as
+          // plainly missing when the destination's own new index already
+          // holds it under another key, and points the operator at an
+          // insert that fails.
+          uniques: evaluableUniques,
+          // What the destination's table actually has, so a column it
+          // dropped is compared as absent rather than as NULL.
+          destCols: heldShape ? new Set(heldCols) : null,
         })
       : { insert: [], conflicts: [] };
 
@@ -2031,12 +2149,31 @@ async function main() {
   }
   console.log(`wrote ${written} row(s)`);
 
-  // A run that wrote nothing has nothing to verify, so it says what it
-  // found and stops. Digesting both databases takes minutes, and doing it
-  // here would make an operator wait through them for a conflict list that
-  // was decided before any of it started — during a cutover window, and
-  // reporting state read long after the decision it describes.
-  if (refused.length > 0 || conflicts.length > 0) {
+  // THE EARLY EXIT BELONGS TO THE CARRY, NOT TO THE RECONCILIATION
+  // (#2267 r39).
+  //
+  // For a carry it is right: a run that wrote nothing has nothing to
+  // verify, and digesting both databases takes minutes an operator would
+  // spend, inside the cutover window, waiting for a conflict list that was
+  // decided before any of it started.
+  //
+  // For the weekly reconciliation the same exit is a trapdoor. Two of the
+  // things this run does — the sequence comparison and the re-read that
+  // notices the source moved under it — exist precisely because the row
+  // comparison CANNOT see certain late writes: an id allocated and then
+  // released leaves no row, and an UPDATE leaves the count identical. Both
+  // sit after this point. And #2279 means a reconciliation can carry a
+  // conflict permanently, because three situations are resolved by a
+  // decision that changes no data. Put together, the first permanent
+  // conflict would switch off both late-write checks for good, on the one
+  // procedure still looking for late writes — the same shape as a check
+  // that can never pass, one door along.
+  //
+  // So reconcile falls through and reports everything it found in one
+  // place. `verdictProblems` re-emits the refusals and conflicts verbatim,
+  // so nothing is lost by not reporting them here — the run still exits
+  // non-zero, it just knows more when it does.
+  if (stopsBeforeVerification({ reconciling, refused, conflicts })) {
     reportProblems(
       [
         ...refused.map((r) => `${r.table}: NOT CARRIED — ${r.refused}`),

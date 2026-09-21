@@ -583,6 +583,24 @@ because step 3 below is the part of it that had to be re-learned.
         reports the clash instead. (A tuple containing NULL cannot collide,
         because SQLite treats those as distinct.)
 
+      **Once the destination has taken a migration the retained source
+      never will, three things follow, and all three are handled rather
+      than assumed away** (#2267 r39). A column the destination has
+      DROPPED is compared as absent, never as NULL — otherwise a
+      straggler writing NULL to that column reads as the two sides
+      agreeing and vanishes inside the only check still looking for it.
+      The unique indexes consulted are the DESTINATION's, since that is
+      the database that would reject the insert this run's report leads
+      an operator to make; one naming a column the source lacks cannot be
+      evaluated at all and is named in the output rather than dropped
+      quietly. And a reconciliation **no longer stops at the conflict
+      list**: its two remaining late-write checks — the sequence
+      comparison and the re-read that notices the source moved — come
+      afterwards, and with #2279 making a conflict permanent, stopping
+      there would have switched both off for good. The carry still stops,
+      because it wrote nothing and has minutes of digests ahead of it
+      inside the cutover window.
+
       **The tool resolves no conflict, and a conflicted run writes
       nothing at all.** It classifies every table first and only then
       acts, so a run that finds both a safe row and a conflict applies
