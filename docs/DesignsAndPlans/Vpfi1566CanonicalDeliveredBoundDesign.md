@@ -7222,10 +7222,18 @@ on the live era alone.
 >   submits a zero-value claim it is never `processed`, and a proof
 >   testing `processed` would refuse the day forever over an obligation
 >   that owes nothing. Exit: **B adds a permissionless retirement for
->   exactly this state** — a closed entry whose remainder prices to zero
->   is marked processed, moving nothing — so the proof's termination test
->   stays "processed, or the claim cursor past the day" and needs no
->   second notion of done;
+>   exactly this state**, and it is NOT a bare flag (Codex #2274 r6 P1):
+>   the two ways a remainder prices to zero differ in what they leave
+>   outstanding. A genuinely empty raw window owes nothing and is marked
+>   processed, moving nothing. A remainder trimmed to zero by a CAP still
+>   carries its raw armed entitlement and the commitment behind it, so
+>   the retirement runs the day primitive's ordinary terminal accounting
+>   for it — the truncate-and-consume a capped day already takes, which
+>   retires the commitment through `consumeArmedFresh` / the recycled
+>   release and persists the day — rather than marking the entry done
+>   over a commitment left outstanding forever. Either way the proof's
+>   termination test stays "processed, or the claim cursor past the day"
+>   and needs no second notion of done;
 > - **the entry's owner sanctioned** — the claim refuses them and the
 >   expiry clock does not advance while they are flagged, so the entry
 >   can stand for as long as the flag does, and nothing the platform
