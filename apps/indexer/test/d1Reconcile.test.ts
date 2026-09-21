@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyForReconcile,
   collapseOutsideLiterals,
+  isMissingSequenceTable,
   readAll,
   situationOf,
   verdictProblems,
@@ -604,5 +605,44 @@ describe('schema comparison — whitespace outside literals only', () => {
     expect(collapseOutsideLiterals("x DEFAULT 'it''s  here'")).toBe(
       "x DEFAULT 'it''s  here'",
     );
+  });
+});
+
+/**
+ * WHY THIS TEST EXISTS. The AUTOINCREMENT check queries `sqlite_sequence`,
+ * which SQLite does not create until something allocates — so on a
+ * database where nothing has, the query is an error rather than an empty
+ * result, and treating that as empty is correct. Treating anything ELSE
+ * as empty would be a check reporting success when it never ran, which is
+ * the failure this tool exists to avoid.
+ */
+describe('the one error that means "nothing has ever allocated"', () => {
+  const live = (m: string) => new Error(`HTTP 400 on /d1/database/x/query\n${m}`);
+
+  it('recognises the real D1 shape', () => {
+    expect(
+      isMissingSequenceTable(
+        live('{"errors":[{"code":7500,"message":"no such table: sqlite_sequence: SQLITE_ERROR"}]}'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT match a table whose name merely starts the same way', () => {
+    expect(
+      isMissingSequenceTable(
+        live('{"errors":[{"message":"no such table: sqlite_sequence_nope: SQLITE_ERROR"}]}'),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not swallow a missing application table', () => {
+    expect(
+      isMissingSequenceTable(live('no such table: notifications: SQLITE_ERROR')),
+    ).toBe(false);
+  });
+
+  it('does not swallow a transport or auth failure', () => {
+    expect(isMissingSequenceTable(new Error('fetch failed'))).toBe(false);
+    expect(isMissingSequenceTable(live('Authentication error'))).toBe(false);
   });
 });

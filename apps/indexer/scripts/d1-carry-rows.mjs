@@ -551,6 +551,24 @@ function digestOf(rows, cols) {
 }
 
 /**
+ * Is this the specific error that means "nothing has ever allocated"?
+ *
+ * It has to be exactly that and nothing near it. `\b` is what keeps
+ * `sqlite_sequence_nope` — or any other table whose name merely starts
+ * the same way — from being read as the one case it is safe to treat as
+ * empty. A missing application table, a network failure or an auth
+ * failure must all still propagate: a check that could not run is not a
+ * check that passed, which is the rule this whole tool is built on.
+ *
+ * The shape is the live one, confirmed against the D1 API on 2026-09-21:
+ * `{"code":7500,"message":"no such table: <name>: SQLITE_ERROR"}`, which
+ * `cf()` re-throws with the response body in the message.
+ */
+export function isMissingSequenceTable(err) {
+  return /no such table: sqlite_sequence\b/.test(String(err?.message ?? err));
+}
+
+/**
  * AUTOINCREMENT tables promise never to reuse an identifier, and rows
  * alone do not carry that promise.
  *
@@ -589,8 +607,7 @@ async function sequenceProblems(src, dst) {
       // identifiers promised", so it is empty — but ONLY that case. Any
       // other failure here is a failure to check, and this tool does not
       // report a check it could not perform as a check that passed.
-      const missing = /no such table: sqlite_sequence\b/.test(String(err?.message ?? err));
-      if (!missing) throw err;
+      if (!isMissingSequenceTable(err)) throw err;
       return out;
     }
     for (const r of rows) {
