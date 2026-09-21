@@ -7130,6 +7130,107 @@ on the live era alone.
 > and whether the closure proof above is the accepted mechanism, on which
 > B proceeds as recommended absent a different answer.
 
+> **3b-ii-A implementation blueprint (scouted 2026-09-21, before code).**
+> Where the draw lands at each of the four sites, read off the settlement
+> paths as they stand, and the two places the scout found the plan's
+> wording needs a decision.
+>
+> *The claim (settlement, and the figures row 13 reads).* The claim already
+> walks a user's side days one at a time — `_walkSideDays` calls
+> `processUserSideDay(user, d, set, pool, dry)` for the lowest pending day,
+> gets a `DayCharge` whose `toUser` / `toTreasury` / `cappedOff` are each a
+> two-leg `EntrySplit`, persists the day and advances the entries'
+> `rewardEntryClaimNextDay` — bounded per call by
+> `MAX_INTERACTION_CLAIM_DAYS` and resumable. So the per-day two-leg need
+> the allocation rule wants is ALREADY computed per day, and a day settles
+> atomically inside the call that priced it. The transport term therefore
+> enters as a PER-DAY allowance on the day primitive's budget: `PoolBudget`
+> gains `transportFresh` / `transportRecycled`, set for the day being
+> priced from that day's cursor-visible epoch coverage, and
+> `_attributeLegs` draws them FIRST per component before the fresh/delivered
+> and bucket bounds it applies today, reporting `DayCharge.transportPaid`
+> as two legs. The primitive stays a view (the preview shares it); the
+> settle wrapper then DRAWS exactly `transportPaid` from the batches — the
+> read and the debit are one transaction, so a claim needs no staging.
+> `_persistDay` and the pool-budget debits then see only the residual legs.
+>
+> *Row 13.* `_entryExecutableNow` tests an aggregate need against
+> `deliveredFreshBound` and the bucket. It gains the same per-day allowance
+> through the dry-run walk the previews already use, so the predicate and
+> the settlement price a day identically; the drought and delivered tests
+> run on the residual legs, as the matrix requires.
+>
+> *Rows 1 and 5 (the sweeps).* Both price an entry's remaining window in
+> O(1) off the capped cumulative curves and never loop days
+> (`_forfeitEntryChunk`, `sweepExpiredEntry` via `_entryPriceCore`). A
+> per-day transport term here is new work: the sweep walks the entry's
+> remaining ARMED days, prices each day's two legs the way the commitment
+> accumulation does (`perDayNumeraire18 × Δ_d`, capped — the cumulative
+> figure is the sum of exactly these by construction, #1008 Option B), and
+> draws per day; the residual of the whole-window figure goes to the
+> chokepoints. Cost: one storage read per remaining day when no batch lists
+> it. **A global short-circuit — no batch ever admitted on this chain — makes
+> every site O(1)**, which is every chain without a legacy delivery; the walk
+> is paid only where the legacy lane actually delivered.
+>
+> *The chokepoints, with what each sees.* Read from `RewardClaimFacet`'s
+> settlement sequence and the two sweep facets:
+> `interactionPoolPaidOut` and `consumeArmedFresh` take the FULL fresh
+> figure — the first is the 69M emission cap and a transport-funded payout
+> is still emission, the second retires the commitment the delivery made,
+> which ends whether the epoch or the live ledger paid it;
+> `chargeDeliveredFresh` (the delivered ledger) and `LibVpfiRecycle.consume`
+> (the bucket debit) take RESIDUALS only; the recycled leg's commitment is
+> released through `releaseCommitment` with no bucket debit (the design's
+> transport-specific retirement); the payout primitives
+> (`custodyPayoutToWallet`, `vaultCreditFromRewardCustodyERC20`) gain a
+> third, transport leg released from the holder's `Unclassified` row, where
+> an epoch's value rests; and an absorption's transport share
+> (`absorbRewardFresh` at rows 1 and 5 and on the forfeit branch of a
+> claim) becomes the in-holder `Unclassified → Recycled` move with the
+> bucket credited and no delivered-ledger charge.
+>
+> *Hosted where.* The per-day coverage read, the draw, the sweep's day
+> walk and the leg-counter writes live on `RewardEpochFacet` (21.7 KB
+> free); `LibInteractionRewards` carries the two budget fields, the
+> `_attributeLegs` ordering and one cross-facet call per site. The
+> `eraBalance(era)` read is one interface returning zero, in the middle
+> position, so PR C changes a body and not an order.
+>
+> **Two decisions the plan's wording leaves open, and how A takes them.**
+>
+> 1. **Staging is the EXCEPTION path, and A ships without it — as A1.** A
+>    claim's day and a sweep's entry each settle inside the call that
+>    drew, so the only case that leaves draws unsettled is a scan cap hit
+>    mid-day: more batches list the day than one call may scan. A1 draws
+>    NOTHING on such a day — the day defers exactly as a bucket shortfall
+>    defers it today, and a sweep returns retryable — so there is nothing
+>    to stage and nothing to unwind; §5c's "draws reverted leave the next
+>    retry facing the same live batches with no progress" is the cost, and
+>    it is bounded to days wider than the cap. A2 adds the staging record
+>    with batch references, deferred exhaustion, permissionless expiry, the
+>    batch-keyed cooldown, priority-mode reservations and row 13's
+>    PREPARATION operation — the machinery that makes a wide day
+>    progress. The reason for the cut is the same as 3b-i's: a single PR
+>    carrying both would not fit under the round cap, and the cap-hit
+>    refusal is the conservative side (value stays in the epoch; the
+>    obligation waits).
+> 2. **"Contested" is read as the plan's own definition of KNOWN.** The
+>    plan refuses a draw when the batch is listed by the day of another
+>    known unmet obligation. There is no per-day enumeration of unmet
+>    obligations (the closure-proof note above is what it would cost to
+>    build one), and §5c's machinery names an obligation as known to a
+>    batch when it holds a STAGING REFERENCE on it. A therefore reads
+>    contested as "another obligation's reference stands on this batch" —
+>    an O(1) test at draw time and again at settlement — which in A1, with
+>    no references yet, is never true, so every A1 draw is uncontested and
+>    settles at once. The wider reading ("any other listed day not yet
+>    proven closed") was rejected because it deadlocks every multi-day
+>    batch until 3c — no day can draw while another listed day is open,
+>    and the other days cannot close without drawing. This is the same
+>    owner question the plan carries (defer contested to 3c), stated with
+>    the reading A takes, so a different answer changes A2, not A1.
+>
 **Transport epochs PR 3c — the contested-allocation machinery.** The
 bonded exclusive challenger slot as one O(1) transport-domain flag; plans
 as committed roots over paginated assignment pages, shadow-validated
