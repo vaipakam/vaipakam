@@ -724,25 +724,37 @@ rather than discovering a mixed dataset later.
 
 ## 3. The cutover
 
-### Step 0 — clear the target
+### ~~Step 0 — clear the target~~ — RETIRED, DO NOT RUN (#2267 r28)
 
-It is **not** empty. `vaipakam-warm` still holds the six rows hand-copied
-during #1537's preparation — `user_thresholds` 1, `notify_state` 1,
-`support_tickets` 4 (verified 2026-08-03). An earlier revision of this plan
-had a clearing step; the no-migration rewrite removed it, which would have
-left those stale rows to be adopted as live state.
-
-```bash
-# [unrun] — verify against OffChainRestore.md §1 before pasting
-(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;")
-```
-
-**Then confirm the domain tables are empty.** Not *every* table: `d1_migrations`
-necessarily holds 49 rows — that is what "prepared through `0048`" means — and
-`sqlite_sequence` may hold rows too. An earlier revision asked for a state the
-target cannot be in, which leaves an operator either blocked or deleting
-bookkeeping they need.
+> **This step deleted user data, and following it today would discard the
+> records this move exists to preserve.** It belonged to the *do not
+> migrate the data* decision, which was reversed on 2026-09-21 (see
+> §"Decision 2 below was SUPERSEDED"). Under that decision warm was to
+> start empty, so six rows hand-copied during #1537's preparation —
+> `user_thresholds` 1, `notify_state` 1, `support_tickets` 4 — were stale
+> fixtures to be cleared.
+>
+> They are not fixtures any more. The reversal carries archive's rows
+> across, `user_thresholds` and `support_tickets` among them, and no later
+> step restores anything this would delete. An operator working down §3's
+> numbered steps rather than the execution record would therefore delete
+> four open support tickets and a user's alert configuration, and the
+> cutover would carry on looking correct.
+>
+> The command is deliberately left unrunnable rather than deleted, because
+> this step was the documented first action for seven weeks and someone
+> may come looking for it:
+>
+> ```
+> RETIRED — do not paste. It read:
+>   DELETE FROM user_thresholds; DELETE FROM notify_state;
+>   DELETE FROM support_tickets;
+> ```
+>
+> **Nothing replaces it.** The mirror carries archive over warm's contents,
+> row by row, and removes what archive does not have — which is what
+> clearing was for, done by comparison rather than by deletion. Step 0b
+> below is unaffected and still applies.
 
 ### Step 0b — re-apply migrations if any landed since
 
@@ -1557,6 +1569,43 @@ and reach for this only with the same care.
 
 ## 5. Deleting the source
 
+> **THIS CHECKLIST DOES NOT AUTHORISE THE DELETION, and saying that it did
+> was this document contradicting itself on its one irreversible step**
+> (#2267 r28).
+>
+> §3 states plainly that work suspended on something external can sit out
+> every observation, that **how long that takes has never been measured**,
+> and that this document will not invent a number for it. Two clean
+> reconciliations are two readings — they say nothing arrived by the moment
+> each one read. A straggler can commit after both. And because an UPDATE
+> preserves the row count, the count re-validation below need not notice it
+> either.
+>
+> Every box here is necessary. **None of them, and not all of them
+> together, makes deleting the only remaining copy safe** — because what
+> would make it safe is a bound on how long a suspended invocation can
+> hold a handle, and no such bound has been measured or enforced.
+>
+> So the source is **RETAINED** at the end of this procedure. Deleting it
+> is a separate decision, taken later, by a person who accepts a residual
+> this document can describe but cannot close:
+>
+> - a **substantiated drain bound** — a measured or enforced limit on how
+>   long an invocation admitted before the barrier can still write — would
+>   close it, and does not exist today; or
+> - a **durable write fence** on the source, after which no write can land
+>   at all, which D1 does not offer; or
+> - an explicit acceptance that a record written by a straggler after the
+>   last read is lost, weighed against what those tables hold. They are
+>   support tickets, alert configuration carrying Telegram chat ids,
+>   signed offers and notification state — not data whose loss is
+>   invisible.
+>
+> The cost of retaining it is one unused D1 database. The cost of the
+> alternative is a record nobody can produce afterwards. **The boxes below
+> are what make deletion possible to CONSIDER; they are not what make it
+> correct.**
+
 Order matters here, and this plan does not own all of it:
 
 - [ ] **The old backup Worker is retired (#1551) — and #1551 has its own
@@ -1593,7 +1642,9 @@ Order matters here, and this plan does not own all of it:
       not be. Re-run the count before deleting; do not trust this table.
 
 ```bash
-# [unrun] — irreversible; confirm the form before running
+# [unrun] — IRREVERSIBLE, and not authorised by this procedure. See the
+# banner at the top of §5: the boxes above are necessary and not
+# sufficient, and the residual they cannot close is named there.
 (cd apps/indexer && npx wrangler d1 delete "$SOURCE_DB")
 ```
 

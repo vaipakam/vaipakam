@@ -466,3 +466,37 @@ check that keeps references in agreement compared the pinned database's name
 and not its identity, so a pinned identity edited to any other valid one
 passed while naming the right database — and the copying tool uses that
 identity directly as its destination.
+
+### The move does not end by deleting the database it moved away from
+
+The procedure's final checklist read as authorisation to delete the old
+database once its boxes were ticked — two clean comparisons among them.
+Elsewhere the same procedure states that work suspended on something
+outside the platform can sit out every reading, and that how long that can
+take has never been measured. Both statements were in the same document,
+and the one attached to the irreversible step was the optimistic one.
+
+Two clean comparisons are two readings. They say nothing arrived by the
+moment each one looked. A straggler can commit after both, and because a
+change to an existing record leaves the record count identical, the count
+re-check would not notice.
+
+So the old database is now **retained** at the end of the move. Deleting it
+is a separate decision for a person, and what would make it safe is named
+rather than implied: a measured limit on how long already-running work can
+still write, or a way to make the old database refuse writes outright,
+neither of which exists — or a deliberate acceptance that a late record is
+lost, weighed against what those tables hold. They are support requests,
+alert settings carrying contact identifiers, signed offers. The cost of
+keeping the database is one unused database.
+
+### A step that would have deleted user data
+
+The same reversal left a live instruction to empty the new database before
+the move — including a user's alert configuration and four open support
+requests. It belonged to the abandoned plan where the new database was to
+start empty, and nothing later in the procedure put those records back. It
+is retired in place rather than removed, because it was the documented
+first action for seven weeks. Nothing replaces it: the copy makes the new
+database match the old one record by record, which is what emptying it was
+for.

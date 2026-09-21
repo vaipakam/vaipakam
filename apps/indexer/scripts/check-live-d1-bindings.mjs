@@ -423,14 +423,26 @@ async function main() {
           );
         }
       }
-      // An attachment the config does not declare is reported rather than
-      // ignored: it is not a failure by itself, but on a gate authorising
-      // normal operation an unexplained database attachment is worth a line.
+      // AN UNDECLARED ATTACHMENT FAILS THE GATE. It used to print a line
+      // and let the run exit OK, on the reasoning that it was "not a
+      // failure by itself" — which contradicts what this mode claims
+      // (#2267 r28). Normal mode says every serving version is on the
+      // expected database; a version carrying the expected binding PLUS
+      // an undeclared one to the predecessor still reaches the database
+      // the cutover exists to leave, and a stale or partially-rolled
+      // gradual deployment is exactly how that arises.
+      //
+      // "Expected plus something else" is not the state the gate
+      // authorises, and printing it while exiting zero is the
+      // silence-reported-as-success this tool refuses everywhere else.
       for (const b of bindings) {
         if (needed.includes(b.name)) continue;
-        console.log(
-          `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${b.name}=${b.id} ` +
-            `(not declared in ${file})`,
+        problems.push(
+          `${script} version ${v.id}${share} carries an UNDECLARED D1 ` +
+            `binding ${b.name}=${b.id}, which ${file} does not declare.\n` +
+            `    The expected binding may also be present; that does not ` +
+            `make this one harmless — a version attached to a database ` +
+            `nothing declares can still read and write it.`,
         );
       }
     }
