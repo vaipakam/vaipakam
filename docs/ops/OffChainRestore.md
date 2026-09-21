@@ -208,13 +208,23 @@ then deploy.
    tree, and the carry and digest tools address a database that is not in
    this account.
 
-   Set `SUCCESSOR.id` to the new uuid. **`PREDECESSOR` in that file is a
-   different matter** — `vaipakam-archive` is not restored by this runbook
-   and will not exist in the new account, so the cutover tooling has no
-   second endpoint and is simply not usable there. That is correct: there
-   is nothing to cut over to or roll back from after a full-account
-   restore. Delete the module and its two callers, or leave them knowing
-   they will refuse.
+   Set `SUCCESSOR.id` to the new uuid, and **leave the module in place.**
+
+   **`PREDECESSOR` in that file is a different matter** — `vaipakam-archive`
+   is not restored by this runbook and will not exist in the new account,
+   so the cutover tooling has no second endpoint and is not usable there.
+   That is correct: there is nothing to cut over to or roll back from
+   after a full-account restore. The tools will refuse, by name, which is
+   the right behaviour.
+
+   **Do not delete the module** (#2267 r32). It is not a leaf:
+   `check-d1-name-consistency.mjs` reads it unconditionally through its
+   `COMMAND_GENERATORS` registry, and `apps/indexer/test/d1Reconcile.test.ts`
+   imports one of its callers — so removing it and its two callers breaks
+   the repository's own checks on a day when you are already restoring
+   from backup. Retiring it properly means the registry entry, the tests,
+   the package check wiring and the runbooks that reference it, which is
+   a deliberate piece of work and not a restore step.
 
    > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
    > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not

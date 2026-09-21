@@ -1473,10 +1473,48 @@ stranding precisely what §"Rolling back" adds the reverse carry to preserve.
 Two orders for one operation, in one section, the earlier one lossy. The
 sequence is:
 
-0. **Bring the rollback target's schema back to parity FIRST:**
+0a. **INVENTORY the rollback target before you migrate it** (#2267 r32).
+
+   This step exists because step 0b is destructive in the general case, and
+   it runs BEFORE step 2b has looked at anything.
+
+   A migration applied here can delete rows, drop a table, or remove a
+   column. Archive is the retained copy of everything written before the
+   switch, plus anything a straggler wrote after it — and step 2b, the
+   gate that finds exactly those late writes, has not run yet. So a
+   data-deleting migration destroys them with no conflict reported,
+   because there is nothing left to report. The column-projection refusal
+   added earlier does NOT cover this: it catches a schema that no longer
+   matches the manifest, and a migration that quietly removes rows leaves
+   the schema matching.
+
+   Reconciling first is not available either. Archive is on the older
+   schema at this point and warm is not, and the tool refuses a table
+   whose declaration differs between the two — correctly, and that
+   refusal is what makes step 2b trustworthy when it does run.
+
+   So the inventory is taken outside the tool:
 
    ```
    ROLLBACK_TARGET=vaipakam-archive     # the database being returned to
+   node apps/indexer/scripts/d1-carry-rows.mjs digest --db "$ROLLBACK_TARGET"
+   ```
+
+   Keep that output. **Then read the pending migrations before applying
+   them.** If any deletes rows, drops a table or removes a column:
+
+   - export the affected tables from archive first — the nightly B2
+     archive from `ops/offchain-data-warm` is the other copy, and
+     `OffChainRestore.md` is how it is read; and
+   - **say in the run log that the automated rollback is unavailable for
+     those tables.** What step 2b would have found is now recoverable
+     only from that export, by hand. This is a limitation NAMED, not
+     closed: replaying rows a migration deliberately removed is a
+     migration decision, and this tool does not make those.
+
+0b. **Bring the rollback target's schema back to parity:**
+
+   ```
    (cd apps/indexer && npx wrangler d1 migrations apply "$ROLLBACK_TARGET" --remote)
    (cd apps/indexer && npx wrangler d1 migrations list  "$ROLLBACK_TARGET" --remote)  # expect none pending
    ```
