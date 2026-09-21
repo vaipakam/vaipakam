@@ -235,6 +235,22 @@ because step 3 below is the part of it that had to be re-learned.
       the step built to find it. So if a mirror stops, the last good
       manifest is still on disk and still true; re-run the mirror for a
       fresh one.
+
+      **[run] 2026-09-21** — proven end to end against the live pair. A
+      mirror carried all 1,384 rows, then failed verification because
+      archive had moved under it:
+
+      ```
+      wrote 1384 row(s)
+      STOPPED — 2 problem(s):
+        - indexer_cursor: source d08701b9… (19 rows) != destination 284bbe4a… (19 rows)
+        - recycle_backing_snapshot: source 066e5e1b… (2 rows) != destination e50b5fa4… (2 rows)
+      ```
+
+      The manifest path was **never created**. Under the previous code it
+      would have been written immediately after `wrote 1384 row(s)` — before
+      the digests ran, before anything was known to be wrong — and those
+      two moving tables would have become the new baseline.
    4. `digest --db vaipakam-archive` once more. If it differs from step 3's
       source digest, something committed during the carry: return to step 2.
    5. Merge. The three Workers redeploy onto warm (#2237). **Then deploy
