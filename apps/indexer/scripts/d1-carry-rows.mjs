@@ -452,18 +452,67 @@ async function orderByDependency(dbId, tables) {
 
 // -------------------------------------------------------------------- rows
 
+/**
+ * A PAGED READ IS NOT A SNAPSHOT, and this tool must not treat one as if
+ * it were.
+ *
+ * Each `LIMIT/OFFSET` page is a separate statement against a database that
+ * may be changing. A row inserted between pages whose sort position falls
+ * into a page already read is never returned by any of them — it is
+ * skipped entirely, silently, and the caller cannot tell. `activity_events`
+ * holds 1,125 rows against a `PAGE` of 500, so this table really does
+ * page, and a straggler inserting an older event is precisely the row the
+ * reconciliation exists to find.
+ *
+ * Raising `PAGE` past the table size would hide it until the data grew.
+ * Keyset paging does not fix it either: a row inserted behind the cursor
+ * is still missed. What is actually available is to READ TWICE AND
+ * COMPARE — if two complete passes agree, nothing moved across them and
+ * the result is a consistent view; if they disagree, the database is
+ * moving and any conclusion drawn from one pass is unsound.
+ *
+ * Against the quiesced source the cutover requires, the second pass agrees
+ * first time and costs one extra read. Against a moving database it fails
+ * loudly, which is the correct outcome: `reconcile` reporting "clean" from
+ * a read that may have skipped a row is exactly the false pass this whole
+ * change keeps removing.
+ */
 async function readAll(dbId, table, cols) {
   const quoted = cols.map((c) => `"${c}"`).join(', ');
-  const out = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const rows = await query(
-      dbId,
-      `SELECT ${quoted} FROM "${table}" ORDER BY ${quoted} LIMIT ${PAGE} OFFSET ${offset}`,
-    );
-    out.push(...rows);
-    if (rows.length < PAGE) break;
+  const onePass = async () => {
+    const out = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const rows = await query(
+        dbId,
+        `SELECT ${quoted} FROM "${table}" ORDER BY ${quoted} LIMIT ${PAGE} OFFSET ${offset}`,
+      );
+      out.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    return out;
+  };
+
+  // A table that fits in one page cannot be torn by paging at all, so the
+  // second pass is only needed once there is more than one page.
+  let first = await onePass();
+  if (first.length < PAGE) return first;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const second = await onePass();
+    if (digestOf(second, cols).digest === digestOf(first, cols).digest) {
+      return second;
+    }
+    first = second;
   }
-  return out;
+  fail(
+    `"${table}" changed while it was being read, three times running. It ` +
+      `spans more than one page (${PAGE} rows), so a row inserted between ` +
+      `pages can fall into a page already read and be skipped without any ` +
+      `sign — which would let a reconciliation report "clean" having never ` +
+      `seen it.\n\nThis is what a source that has NOT stopped looks like. ` +
+      `Close the barrier (check-live-d1-bindings.mjs --writers-held) and ` +
+      `run again.`,
+  );
 }
 
 /** JSON of the values in declared column order — null and "" stay distinct. */

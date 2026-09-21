@@ -174,14 +174,15 @@ finished, and the procedure no longer pretends otherwise.** Work that is
 suspended waiting on something else can sit out every reading and commit
 afterwards. So the last step is not the switch: once the services are running
 against the new database, the old one is read again and anything that turned up
-late is carried across — using the mode that adds only what is missing, so
-nothing the services have written since is disturbed. That repeats until two
-consecutive runs find nothing, and the old database is kept regardless, so a
-record noticed a week later is still recoverable.
+late is **reported** — the step reads both databases and writes to neither, so
+nothing the services have written since can be disturbed by it. Each
+difference it names is applied by a person. That repeats until two consecutive
+runs find nothing, and the old database is kept regardless, so a record
+noticed a week later is still recoverable.
 
 **A late arrival and a late change are different problems, and only one of
 them is obvious.** A straggler that creates a new record leaves the new
-database without it, and the reconciliation simply carries it over. A
+database without it, which the reconciliation can see and name. A
 straggler that *changes an existing* record — an offer's status, a
 notification preference, how far the chain has been read — leaves a record
 that already exists on both sides, so a reconciliation that asks only "is

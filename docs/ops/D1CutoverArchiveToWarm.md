@@ -205,6 +205,17 @@ because step 3 below is the part of it that had to be re-learned.
       > Workers can run the barrier; one that cannot, cannot, and the
       > cutover does not start.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
+
+      **A table bigger than one page is read twice and compared, and the
+      tool refuses if the two passes disagree** (#2267 r19). Paged reads
+      are separate statements: a row inserted between pages whose sort
+      position falls into a page already read is returned by none of them,
+      so it is skipped with no sign. `activity_events` holds 1,125 rows
+      against a page of 500, so it really does page. Against a source that
+      has stopped, the second pass agrees first time. Against one that has
+      not, the run fails and names this step — which is the right answer,
+      because a reconciliation reporting "clean" from a read that may have
+      skipped a row is the false pass this procedure keeps removing.
       **If anything changed, do not proceed — wait and repeat.** Two
       consecutive identical digests, ten minutes apart, allow the next step.
    3. `carry --from vaipakam-archive --to vaipakam-warm --mirror --manifest
