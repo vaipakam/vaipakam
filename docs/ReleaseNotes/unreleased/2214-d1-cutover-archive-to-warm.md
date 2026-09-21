@@ -181,6 +181,28 @@ destination already has that value — and the reconciliation reports what it
 found rather than claiming the two sides are identical, because by then the
 new database has legitimately moved on.
 
+### The check that the move happened was itself reading the wrong thing
+
+The last step of the move is confirming which database each service ended up
+attached to. The instruction for doing that said to read the service's stored
+configuration — and that turns out to report the most recently *uploaded*
+configuration, which on this repository is routinely one built from a branch
+and released to nobody.
+
+This was not a theoretical objection. Read that way during the preparation,
+the indexing service reported the **new** database while the version actually
+handling requests — released the day before — was still attached to the
+**old** one. The move would have been declared complete while every write
+continued to land in the database being left behind: a check that fails in
+the direction of saying yes.
+
+The check is now a recorded procedure that asks what is *serving*: the
+release currently taking traffic, every version within it — traffic can be
+split across several, and a move that reached most of it is not a move — and
+that version's own attachment. Run before the switch, it correctly reports all
+four services still on the old database, which is what a working check looks
+like when the thing it checks has not happened yet.
+
 ### Rolling back is another move, not an undo
 
 The old database still exists and still holds its rows. Nothing here deletes it,

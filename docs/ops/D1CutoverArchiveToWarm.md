@@ -130,7 +130,10 @@ because step 3 below is the part of it that had to be re-learned.
       against a warm that nothing is writing to yet.
    4. `digest --db vaipakam-archive` once more. If it differs from step 3's
       source digest, something committed during the carry: return to step 2.
-   5. Merge. The Workers redeploy onto warm; verify each binding **id**.
+   5. Merge. The Workers redeploy onto warm; verify with
+      `check-live-d1-bindings.mjs` — which asks what each Worker is SERVING,
+      not what its latest upload says (§3 explains why that distinction cost
+      a false pass).
    6. **Reconcile, and keep reconciling.**
       `carry --from vaipakam-archive --to vaipakam-warm --only-missing`,
       which inserts anything that appeared in archive late and **touches
@@ -871,13 +874,46 @@ of the world rather than of the check.
 (#2238 r3 P1, adjusted r6 P2). Confirmation is two passes, and the first is
 the one that authorises restoring normal operation:
 
-1. **Binding read — control plane.** Read each Worker's D1 binding
-   (*Settings → Bindings*, or the API) and confirm every one names the
-   intended database. A configuration check, labelled as such. It is the only
-   check that distinguishes "build still running" and "build failed" from
-   "switched", since it reflects what is actually deployed — and the only one
-   available at all if the writers have been stopped, because the write probes
-   below go through the very surfaces a stoppage closes.
+1. **Binding read — control plane.** Run
+
+   ```
+   node apps/indexer/scripts/check-live-d1-bindings.mjs
+   ```
+
+   A configuration check, labelled as such. It is the only check that
+   distinguishes "build still running" and "build failed" from "switched",
+   since it reflects what is actually deployed — and the only one available at
+   all if the writers have been stopped, because the write probes below go
+   through the very surfaces a stoppage closes.
+
+   > **Do NOT read this from *Settings → Bindings* or from
+   > `/workers/scripts/<name>/settings`. That probe returns the wrong answer,
+   > and it returns it in the PASSING direction.** Those report the bindings
+   > of the most recently UPLOADED version, which on a repository with branch
+   > builds is a version nobody is served. Measured 2026-09-21, mid-cutover:
+   > `settings` reported `DB=e5e927cf…` (**warm**) for `vaipakam-indexer`,
+   > while the deployment actually serving traffic — version `964d9628…`,
+   > uploaded the previous day — was bound to `3cffebf5…` (**archive**). A
+   > cutover "verified" that way is declared complete while every write still
+   > lands in the database being abandoned.
+   >
+   > The script asks the DEPLOYMENT instead: the active deployment, then
+   > **every version inside it** — a gradual deployment splits traffic, so
+   > checking only the first would let a 90/10 split pass with a tenth of
+   > requests still writing to the old database — then that version's own
+   > bindings. The expected id comes from `apps/indexer/wrangler.jsonc`, not
+   > from an argument. A version with no D1 binding at all is reported as the
+   > maintenance build rather than as a mismatch, since that is a deliberate
+   > state during the switch.
+   >
+   > This replaces the wording added in #2267 r1, which said to read the
+   > binding id "from the control plane" without saying which reading — and
+   > the obvious reading is the one that lies.
+
+   **[run] 2026-09-21, before the switch** — all four Workers reported
+   `MISMATCH` on `3cffebf5…` (archive) at 100%, which is the correct
+   pre-cutover answer and is what a probe that works looks like when the
+   thing it checks has not happened yet.
 2. **Write probes — behaviour.** Run them once traffic is flowing again. They
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
@@ -895,11 +931,15 @@ open. The binding read closes the window; the write confirms it afterwards.
   `rowCount` per table: against the target those are ~0, against the source
   they are the old ~1,100. That is the discriminator.~~ **Retired 2026-09-21
   (#2267 r1): the data was copied, so both databases report the same counts
-  and this can no longer tell them apart.** Read this Worker's `DB_ARCHIVE`
-  binding id from the control plane instead — and note that the binding read
-  is the *only* discriminator here, because the backup Worker exports a fixed
-  table set from wherever it is pointed and has no surface of its own to
-  write a sentinel through.
+  and this can no longer tell them apart.** Use
+  `check-live-d1-bindings.mjs` instead — it covers this Worker too, reading
+  its `DB_ARCHIVE` binding from the version actually serving. Note that the
+  binding read is the *only* discriminator here, because the backup Worker
+  exports a fixed table set from wherever it is pointed and has no surface of
+  its own to write a sentinel through. Note also that this Worker is deployed
+  **by hand**, so the merge does not move it — its line in the probe's output
+  stays `MISMATCH` until someone deploys it, which is the probe doing its job
+  rather than a fault.
 
 ## 4. Rollback
 
