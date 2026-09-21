@@ -7010,6 +7010,126 @@ on the live era alone.
   refusals; and the holder invariants under a handler that delivers
   old-wire packets.
 
+> **3b-ii SCOUTED 2026-09-21, and cut in two on the same kind of evidence
+> that split 3b.** Two measurements, taken after 3b-i merged (`ff92150df`):
+>
+> - **Round count.** 3b-i carried roughly a third of the bullets above and
+>   took sixteen Codex rounds, past the fifteen-round cap, with the last
+>   round arrested at the root. The remaining two thirds in one PR would
+>   not fit under the cap; the cap is the owner's, so the cut is.
+> - **Headroom, on `main` after 3b-i** (quick profile, same viaIR and
+>   optimizer as production): `InteractionRewardsLensFacet` 1,318 bytes
+>   free, `RewardReconciliationFacet` 1,413, `RewardCustodyFacet` 1,667,
+>   `InteractionRewardsFacet` 1,734, `RewardClaimFacet` 1,870,
+>   `RewardHorizonSweepFacet` 2,804; `RewardEpochFacet` 21,695.
+>   `LibInteractionRewards` is inlined into four of the six tightest, so
+>   every line the draw adds to the day walk lands in all four at once.
+>   The 3b-i note's rule stands: the pass is hosted on `RewardEpochFacet`
+>   and each consumer carries only the call.
+>
+> The seam is SPEND versus CLOSE-OUT, so each half is again whole:
+>
+> - **3b-ii-A — the draws (SPEND).** Everything an obligation needs to be
+>   PAID from an epoch: the `eraBalance(era)` interface reading zero; the
+>   per-day two-leg allocation rule (matching transport first per
+>   component, scarce transport split by typed shortfall, fresh first on
+>   ties, the unarrived-day necessity constraint) hosted on
+>   `RewardEpochFacet`; the split `transportPaid / eraPaid / livePaid`
+>   recorded at the claim's day walk, the forfeit sweep (row 1), the expiry
+>   sweep (row 5) and settlement, each downstream chokepoint seeing only
+>   its residual; the recycled leg's commitment released without a bucket
+>   debit; a transport-funded absorption as the in-holder
+>   `Unclassified → Recycled` attribution move (an epoch's value rests in
+>   the holder's `Unclassified` row — the draw is a debit of that row, so
+>   the conservation invariant the 3b-i suite already pins keeps holding);
+>   the leg counters as written quantities inside the per-packet bound;
+>   staging with batch references, deferred exhaustion transitions,
+>   permissionless expiry, the batch-keyed cooldown and priority-mode
+>   reservations; row 13's PREPARATION operation and its O(1) read; and
+>   the refusal of a CONTESTED allocation with a named reason until 3c.
+>   Nothing in this half opens the release entries.
+> - **3b-ii-B — the close-out (RELEASE).** The per-day obligation check
+>   #2258 asks for (below), the release entries opened on it — parking
+>   permissionless and refused while any listed day is open or any
+>   staging reference stands, the acknowledgment an operator act — the
+>   batch-keyed pending remainder and its membership-bound restore, the
+>   operator dispositions (repatriation, evidence-backed classification)
+>   with the refusal they leave standing, and batch-bound replacement
+>   funding that clears a disposition by amount. Lands after A: a release
+>   before the draws exist would close out epochs nothing has drawn from.
+>
+> **The per-day obligation figure — what the scout found, and the shape
+> it recommends.** #2258 recorded that no per-day outstanding-obligation
+> figure exists and that answering the design's question meant walking
+> entries. Four facts from the code bound the design space:
+>
+> 1. An obligation is a `RewardEntry`, a DAY RANGE `[startDay, endDay)`
+>    per user and side; there is no per-day index of entries. A per-day
+>    counter maintained on the settlement paths is therefore O(window) per
+>    whole-window settlement: the forfeit and expiry sweeps price the
+>    remaining window in O(1) off the cumulative curves and never loop
+>    days, so a 365-day loan swept would write 365 cold slots (about 8M
+>    gas) — or the sweeps become resumable, a new partial state on a path
+>    that has none.
+> 2. **A past day's covering set is FIXED.** Registration stamps
+>    `startDay = today + 1` on every entry (new and re-registered), and
+>    `_closeEntry` only ever SHRINKS `endDay` to `today + 1` — so no entry
+>    can ever begin covering a day that has passed, and none can stop
+>    covering one. "Every obligation on day `d` has terminated" is a
+>    monotone fact about `d` once `d` has passed: provable once, true
+>    forever, and a property of the DAY rather than of any batch listing it.
+> 3. **The chain already enumerates a day's covering entries, verified.**
+>    The mirror's commitment accumulation (`accumulateBatch`) takes
+>    ascending entry ids from a keeper, refuses any that does not cover the
+>    day, and proves COMPLETENESS by conservation: the walk is whole when
+>    the per-day sum of visited entries' `perDayNumeraire18` equals the
+>    day's recorded side total. That total is exact for the covering set
+>    because of fact 2 (the frontier drop in `_applyDelta` is reachable
+>    only by a retroactive close, which `_closeEntry` cannot produce).
+> 4. Per-entry termination is already observable in O(1): `processed` for
+>    a settled or swept entry, and for a part-claimed entry the claim
+>    cursor `rewardEntryClaimNextDay` having passed the day.
+>
+> Five mechanisms were priced against these. (i) Per-day counters on the
+> settlement paths — fact 1's O(window). (ii) A Fenwick tree over days —
+> O(log D) per point update, but that is 14–32 cold writes per update at
+> loan acceptance and at every termination; a claim already costs several
+> hundred thousand gas per walked day and this would add most of that
+> again per entry. (iii) Blocked prefix sums — four writes per termination
+> and about 110 reads per queried day; cheaper, still a hot-path cost paid
+> by every loan on every chain for a check only a mirror with a legacy
+> delivery ever runs. (iv) Staging references alone, which is the letter of
+> §5c's "a batch with outstanding staging references cannot be retired" —
+> O(1), but blind to an obligation that has not yet drawn, which is
+> exactly the #2258 scenario the owner chose to refuse. (v) **A per-day
+> CLOSURE PROOF, which this note recommends and 3b-ii-B is written
+> against unless the owner overrules it:** a permissionless, resumable
+> walk with the SAME shape as the accumulation — ascending ids, a per-side
+> cursor, the cover check, the conservation completeness test — where
+> every visited entry must be terminated (fact 4) or the call reverts
+> naming the entry, and completion stamps `dayObligationsClosed[d]`. Zero
+> cost on any settlement path; paid once per day, ever, by whoever wants
+> the batch closed; reused by every batch that lists the day. Parking then
+> re-supplies the batch's day list against its 3a commitment and requires
+> every listed day stamped closed — paged with a cursor for a pre-cap
+> batch whose list exceeds one page, which is the resumable RETIRING path
+> the plan already names.
+>
+> **Residue, stated rather than implied.** A day whose entries can never
+> terminate — a funding stamp that never arrives leaves them unpriceable,
+> so neither claimable nor sweepable — keeps every batch that lists it
+> unparkable, and therefore unclassifiable and unrepatriable, for as long
+> as that holds. That is the conservative side, and it is the owner's
+> chosen side (#2258, Reading B): the value stays protected and visible in
+> `Unclassified`. The lane's own remedies for a missing stamp
+> (force-finalize, the manual budget path) are the exit, not a bypass in
+> the release.
+>
+> Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
+> allocations to 3c (the plan recommends yes, and A is written that way);
+> and whether the closure proof above is the accepted mechanism, on which
+> B proceeds as recommended absent a different answer.
+
 **Transport epochs PR 3c — the contested-allocation machinery.** The
 bonded exclusive challenger slot as one O(1) transport-domain flag; plans
 as committed roots over paginated assignment pages, shadow-validated
