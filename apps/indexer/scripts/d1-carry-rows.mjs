@@ -1373,12 +1373,28 @@ export function classifyAgainstManifestOnly({
   }
   let added = 0;
   let changed = 0;
+  const present = new Set();
   for (const r of rows) {
-    const seen = wasSeen[keyOf(r, key)];
+    const k = keyOf(r, key);
+    present.add(k);
+    const seen = wasSeen[k];
     if (seen === undefined) added += 1;
     else if (seen !== rowHash(r, cols)) changed += 1;
   }
-  if (added === 0 && changed === 0) return { insert: [], conflicts: [] };
+
+  // A DELETION IS A LATE WRITE TOO, and iterating the source's CURRENT
+  // rows can never see one (#2267 r45). The row is in no row — only the
+  // manifest remembers it — which is the same blind spot the main
+  // decision table needed a separate manifest pass for.
+  //
+  // It matters most in the case that reaches here: a destination whose
+  // key was dropped still HOLDS the row, so a deletion the source made
+  // for a retention or privacy reason has not happened there, and the
+  // one report that would have said so said nothing.
+  let deleted = 0;
+  for (const k of Object.keys(wasSeen)) if (!present.has(k)) deleted += 1;
+
+  if (added === 0 && changed === 0 && deleted === 0) return { insert: [], conflicts: [] };
   return {
     insert: [],
     conflicts: [
@@ -1386,10 +1402,11 @@ export function classifyAgainstManifestOnly({
         table,
         kind: 'written to after the mirror, in a table this run cannot compare',
         detail:
-          `${added} row(s) added and ${changed} changed on the source ` +
-          `since the mirror, and ${why}. Decide whether those writes ` +
-          `matter — the source's copy of them exists only while it is ` +
-          `retained`,
+          `${added} row(s) added, ${changed} changed and ${deleted} ` +
+          `DELETED on the source since the mirror, and ${why}. Decide ` +
+          `whether those writes matter — the source's copy of them ` +
+          `exists only while it is retained, and a deletion it made may ` +
+          `still be undone on the destination`,
       },
     ],
   };
@@ -1830,7 +1847,28 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     const heldShape = reportOnly && !destTableGone ? await shapeOf(dst.id, table) : null;
     const heldCols = heldShape ? heldShape.cols : cols;
     const missingKey = destTableGone ? [] : key.filter((c) => !heldCols.includes(c));
-    if (missingKey.length > 0) {
+    // A THIRD WAY THE DESTINATION LEAVES THE COMPARISON, and it was
+    // still taking the refusal path (#2267 r45). Without the key columns
+    // there, rows cannot be matched across the two sides — that part of
+    // the refusal was right. What was wrong is stopping: the SOURCE and
+    // the MANIFEST are untouched by a destination-side migration, so
+    // "did anything write here after the mirror" is still fully
+    // answerable, and answering it is the entire purpose of the weekly
+    // run. A refusal instead made every week emit the same generic line,
+    // in which a genuine late write is indistinguishable from the schema
+    // drift everyone already knows about.
+    const destKeyColumnsGone = reportOnly && missingKey.length > 0;
+    if (destKeyColumnsGone) {
+      driftNotes.push({
+        table,
+        detail:
+          `the destination no longer has key column(s) ` +
+          `${missingKey.map((c) => `"${c}"`).join(', ')}, so its rows ` +
+          `cannot be matched to the source's at all. The source is still ` +
+          `compared against the manifest below, so a late write here is ` +
+          `still reported`,
+      });
+    } else if (missingKey.length > 0) {
       plan.push({
         table,
         key,
@@ -1941,7 +1979,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // a note and then said VERIFIED — no unresolved late write was found,
     // having not looked. A blind spot that is merely printed is not a
     // blind spot that is handled.
-    const destOutOfComparison = destTableGone || destKeyless;
+    const destOutOfComparison = destTableGone || destKeyless || destKeyColumnsGone;
     const held = destOutOfComparison
       ? []
       : await readAll(dst.id, table, heldCols, query, {
@@ -2142,9 +2180,14 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           why: destTableGone
             ? `the destination has since DROPPED this table, so nothing ` +
               `here can be applied where the data now lives`
-            : `the destination still HAS this table but has dropped its ` +
-              `primary key, so its rows cannot be read coherently while ` +
-              `it is live — these writes may or may not already be there`,
+            : destKeyColumnsGone
+              ? `the destination still HAS this table but no longer has ` +
+                `the column(s) its rows were matched by, so nothing there ` +
+                `can be lined up with these — they may or may not already ` +
+                `be present under whatever identity it now uses`
+              : `the destination still HAS this table but has dropped its ` +
+                `primary key, so its rows cannot be read coherently while ` +
+                `it is live — these writes may or may not already be there`,
         })
       : onlyMissing
       ? classifyForReconcile({

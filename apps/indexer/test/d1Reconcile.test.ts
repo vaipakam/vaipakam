@@ -1298,7 +1298,7 @@ describe('a table the destination no longer has', () => {
       wasSeen: seenOf(mirrored),
     });
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0].detail).toContain('1 row(s) added and 1 changed');
+    expect(conflicts[0].detail).toContain('1 row(s) added, 1 changed and 0 DELETED');
     expect(conflicts[0].detail).toContain('DROPPED this table');
     // There is nowhere to apply them and cutover output gets pasted into
     // run logs, so the finding carries no row and no key.
@@ -1575,10 +1575,62 @@ describe('a destination out of the comparison is not a question dropped', () => 
         'key, so its rows cannot be read coherently while it is live',
     });
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0].detail).toContain('0 row(s) added and 1 changed');
+    expect(conflicts[0].detail).toContain('0 row(s) added, 1 changed and 0 DELETED');
     expect(conflicts[0].detail).toContain('dropped its primary key');
     // The two situations are different facts about what to do next, so
     // the wording must not claim the table is gone when it is not.
     expect(conflicts[0].detail).not.toContain('DROPPED this table');
+  });
+});
+
+describe('a deletion on the source is a late write too', () => {
+  // Iterating the source's CURRENT rows can never see one: the row is in
+  // no row at all, only the manifest remembers it. It matters most in
+  // exactly the case that reaches this classifier — a destination whose
+  // key was dropped still HOLDS the row, so a deletion the source made
+  // for a retention or privacy reason has not happened there, and the
+  // one report that would have said so said nothing (#2267 r45).
+  const seenOf = (rows: Record<string, unknown>[]) => {
+    const w: Record<string, string> = {};
+    for (const r of rows) w[k(r.id as number)] = hashOf(r);
+    return w;
+  };
+
+  it('counts a manifest key the source no longer has', () => {
+    const { conflicts } = classifyAgainstManifestOnly({
+      table: 'telegram_links',
+      cols,
+      key,
+      rows: [],
+      wasSeen: seenOf([{ id: 1, value: 'deleted since, for a reason' }]),
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].detail).toContain('1 DELETED');
+    expect(conflicts[0].detail).toContain('may still be undone on the destination');
+  });
+
+  it('still says nothing when the source has not moved at all', () => {
+    const rows = [{ id: 1, value: 'as mirrored' }];
+    expect(
+      classifyAgainstManifestOnly({ table: 't', cols, key, rows, wasSeen: seenOf(rows) })
+        .conflicts,
+    ).toEqual([]);
+  });
+
+  it('counts all three kinds together', () => {
+    const { conflicts } = classifyAgainstManifestOnly({
+      table: 't',
+      cols,
+      key,
+      rows: [
+        { id: 1, value: 'changed since' },
+        { id: 3, value: 'arrived since' },
+      ],
+      wasSeen: seenOf([
+        { id: 1, value: 'as mirrored' },
+        { id: 2, value: 'gone since' },
+      ]),
+    });
+    expect(conflicts[0].detail).toContain('1 row(s) added, 1 changed and 1 DELETED');
   });
 });
