@@ -1,0 +1,599 @@
+#!/usr/bin/env node
+/**
+ * d1-carry-rows — carry the rows of one D1 database into another, and
+ * prove afterwards what both sides hold.
+ *
+ * WHY THIS IS CODE AND NOT A PROCEDURE IN A RUNBOOK (#2214). The first
+ * copy of the archive → warm cutover was done ad hoc, reported success,
+ * and had silently lost a row. Nothing about it was reproducible: the
+ * table set, the conflict keys, the batch sizing and the comparison all
+ * lived in a terminal session. A data step that cannot be re-run
+ * identically cannot be verified, and the cutover re-runs it — once more
+ * after the writers stop, and again after the switch.
+ *
+ * WHAT THIS TOOL IS SHAPED BY. Four review rounds, each finding the same
+ * seam from a different side, are why it looks like this rather than like
+ * a one-way copy:
+ *
+ *   - **One end of a carry is always the SHARED database.** Not "the
+ *     destination is fixed" — an earlier revision fixed the destination,
+ *     which made the tool unable to perform the ROLLBACK the functional
+ *     spec requires (stop → carry rows → switch, in the other direction).
+ *     The property that actually matters is that a carry cannot be aimed
+ *     between two arbitrary databases: the shared one, as
+ *     `apps/indexer/wrangler.jsonc` declares it, is always one end. Both
+ *     directions are reachable; neither is reachable by accident.
+ *
+ *   - **Parents before children.** Tables are ordered by their FOREIGN
+ *     KEY dependencies, not alphabetically. D1 enforces foreign keys, and
+ *     alphabetical order puts `notify_state` before the `user_thresholds`
+ *     row it references — so a child created between two carries would be
+ *     rejected, aborting the very copy the cutover depends on. Deletes go
+ *     in the reverse order for the same reason.
+ *
+ *   - **A deletion on the source is a difference like any other.** An
+ *     upsert-only copy can never make the two sides equal once a row has
+ *     been deleted on the source — live writers expire `telegram_links`,
+ *     prune diagnostics and cancel offers between carries — so the
+ *     destination keeps a row the source no longer has and the digest
+ *     never converges. `mirror` therefore also removes destination rows
+ *     whose key is absent from the source. That is only safe against an
+ *     INERT destination, which the tool says out loud.
+ *
+ *   - **A live destination gets `--only-missing` instead.** Reconciling
+ *     into a database that is being written to must not overwrite what it
+ *     has: rows are inserted only where the key is absent, nothing is
+ *     updated and nothing is deleted. This is the post-switch
+ *     reconciliation mode, and it is the reason the cutover does not have
+ *     to claim its drain barrier is a proof.
+ *
+ * Never carried: `sqlite_*` and `_cf_*` (the engine's and the platform's
+ * own — `_cf_KV` refuses to be read at all), and `d1_migrations`, because
+ * a database's record of which migrations have run against IT is its own
+ * and overwriting it would assert history that never happened.
+ *
+ * SCALE. Both sides are read in full, in memory, to compare them. That is
+ * right for a cutover of this database — 1,384 rows across 43 tables —
+ * and is stated rather than assumed: a database large enough not to fit
+ * needs a different tool, not a bigger `PAGE`.
+ *
+ * USAGE
+ *
+ *   # what a database holds, table by table
+ *   node apps/indexer/scripts/d1-carry-rows.mjs digest --db vaipakam-archive
+ *
+ *   # the cutover copy: destination inert, made identical to the source
+ *   node apps/indexer/scripts/d1-carry-rows.mjs carry \
+ *     --from vaipakam-archive --to vaipakam-warm
+ *
+ *   # post-switch reconciliation: destination LIVE, nothing overwritten
+ *   node apps/indexer/scripts/d1-carry-rows.mjs carry \
+ *     --from vaipakam-archive --to vaipakam-warm --only-missing
+ *
+ * See `docs/ops/D1CutoverArchiveToWarm.md` for where each belongs in the
+ * sequence, and for why `digest` run twice is the drain barrier.
+ *
+ * ENVIRONMENT: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (D1
+ * read+write). The D1 HTTP API is used rather than `wrangler d1 execute`
+ * because it BINDS parameters: a copy that formats its values into SQL is
+ * a copy whose correctness depends on quoting every type correctly, and
+ * this one moves rows a person's money position is described by.
+ */
+
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO = join(__dirname, '..', '..', '..');
+
+/** The single declaration of the shared database. */
+const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
+
+const NEVER_CARRIED = (t) =>
+  t.startsWith('sqlite_') || t.startsWith('_cf_') || t === 'd1_migrations';
+
+/**
+ * D1 caps bound parameters per statement. 90 is the working headroom the
+ * archive → warm carry was sized against; rows per batch is
+ * floor(90 / columns), which is why wide tables go in twos.
+ */
+const MAX_PARAMS = 90;
+
+/** Rows pulled per SELECT. Bounds one response, not the total. */
+const PAGE = 500;
+
+function fail(msg) {
+  console.error(`\n[d1-carry-rows] ${msg}\n`);
+  process.exit(1);
+}
+
+/** Strip JSONC comments without mangling string contents. */
+function parseJsonc(src, file) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < src.length) {
+        if (src[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (src[j] === '"') break;
+        j += 1;
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  try {
+    return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+  } catch (err) {
+    fail(`${file}: not parseable as JSONC — ${err.message}`);
+  }
+}
+
+// --------------------------------------------------------------- validation
+
+/**
+ * Ids and names are built into request paths and identifiers into
+ * statements, so each is checked against its shape rather than trusted
+ * for having come from a committed file or from the API: a mis-edited
+ * config should fail here, naming the field, not become part of a URL.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const DB_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** Values are bound; an identifier cannot be, so identifiers are checked. */
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function checked(value, pattern, what) {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    fail(`${what} is not a well-formed value: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function sharedDatabase() {
+  const cfg = parseJsonc(
+    readFileSync(join(REPO, DECLARING_FILE), 'utf8'),
+    DECLARING_FILE,
+  );
+  const entry = (cfg.d1_databases ?? []).find((e) => e.binding === 'DB');
+  if (!entry?.database_name || !entry?.database_id) {
+    fail(
+      `${DECLARING_FILE} has no complete "DB" d1 binding. That file is the ` +
+        `single declaration of the shared database, so this tool has no ` +
+        `anchor it is willing to trust.`,
+    );
+  }
+  return {
+    name: checked(entry.database_name, DB_NAME, `${DECLARING_FILE} database_name`),
+    id: checked(entry.database_id, UUID, `${DECLARING_FILE} database_id`),
+  };
+}
+
+// ----------------------------------------------------------------- transport
+
+const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
+const TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const API = 'https://api.cloudflare.com/client/v4';
+
+/**
+ * One request against an ACCOUNT-RELATIVE path. The account id is joined
+ * here and nowhere else, so it cannot reach a log line: an error names
+ * the endpoint, which is what diagnoses a failure, while the credentials
+ * and the account identity stay out of the diagnosis.
+ */
+async function cf(subpath, init = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let res;
+    try {
+      res = await fetch(`${API}/accounts/${ACCOUNT}${subpath}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          'Content-Type': 'application/json',
+          ...(init.headers ?? {}),
+        },
+      });
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+      continue;
+    }
+    const text = await res.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+    if (res.ok && body?.success) return body.result;
+    // The body is the diagnosis and must never be swallowed: the batching
+    // bug in the first copy looked like a bare "HTTP 400" for exactly as
+    // long as the wrapper printed only the status.
+    lastErr = new Error(`HTTP ${res.status} on ${subpath}\n${text.slice(0, 2000)}`);
+    if (res.status < 500) break;
+    await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+  }
+  throw lastErr;
+}
+
+/** One statement against one database. `params` are bound, never spliced. */
+async function query(dbId, sql, params = []) {
+  const result = await cf(
+    `/d1/database/${checked(dbId, UUID, 'database id')}/query`,
+    { method: 'POST', body: JSON.stringify({ sql, params }) },
+  );
+  return result?.[0]?.results ?? [];
+}
+
+async function resolveByName(name) {
+  checked(name, DB_NAME, 'database name');
+  const list = await cf(`/d1/database?name=${encodeURIComponent(name)}`);
+  const hit = (list ?? []).find((d) => d.name === name);
+  if (!hit) fail(`no D1 database named "${name}" in this account`);
+  return { name, id: checked(hit.uuid, UUID, `id the API reports for ${name}`) };
+}
+
+// -------------------------------------------------------------- table shapes
+
+async function tablesOf(dbId) {
+  const rows = await query(
+    dbId,
+    `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`,
+  );
+  return rows
+    .map((r) => checked(r.name, IDENT, 'table name from sqlite_master'))
+    .filter((t) => !NEVER_CARRIED(t));
+}
+
+/** Column order and primary key, as the table itself declares them. */
+async function shapeOf(dbId, table) {
+  const info = await query(dbId, `PRAGMA table_info("${table}")`);
+  const cols = [...info]
+    .sort((a, b) => a.cid - b.cid)
+    .map((c) => checked(c.name, IDENT, `column name in ${table}`));
+  const key = info
+    .filter((c) => c.pk > 0)
+    .sort((a, b) => a.pk - b.pk)
+    .map((c) => checked(c.name, IDENT, `key column in ${table}`));
+  return { cols, key };
+}
+
+/**
+ * Parents before children. D1 enforces foreign keys, so insert order is
+ * not free: a child whose parent has not been carried yet is rejected,
+ * which would abort the carry rather than degrade it.
+ */
+async function orderByDependency(dbId, tables) {
+  const parentsOf = new Map(tables.map((t) => [t, new Set()]));
+  for (const t of tables) {
+    for (const fk of await query(dbId, `PRAGMA foreign_key_list("${t}")`)) {
+      const parent = fk.table;
+      if (typeof parent === 'string' && parent !== t && parentsOf.has(parent)) {
+        parentsOf.get(t).add(parent);
+      }
+    }
+  }
+  const state = new Map();
+  const ordered = [];
+  const visit = (t, stack) => {
+    if (state.get(t) === 'done') return;
+    if (state.get(t) === 'active') {
+      fail(
+        `foreign-key cycle: ${[...stack, t].join(' → ')}. No insert order ` +
+          `satisfies a cycle, so this needs deferred constraints and a ` +
+          `decision — it is not something this tool should guess at.`,
+      );
+    }
+    state.set(t, 'active');
+    for (const p of parentsOf.get(t)) visit(p, [...stack, t]);
+    state.set(t, 'done');
+    ordered.push(t);
+  };
+  for (const t of tables) visit(t, []);
+  return ordered;
+}
+
+// -------------------------------------------------------------------- rows
+
+async function readAll(dbId, table, cols) {
+  const quoted = cols.map((c) => `"${c}"`).join(', ');
+  const out = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const rows = await query(
+      dbId,
+      `SELECT ${quoted} FROM "${table}" ORDER BY ${quoted} LIMIT ${PAGE} OFFSET ${offset}`,
+    );
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
+/** JSON of the values in declared column order — null and "" stay distinct. */
+const canonical = (row, cols) => JSON.stringify(cols.map((c) => row[c] ?? null));
+
+function digestOf(rows, cols) {
+  const lines = rows.map((r) => canonical(r, cols)).sort();
+  const h = createHash('sha256');
+  for (const l of lines) h.update(l).update('\n');
+  return { digest: h.digest('hex').slice(0, 16), count: rows.length };
+}
+
+async function digestDatabase(db) {
+  const out = new Map();
+  for (const table of await tablesOf(db.id)) {
+    const { cols } = await shapeOf(db.id, table);
+    out.set(table, digestOf(await readAll(db.id, table, cols), cols));
+  }
+  return out;
+}
+
+function printDigest(label, map) {
+  console.log(`\n${label}`);
+  let rows = 0;
+  for (const [table, { digest, count }] of [...map].sort()) {
+    rows += count;
+    console.log(`  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}`);
+  }
+  console.log(
+    `  ${'—'.repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)`,
+  );
+}
+
+// ------------------------------------------------------------------- carry
+
+const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
+
+/** Chunk so a statement never exceeds the bound-parameter cap. */
+function chunk(items, perBatch) {
+  const out = [];
+  for (let i = 0; i < items.length; i += perBatch) out.push(items.slice(i, i + perBatch));
+  return out;
+}
+
+async function upsert(dst, table, rows, cols, key, onlyMissing) {
+  if (rows.length === 0) return 0;
+  const quoted = cols.map((c) => `"${c}"`).join(', ');
+  const conflict = key.map((c) => `"${c}"`).join(', ');
+  const nonKey = cols.filter((c) => !key.includes(c));
+  // `DO NOTHING` is what --only-missing means at the statement level: an
+  // existing row is left exactly as the destination has it. A key-only
+  // table has nothing to update either way.
+  const action =
+    onlyMissing || nonKey.length === 0
+      ? 'NOTHING'
+      : `UPDATE SET ${nonKey.map((c) => `"${c}" = excluded."${c}"`).join(', ')}`;
+
+  for (const batch of chunk(rows, Math.max(1, Math.floor(MAX_PARAMS / cols.length)))) {
+    await query(
+      dst.id,
+      `INSERT INTO "${table}" (${quoted}) VALUES ` +
+        batch.map(() => `(${cols.map(() => '?').join(', ')})`).join(', ') +
+        ` ON CONFLICT (${conflict}) DO ${action}`,
+      batch.flatMap((r) => cols.map((c) => r[c] ?? null)),
+    );
+  }
+  return rows.length;
+}
+
+async function deleteKeys(dst, table, keyRows, key) {
+  if (keyRows.length === 0) return 0;
+  const perBatch = Math.max(1, Math.floor(MAX_PARAMS / key.length));
+  for (const batch of chunk(keyRows, perBatch)) {
+    const predicate = batch
+      .map(() => `(${key.map((c) => `"${c}" = ?`).join(' AND ')})`)
+      .join(' OR ');
+    await query(
+      dst.id,
+      `DELETE FROM "${table}" WHERE ${predicate}`,
+      batch.flatMap((r) => key.map((c) => r[c] ?? null)),
+    );
+  }
+  return keyRows.length;
+}
+
+async function carry(src, dst, { onlyMissing }) {
+  const tables = await orderByDependency(src.id, await tablesOf(src.id));
+  const dstTables = new Set(await tablesOf(dst.id));
+
+  const plan = [];
+  for (const table of tables) {
+    const { cols, key } = await shapeOf(src.id, table);
+    if (!dstTables.has(table)) {
+      plan.push({ table, refused: 'the destination has no such table' });
+      continue;
+    }
+    if (key.length === 0) {
+      plan.push({
+        table,
+        refused:
+          'no primary key, so nothing identifies a row: an upsert has no ' +
+          'conflict target and a re-run would duplicate every row',
+      });
+      continue;
+    }
+    const rows = await readAll(src.id, table, cols);
+    const have = new Set(
+      (await readAll(dst.id, table, cols)).map((r) => keyOf(r, key)),
+    );
+    plan.push({
+      table,
+      cols,
+      key,
+      insert: rows.filter((r) => !have.has(keyOf(r, key))),
+      all: rows,
+      surplus: onlyMissing
+        ? []
+        : (await readAll(dst.id, table, cols)).filter(
+            (r) => !rows.some((s) => keyOf(s, key) === keyOf(r, key)),
+          ),
+    });
+  }
+
+  // Deletes run children-first, which is the reverse of the insert order,
+  // for the same foreign-key reason the insert order exists.
+  for (const step of [...plan].reverse()) {
+    if (step.refused || step.surplus.length === 0) continue;
+    await deleteKeys(dst, step.table, step.surplus, step.key);
+  }
+
+  let written = 0;
+  for (const step of plan) {
+    if (step.refused) {
+      console.log(`  ${step.table.padEnd(32)} REFUSED — ${step.refused}`);
+      continue;
+    }
+    const rows = onlyMissing ? step.insert : step.all;
+    written += await upsert(dst, step.table, rows, step.cols, step.key, onlyMissing);
+    const note = onlyMissing
+      ? `${step.insert.length} missing`
+      : `${step.all.length} upserted, ${step.surplus.length} removed`;
+    if (step.all.length || step.surplus.length) {
+      console.log(`  ${step.table.padEnd(32)} ${note}`);
+    }
+  }
+  return { written, refused: plan.filter((s) => s.refused) };
+}
+
+// -------------------------------------------------------------------- main
+
+async function main() {
+  const [mode, ...rest] = process.argv.slice(2);
+  const arg = (flag) => {
+    const i = rest.indexOf(flag);
+    return i === -1 ? null : rest[i + 1];
+  };
+
+  if (!ACCOUNT || !TOKEN) {
+    fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
+  }
+  const shared = sharedDatabase();
+
+  if (mode === 'digest') {
+    const name = arg('--db');
+    if (!name) fail('digest needs --db <name>');
+    const db = name === shared.name ? shared : await resolveByName(name);
+    printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
+    return;
+  }
+
+  if (mode !== 'carry') {
+    fail(
+      'usage:\n' +
+        '  d1-carry-rows.mjs digest --db <name>\n' +
+        '  d1-carry-rows.mjs carry  --from <name> --to <name> [--only-missing]',
+    );
+  }
+
+  const fromName = arg('--from');
+  const toName = arg('--to');
+  if (!fromName || !toName) fail('carry needs both --from <name> and --to <name>');
+  if (fromName === toName) fail('--from and --to name the same database');
+  // The guarantee is not "the destination is fixed" — that version of this
+  // tool could not perform the rollback the functional spec requires. It is
+  // that a carry always has the shared database at one end, so rows cannot
+  // be moved between two databases this repository does not account for.
+  if (fromName !== shared.name && toName !== shared.name) {
+    fail(
+      `neither --from "${fromName}" nor --to "${toName}" is the shared ` +
+        `database (${shared.name}, per ${DECLARING_FILE}). One end of a ` +
+        `carry is always the shared database.`,
+    );
+  }
+
+  const src = fromName === shared.name ? shared : await resolveByName(fromName);
+  const dst = toName === shared.name ? shared : await resolveByName(toName);
+  const onlyMissing = rest.includes('--only-missing');
+
+  console.log(
+    `carrying ${src.name} (${src.id})\n` +
+      `     into ${dst.name} (${dst.id})\n` +
+      (onlyMissing
+        ? `     mode: only-missing — rows absent from the destination are ` +
+          `inserted; nothing it already holds is updated or removed, so a ` +
+          `LIVE destination is safe`
+        : `     mode: mirror — the destination is made identical to the ` +
+          `source, INCLUDING removing rows the source no longer has. Run ` +
+          `this only against a destination nothing is writing to`),
+  );
+
+  const { written, refused } = await carry(src, dst, { onlyMissing });
+  console.log(`wrote ${written} row(s)`);
+
+  // Verification is part of the carry, not a step someone may skip.
+  const [srcD, dstD] = [await digestDatabase(src), await digestDatabase(dst)];
+  printDigest(`source  ${src.name}`, srcD);
+  printDigest(`target  ${dst.name}`, dstD);
+
+  const refusedNames = new Set(refused.map((r) => r.table));
+  const problems = [];
+  for (const [table, s] of srcD) {
+    if (refusedNames.has(table)) continue;
+    const d = dstD.get(table);
+    if (!d) {
+      problems.push(`${table}: absent from the destination`);
+    } else if (!onlyMissing && d.digest !== s.digest) {
+      problems.push(
+        `${table}: source ${s.digest} (${s.count} rows) != destination ` +
+          `${d.digest} (${d.count} rows)`,
+      );
+    } else if (onlyMissing && d.count < s.count) {
+      problems.push(
+        `${table}: destination holds ${d.count} rows, fewer than the ` +
+          `source's ${s.count} — rows are still missing`,
+      );
+    }
+  }
+
+  console.log('');
+  if (refused.length > 0) {
+    console.log(
+      `REFUSED, and therefore unverified: ` +
+        refused.map((r) => r.table).join(', ') +
+        ` — see above for why each.`,
+    );
+  }
+  if (problems.length > 0) {
+    console.error(
+      `\nVERIFICATION FAILED — ${problems.length} table(s):\n` +
+        problems.map((p) => `  - ${p}`).join('\n') +
+        `\n\nA difference is not always a fault in the carry: a source with ` +
+        `live writers moves on while it runs. That is why the cutover takes ` +
+        `its mirror carry with the writers stopped and reconciles with ` +
+        `--only-missing afterwards — read the sequence in ` +
+        `docs/ops/D1CutoverArchiveToWarm.md before deciding which this is.\n`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    onlyMissing
+      ? `VERIFIED — every table the source holds is present in ${dst.name} ` +
+        `with at least as many rows. This mode deliberately does not claim ` +
+        `the two sides are identical: the destination is live and its own ` +
+        `newer values are left alone.`
+      : `VERIFIED — every table the source holds is present in ${dst.name} ` +
+        `with an identical content digest.`,
+  );
+}
+
+main().catch((err) => fail(err.stack ?? String(err)));

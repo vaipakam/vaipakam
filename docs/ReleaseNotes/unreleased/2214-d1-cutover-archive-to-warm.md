@@ -83,14 +83,33 @@ session.** The first one was improvised — which tables, which key identifies a
 row, how many rows to send at once, and how to check afterwards all existed
 only in the operator's head — and it is the improvised copy that lost the row.
 Since the move requires running the copy again once the services stop, a step
-that cannot be repeated identically is a step that cannot be verified. The tool
-carries the three lessons as properties rather than instructions: it updates
-rows in place instead of replacing them, it compares contents rather than
-counts, and it has no setting that would let it write to the database being
-left behind — the destination is read from the services' own configuration.
-A table it cannot copy safely, because nothing identifies a row uniquely, is
-named and left alone rather than copied in a way that would duplicate on a
-second run.
+that cannot be repeated identically is a step that cannot be verified.
+
+The tool carries its lessons as properties rather than as instructions
+someone has to remember:
+
+- It updates rows in place instead of replacing them, which is what the lost
+  row was about.
+- It carries tables **in dependency order** — a record that refers to another
+  record goes after the one it refers to, because the database rejects it
+  otherwise and would abort the copy rather than degrade it. Alphabetical
+  order got this wrong for one real pair of tables.
+- It treats a record **deleted** on the original as a difference like any
+  other and removes it from the destination. Without that, an expired or
+  cancelled record left over from an earlier copy can never be cleared, and
+  the two sides can never be made to match at all.
+- It has a second mode for copying into a database that is **live**, which
+  adds only records the destination does not have and never overwrites or
+  removes anything. That is what makes the reconciliation described below
+  possible.
+- It compares contents rather than counts, as part of the copy.
+- It works in **either direction**, with one rule: one end of a copy is
+  always the platform's shared database. An earlier version fixed the
+  destination instead, which read as safer and quietly made the documented
+  way back impossible to perform.
+- A table it cannot copy safely, because nothing identifies a record
+  uniquely, is named and left alone rather than copied in a way that would
+  duplicate it next time.
 
 ### A previous decision was reversed, and is recorded as reversed
 
@@ -144,9 +163,23 @@ see: the old database's contents are read, read again ten minutes later, and
 the copy proceeds only if the two readings are identical — then read a third
 time afterwards, to catch anything that committed while the copy ran. This
 rests on "a write changes what the database holds", which is true by
-construction. Its one gap is stated rather than glossed: a write that stores
-the value already stored changes nothing observable — which is harmless for a
-copy, because the destination already has that value.
+construction.
+
+**Watching it hold still narrows the window. It does not prove the work has
+finished, and the procedure no longer pretends otherwise.** Work that is
+suspended waiting on something else can sit out every reading and commit
+afterwards. So the last step is not the switch: once the services are running
+against the new database, the old one is read again and anything that turned up
+late is carried across — using the mode that adds only what is missing, so
+nothing the services have written since is disturbed. That repeats until two
+consecutive runs find nothing, and the old database is kept regardless, so a
+record noticed a week later is still recoverable.
+
+Two smaller gaps are stated rather than glossed: a write that stores the value
+already stored changes nothing observable — harmless for a copy, because the
+destination already has that value — and the reconciliation reports what it
+found rather than claiming the two sides are identical, because by then the
+new database has legitimately moved on.
 
 ### Rolling back is another move, not an undo
 

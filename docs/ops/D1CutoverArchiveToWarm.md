@@ -25,38 +25,63 @@ because step 3 below is the part of it that had to be re-learned.
    switch requires re-running it. So the step is now a checked-in tool:
 
    ```
-   node apps/indexer/scripts/d1-copy-into-shared.mjs copy --from vaipakam-archive
-   node apps/indexer/scripts/d1-copy-into-shared.mjs digest --db vaipakam-archive
+   node apps/indexer/scripts/d1-carry-rows.mjs digest --db vaipakam-archive
+   node apps/indexer/scripts/d1-carry-rows.mjs carry \
+     --from vaipakam-archive --to vaipakam-warm
    ```
 
-   Three of its properties are load-bearing, all three learned the hard way,
-   and all three are now enforced by the tool rather than left to whoever
-   repeats the step:
+   Five of its properties are load-bearing. Each was learned by a review
+   round finding the previous version of this list insufficient, and each is
+   now enforced by the tool rather than left to whoever repeats the step:
 
-   - **The target is not an argument.** It is read from
-     `apps/indexer/wrangler.jsonc` — the single declaration
-     `check-d1-name-consistency` guards. There is no flag that makes the copy
-     write anywhere else, which is a stronger guarantee than a flag that is
-     checked: an operator cannot aim it at the database being abandoned,
-     because that capability is absent.
+   - **One end of a carry is always the SHARED database.** Not "the
+     destination is fixed" — that was the first version, and it made the tool
+     unable to perform the rollback §"Rolling back" requires, which is the
+     same move in the other direction. The property that matters is that rows
+     cannot be carried between two databases this repository does not account
+     for: the shared one, as `apps/indexer/wrangler.jsonc` declares it and
+     `check-d1-name-consistency` guards it, is always one end.
+   - **Parents before children.** Tables are ordered by FOREIGN KEY
+     dependency, not alphabetically. D1 enforces foreign keys, so a child
+     carried before its parent is *rejected*, aborting the carry — and
+     alphabetical order puts `notify_state` before `user_thresholds`.
+     Deletes run in the reverse order for the same reason.
    - **Upsert, never `INSERT OR REPLACE`.** `REPLACE` is `DELETE` + `INSERT`,
      and `notify_state` carries `ON DELETE CASCADE` to `user_thresholds`.
-     Copying alphabetically wrote the child first, and rewriting the parent
-     later cascaded the child away. `ON CONFLICT … DO UPDATE` mutates in place,
-     fires no cascade, does not depend on table order, and is re-runnable —
-     which is what makes a repeat copy safe. A table with no primary key has
-     no conflict target, so the tool **refuses it and names it** rather than
-     falling back to plain inserts that would duplicate on a second run.
+     The first copy wrote the child first and rewriting the parent cascaded it
+     away. `ON CONFLICT … DO UPDATE` mutates in place and is re-runnable. A
+     table with no primary key has no conflict target, so the tool **refuses
+     it and names it** rather than duplicating it on the next run.
+   - **A source-side DELETION is a difference like any other.** Upsert-only
+     can never make two sides equal once a row has been deleted on the
+     source — and live writers expire `telegram_links`, prune diagnostics and
+     cancel offers between carries. The default `mirror` therefore also
+     removes destination rows whose key the source no longer has, which is
+     what makes "identical digest" a reachable state rather than an
+     aspiration. It is only safe against an **inert** destination, and the
+     tool says so on every run.
+   - **A LIVE destination gets `--only-missing`.** Rows absent from the
+     destination are inserted; nothing it already holds is updated or
+     removed. This is the post-switch reconciliation mode, and it is why the
+     barrier below does not have to be a proof.
    - **Compare CONTENT, never row counts.** The count check passed on two
      tables that were not equal (`indexer_cursor`, `recycle_backing_snapshot`).
      The tool canonicalises each table's rows and hashes them, and the
-     comparison is part of the copy rather than a step someone may skip.
+     comparison is part of the carry rather than a step someone may skip.
 
    **[run] 2026-09-21** — the digest of both sides immediately after the
-   copy, with the Workers still live, showed **three** tables differing:
-   `indexer_cursor`, `protocol_config`, `recycle_backing_snapshot`. None was
-   a copy fault; all three are tables the running services rewrite, and the
-   source had simply moved on. That is the evidence for step 3.
+   first copy, with the Workers still live, showed **three** tables
+   differing: `indexer_cursor`, `protocol_config`, `recycle_backing_snapshot`.
+   None was a copy fault; all three are tables the running services rewrite,
+   and the source had simply moved on. That is the evidence for step 3.
+
+   **[run] 2026-09-21** — a mirror carry with the tool, still against live
+   Workers, brought `protocol_config` and `recycle_backing_snapshot` into
+   agreement and **failed verification on `indexer_cursor` alone**: 19 rows
+   on each side, different digests, because the indexer advanced it during
+   the carry. The tool exiting non-zero there is the correct outcome and is
+   the barrier's case made twice over — a carry taken against a live source
+   cannot converge, however well it is written.
 3. **The switch — NOT DONE, and it requires the writers stopped first.**
 
    The bindings change is staged in the PR but must not land while anything is
@@ -77,44 +102,58 @@ because step 3 below is the part of it that had to be re-learned.
    nothing they sent was recorded, which is the whole reason that mechanism
    exists.
 
-   **"Observed still" is the drain barrier, and it is deliberately not a
-   waiting time.** Removing the D1 binding stops any NEW invocation from
-   obtaining a handle, but an invocation already running — including
-   `waitUntil` work admitted before the gate — still holds the handle it was
-   given and can commit after the copy. How long that takes has never been
-   measured here, and §"Stopping the writers" refuses to invent a number for
-   it. A duration would be a guess; movement is a fact, so the barrier
-   observes movement instead:
+   **"Observed still" NARROWS the window. It does not prove the drain, and
+   this document will not say that it does.** Removing the D1 binding stops
+   any NEW invocation from obtaining a handle, but an invocation already
+   running — including `waitUntil` work admitted before the gate — still
+   holds the handle it was given. Such work can be suspended on something
+   external for longer than any interval chosen here, sit out every
+   observation, and commit afterwards. How long that takes has never been
+   measured, and §"Stopping the writers" refuses to invent a number for it;
+   observing stillness does not measure it either.
+
+   So the sequence has two distinct parts, and conflating them is the error
+   this revision exists to correct. Steps 1–5 make the window small.
+   **Step 6 is what closes it.**
 
    1. Deploy the maintenance build (no `d1_databases`) to all three Workers.
    2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
-      **If anything changed, the drain is not done — wait and repeat.** Only
-      two consecutive identical digests, ten minutes apart, allow the next
-      step.
-   3. Take the final copy.
-   4. `digest --db vaipakam-archive` once more. If it now differs from the
-      copy's source digest, something committed during the copy: discard the
-      claim, return to step 2. Only when it matches is the final copy final.
-   5. Merge.
+      **If anything changed, do not proceed — wait and repeat.** Two
+      consecutive identical digests, ten minutes apart, allow the next step.
+   3. `carry --from vaipakam-archive --to vaipakam-warm` — the mirror carry,
+      against a warm that nothing is writing to yet.
+   4. `digest --db vaipakam-archive` once more. If it differs from step 3's
+      source digest, something committed during the carry: return to step 2.
+   5. Merge. The Workers redeploy onto warm; verify each binding **id**.
+   6. **Reconcile, and keep reconciling.**
+      `carry --from vaipakam-archive --to vaipakam-warm --only-missing`,
+      which inserts anything that appeared in archive late and **touches
+      nothing warm has since written**. Repeat until two consecutive runs
+      carry zero rows. Only then is archive's content fully accounted for —
+      and archive is retained regardless, so a row found a week later is
+      still recoverable.
 
-   The premise this barrier rests on is "a write changes the digest", which
-   is true by construction — unlike "every writer is on this list", which is
-   the unbounded predicate §"Stopping the writers" refuses. Its residual is
-   stated rather than absorbed: a write that stores a value **identical** to
-   the one already there moves no digest. That is harmless for the copy — the
-   target already holds that value — and it is not a claim that nothing is
-   running. The barrier's guarantee is that **no observed change was in
-   flight across the copy**, which is what the copy needs, and nothing
-   larger.
+   Step 6 is not a belt-and-braces precaution; it is the only part of this
+   that covers work suspended across the whole barrier. It is possible
+   because the carry tool has a mode that is safe against a live
+   destination — reconciling with a mirror carry would roll warm's newer
+   rows back to archive's stale ones, which is a worse outcome than the
+   problem.
+
+   What steps 2 and 4 do rest on is "a write changes the digest", true by
+   construction — unlike "every writer is on this list", the unbounded
+   predicate §"Stopping the writers" refuses. Their residual is stated
+   rather than absorbed: a write storing a value **identical** to the one
+   already there moves no digest. Harmless for the carry, and not a claim
+   that nothing is running.
 
    The ten minutes is not a derived bound and is not presented as one; it is
    an observation interval long enough that ordinary movement shows up in it.
-   The **evidence** it is sized against is in step 2: three tables drifted
-   within minutes with the writers live, so a source that holds still for two
-   consecutive intervals is visibly not the source this document measured.
-   Tooling to produce the maintenance build without hand-editing production
-   config is still #2250; until it lands, that edit is an uncommitted,
-   operator-side change, and the operator restores the file afterwards.
+   The **evidence** it is sized against is in step 2 of the execution record:
+   three tables drifted within minutes with the writers live. Tooling to
+   produce the maintenance build without hand-editing production config is
+   still #2250; until it lands, that edit is an uncommitted, operator-side
+   change, and the operator restores the file afterwards.
 
    An earlier revision of this record listed the switch as done and described
    a "sync just before merging" as sufficient. It is not, and saying so was
@@ -917,16 +956,33 @@ accumulated rows rather than the target's emptiness. Running them as written
 would pass a Worker still bound to the target, which is the failure this
 rollback is trying to escape.
 
-**After that it is not free, and this plan does not offer a clean one.**
-New support tickets, thresholds, signed offers, notification state and
-cursors exist only in the target. Reverting points every Worker back at a
-source that is missing them, and the exports are plain `INSERT`s that collide
-with the source's surviving rows — so a reverse import is not a one-liner
-either.
+**After that it is not free.** New support tickets, thresholds, signed
+offers, notification state and cursors exist only in the target. Reverting
+the bindings alone points every Worker back at a source that is missing
+them — which strands those rows exactly as going forward without a carry
+would have stranded the originals.
 
-If rollback is needed after that point, treat it as its own cutover with the
-same care as the forward one. The honest planning assumption is: **once the
-Workers write to the new database, forward is the only direction.**
+**There IS now a repeatable path for it, and it is the forward sequence
+run backwards.** `d1-carry-rows.mjs` carries in either direction — the
+constraint is that the shared database is one END of a carry, not that it is
+the destination — so the reverse is:
+
+```
+node apps/indexer/scripts/d1-carry-rows.mjs carry \
+  --from vaipakam-warm --to vaipakam-archive
+```
+
+with the same barrier around it: stop the writers, observe the source still,
+mirror-carry, switch the bindings back, then reconcile with `--only-missing`
+in the same direction until two consecutive runs carry nothing. An earlier
+revision of this section said a reverse import "is not a one-liner either",
+which was true of the export/import approach it described and is no longer
+the only option.
+
+What has NOT changed is that this is **a cutover, not an undo**, and it
+costs what the forward one costs. The honest planning assumption stays:
+once the Workers write to the new database, treat forward as the direction
+and reach for this only with the same care.
 
 ## 5. Deleting the source
 
