@@ -85,6 +85,17 @@ const OTHER_DATABASES = new Map([
     'vaipakam-lz-alerts-db',
     'retired ops/lz-watcher (#1440) — still named in the restore runbook',
   ],
+  [
+    'vaipakam-archive',
+    'the PREVIOUS shared database (#2214). Still exists, still holds its ' +
+      'rows, and is the rollback target — so commands naming it are ' +
+      'legitimate: the dated deploy plan records the one-time apply that ' +
+      'was run against it in May 2026, and the cutover runbook addresses ' +
+      'it directly. It is NOT bound by any Worker, which is the point: ' +
+      'check 1 is what proves that, and this entry only exempts it from ' +
+      'check 2. Remove this entry when the database is actually deleted, ' +
+      'and check 2 will then find every command that outlived it.',
+  ],
 ]);
 
 /**

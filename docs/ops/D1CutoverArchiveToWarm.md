@@ -1,24 +1,58 @@
 # D1 cutover — `vaipakam-archive` → `vaipakam-warm`
 
-**Status: EXECUTED 2026-09-21.** Schema parity applied, data copied, bindings
-moved. What follows the execution record is the plan as written beforehand,
-kept because its reasoning is still the reasoning.
+**Status: PARTLY EXECUTED 2026-09-21 — schema and a first data copy are done;
+the switch itself is NOT.** What follows the execution record is the plan as
+written beforehand, kept because its reasoning is still the reasoning — and
+because step 3 below is the part of it that had to be re-learned.
 
 ## Execution record (2026-09-21)
 
-1. **Schema parity.** `vaipakam-warm` was four migrations behind — `0049`,
-   `0050`, `0052`, `0053` — and missing two tables (`loan_reconcile_quarantine`,
-   `prenotify_scan_cursor`). Applied with `wrangler d1 migrations apply`, so the
-   `d1_migrations` record is wrangler's own rather than hand-written. Both
-   databases now report **53 migrations and 46 tables**, with nothing in one
-   that is absent from the other.
-2. **Data copied** — 1,384 rows across 17 tables, verified equal table-by-table
-   against the source. `d1_migrations` was deliberately **not** copied: warm's
+1. **Schema parity — DONE.** `vaipakam-warm` was four migrations behind —
+   `0049`, `0050`, `0052`, `0053` — and missing two tables
+   (`loan_reconcile_quarantine`, `prenotify_scan_cursor`). Applied with
+   `wrangler d1 migrations apply`, so the `d1_migrations` record is wrangler's
+   own rather than hand-written. Both databases report **53 migrations and 46
+   tables**, nothing in one absent from the other.
+2. **First data copy — DONE, and it must be repeated at switch time.** 1,384
+   rows across 17 tables. `d1_migrations` deliberately **not** copied: warm's
    record is its own, and copying the source's would have claimed migrations
-   ran on warm that never did.
-3. **Bindings moved** in all four consumers, with every `wrangler d1` command,
-   runbook line and generator constant moved in the same change — the
-   `check-d1-name-consistency` guard is what forces that to be simultaneous.
+   ran there that never did.
+
+   Two properties of the copy are load-bearing and were both learned the hard
+   way, so they are stated rather than left to whoever repeats it:
+
+   - **Upsert, never `INSERT OR REPLACE`.** `REPLACE` is `DELETE` + `INSERT`,
+     and `notify_state` carries `ON DELETE CASCADE` to `user_thresholds`.
+     Copying alphabetically wrote the child first, and rewriting the parent
+     later cascaded the child away. `ON CONFLICT … DO UPDATE` mutates in place,
+     fires no cascade, does not depend on table order, and is re-runnable —
+     which is what makes a repeat copy safe.
+   - **Compare CONTENT, never row counts.** The count check passed on two
+     tables that were not equal (`indexer_cursor`, `recycle_backing_snapshot`).
+     Compare a canonical per-table digest of the rows themselves.
+3. **The switch — NOT DONE, and it requires the writers stopped first.**
+
+   The bindings change is staged in the PR but must not land while anything is
+   writing. Merging auto-deploys the three Workers (#2237), they do not deploy
+   simultaneously, and a failed build stretches the gap without bound. Anything
+   written to the source after the final copy but before that Worker picks up
+   the new binding exists only in the database being left behind, and no
+   amount of copying *before* the merge closes a gap that opens *after* it.
+
+   This is not hypothetical. Between the first copy and the content check —
+   about twelve minutes — the source advanced **sixteen** `indexer_cursor`
+   rows. The writers are demonstrably live.
+
+   So the order is: **stop the writers (the maintenance build the mechanism
+   provides), take the final copy while nothing can move, merge, let the
+   Workers come back on the target, then verify by binding id.** The refusal
+   callers see during that window states plainly that nothing they sent was
+   recorded, which is the whole reason that mechanism exists.
+
+   An earlier revision of this record listed the switch as done and described
+   a "sync just before merging" as sufficient. It is not, and saying so was
+   the same class of error this document keeps warning about: a procedure
+   claiming a guarantee its mechanism does not provide.
 
 ### Decision 2 below was SUPERSEDED, and that is worth stating plainly
 
@@ -631,15 +665,34 @@ either way, an agent request reads a schema-valid database either way, and
 the backup Worker completes into whichever `B2_BUCKET` it holds. Those prove
 the Worker is alive, not where it is pointed.
 
-Use checks that can only be true of the new database. Since the target starts
-empty, its emptiness is the discriminator:
+Use checks that can only be true of the new database.
 
-```bash
-# [unrun] — same shape as the [run] commands above; confirm before pasting.
-# Before restoring traffic: the new database has zero rows in these.
-(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a")
-```
+> **The emptiness discriminator is GONE, and this is the correction** (#2267
+> r1). Every revision of this section up to 2026-09-21 used the target's
+> emptiness as the tell: zero `offers`, zero `activity_events`, a first
+> `indexer_cursor` row appearing. **The data was copied, so both databases now
+> hold the same 1,384 rows**, and an emptiness test against the target now
+> fails on a correctly switched Worker while telling you nothing about one that
+> never switched. It inverted from a discriminator into a false alarm.
+>
+> Do not replace it with "roughly equal row counts" either. Two databases
+> carrying the same rows are indistinguishable by counting them — that is the
+> whole problem, and it is the same mistake as verifying the copy by row count
+> (which missed two genuinely divergent tables until a content comparison
+> found them).
+
+**The binding read is the discriminator.** It is authoritative, it is the only
+check available while the writers are stopped, and it reflects what is actually
+deployed rather than what the code intends — which is why it already leads the
+list below. Read each Worker's D1 binding from the control plane and compare the
+**database id**, not the name: an id cannot be ambiguous the way a name in a
+config file that may not have deployed yet can.
+
+Where a data-level tell is still wanted after traffic resumes, write a **unique
+sentinel** through the Worker's own surface and look for it in the target by
+that exact value. A sentinel discriminates because you chose it; emptiness
+discriminated only while the target happened to be empty, which was a property
+of the world rather than of the check.
 
 - **indexer** — after its first tick, `indexer_cursor` gains a row in
   `$TARGET_DB` and `offers`/`activity_events` begin filling *there*. Confirm
@@ -711,9 +764,15 @@ open. The binding read closes the window; the write confirms it afterwards.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the
-  table list" would have passed either way. The manifest carries a
+  table list" would have passed either way. ~~The manifest carries a
   `rowCount` per table: against the target those are ~0, against the source
-  they are the old ~1,100. That is the discriminator.
+  they are the old ~1,100. That is the discriminator.~~ **Retired 2026-09-21
+  (#2267 r1): the data was copied, so both databases report the same counts
+  and this can no longer tell them apart.** Read this Worker's `DB_ARCHIVE`
+  binding id from the control plane instead — and note that the binding read
+  is the *only* discriminator here, because the backup Worker exports a fixed
+  table set from wherever it is pointed and has no surface of its own to
+  write a sentinel through.
 
 ## 4. Rollback
 
