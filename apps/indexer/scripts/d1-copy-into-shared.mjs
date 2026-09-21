@@ -158,19 +158,58 @@ function sharedDatabase() {
         `target it is willing to trust.`,
     );
   }
-  return { name: entry.database_name, id: entry.database_id };
+  return {
+    name: checked(entry.database_name, DB_NAME, `${DECLARING_FILE} database_name`),
+    id: checked(entry.database_id, UUID, `${DECLARING_FILE} database_id`),
+  };
 }
 
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const API = 'https://api.cloudflare.com/client/v4';
 
-async function cf(path, init = {}) {
+/**
+ * A D1 database id, as the declaration and the API both spell it. The
+ * script builds request paths out of this value, so it is checked against
+ * the shape rather than trusted for being in a committed file: a
+ * config that has been mis-edited should fail here, naming the field,
+ * rather than becoming part of a URL.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A database name, as `wrangler d1` accepts it. Same reasoning. */
+const DB_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Table and column names. Values are BOUND, never spliced — but an
+ * identifier cannot be bound, so every one that reaches a statement is
+ * checked against this first. They come from `sqlite_master` and
+ * `PRAGMA table_info` on the source database rather than from a person,
+ * which makes this a guard on the source being what it claims to be
+ * rather than on user input.
+ */
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function checked(value, pattern, what) {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    fail(`${what} is not a well-formed value: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/**
+ * One request, against a path RELATIVE TO THE ACCOUNT. The account id is
+ * joined here and nowhere else, so it cannot reach a log line: an error
+ * from this function names the account-relative endpoint, which is what
+ * diagnoses a failure, and the credentials and account identity stay out
+ * of the diagnosis entirely.
+ */
+async function cf(subpath, init = {}) {
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     let res;
     try {
-      res = await fetch(`${API}${path}`, {
+      res = await fetch(`${API}/accounts/${ACCOUNT}${subpath}`, {
         ...init,
         headers: {
           Authorization: `Bearer ${TOKEN}`,
@@ -195,7 +234,7 @@ async function cf(path, init = {}) {
     // bug in the first copy looked like a bare "HTTP 400" for as long as
     // the wrapper printed only the status.
     lastErr = new Error(
-      `HTTP ${res.status} on ${path}\n${text.slice(0, 2000)}`,
+      `HTTP ${res.status} on ${subpath}\n${text.slice(0, 2000)}`,
     );
     if (res.status < 500) break;
     await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
@@ -205,7 +244,7 @@ async function cf(path, init = {}) {
 
 /** One statement against one database. `params` are bound, never spliced. */
 async function query(dbId, sql, params = []) {
-  const result = await cf(`/accounts/${ACCOUNT}/d1/database/${dbId}/query`, {
+  const result = await cf(`/d1/database/${checked(dbId, UUID, 'database id')}/query`, {
     method: 'POST',
     body: JSON.stringify({ sql, params }),
   });
@@ -213,12 +252,11 @@ async function query(dbId, sql, params = []) {
 }
 
 async function resolveByName(name) {
-  const list = await cf(
-    `/accounts/${ACCOUNT}/d1/database?name=${encodeURIComponent(name)}`,
-  );
+  checked(name, DB_NAME, 'database name');
+  const list = await cf(`/d1/database?name=${encodeURIComponent(name)}`);
   const hit = (list ?? []).find((d) => d.name === name);
   if (!hit) fail(`no D1 database named "${name}" in this account`);
-  return { name, id: hit.uuid };
+  return { name, id: checked(hit.uuid, UUID, `id the API reports for ${name}`) };
 }
 
 // ------------------------------------------------------------ table shapes
@@ -228,13 +266,17 @@ async function tablesOf(dbId) {
     dbId,
     `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`,
   );
-  return rows.map((r) => r.name).filter((t) => !NEVER_COPIED(t));
+  return rows
+    .map((r) => checked(r.name, IDENT, 'table name from sqlite_master'))
+    .filter((t) => !NEVER_COPIED(t));
 }
 
 /** Column order and primary key, as the table itself declares them. */
 async function shapeOf(dbId, table) {
   const info = await query(dbId, `PRAGMA table_info("${table}")`);
-  const cols = [...info].sort((a, b) => a.cid - b.cid).map((c) => c.name);
+  const cols = [...info]
+    .sort((a, b) => a.cid - b.cid)
+    .map((c) => checked(c.name, IDENT, `column name in ${table}`));
   const key = info
     .filter((c) => c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
