@@ -1246,13 +1246,19 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // past them. Declared AND populated here — a map that is only ever
   // read is the inert-fix shape this PR has hit twice.
   const sequenceAtMirror = new Map();
+  let sequenceBaselineKnown = false;
   if (!reportOnly) {
     try {
       for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
         if (!NEVER_CARRIED(r.name)) sequenceAtMirror.set(r.name, Number(r.seq));
       }
+      sequenceBaselineKnown = true;
     } catch (err) {
       if (!isMissingSequenceTable(err)) throw err;
+      // No `sqlite_sequence` at all means nothing has ever allocated,
+      // which is a known baseline of zero for every table — not an
+      // unknown one.
+      sequenceBaselineKnown = true;
     }
   }
 
@@ -1560,7 +1566,17 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   // before a single statement is sent, so honouring that promise is a
   // matter of checking it here rather than of unwinding anything.
   const refused = plan.filter((s) => s.refused);
-  const conflicts = [...driftNotes, ...plan.flatMap((s) => s.conflicts ?? [])];
+  // DRIFT IS CONTEXT, NOT A CONFLICT (#2267 r37). Merging it into
+  // `conflicts` made every expected DDL difference a permanent failure:
+  // `main()` exits through `reportProblems` whenever that array is
+  // non-empty, so after the first post-cutover migration the weekly
+  // reconciliation could never reach either of the two consecutive clean
+  // runs the procedure requires. That is the previous round's defect one
+  // level in — the check ran, and could never pass.
+  const conflicts = plan.flatMap((s) => s.conflicts ?? []);
+  for (const n of driftNotes) {
+    console.log(`  ${n.table.padEnd(32)} schema drift — ${n.detail}`);
+  }
   const manifestOf = () => {
     const m = {};
     for (const step of plan) {
@@ -1570,7 +1586,15 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         cols: step.cols,
         // The allocation high-water mark at mirror time, so a later
         // reconciliation can see the source allocate past it (#2267 r36).
-        seq: sequenceAtMirror.get(step.table) ?? null,
+        //
+        // ZERO AND NULL MEAN DIFFERENT THINGS (#2267 r37). A table that
+        // has never allocated has a known baseline of zero, and writing
+        // `null` for it would be indistinguishable from a manifest taken
+        // before this field existed — which the comparison skips. A
+        // straggler inserting and deleting the FIRST row of
+        // `diag_legal_hold_audit` is exactly that case, and it would
+        // have gone unreported.
+        seq: sequenceBaselineKnown ? (sequenceAtMirror.get(step.table) ?? 0) : null,
         rows: step.seen,
       };
     }

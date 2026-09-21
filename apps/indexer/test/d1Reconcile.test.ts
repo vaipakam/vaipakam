@@ -953,3 +953,25 @@ describe('late allocations on the source are reported', () => {
     expect(compareSequences(new Map([['notifications', 46]]), {})).toEqual([]);
   });
 });
+
+describe('a never-allocated baseline is zero, not unknown', () => {
+  it('reports the first allocation after the mirror', () => {
+    // diag_legal_hold_audit is empty today. A straggler inserting and
+    // then deleting its FIRST row leaves the rows matching and the
+    // sequence at 1 — which a null baseline would have skipped, because
+    // null means "this manifest predates the field" (#2267 r37).
+    const problems = compareSequences(new Map([['diag_legal_hold_audit', 1]]), {
+      diag_legal_hold_audit: { seq: 0 },
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('inserted 1 row(s)');
+  });
+
+  it('still skips a legacy manifest that recorded no baseline', () => {
+    expect(
+      compareSequences(new Map([['diag_legal_hold_audit', 1]]), {
+        diag_legal_hold_audit: { seq: null },
+      }),
+    ).toEqual([]);
+  });
+});

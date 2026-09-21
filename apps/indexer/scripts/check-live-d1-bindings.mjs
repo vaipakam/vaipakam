@@ -256,8 +256,12 @@ async function assertWritersHeld() {
   console.log(
     `[check-live-d1-bindings] OK — every serving version of all ` +
       `${WRITER_FILES.length} writers carries no D1 binding. New invocations ` +
-      `cannot obtain a handle; work already running is the residual the ` +
-      `runbook names, which the digest barrier narrows and step 6 closes.`,
+      `cannot obtain a handle.\n\nWork ALREADY RUNNING is the residual, ` +
+      `and nothing here revokes a handle it already holds — no lifetime ` +
+      `for such work has been measured. The digest barrier narrows that ` +
+      `window; step 6 KEEPS LOOKING for what lands in it, weekly, for as ` +
+      `long as the predecessor is retained. Neither closes it (#2267 ` +
+      `r37).`,
   );
 }
 
