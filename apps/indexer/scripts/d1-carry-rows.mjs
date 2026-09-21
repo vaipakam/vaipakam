@@ -358,13 +358,41 @@ async function shapeOf(dbId, table) {
       columns: columns.map((c) => checked(c, IDENT, `unique column in ${table}`)),
     });
   }
-  // Foreign keys, as the destination must also declare them: a missing
-  // cascade changes what a delete does, which is a schema difference even
-  // though every column name matches.
-  const fks = (await query(dbId, `PRAGMA foreign_key_list("${table}")`))
-    .map((f) => `${f.from}->${f.table}.${f.to}:${f.on_delete ?? ''}`)
-    .sort();
-  return { cols, key, uniques, fks };
+  // THE DECLARATION ITSELF, not a list of the parts of it we remembered
+  // to look at. Two revisions of this compared column names, then column
+  // names plus unique tuples plus some foreign-key fields — and each time
+  // review named something else that differs while those match: column
+  // types, nullability, defaults, CHECK constraints, triggers, foreign-key
+  // update and deferral semantics. Enumerating schema features is the same
+  // unbounded predicate as enumerating writers, and it fails the same way:
+  // a list that reads complete and is not.
+  //
+  // So the comparison is over the CREATE statements SQLite itself stores,
+  // for the table and for every index on it. Whitespace is normalised
+  // because it is not semantic; nothing else is. Anything the two sides
+  // declare differently shows up, including things nobody thought of.
+  const ddl = await declarationOf(dbId, table);
+  return { cols, key, uniques, ddl };
+}
+
+/**
+ * The normalised `CREATE TABLE` / `CREATE INDEX` text for a table, as
+ * `sqlite_master` holds it. Indexes are sorted by name so the comparison
+ * does not depend on creation order.
+ */
+async function declarationOf(dbId, table) {
+  const rows = await query(
+    dbId,
+    `SELECT type, name, sql FROM sqlite_master ` +
+      `WHERE (type = 'table' AND name = ?1) OR (tbl_name = ?1 AND sql IS NOT NULL) ` +
+      `ORDER BY type, name`,
+    [table],
+  );
+  return rows
+    .filter((r) => typeof r.sql === 'string')
+    .map((r) => `${r.type} ${r.name}: ${r.sql.replace(/\s+/g, ' ').trim()}`)
+    .sort()
+    .join('\n');
 }
 
 /**
@@ -783,7 +811,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
 
   const plan = [];
   for (const table of tables) {
-    const { cols, key, uniques, fks } = await shapeOf(src.id, table);
+    const { cols, key, uniques, ddl } = await shapeOf(src.id, table);
     if (!dstTables.has(table)) {
       plan.push({ table, refused: 'the destination has no such table' });
       continue;
@@ -811,24 +839,19 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // digest reported the two sides identical. The runbook says a schema
     // difference is a migration decision, so the constraints are part of
     // what is compared.
-    const shapeKey = (sh) =>
-      JSON.stringify({
-        cols: sh.cols,
-        key: sh.key,
-        uniques: (sh.uniques ?? [])
-          .map((u) => u.columns.join('+'))
-          .sort(),
-        fks: (sh.fks ?? []).slice().sort(),
-      });
-    if (shapeKey(dstShape) !== shapeKey({ cols, key, uniques, fks })) {
+    if (dstShape.ddl !== ddl) {
       plan.push({
         table,
         refused:
-          `the two sides declare different shapes (columns, primary key, unique indexes or foreign keys) — source columns ` +
-          `[${cols.join(', ')}] key [${key.join(', ')}], destination ` +
-          `columns [${dstShape.cols.join(', ')}] key ` +
-          `[${dstShape.key.join(', ')}]. Carrying rows across a schema ` +
-          `difference is a migration decision, not a copy`,
+          `the two sides DECLARE this table differently. Compared is the ` +
+          `stored CREATE text for the table and every index on it, so ` +
+          `this covers types, nullability, defaults, CHECK constraints, ` +
+          `foreign-key semantics and triggers, not a list of features ` +
+          `someone remembered to check.\n` +
+          `      source:      ${ddl.replace(/\n/g, '\n                   ')}\n` +
+          `      destination: ${dstShape.ddl.replace(/\n/g, '\n                   ')}\n` +
+          `      Carrying rows across a schema difference is a migration ` +
+          `decision, not a copy`,
       });
       continue;
     }
@@ -1248,12 +1271,12 @@ async function main() {
     const d = dstD.get(table);
     if (!d) {
       problems.push(`${table}: absent from the destination`);
-    } else if (!onlyMissing && d.digest !== s.digest) {
+    } else if (!reconciling && d.digest !== s.digest) {
       problems.push(
         `${table}: source ${s.digest} (${s.count} rows) != destination ` +
           `${d.digest} (${d.count} rows)`,
       );
-    } else if (onlyMissing && d.count < s.count) {
+    } else if (reconciling && d.count < s.count) {
       problems.push(
         `${table}: destination holds ${d.count} rows, fewer than the ` +
           `source's ${s.count} — rows are still missing`,
@@ -1289,7 +1312,7 @@ async function main() {
   console.log('');
   if (problems.length > 0) reportProblems(problems, dst);
   console.log(
-    onlyMissing
+    reconciling
       ? `VERIFIED — every table the source holds is present in ${dst.name} ` +
         `with at least as many rows. This mode deliberately does not claim ` +
         `the two sides are identical: the destination is live and its own ` +

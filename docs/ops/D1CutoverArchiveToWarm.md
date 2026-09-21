@@ -65,10 +65,18 @@ because step 3 below is the part of it that had to be re-learned.
      what makes "identical digest" a reachable state rather than an
      aspiration. It is only safe against an **inert** destination, and the
      tool says so on every run.
-   - **A LIVE destination gets `--only-missing`.** Rows absent from the
-     destination are inserted; nothing it already holds is updated or
-     removed. This is the post-switch reconciliation mode, and it is why the
-     barrier below does not have to be a proof.
+   - **Nothing is ever written to a LIVE database.** The post-switch step
+     is a separate verb, `reconcile`, which reads both sides and REPORTS.
+     It has no write path at all — the `--only-missing` insert this bullet
+     used to describe was removed rather than guarded, because no preflight
+     closes a race against a database something else is writing to (#2267
+     r14). It is why the barrier below does not have to be a proof.
+
+     **So `reconcile` finding a row does NOT mean the row has been
+     carried** — it means a person has to carry it. An operator reading the
+     old wording could watch a late row be reported and walk away leaving
+     it stranded on a database nobody reads. Every difference it prints is
+     an action item, including the ones that look mechanical.
    - **Compare CONTENT, never row counts.** The count check passed on two
      tables that were not equal (`indexer_cursor`, `recycle_backing_snapshot`).
      The tool canonicalises each table's rows and hashes them, and the
@@ -1178,6 +1186,25 @@ sequence is:
    step 3. Nothing below is safe while warm is being written to.
 2. **Observe warm still** — `digest --db vaipakam-warm` twice, ten minutes
    apart, identical. Same barrier, same reason, same stated residual.
+2b. **Account for anything archive holds that warm does not — BEFORE the
+   reverse mirror, because the mirror destroys it** (#2267 r15).
+
+   `reconcile --from vaipakam-archive --to vaipakam-warm --since
+   cutover-mirror.json`, read-only, and **resolve everything it reports**.
+
+   The trap here is exact and worth spelling out: `--mirror` makes archive
+   the DESTINATION, and a mirror deletes destination-only keys and
+   overwrites rows that differ. A straggler that reached archive after the
+   forward mirror — the precise row the whole retention argument exists to
+   protect — is a destination-only or differing row at this moment. Running
+   step 3 first erases it, and erases it before any later read-only pass
+   could have observed it. A rollback begun before the forward
+   reconciliation finished is the likeliest way to be in that state.
+
+   If this reports nothing, step 3 is safe. If it reports anything, deal
+   with it first; do not reach for the mirror to "sort it out", because the
+   mirror is what loses it.
+
 3. **Carry the rows back** —
    `carry --from vaipakam-warm --to vaipakam-archive --mirror --manifest
    rollback-mirror.json`. This is the step the earlier wording skipped.
@@ -1291,6 +1318,17 @@ Order matters here, and this plan does not own all of it:
       An earlier revision of this checklist said "retired first" while
       listing the target's nightly verification two entries below, which
       inverted #1551's own sequence.
+- [ ] **Step 6's reconciliation COMPLETED** — two consecutive
+      `reconcile` runs reporting nothing, and every difference an earlier
+      run reported actually resolved.
+
+      **This is the prerequisite that makes the rest of the list safe, and
+      it was missing** (#2267 r15). The whole reconciliation procedure
+      rests on archive being retained so a late write stays recoverable;
+      satisfying every other box while a straggler is still pending — or
+      while one arrives after the last read — and then deleting archive
+      destroys the only copy of that record. A checklist that can be
+      completed with rows outstanding is not a gate on anything.
 - [ ] All four Workers confirmed on the target by a **discriminating** probe.
 - [ ] One nightly backup completed against the target, verified by content.
 - [ ] **Both §1 exceptions decided** — `support_tickets` (4 open) and

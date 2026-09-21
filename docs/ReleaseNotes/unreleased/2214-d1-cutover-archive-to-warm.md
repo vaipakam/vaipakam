@@ -276,6 +276,23 @@ service was told to stop, that trade buys a human decision on every record
 that moves after the switch and gives up an automation nobody should want
 racing a live database.
 
+### Checking that two databases have the same shape, without listing what shape means
+
+Before records are copied, the two sides must agree on how a table is
+defined. Two attempts at that compared a list of features — first the
+column names, then the columns plus the uniqueness rules plus part of the
+relationship information — and each time review named something else that
+can differ while all of those match: the types, whether a column may be
+empty, its default, the rules a record must satisfy to be stored at all,
+and the automatic behaviour attached to the table.
+
+Listing the features of a schema is the same kind of unbounded list as
+listing the ways code can reach a database, and it fails the same way: the
+list reads complete and is not. So the comparison is now over the
+definition the database itself stores for the table and each of its
+indexes. Anything the two sides declare differently shows up, including
+things nobody thought to look for.
+
 ### Nothing here reports success by staying quiet
 
 Three separate places were doing it, and all three now fail instead.
