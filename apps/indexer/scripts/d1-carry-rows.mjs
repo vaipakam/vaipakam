@@ -61,6 +61,15 @@
  * a database's record of which migrations have run against IT is its own
  * and overwriting it would assert history that never happened.
  *
+ * WHAT IT DOES NOT GUARANTEE. It takes no lock. Two carries run against
+ * the same pair at once will interleave their reads and writes, and the
+ * manifest one writes will not describe what the other did — so a
+ * reconciliation against it is meaningless. The cutover is a numbered
+ * sequence one operator follows, which is why this is stated rather than
+ * mechanised: a lock across an HTTP API is a larger mechanism than the
+ * situation it guards, and a stated limit is honest where an unenforced
+ * assumption is not.
+ *
  * SCALE. Both sides are read in full, in memory, to compare them. That is
  * right for a cutover of this database — 1,384 rows across 43 tables —
  * and is stated rather than assumed: a database large enough not to fit
