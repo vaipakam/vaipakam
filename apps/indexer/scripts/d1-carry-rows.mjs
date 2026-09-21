@@ -121,7 +121,7 @@
  */
 
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
@@ -1093,7 +1093,12 @@ function assertRedactionsApply(table, cols) {
  * guessing would be exactly the overwrite `--only-missing` exists to
  * prevent. It names the row and stops.
  */
-function writeManifest(path, src, tables) {
+/**
+ * Exported for `test/d1Reconcile.test.ts`: the atomicity is the point of
+ * the function, and a promise the runbook makes to an operator during a
+ * cutover is not one to leave unexercised.
+ */
+export function writeManifest(path, src, tables) {
   const doc = {
     source: { name: src.name, id: src.id },
     takenAt: new Date().toISOString(),
@@ -1110,7 +1115,34 @@ function writeManifest(path, src, tables) {
   // "mode 0600" underneath — so the mode is set explicitly afterwards
   // rather than requested at open. A cutover re-runs its steps; a
   // protection that only holds the first time is not one.
-  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
+  //
+  // WRITTEN BESIDE AND RENAMED OVER, never truncated in place (#2267
+  // r47). `writeFileSync` opens for truncation first, so an interrupted
+  // or failed write — a full disk, a cancelled run — leaves the previous
+  // manifest destroyed and the new one incomplete. This file is the ONLY
+  // baseline a later reconciliation and the documented rollback have,
+  // and the runbook promises in as many words that a failed mirror
+  // leaves the last good one intact. A rename within the same directory
+  // is atomic, so the path holds either the old manifest or the new one
+  // and never half of either.
+  //
+  // The temporary file carries the same 0600 for the same reason the
+  // final one does — it holds the identical key inventory for as long as
+  // it exists — and is removed if the rename cannot happen.
+  const tmp = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Nothing to clean up, or nothing we can do about it — the point
+      // of this handler is the manifest at `path`, which is untouched.
+    }
+    throw err;
+  }
   chmodSync(path, 0o600);
   console.log(
     `manifest written to ${path} (mode 0600) — it is what --since reads, ` +
@@ -2869,11 +2901,18 @@ async function main() {
         // where the schemas differ, the success line contradicted the
         // drift notes printed above it.
         `VERIFIED — no unresolved late write from ${src.name} was found. ` +
-        `Every table the two sides share holds at least as many rows in ` +
-        `${dst.name}, and any table only one of them has is reported as ` +
-        `drift above.\n  This mode deliberately does not claim the two ` +
-        `sides are identical: the destination is live and its own newer ` +
-        `values are left alone.`
+        (manifestOnly.size > 0
+          ? `Every table whose rows this run could LINE UP holds at least ` +
+            `as many rows in ${dst.name}; ${manifestOnly.size} table(s) ` +
+            `could not be lined up at all and were compared against the ` +
+            `manifest alone — named above, with why. Nothing here says ` +
+            `how many rows ${dst.name} holds for those.`
+          : `Every table the two sides share holds at least as many rows ` +
+            `in ${dst.name}, and any table only one of them has is ` +
+            `reported as drift above.`) +
+        `\n  This mode deliberately does not claim the two sides are ` +
+        `identical: the destination is live and its own newer values are ` +
+        `left alone.`
       : `VERIFIED — every table the source holds is present in ${dst.name} ` +
         `with an identical content digest.`,
   );

@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // The reconciliation decision table from the cutover tool (#2214). It is a
 // plain-Node operator script rather than Worker source, so it is imported
@@ -19,6 +22,7 @@ import {
   stopsBeforeVerification,
   unsupportedUniqueReason,
   verdictProblems,
+  writeManifest,
 } from '../scripts/d1-carry-rows.mjs';
 
 /**
@@ -1679,5 +1683,54 @@ describe('a count comparison assumes the two sides were lined up', () => {
     });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('CHANGED while this run was working');
+  });
+});
+
+describe('the manifest survives a failed write', () => {
+  // It is the ONLY baseline a later reconciliation and the documented
+  // rollback have, and the runbook promises in as many words that a
+  // failed mirror leaves the last good one intact. `writeFileSync` opens
+  // for truncation first, so an interrupted write destroyed the previous
+  // manifest and left an incomplete one in its place (#2267 r47).
+  const dir = mkdtempSync(join(tmpdir(), 'manifest-'));
+  const src = { name: 'vaipakam-archive', id: 'abc' };
+
+  it('leaves the previous one untouched when the write fails', () => {
+    const path = join(dir, 'cutover-mirror.json');
+    writeManifest(path, src, { t: { key: ['id'], cols: ['id'], seq: 0, rows: {} } });
+    const good = readFileSync(path, 'utf8');
+
+    // THE FAILURE HAS TO HAPPEN AFTER THE FILE IS OPENED, or the test
+    // proves nothing. A value JSON cannot serialise was the first thing
+    // written here and it throws BEFORE any write — passing whether or
+    // not the fix exists, which is the inert-test shape this PR has
+    // already been caught by twice.
+    //
+    // So the temporary path is made unwritable for real: the name is
+    // deterministic, so creating a DIRECTORY there makes the write fail
+    // with EISDIR at exactly the point a full disk would.
+    const tmp = `${path}.tmp-${process.pid}`;
+    mkdirSync(tmp);
+    try {
+      expect(() =>
+        writeManifest(path, src, { t: { key: ['id'], cols: ['id'], seq: 9, rows: {} } }),
+      ).toThrow();
+      // The promise the runbook makes: the last good baseline is still
+      // there, byte for byte.
+      expect(readFileSync(path, 'utf8')).toBe(good);
+      expect(JSON.parse(good).tables.t.seq).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces it completely when the write succeeds', () => {
+    const path = join(dir, 'second.json');
+    writeManifest(path, src, { a: { key: ['id'], cols: ['id'], seq: 1, rows: {} } });
+    writeManifest(path, src, { b: { key: ['id'], cols: ['id'], seq: 2, rows: {} } });
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    expect(Object.keys(doc.tables)).toEqual(['b']);
+    // 0600 holds across the rename, not only on first creation.
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 });
