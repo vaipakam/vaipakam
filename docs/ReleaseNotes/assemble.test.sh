@@ -4841,6 +4841,36 @@ check "the run refuses"       "$?"                            "1"
 check "as a placeholder"      "$(says "$msg" 'placeholder')"   "1"
 check "nothing was consumed"  "$(pending "$W")"                "3"
 
+# ── BLANK MEANS SPACES AND TABS, not Python's idea of whitespace (#2301) ───
+# `bytes.strip()` also counts a vertical tab, a form feed and the C0
+# separators. A fragment opening with a lone `\x0b` was therefore skipped past
+# to the heading below and ACCEPTED — published with a stray control
+# character above its title, and in contradiction of the rule that the opening
+# line must be the heading. CommonMark counts only spaces and tabs.
+case_start "T217u: a control character above the heading is not a blank line"
+W="$ROOT/t217u"; build "$W"
+printf -- '\x0b\n## Thread — heading under a vertical tab (PR #4252)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-vtab.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"       "$?"                                     "1"
+check "for the opening line"  "$(says "$msg" 'opening line is not a')"  "1"
+check "nothing was consumed"  "$(pending "$W")"                         "3"
+# A form feed likewise.
+W="$ROOT/t217u2"; build "$W"
+printf -- '\x0c\n## Thread — heading under a form feed (PR #4253)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-ff.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "refused too"           "$?"              "1"
+check "nothing was consumed"  "$(pending "$W")" "3"
+# Real blank lines — empty, spaces, tabs — are still skipped, or every
+# fragment that opens after one would now be refused.
+W="$ROOT/t217u3"; build "$W"
+printf -- '\n   \n\t\n## Thread — after genuine blank lines (PR #4254)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-blanks.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "still accepted"        "$?"              "0"
+check "nothing left pending"  "$(pending "$W")" "0"
+
 case_start "T217k2: a deep heading is still refused for its placeholder"
 W="$ROOT/t217k2"; build "$W"
 printf '### Thread — deep AND unsubstituted (PR #TBD)\n' \

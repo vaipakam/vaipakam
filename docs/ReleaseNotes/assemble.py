@@ -84,6 +84,14 @@ HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # The three line endings CommonMark recognises. `\r\n` must come first, or a
 # CRLF file splits into a trailing empty field per line.
 LINE_END_RE = re.compile(rb"\r\n|\r|\n")
+# A BLANK LINE, as CommonMark defines one: empty, or spaces and tabs only.
+# NOT `bytes.strip()`, which also treats a vertical tab, a form feed and the
+# C0 file/group/record/unit separators as whitespace (#2301 r1). A fragment
+# opening with a lone `\x0b` and a heading under it was therefore skipped to
+# the heading and accepted — published with a stray control character above
+# its title, and in contradiction of the rule that the OPENING line must be
+# the heading. Narrowing this can only refuse more, never publish more.
+BLANK_RE = re.compile(rb"^[ \t]*$")
 # The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
 # literal `#NNNN`, and a present-but-unsubstituted one is the defect this
 # catches (#2288).
@@ -267,7 +275,7 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     # saved.
     lines = LINE_END_RE.split(body)
     i = 0
-    while i < len(lines) and not lines[i].strip():
+    while i < len(lines) and BLANK_RE.match(lines[i]):
         i += 1
     if i >= len(lines):
         return None
@@ -1697,10 +1705,11 @@ class Assembly:
             # both answer "what is the first line of content", and if they
             # disagree about where a line ends, the `---` refusal below and the
             # message printed for an unrecognised opener describe a different
-            # line from the one actually judged. `LINE_END_RE` is the single
-            # definition, so they cannot drift apart.
+            # line from the one actually judged. They must also agree on what
+            # BLANK means, for the same reason (#2301 r1). `LINE_END_RE` and
+            # `BLANK_RE` are the single definitions, so they cannot drift.
             _first_content = next(
-                (ln for ln in LINE_END_RE.split(body) if ln.strip()),
+                (ln for ln in LINE_END_RE.split(body) if not BLANK_RE.match(ln)),
                 None,
             )
             # `rstrip` of spaces and tabs ONLY (#2290 r14). `---   ` and
