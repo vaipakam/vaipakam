@@ -7762,8 +7762,9 @@ closure 2's cutover PR.**
 > under-specified; on r2, which found the record's lifecycle
 > unaccounted between pages and its seam ungated; and on r3, which found
 > the domain resolving before it was whole and staged legs paid across a
-> revised cap; and on r4, which found the domain without a lifecycle of
-> its own).** A1 shipped the draws with every day settled inside
+> revised cap; on r4, which found the domain without a lifecycle of
+> its own; and on r5, which found that lifecycle's edges — its cutoff,
+> its caps, its revalidation and its reach — unstated).** A1 shipped the draws with every day settled inside
 > the call that priced it. A2 adds what §5c's machinery calls staging: a
 > day that cannot be settled in one call keeps what it drew,
 > obligation-bound and UNPAID, until the call that can. This note opens
@@ -7866,12 +7867,39 @@ closure 2's cutover PR.**
 >    the second failing after the first's scarce allocation had become
 >    irreversible); then RESOLVING, in which each record runs its batch
 >    pages and pays on its last page, safe because every day's funding
->    is now held; then CLEARED. A domain whose reservation cannot
->    complete — a day whose live sources cannot bear the debit — stops
->    in RESERVING with what it holds, subject to the domain deadline and
->    teardown below, and pays nothing. So an early day's scarce
->    allocation is never paid while a later day is still short, and a
->    domain with one short day stays whole. The
+>    is now held; then CLEARED. Four edges of that lifecycle are rules,
+>    not implications (r5 P1 ×4). **The cutoff:** leaving STAGING
+>    freezes the domain's transport set — a batch that materializes
+>    after it is not this domain's, is never discovered by it, and stays
+>    in its epoch for the next obligation exactly as a wide day's value
+>    does today; the transport-first order the design promises is
+>    transport listed BEFORE the cutoff, stated so, since no phase
+>    transitions back to STAGING. **Revalidation:** the transition out
+>    of STAGING first re-reads every record's commitment against its
+>    entries' CURRENT lifecycle — an entry forfeited, liquidated,
+>    defaulted or expired since preparation makes its record STALE: its
+>    staged destination split no longer matches what the live primitive
+>    would route, so the record is unwound (anyone may, at once, with no
+>    deadline to wait for) and the newly applicable operation proceeds
+>    afresh; the stale record is never repriced in place, and nothing
+>    it held was vested, because staging never settles. **The caps:**
+>    RESERVING reserves the ACCOUNTING headroom as well as the money —
+>    the day's fresh legs against the pool budget (the 69M/D1 term) and
+>    the loan-side reward cap, held per domain and debited from the cap
+>    counters at reservation, consumed by the day's persistence at
+>    resolution and released exactly on teardown — because those
+>    counters are persisted only when a day settles and two domains
+>    reserving disjoint money could otherwise both count the same
+>    headroom. **The reach of the deadline:** it ends at the RESOLVING
+>    transition; a domain in RESOLVING is IRREVOCABLE — fully funded,
+>    fully reserved, with no deadline, never unwound, only continued,
+>    permissionlessly and in bounded pages, until CLEARED. A domain
+>    whose reservation cannot complete — a day whose live sources or cap
+>    headroom cannot bear the debit — stops in RESERVING with what it
+>    holds, subject to the domain deadline and teardown below, and pays
+>    nothing. So an early day's scarce allocation is never paid while a
+>    later day is still short, and a domain with one short day stays
+>    whole. The
 >    committed extent is a SNAPSHOT, not a comparison against the
 >    claimant's changing set (r3 P1): an entry that accrues after the
 >    staging pass begins is simply outside it and queues for the next
@@ -8123,11 +8151,20 @@ closure 2's cutover PR.**
 >   row atomically — headroom debited, bucket debited, era balance
 >   debited — and a day whose live sources cannot bear that debit at
 >   that moment is not covered and does not begin. That is the rule for
->   a STANDALONE record — a one-chunk day, a sweep's day; a record
->   inside a committed domain reserves nothing on its own and begins its
->   batch pages only when the domain's RESERVING phase has completed for
->   every day (question 3), since a per-day reservation would let two
->   days of one domain claim the same live balance (r4 P1). Between pages the
+>   a STANDALONE record — a one-chunk day, a sweep's day — and the
+>   standalone record has the domain's edges in miniature (r5 P1): its
+>   cutoff is that first act; once 3c lands, a contested standalone
+>   record passes the same bounded challenge state before its first
+>   irreversible page, so a first-prepared standalone allocation cannot
+>   settle ahead of a needs-based reallocation; its commitment is
+>   revalidated against its entries' current lifecycle in that same
+>   step, a stale record being unwound rather than repriced; and its
+>   reservation takes the pool and loan-side cap headroom with the
+>   money. A record inside a committed domain reserves nothing on its
+>   own and begins its batch pages only when the domain's RESERVING
+>   phase has completed for every day (question 3), since a per-day
+>   reservation would let two days of one domain claim the same live
+>   balance (r4 P1). Between pages the
 >   value is neither in its source row nor with a recipient, so it has
 >   a row of its own (r2 P1): each page moves the batch's staged
 >   components out of the packet's `Unclassified` row into an explicit
@@ -8176,11 +8213,20 @@ closure 2's cutover PR.**
 >   is reached) plus the grace, upward-only by the same rule, and every
 >   record in the extent expires with the domain, not before it. Past
 >   it anyone begins the unwind; a voluntary cancellation begins the
->   same unwind. A domain's teardown is itself resumable and has a
+>   same unwind — while the domain is in STAGING or RESERVING; a domain
+>   or a standalone record that has entered resolution is beyond the
+>   deadline's reach and only completes (r5 P1: a teardown begun over a
+>   resolving record could neither clear it nor decrement the count).
+>   A domain's teardown is itself resumable and has a
 >   bounded terminal condition (r4 P1): a domain UNWIND cursor walks the
 >   extent's days at most a bounded number per call, each day's record
 >   running its own paginated unwind and its reserved residual returning
->   to the live sources; the domain keeps a LIVE-RECORD count,
+>   to the live sources — by PROVENANCE, not by recomputation (r5 P1):
+>   the reservation records what it debited from each source, the
+>   eligible era balances era by era, the delivered headroom, the
+>   recycled bucket, and the cap headroom, and teardown reverses those
+>   exact debits, since the sources are separate ledgers whose balances
+>   may have moved since; the domain keeps a LIVE-RECORD count,
 >   incremented when a day's record is opened and decremented when a
 >   record has fully unwound or fully resolved, and the claimant-side
 >   committed extent is cleared exactly when that count reaches zero —
@@ -8266,7 +8312,10 @@ closure 2's cutover PR.**
 > continuation point, resolution cursor, opening time and deadline; the
 > per-claimant-side DOMAIN record — its phase, committed extent,
 > preparation cursor, reservation cursor, consumption cursor, unwind
-> cursor, live-record count and aggregate four-figure totals;
+> cursor, live-record count, aggregate four-figure totals, reserved pool
+> and loan-side cap headroom, and the reservation's per-source
+> provenance (per era, headroom, bucket, caps) — the standalone record
+> carrying the same reservation fields;
 > per-batch reference counts; per-batch cooldown windows; the priority
 > used-pair marks and per-batch waiting queues with their head cursors;
 > the per-domain deadline; the per-day late chain (head, tail and a
@@ -8303,9 +8352,16 @@ closure 2's cutover PR.**
 > and no record in the extent begins its batch pages until every day's
 > transport is staged and every day's residual is reserved; two days of
 > one domain cannot count the same live balance, because the reserving
-> phase debits each; a standalone record's first page reserves the
-> residual legs from the live sources and a day they cannot bear does
-> not begin; a cancelled wide domain tears down across calls and clears
+> phase debits each, nor the same pool or loan-side cap headroom; a
+> batch materialized after a domain's cutoff is not discovered by it and
+> is drawn by the next obligation; an entry swept or expired after
+> preparation makes its record stale, unwound at once and never paid on
+> its staged split; a domain or record in resolution is not unwound by
+> any deadline and completes; teardown reverses each source's exact
+> debit, era by era, and none is over-credited; a standalone record's
+> first page reserves the residual legs from the live sources and a day
+> they cannot bear does not begin, and once 3c lands a contested one
+> waits out the challenge state first; a cancelled wide domain tears down across calls and clears
 > its extent exactly when its last record is gone, and no new domain
 > commits before then; a late epoch
 > inserted ahead of a continuation point is found by the resume; a
