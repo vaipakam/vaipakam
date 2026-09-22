@@ -1504,6 +1504,12 @@ class Assembly:
 
             published level-2 section headings                1084
               carrying NO `PR #` token at all                  758   (69%)
+              carrying an UNSUBSTITUTED placeholder            179  (1 in 6)
+
+        That last row is the defect itself, already published: 179 sections
+        in the dated notes that nothing can trace back to the change they
+        describe. It is the motivation for the rule, not an argument about
+        its scope, and it is the figure the contributor README points at.
 
         Read those two rows carefully, because conflating them is easy and a
         review round caught this paragraph doing it. Requiring a reference to

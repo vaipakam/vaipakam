@@ -25,8 +25,9 @@ PRs landing the same day never append-conflict.
    Assembly is the last step that looks at the heading, and afterwards the
    section is just text in a dated file — the review pass below is for
    wording and the intro, not for auditing PR numbers, so in practice a
-   placeholder that gets past assembly stays. Around 179 published headings
-   carry one, which is what this is there to stop adding to.
+   placeholder that gets past assembly stays. A sixth of all published
+   section headings already carry one, which is what this is there to stop
+   adding to. (Count with the rule, as below.)
 
    **What the refusal does and does not cover**, so it is not relied on for
    more than it does:
