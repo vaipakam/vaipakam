@@ -52,9 +52,18 @@ PRs landing the same day never append-conflict.
      deliberately not copied here — three review rounds were spent on figures
      that had drifted between files.)
 
-   What is refused is narrow and worth stating exactly: a reference that is
-   **present and not a number**. That is the failure the template actually
-   produces — shipping `(PR #<n>)` and leaving it unsubstituted.
+   What is refused is worth stating exactly, because it is **stricter than
+   "not a placeholder"**: a `PR #…` reference that is present must be a
+   **plain number and nothing else**. `(PR #2290)` and `(PR #2290, issue
+   #99)` pass. `PR #2290:` and `PR #2290—follow-up` do **not** — the colon
+   and the dash are part of the token, so the token is not a plain number.
+   Put the reference in its own parentheses, or leave a space after it.
+
+   That is deliberately blunt. Five review rounds were spent trying to tell
+   an ornamented reference from a placeholder, and every disputed shape
+   turned out to be one nobody had ever written. The strict rule refuses a
+   few things it need not; the permissive ones kept publishing sections
+   nothing could trace. An over-refusal costs you this message.
 
    The heading must also open at `##`, not `#` — a fragment opening at `#`
    lands in the dated file as a second document title rather than nesting
@@ -76,10 +85,13 @@ PRs landing the same day never append-conflict.
    the rule, as above.) Open at `##` unless you mean to be a subsection of
    something — and you cannot know what that will be.
 
-   If nothing shallower precedes it, a deep opener is not absorbed at all;
-   it sits under the release title at a level that skips one. Which of the
-   two you get depends on the fold order and on the heading levels of every
-   fragment ahead of yours, so the warning names both rather than guessing.
+   Something shallower always precedes you — the dated file opens with its
+   own `# Release Notes` title — so the question is only *what*. If a `##`
+   section of another change comes first, your heading is filed under that
+   change. If only the release title comes first, your heading hangs off it
+   at a level that skips one. Which you get depends on the fold order and on
+   the heading levels of every fragment ahead of yours, so the warning names
+   both rather than guessing.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.

@@ -4584,13 +4584,16 @@ check "it warns"             "$(says "$msg" 'open below level 2')"        "1"
 check "naming the level-3"   "$(says "$msg" '0003-l3.md')"                "1"
 check "naming the level-4"   "$(says "$msg" '0004-l4.md')"                "1"
 check "and names the real outcome" "$(says "$msg" 'SUBSECTION of whatever shallower heading')" "1"
-# The message is CONDITIONAL, because absorption depends on what precedes the
-# fragment in the finished file (#2290 r11). With no `##` before it, a `###`
-# opener is not absorbed at all — it sits under the release title at a level
-# that skips one. Telling the operator flatly that another change will own it
-# is wrong in that case, and the check deliberately does not re-derive the
-# fold order to find out which case applies.
-check "and states the other case"  "$(says "$msg" 'Where nothing shallower precedes it')" "1"
+# The message is CONDITIONAL, because which heading absorbs the fragment
+# depends on what precedes it in the finished file (#2290 r11), and the check
+# deliberately does not re-derive the fold order to find out.
+#
+# SOMETHING SHALLOWER ALWAYS PRECEDES IT — `build()` writes `# Release Notes`
+# as the file's first line (#2290 r18). An earlier version of this message
+# offered "where nothing shallower precedes it" as the second case, which
+# cannot happen. The real second case is that only the release TITLE precedes
+# it, so the heading hangs off the title at a level that skips one.
+check "and states the other case"  "$(says "$msg" 'only the release title precedes you')" "1"
 check "and that it continues"      "$(says "$msg" 'not a refusal')"              "1"
 
 # A WARNING MUST NOT EXEMPT THE REFUSAL. The first version of the warning
