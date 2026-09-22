@@ -7755,6 +7755,637 @@ closure 2's cutover PR.**
   intended-era rejection on each receive ingress; the `Detached` bound at
   zero with era rows still consumable.
 
+> **3b-ii-A2 design — STAGING (scouted 2026-09-22, after 3b-ii-A passed
+> its fifteen-round review cap; PR #2276, root arrests recorded in
+> #2296; revised on Codex #2297 r1, which found the first draft's
+> settlement rule contradicting itself and its staging record
+> under-specified; on r2, which found the record's lifecycle
+> unaccounted between pages and its seam ungated; and on r3, which found
+> the domain resolving before it was whole and staged legs paid across a
+> revised cap; on r4, which found the domain without a lifecycle of
+> its own; and on r5, which found that lifecycle's edges — its cutoff,
+> its caps, its revalidation and its reach — unstated).** A1 shipped the draws with every day settled inside
+> the call that priced it. A2 adds what §5c's machinery calls staging: a
+> day that cannot be settled in one call keeps what it drew,
+> obligation-bound and UNPAID, until the call that can. This note opens
+> with what the owner decides, then states the mechanism read off A1 as
+> built, the host it must land on, the storage it appends, and the proofs
+> it carries. Nothing here is code; every mechanism names the A1 site it
+> changes. One rule governs everything below and is stated once here:
+> **staging never settles.** A staged amount is debited from its batch
+> and credited to no one; the obligation's day pays out, persists and
+> exhausts its batches only in the call that finds the WHOLE day covered,
+> and until then nothing is half-paid — the first draft's "settle at once
+> what it could stage" (r1 P1) is withdrawn.
+>
+> *What the owner decides first.* Eleven questions — six carried from the
+> 3b-ii scout, four from #2296, one from the A1 blueprint's own A2
+> assignment. A2 proceeds on the recommendation beside each absent a
+> different answer.
+>
+> 1. **Contested allocations, A1's reading — and the grandfathering rule
+>    A2 needs the owner to ratify.** A1 reads an allocation as contested
+>    only when another obligation's STAGING REFERENCE stands on the
+>    batch, which A1 — with no references — never sees, so every A1 draw
+>    settles at once; the wider reading (any other listed day not yet
+>    proven closed) deadlocks every multi-day batch until 3c. A2 is the
+>    release that CREATES references, so in A2 the test becomes real: a
+>    batch another obligation has staged against is contested for a
+>    second stager. Recommendation: A2 keeps the narrow reading and, on a
+>    contested batch, STAGES against the unreferenced remainder only — it
+>    never displaces a standing reference, which is 3c's challenge — and
+>    the day stays staged, with no settlement effect, until the whole day
+>    is covered (r1 P1: a partial settlement would credit a partial payout
+>    and mutate counters before the obligation is complete). That leaves
+>    two records referencing one batch, and the ratified rule above —
+>    contention re-checked at final settlement, an allocation that has
+>    ACQUIRED a competing known obligation unwinds — would, read
+>    literally, unwind the EARLIER record when the later one staged the
+>    remainder, or deadlock both until 3c (r2 P1). A2 therefore states an
+>    explicit ASYMMETRIC rule and asks the owner to ratify it as a
+>    departure: **first staged wins, per batch.** An allocation, once
+>    staged, is never contested by a reference established after it; a
+>    later stager takes the unreferenced remainder and is likewise
+>    grandfathered against anyone later still; the final check at
+>    resolution verifies only that the record's OWN references stand
+>    (none unwound, none displaced). Needs-based reordering between two
+>    staged records — the case the ratified rule was written for — is
+>    exactly 3c's challenge, and A2 does not attempt it.
+> 2. **First caller wins, stated with its cost — and what A2 does and does
+>    not change about it.** Until 3c a draw that settles at once on a
+>    batch that a second, less flexible obligation was the only feasible
+>    claimant of strands that obligation, and once the value is PAID
+>    nothing on the ledger refers to it: 3c challenges STAGED allocations,
+>    so a settled draw is beyond its reach (r1 P1: the first draft claimed
+>    the second obligation's reference would be "on record", which is
+>    false when the first claimant fitted in one call and left no
+>    reference behind). What A2 changes is narrower and stated exactly:
+>    an obligation that has PREPARED — staged ahead of its settlement, by
+>    anyone, since preparation is permissionless — holds references, so a
+>    later one-call claimant sees the batch contested and takes only the
+>    unreferenced remainder. First CALLER wins becomes first PREPARER
+>    wins for obligations that prepare; an obligation that neither fits
+>    one call nor was prepared remains strandable by a one-call claimant
+>    until 3c. The alternative — hold every potentially contested
+>    allocation in staged form until 3c can reorder it — is the wider
+>    reading, rejected for the deadlock above. Recommendation: accept the
+>    cost as bounded by preparation being permissionless, and say so in
+>    the operator runbook.
+> 3. **The cross-chunk case.** A1 persists no allocation across
+>    settlement chunks, so an early chunk can spend a scarce shared epoch
+>    on a leg the live sources could have paid and leave a later chunk
+>    short. The first draft claimed A2 fixes this by changing only the
+>    deferral; it does not (r1 P1) — an early chunk that is fully covered
+>    would still settle at once. The remedy the scout named — persist the
+>    full-domain decision — needs every chunk of a multi-chunk domain to
+>    be STAGED rather than settled until the whole domain is priced.
+>    Recommendation: a claim whose domain fits one chunk settles at once,
+>    unchanged; a claim whose domain spans more than one chunk stages
+>    every chunk's day allocations (the same records, one per day) and
+>    resolves them, paginated, once the last chunk is priced — so the
+>    decision is persisted, unpaid and challengeable for exactly the
+>    population the cross-chunk case concerns, and the one-chunk majority
+>    pays nothing for it. This needs a cursor of its own (r2 P1): the
+>    claim's settlement cursor advances only when a day is PERSISTED,
+>    which the staging pass withholds until the last chunk, so without
+>    one the next call would start at the same unpersisted day forever.
+>    A2 adds a per-claimant-side DOMAIN PREPARATION cursor and a
+>    committed extent (the domain's entry set and its last day, fixed
+>    when the staging pass begins); the staging pass advances the
+>    preparation cursor day by day, the settlement cursor stays where it
+>    was, and the resolution pass walks the staged days from the
+>    settlement cursor to the committed extent, persisting each as it
+>    resolves. The domain resolves as a UNIT (r3 P1), through a
+>    lifecycle of its own (r4 P1): STAGING, until every day in the
+>    extent has its transport legs staged; then, once 3c lands, its
+>    challenge window; then RESERVING — a domain reservation cursor
+>    walks the extent's days, at most a bounded number per call, moving
+>    each day's residual legs from the live sources into the resolving
+>    row, with no payout anywhere until the cursor reaches the extent
+>    (r4 P1: a per-day coverage test would let two days count the same
+>    ten tokens of live balance, the first reserving and paying it and
+>    the second failing after the first's scarce allocation had become
+>    irreversible); then RESOLVING, in which each record runs its batch
+>    pages and pays on its last page, safe because every day's funding
+>    is now held; then CLEARED. Four edges of that lifecycle are rules,
+>    not implications (r5 P1 ×4). **The cutoff:** leaving STAGING
+>    freezes the domain's transport set — a batch that materializes
+>    after it is not this domain's, is never discovered by it, and stays
+>    in its epoch for the next obligation exactly as a wide day's value
+>    does today; the transport-first order the design promises is
+>    transport listed BEFORE the cutoff, stated so, since no phase
+>    transitions back to STAGING. **Revalidation:** the transition out
+>    of STAGING first re-reads every record's commitment against its
+>    entries' CURRENT lifecycle — an entry forfeited, liquidated,
+>    defaulted or expired since preparation makes its record STALE: its
+>    staged destination split no longer matches what the live primitive
+>    would route, so the record is unwound (anyone may, at once, with no
+>    deadline to wait for) and the newly applicable operation proceeds
+>    afresh; the stale record is never repriced in place, and nothing
+>    it held was vested, because staging never settles. **The caps:**
+>    RESERVING reserves the ACCOUNTING headroom as well as the money —
+>    the day's fresh legs against the pool budget (the 69M/D1 term) and
+>    the loan-side reward cap, held per domain and debited from the cap
+>    counters at reservation, consumed by the day's persistence at
+>    resolution and released exactly on teardown — because those
+>    counters are persisted only when a day settles and two domains
+>    reserving disjoint money could otherwise both count the same
+>    headroom. **The reach of the deadline:** it ends at the RESOLVING
+>    transition; a domain in RESOLVING is IRREVOCABLE — fully funded,
+>    fully reserved, with no deadline, never unwound, only continued,
+>    permissionlessly and in bounded pages, until CLEARED. A domain
+>    whose reservation cannot complete — a day whose live sources or cap
+>    headroom cannot bear the debit — stops in RESERVING with what it
+>    holds, subject to the domain deadline and teardown below, and pays
+>    nothing. So an early day's scarce allocation is never paid while a
+>    later day is still short, and a domain with one short day stays
+>    whole. The
+>    committed extent is a SNAPSHOT, not a comparison against the
+>    claimant's changing set (r3 P1): an entry that accrues after the
+>    staging pass begins is simply outside it and queues for the next
+>    domain, and the domain finishes over its snapshot even while a
+>    many-page resolution is running. The mismatch refusal is for a
+>    caller asking to stage or resolve a DIFFERENT obligation on a day
+>    that carries a record — a sweep of an entry inside a staged claim
+>    set, a claim over a set that differs from the record's — never for
+>    an append. Persisting the decision is the hook, not the
+>    reallocation: a later chunk found short leaves the staged records
+>    standing for 3c or for the live sources to catch up, and it is the
+>    owner's call whether that trade is preferred to the explicit
+>    "cross-chunk guarantee deferred to 3c" alternative, which A2 would
+>    then record rather than resolve.
+> 4. **The closure proof as B's mechanism.** Unchanged by A2; B proceeds
+>    as recommended. A2 adds one closure fact B relies on: a day with a
+>    standing staging record is not closed, and a batch with a standing
+>    reference is neither parkable nor retirable.
+> 5. **The sanctions exception.** A single flagged claimant on one listed
+>    day holds a whole batch's release indefinitely. A2 answers HALF of
+>    it by construction: a flagged stager's record reaches its deadline
+>    and anyone unwinds it, so their STAGED value returns to the batches
+>    and no longer holds a neighbour; their ENTRY still stands, and
+>    whether B may stamp such a day closed over it with a write-off
+>    recorded remains the owner's question for B, unchanged.
+> 6. **Replacement funding.** Exists only for that exception's recorded
+>    surviving liability, consumed by the write-off record and never by a
+>    draw. A2 changes nothing here; a replacement packet is never staged
+>    against.
+> 7. **The split's flexible-leg tie (#2296 item 1).** A1's split spends
+>    in plan order with the suffix reservation; its remaining tie sends
+>    a flexible unit fresh first, which can consume a later, wider epoch
+>    where an earlier one would do. Recommendation: A2 restates the tie
+>    as "the leg whose next capacity in the suffix comes LATEST" — the
+>    earliest later capacity is consumed, the later preserved — and
+>    carries the cut-bound proof with it. It is a change to one pure
+>    function the epoch facet hosts; no settle facet moves.
+> 8. **The pre-list conversion (#2296 item 2)** and **9. keep or delete
+>    the pre-list path (#2296 item 4)** are one decision. No chain runs
+>    3b-i's array-only index: the epoch facet is in no deployment
+>    artifact and the live Base Sepolia loupe routes none of its
+>    selectors (2026-09-22). If the next testnet refresh deploys 3b-i and
+>    3b-ii together, the path never fires and A2 DELETES it — the array
+>    stays as the membership count, the array-mode reads, the conversion
+>    state and the catch-up entry go, and item 2 is moot. If 3b-i may be
+>    deployed alone first, the path stays and A2 fixes item 2 by marking
+>    every array-passed member as passed at conversion and letting the
+>    scan skip passed nodes wherever they sit. Recommendation: delete;
+>    deploy 3b-i and 3b-ii together.
+> 10. **Preview by execution (#2296 item 3) — for the callers that can
+>    make a CALL, and only those.** Nine of A1's fifteen rounds were the
+>    dry run mirroring a live side effect through its overlay. Staging
+>    adds a fourth side effect to mirror (the record), which is the point
+>    to stop mirroring: run the preview as the real settlement inside a
+>    frame that reverts at the end and returns its result in the revert
+>    data. That frame WRITES before it reverts, so it cannot run under
+>    STATICCALL — a static context propagates into nested calls and the
+>    first store faults before the deliberate revert (r1 P1). The ratified
+>    A1 hosting reaches the dry run, the domain pass and the domain probe
+>    on the read-only view facet by staticcall, so this is a caller
+>    migration, stated per site: the claim's own domain pass and the two
+>    sweeps' executability gates run inside state-changing transactions
+>    and move from staticcall to a self-CALL — the committing walk itself,
+>    not a captured revert, as below;
+>    off-chain previews reach the same entry through `eth_call` on an
+>    entry declared state-changing (a top-level `eth_call` may write and
+>    revert), which the app's read path already tolerates through
+>    simulate-style reads; and every STATIC consumer — the lens's
+>    armed-need view, row 13's executability predicate, any `view`
+>    function or external contract reading through the loupe — keeps a
+>    read-only path, which after A2 is row 13's own design: the O(1)
+>    prepared-coverage read — the obligation's STAGED legs, plus at most
+>    the one batch at the day's cursor, applied through the two-leg
+>    allocation before the drought checks — not a simulated walk. It
+>    counts nothing it would have to scan for (r3 P1: a day whose
+>    coverage is spread across several visible batches cannot be summed
+>    in O(1), and no per-day aggregate can be maintained without
+>    touching every day a batch lists on every mutation), so it is
+>    conservative — never over-counting, reading a wide unprepared day
+>    as not yet executable — and preparation, which is permissionless,
+>    is what makes such a day read true. That is row 13's own rule:
+>    prepare until covered, then the clock and the sweep see it. The
+>    revert-at-end frame is for OBSERVATIONAL callers only — the
+>    off-chain preview and the domain probe, which ask and keep nothing.
+>    A state-changing caller that ran the walk in a captured revert
+>    would roll back every staging write the walk made and then have to
+>    run it again (r2 P2), so the claim's domain pass and the sweeps'
+>    gates do not preview at all: they run the ONE committing walk —
+>    stage or settle, normal return — and read its result; the same
+>    function, called without the flag. That is the "one walk" the
+>    mitigation names, and it is why the on-chain path pays no double
+>    gas; the roughly double cost falls only on an observational call
+>    that is then followed by the real one. The consequence is a
+>    specification change for the static armed-need figure, which
+>    becomes prepared-plus-visible coverage rather than a walk's
+>    simulated draw. Recommendation: take it in A2 on those terms, with
+>    the per-site migration list above as the PR's checklist; the
+>    alternative is to keep the overlay for the static surface only,
+>    which keeps the mirror and its finding class alive for one caller.
+> 11. **The whole-window legacy-slice draw the A1 blueprint assigned to
+>    A2.** An active mirror can receive an untyped old-wire remittance
+>    listing a pre-`D*` day; 3b-i opens an epoch for it; the obligation
+>    is a PRE-ARMING legacy slice, priced whole-window in O(1) off the
+>    cumulative curves with no per-day loop for the day primitive to hook
+>    (blueprint, rows 1 and 5). The first draft left it out (r1 P1).
+>    Recommendation: A2 carries it as its second draw path, shaped as a
+>    preparation: permissionless and paginated over the slice's window at
+>    a bounded number of days per call, each day's need read by
+>    differencing the cumulative curves, each day read through the
+>    per-day list (one storage read where no batch lists it, zero under
+>    the no-batch-admitted short-circuit), and each listed day staged
+>    against its batches into the same record shape keyed by the slice's
+>    identity; the slice's settlement then consumes its staged coverage
+>    before schedule or era funding under every role, exactly as row 13
+>    requires of prepared coverage. The slice is a DOMAIN in the sense
+>    of question 3 (r4 P1): it is priced and persisted whole-window with
+>    no per-day loop, so its day records cannot be paid one at a time
+>    without leaving its processed marker behind them — a retry would
+>    price already-paid value again — and cannot be consumed all at
+>    once without the unbounded walk pagination removed. It therefore
+>    carries the domain lifecycle: a slice-level record with the
+>    preparation cursor over the window, a committed extent (the window
+>    and the entry), the reserving phase, a CONSUMPTION cursor for its
+>    resolution and aggregate four-figure totals accumulated as each day
+>    record resolves into the resolving row; the slice's whole-window
+>    persistence and payout fire exactly once, from the aggregates, when
+>    the consumption cursor reaches the extent, and the processed marker
+>    moves only then. The alternative is to rescope: name
+>    the population and record that it waits on B's release, with the
+>    fund-liveness consequence that a well-backed legacy obligation on a
+>    mirror stays unpaid until then.
+>
+> *The mechanism, read off A1 as built.* A1's unit is the DAY inside
+> the settlement call: `processUserSideDay` prices a day's two legs
+> against the epochs through `callTransportAllocateForDay` (a staticcall
+> to the epoch facet), the settle wrapper draws exactly those legs
+> through `callDrawTransportForDay` (a call), and the day is persisted
+> with a `DayCharge` whose transport figures are FOUR — user and
+> treasury destination, each a fresh and a recycled leg. A day the
+> window cannot cover, or the transaction's write budget cannot afford,
+> DEFERS: nothing drawn, the walk ends, progress kept. A2 changes the
+> deferral, adds preparation and the legacy path, and leaves a covered
+> one-chunk day exactly as A1 settles it.
+>
+> - **The staging record and its key.** One record per settlement
+>   obligation-day. Its key is the obligation's identity — claimant,
+>   side, day — and the record carries an immutable COMMITMENT to what
+>   was priced: the entry set the day was priced over and the operation
+>   (claim, forfeit sweep, expiry sweep). The same claimant-side-day is
+>   reached by an aggregate claim over several entries and by either
+>   one-entry sweep, so the triple alone is not an obligation (r1 P1); a
+>   caller whose entry set or operation differs from the standing
+>   record's is refused, and its exits are the record's own — settle it,
+>   or unwind it past its deadline. The record holds the priced day's
+>   four transport figures as staged (user fresh, user recycled,
+>   treasury fresh, treasury recycled — the destination split is a
+>   staged fact, not something recomputed after lifecycle state has
+>   moved; r1 P1), the list of batches staged from with each batch's
+>   packet id and per-leg amounts (§5c's non-locking provenance), an
+>   authenticated CONTINUATION point — the plan position after the last
+>   batch staged, so a retry resumes the day's scan there and never
+>   rescans the staged prefix (r1 P1) — together with its position in
+>   the day's LATE CHAIN, a resolution cursor, the opening time (its
+>   preparation age) and its deadline. The continuation is not a stable
+>   position by itself (r3 P1): the plan orders by fewest listed days
+>   and then arrival, and a late epoch can sort before a saved position,
+>   which a plain resume would skip forever. The day index already
+>   presents a late epoch at the window's first place for the DAY cursor
+>   (A1 round 11); A2 makes that reachable from any record by keeping,
+>   per day, a chain of late insertions in arrival order beside their
+>   sorted place. A resume first walks the late chain from the record's
+>   stored position — bounded by the epochs that arrived since its last
+>   page, within the scan cap — and only then continues from the
+>   continuation point, so nothing inserted ahead of it is missed and
+>   nothing behind it is rescanned.
+> - **Staging debits, per component.** Staging moves a batch's balance
+>   into staged form and credits no one. Each batch carries
+>   `stagedFresh` and `stagedRecycled` — not one aggregate figure (r1 P1:
+>   two stagers reading `consumedFresh == 0` against a five-fresh cap
+>   could each stage five) — and every COMPONENT read is net of both
+>   consumed and staged: fresh room is the cap less consumed fresh less
+>   staged fresh, likewise recycled. The AGGREGATE available to a new
+>   stager is the post-debit `balance` itself — the staged terms are
+>   disjoint from it in the identity and are not subtracted again (r2
+>   P1: staging five of ten leaves five in balance and five staged, and
+>   the first revision's "balance less both staged components" would
+>   have read that as nothing available). The batch identity gains the
+>   two terms: `admitted == balance + parked + debited + consumedFresh +
+>   consumedRecycled + consumedBeyondCaps + stagedFresh +
+>   stagedRecycled`. The packet's identity is untouched until resolution
+>   (its exit `drawn` is a resolution fact) and the custody row moves in
+>   resolution, page by page, as the next bullets state.
+> - **Staging waits for the type.** A staged leg is a component claim
+>   on a batch, so it can be made only against caps that are final. A
+>   batch whose packet still awaits its split attestation — a new-wire
+>   packet the source has not yet attested — is DRAW-ONLY: a one-call
+>   settlement may take from it exactly as A1 does, with A1's recorded
+>   divergence if the attestation later disagrees, and no record may
+>   stage against it until the attestation lands. A packet that carries
+>   no attestation by construction — the old-wire legacy remittance,
+>   classified locally — is typed by that classification and may be
+>   staged against at once. The r2 revision instead let a staged leg be
+>   resolved across a revised cap into `consumedBeyondCaps`; that would
+>   have paid a fresh entitlement from authenticated recycled backing
+>   and recorded the breach for B rather than preventing it (r3 P1), so
+>   it is withdrawn. The attestation's reconcile keeps reading caps net
+>   of prior classification (A1, round 9) and now also asserts that an
+>   untyped batch carries no staged component — a non-zero figure there
+>   is a bug, not a case.
+> - **Deferred exhaustion.** Staging moves balance only. The leg
+>   counters, the packet's `drawn`, the row release and the day's prune
+>   all fire at settlement, exactly where A1 fires them — so an unwind
+>   restores balance to batches whose cursors never passed them and
+>   whose leg counters never counted them. The prune's exhaustion test
+>   reads `balance == 0 && references == 0`: a batch that is
+>   empty-but-referenced is not passed by any day's cursor.
+> - **References.** Each staged batch carries a reference count; A1's
+>   `packetBatchReleased` gate and the park entry refuse a referenced
+>   batch; the last reference to resolve fires the retirement if the
+>   balance is then zero. This is the fact B's closure proof reads.
+> - **What a deferral does in A2.** A cap-hit deferral stages what the
+>   window offered (the plan's legs, from the same split) instead of
+>   drawing nothing, records the continuation point, and the day stays
+>   open; a budget deferral stages nothing for the day it stops on (the
+>   budget is spent) and keeps the earlier days as they were — settled if
+>   the domain fits one chunk, staged if it does not (question 3); the
+>   walk ends either way. The next call resumes from the record: it
+>   re-prices the day with the staged legs as prepared coverage, scans
+>   from the continuation point for what is still missing, and stages
+>   that too. A day is COVERED when the staged legs plus what the call
+>   can add — from the window and from the live sources — meet the
+>   priced need; only then does the day RESOLVE.
+> - **Resolution is paginated, and so is the unwind.** A day may span
+>   arbitrarily many batches and a record may accumulate them over many
+>   calls, so the settlement cannot be one atomic walk over the whole
+>   record (r1 P1). Resolution is a monotone, permissionless walk over
+>   the record's batch list, at most the scan cap per call, firing each
+>   batch's deferred exhaustion (leg counters, packet `drawn`, reference
+>   decrement, retirement if empty) and advancing the resolution cursor;
+>   the day's payout, row release and persistence fire once, in the call
+>   that resolves the last batch, atomically with it. A day is covered by
+>   staged transport AND the live sources for its residual — delivered
+>   headroom, the recycled bucket, the era balance — and those are not
+>   the record's until reserved (r3 P1: another claim or sweep could
+>   consume them while the pages run, and the last page would overdraw
+>   or revert with transport value already in the resolving row). So
+>   resolution's FIRST act, before any irreversible batch page, is to
+>   move the residual legs from their live sources into the resolving
+>   row atomically — headroom debited, bucket debited, era balance
+>   debited — and a day whose live sources cannot bear that debit at
+>   that moment is not covered and does not begin. That is the rule for
+>   a STANDALONE record — a one-chunk day, a sweep's day — and the
+>   standalone record has the domain's edges in miniature (r5 P1): its
+>   cutoff is that first act; once 3c lands, a contested standalone
+>   record passes the same bounded challenge state before its first
+>   irreversible page, so a first-prepared standalone allocation cannot
+>   settle ahead of a needs-based reallocation; its commitment is
+>   revalidated against its entries' current lifecycle in that same
+>   step, a stale record being unwound rather than repriced; and its
+>   reservation takes the pool and loan-side cap headroom with the
+>   money. A record inside a committed domain reserves nothing on its
+>   own and begins its batch pages only when the domain's RESERVING
+>   phase has completed for every day (question 3), since a per-day
+>   reservation would let two days of one domain claim the same live
+>   balance (r4 P1). Between pages the
+>   value is neither in its source row nor with a recipient, so it has
+>   a row of its own (r2 P1): each page moves the batch's staged
+>   components out of the packet's `Unclassified` row into an explicit
+>   RESOLVING custody row held against the record, and increments the
+>   packet's `drawn` by the same amount, so the packet identity holds at
+>   every page (`Unclassified` held + returned + drawn, with drawn now
+>   counting resolving value) and the row identity holds too
+>   (`Resolving` == the sum of every record's resolved-not-paid
+>   figures); the last page moves the `Resolving` row to its
+>   destinations — the four figures, one aggregate each — which is
+>   constant work because the record carries the totals. A record in
+>   resolution can be neither staged against nor unwound. The unwind is
+>   the same walk in the other direction — each call restores a page of
+>   batches' staged components to balance and decrements their
+>   references — and a record in unwind can be neither staged nor
+>   resolved. Nothing is ever half-paid: the payout is the last step of
+>   a resolution that, once begun, only completes.
+> - **Eligibility can change between pages, and the last page never
+>   reverts for it.** Resolution revalidates the claimant's eligibility
+>   before its first page commits anything irreversible, and again on
+>   the last page; a claimant flagged by the sanctions oracle between
+>   the two does not trap the record (r2 P1: a refused payout after
+>   earlier pages consumed counters and released references would leave
+>   a record that can be neither finished nor unwound). The last page
+>   delivers the user figures into the claimant's vault under the
+>   freeze-at-source lock the sanctions path already applies to
+>   proceeds, the treasury figures as usual, and persists the day — the
+>   Tier-2 shape: the close-out completes, the flagged party's value is
+>   locked, nothing is refused mid-walk.
+> - **Deadline, unwind, cooldown, priority.** A record in staging carries
+>   a deadline derived from the WORK the day needs, not a fixed multiple
+>   of the retry cadence (r2 P1: a day spread across more batches than a
+>   fixed allowance of pages could scan would expire under honest
+>   progress and anyone could unwind it forever). The day index records
+>   how many batches list the day, so the pages a full scan needs are
+>   known: the deadline is the opening time plus the cadence times that
+>   page count plus a fixed grace, and it moves only UPWARD, only when
+>   the day's list grows (a late epoch), and only to the figure that
+>   growth implies — never by the stager's own action, so a stalled
+>   preparer cannot extend its lease (the anti-renewal rule). A record
+>   inside a committed domain carries the DOMAIN's deadline instead
+>   (r3 P1): its own day may need one page while the domain needs many
+>   chunk calls before it can resolve, so the domain's deadline is its
+>   opening plus the cadence times the chunks the extent needs (known at
+>   commitment) plus the pages its listed days need (known as each day
+>   is reached) plus the grace, upward-only by the same rule, and every
+>   record in the extent expires with the domain, not before it. Past
+>   it anyone begins the unwind; a voluntary cancellation begins the
+>   same unwind — while the domain is in STAGING or RESERVING; a domain
+>   or a standalone record that has entered resolution is beyond the
+>   deadline's reach and only completes (r5 P1: a teardown begun over a
+>   resolving record could neither clear it nor decrement the count).
+>   A domain's teardown is itself resumable and has a
+>   bounded terminal condition (r4 P1): a domain UNWIND cursor walks the
+>   extent's days at most a bounded number per call, each day's record
+>   running its own paginated unwind and its reserved residual returning
+>   to the live sources — by PROVENANCE, not by recomputation (r5 P1):
+>   the reservation records what it debited from each source, the
+>   eligible era balances era by era, the delivered headroom, the
+>   recycled bucket, and the cap headroom, and teardown reverses those
+>   exact debits, since the sources are separate ledgers whose balances
+>   may have moved since; the domain keeps a LIVE-RECORD count,
+>   incremented when a day's record is opened and decremented when a
+>   record has fully unwound or fully resolved, and the claimant-side
+>   committed extent is cleared exactly when that count reaches zero —
+>   an O(1) test, no rescan. Until it does, no new domain can be
+>   committed for that claimant-side, so a new domain never overlaps an
+>   old one's references, and a wide cancelled domain cannot block later
+>   claims for longer than its own bounded teardown.
+>   The priority window after ANY non-settlement release is keyed to the
+>   BATCH: the restored coverage is directly consumable by any competing
+>   obligation, and by a competitor too large for one scan through
+>   priority-mode staging — a reservation that debits the restored
+>   coverage into staged form under the same conservation and unwind
+>   rules, holds the batch's cursors and counts in its references.
+>   Priority mode is NON-RENEWABLE per obligation and batch and FIFO by
+>   preparation age, as §5c requires and the first draft dropped (r1 P1):
+>   the ledger keeps a used-pair mark — one priority reservation ever for
+>   an obligation on a batch, so an obligation whose reservation expired
+>   unsettled is permanently ineligible there — and a per-batch waiting
+>   queue of obligations that found the batch contested, appended in
+>   preparation order and served oldest first at every burn. Stale
+>   entries — obligations that resolved or unwound before their burn —
+>   are skipped from a persistent head cursor, at most the scan cap per
+>   call, and a call that spends its budget on cleanup alone still
+>   advances the head (r2 P2: a long stale prefix must not make the
+>   restored batch unusable in the one window the mechanism exists
+>   for).
+>   Without both, two prepared obligations under one controller
+>   alternate unwind and priority-stage forever and the batch never
+>   breathes.
+> - **Contention.** A batch with a standing reference is contested for a
+>   second stager, who stages against the unreferenced remainder only;
+>   displacing a reference is 3c's challenge. Two obligations therefore
+>   share a batch by staging disjoint amounts, neither can retire it, and
+>   under question 1's grandfathering rule neither contests the other:
+>   the final check at resolution is that the record's own references
+>   stand, and no reference established later can fail it.
+> - **Preparation.** Any caller may run the scan-and-stage machinery for
+>   an obligation ahead of its settlement, accumulating staged coverage
+>   across calls into the same record; row 13's predicate then reads the
+>   O(1) result, which is the staged coverage and nothing a scan would
+>   be needed for. A prepared obligation is what makes question 2's cost
+>   bounded and question 10's static surface possible.
+> - **The legacy slice.** As question 11: a second draw path, preparation
+>   shaped, paginated over the slice's window, staging into records keyed
+>   by the slice's identity, carried as a domain with a consumption
+>   cursor and aggregate totals, and paid exactly once by the slice's
+>   settlement — before schedule or era funding under every role — when
+>   its consumption cursor reaches its extent.
+>
+> *The host.* A1 left `RewardClaimFacet` at 61 bytes of EIP-170 headroom,
+> `RewardHorizonSweepFacet` at 223 and `InteractionRewardsFacet` at 868:
+> nothing further can be inlined on the settle path. A2 therefore moves
+> the settle wrappers' transport seam off those facets: the day
+> primitive's draw-or-stage decision, the paginated resolution and unwind,
+> preparation and the legacy path become entries on a new
+> `RewardStagingFacet` (measured against the epoch facet's 5,087 bytes
+> before deciding whether the epoch facet can host them instead), reached
+> by ONE self-call carrying the day's four figures, and the settle facets
+> lose the `callDrawTransportForDay` encode they inline today. Measure
+> the encode before choosing (the round-13 lesson: a struct with arrays
+> crossing a call is what costs); if the settle facets still do not
+> shrink enough, the walk itself moves behind a self-call, which is the
+> host split the design has planned since slice 4. With the walk hosted
+> there, question 10's preview is the same function: the hosted walk
+> commits on a normal return for the state-changing sites, runs with the
+> revert-at-end flag for `eth_call` off-chain and for the domain probe,
+> and the static surface reads the O(1) prepared coverage.
+>
+> *The seam's gate.* The mutating seam accepts caller-supplied figures,
+> and a facet selector is reachable by anyone through the Diamond
+> fallback, so it is gated to `msg.sender == address(this)` exactly as
+> `completeOffsetInternal` and A1's own draw entry are (r2 P1: an ungated
+> entry would let an external account fabricate an obligation or a
+> destination split and move batch balances without the pricing path).
+> The permissionless entries — preparation, resolution, unwind, queue
+> cleanup — take an obligation key only and derive everything else from
+> storage, re-pricing the day through the same primitive rather than
+> trusting a figure from calldata.
+>
+> *Storage, append-only.* On `LibVaipakam.Storage`: the staging records by
+> obligation-day key, each with its commitment, four staged figures,
+> four resolved-not-paid figures, batch list with provenance,
+> continuation point, resolution cursor, opening time and deadline; the
+> per-claimant-side DOMAIN record — its phase, committed extent,
+> preparation cursor, reservation cursor, consumption cursor, unwind
+> cursor, live-record count, aggregate four-figure totals, reserved pool
+> and loan-side cap headroom, and the reservation's per-source
+> provenance (per era, headroom, bucket, caps) — the standalone record
+> carrying the same reservation fields;
+> per-batch reference counts; per-batch cooldown windows; the priority
+> used-pair marks and per-batch waiting queues with their head cursors;
+> the per-domain deadline; the per-day late chain (head, tail and a
+> late-next link per node); the `Resolving` custody row; `stagedFresh`
+> and `stagedRecycled` on `TransportBatch` (a mapping-value struct, so
+> appended). Nothing is
+> inserted, removed or retyped, per the in-place refresh rule.
+>
+> *What A2 does not do.* It does not reorder or displace allocations
+> (3c), close out a batch (B), or change the wire (3d). It does not decide
+> the sanctions exception (B). It does not resolve first-caller-wins for
+> an unprepared obligation, and it resolves the cross-chunk case only by
+> keeping multi-chunk decisions staged and challengeable, not by
+> reallocating them. It does not touch the split's reservation, the
+> cursor's advance-only rule, the compatibility entry for the
+> four-argument vault credit, or the per-transaction write budget — A1's
+> arrested clusters stand; the roots A2 takes on are the preview and, by
+> deletion or by the passed-set fix, the pre-list path.
+>
+> *Proofs and tests A2 carries.* Conservation with both staged terms
+> after every stage, resolve page and unwind page, and the packet and
+> `Resolving` row identities at every page of a many-page resolution; a
+> component read is net of consumed and staged, so two stagers cannot
+> together exceed a cap, while the aggregate read is the post-debit
+> balance, so staging five of ten leaves five available; an untyped
+> batch refuses staging and accepts a one-call draw, and its attestation
+> asserts no staged component; a claimant flagged between pages is
+> paid into the frozen vault and the record completes; the deadline
+> grows with the day's list and never by the stager's action; a stale
+> queue prefix longer than one budget is cleared across calls; the
+> mutating seam reverts for any caller but the Diamond; a multi-chunk
+> claim's preparation cursor advances while its settlement cursor
+> stands, an entry accrued after commitment queues for the next domain,
+> and no record in the extent begins its batch pages until every day's
+> transport is staged and every day's residual is reserved; two days of
+> one domain cannot count the same live balance, because the reserving
+> phase debits each, nor the same pool or loan-side cap headroom; a
+> batch materialized after a domain's cutoff is not discovered by it and
+> is drawn by the next obligation; an entry swept or expired after
+> preparation makes its record stale, unwound at once and never paid on
+> its staged split; a domain or record in resolution is not unwound by
+> any deadline and completes; teardown reverses each source's exact
+> debit, era by era, and none is over-credited; a standalone record's
+> first page reserves the residual legs from the live sources and a day
+> they cannot bear does not begin, and once 3c lands a contested one
+> waits out the challenge state first; a cancelled wide domain tears down across calls and clears
+> its extent exactly when its last record is gone, and no new domain
+> commits before then; a late epoch
+> inserted ahead of a continuation point is found by the resume; a
+> one-page day inside a many-chunk domain does not expire before the
+> domain; an unwind restores exactly what was staged and nothing a
+> cursor passed; a referenced batch is refused by park, retirement and
+> every day's prune; a record with a mismatched commitment is refused; a
+> retry resumes from the continuation point without rescanning the
+> staged prefix and stays within the bound; a record of more batches than
+> one scan cap resolves and unwinds across calls with the payout only on
+> the last page; a contested batch yields only its unreferenced remainder
+> and the day does not resolve until covered; the deadline is
+> permissionless, the cooldown is batch-keyed, priority mode is used at
+> most once per obligation and batch and served oldest first, so the
+> two-obligation alternation cannot starve a batch; a multi-chunk claim
+> stages every chunk and pays nothing until the last is priced; the
+> legacy path stages a listed pre-`D*` day and the slice consumes it
+> before schedule funding, paying exactly once when its consumption
+> cursor reaches its extent, so a retry before that re-prices nothing
+> paid; the preview equals the settlement including
+> the staged terms — by construction for the CALL sites, and the static
+> read never exceeds staged coverage plus the one cursor batch; the split's restated tie
+> attains the cut bound on the round-17 shape.
+
 ### The order, and why
 
 (Closure 2's second PR landed as two — the ingress half first, the
