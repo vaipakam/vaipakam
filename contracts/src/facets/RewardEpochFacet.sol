@@ -113,8 +113,24 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return LibRewardCustody.materializeTransportBatchPage(
             LibVaipakam.storageSlot(),
             batchId,
-            dayIds
+            dayIds,
+            new bytes32[](0)
         );
+    }
+
+    /// @notice {materializeTransportBatchPage} with the predecessor named for
+    ///         each day (Codex #2276 r7): `hints[i]` is the batch after which
+    ///         this one belongs in day `dayIds[i]`'s ordered list, zero for the
+    ///         head; verified on chain, so a wrong hint is refused and never
+    ///         mis-orders. Needed only for an epoch indexed after more newer
+    ///         epochs on a day than the unhinted entry's bounded walk covers.
+    function materializeTransportBatchPageHinted(
+        bytes32 batchId,
+        uint256[] calldata dayIds,
+        bytes32[] calldata hints
+    ) external nonReentrant returns (uint32 indexedDays) {
+        if (hints.length != dayIds.length) revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
+        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints);
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
@@ -398,22 +414,33 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, uint256 cursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32[] storage index = s.transportBatchesByDay[dayId];
-        total = index.length;
-        cursor = s.transportDayCursor[dayId];
-        if (offset >= total) return (new bytes32[](0), new uint64[](0), total, cursor);
-        // Clamped against what REMAINS rather than computing `offset + limit`:
-        // a caller asking for everything with an unbounded limit would
-        // otherwise overflow into a panic instead of getting the tail.
-        uint256 end = total - offset < limit ? total : offset + limit;
-        page = new bytes32[](end - offset);
-        arrivedAt = new uint64[](end - offset);
-        for (uint256 i = offset; i < end; ++i) {
-            bytes32 id = index[i];
-            page[i - offset] = id;
-            // The batch IS its packet's stamp, so the arrival is one read from
-            // the packet record and never a second copy that could drift.
-            arrivedAt[i - offset] = s.ingressPackets[id].arrivedAt;
+        total = s.transportBatchesByDay[dayId].length;
+        // The page is read in the day's ORDER — the list by (arrival, batch
+        // id) — and `cursor` is the position of the consumption cursor in
+        // that order (Codex #2276 r7: the list replaced an arrival-sorted
+        // array whose insertion no budget could bound).
+        bytes32 cursorNode = s.transportDayCursorNode[dayId];
+        bytes32 node = s.transportDayHead[dayId];
+        uint256 pos;
+        uint256 want = offset >= total ? 0 : (total - offset < limit ? total - offset : limit);
+        page = new bytes32[](want);
+        arrivedAt = new uint64[](want);
+        uint256 w;
+        bool cursorSeen = cursorNode == bytes32(0);
+        while (node != bytes32(0)) {
+            if (!cursorSeen) {
+                // The cursor is the last exhausted node: its position counts it.
+                cursor = pos + 1;
+                if (node == cursorNode) cursorSeen = true;
+            }
+            if (pos >= offset && w < want) {
+                page[w] = node;
+                arrivedAt[w] = s.ingressPackets[node].arrivedAt;
+                unchecked { ++w; }
+            }
+            if (cursorSeen && w == want) break;
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++pos; }
         }
     }
 

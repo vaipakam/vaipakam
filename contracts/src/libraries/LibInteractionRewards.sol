@@ -1679,6 +1679,7 @@ library LibInteractionRewards {
             }),
             advanced: false,
             pruned: false,
+            capHit: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS,
             transport: TransportLegs({userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0})
         });
@@ -1692,6 +1693,10 @@ library LibInteractionRewards {
             if (work.length != 0) {
                 _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
             }
+            // A day deferred on the scan window ends the whole walk (Codex
+            // #2276 r7 P2): the prune it persisted is what the next call
+            // sees, and the dry run — which cannot prune — stops the same way.
+            if (ctx.capHit) break;
             unchecked { ++sideIdx; }
         }
         // A pruned cursor is persisted progress too (Codex #2276 r4 P2).
@@ -1824,6 +1829,7 @@ library LibInteractionRewards {
                 // empty-claim revert rolled it back and every retry scanned
                 // the same exhausted window.
                 if (_drawAndFold(d, charge, ctx.transport)) ctx.pruned = true;
+                if (charge.transportCapHit) ctx.capHit = true;
                 break;
             }
 
@@ -2755,6 +2761,7 @@ library LibInteractionRewards {
                 daysLeft -= spent;
                 armedTotal += armed;
             }
+            if (acc.capHit) break; // as the live walk (Codex #2276 r7 P2)
             unchecked { ++sideIdx; }
         }
         liveArmed = acc.liveArmed;
@@ -2878,6 +2885,7 @@ library LibInteractionRewards {
                 (, uint256 spent, ) = _dryRunSideDays(s, user, work, daysLeft, pool, acc);
                 daysLeft -= spent;
             }
+            if (acc.capHit) break; // as the live walk (Codex #2276 r7 P2)
             unchecked { ++sideIdx; }
         }
         return (acc.fresh, acc.recycled);
@@ -6117,6 +6125,10 @@ library LibInteractionRewards {
         /// @dev 3b-ii-A — a deferred day's epoch cursor moved: persisted
         ///      progress, reported as such (Codex #2276 r4 P2).
         bool pruned;
+        /// @dev 3b-ii-A — a day deferred on the transport scan window: the
+        ///      walk ends on EVERY side (Codex #2276 r7 P2), so the preview,
+        ///      which cannot simulate the prune, describes what the claim did.
+        bool capHit;
         uint256 daysLeft;
         /// @dev 3b-ii-A — the transport-paid legs the walk drew, folded per day.
         TransportLegs transport;

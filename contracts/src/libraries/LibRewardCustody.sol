@@ -1030,7 +1030,7 @@ library LibRewardCustody {
     event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
     /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
     ///         moved past exhausted epochs at the front of its index.
-    event TransportDayCursorAdvanced(uint256 indexed dayId, uint256 cursor);
+    event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
     /// @dev A split attested after draws re-typed the legs already drawn so the
     ///      attested component caps hold (Codex #2276 r4): the epoch's total is
     ///      unchanged, one leg fell and the other rose by the same amount.
@@ -1309,13 +1309,11 @@ library LibRewardCustody {
     ///         draws nothing on such a day, so there is nothing to stage or
     ///         unwind; 3b-ii-B's staging is what makes a wider day progress.
     uint256 internal constant TRANSPORT_DRAW_SCAN_CAP = 64;
-    /// @dev The arrival-order insertion work one materialization call takes on
-    ///      before it stops its page early (Codex #2276 r6 P2): an epoch
-    ///      indexed after newer ones shifts them, and the shift is bounded by
-    ///      how many newer epochs the day lists — but a page of many such days
-    ///      multiplies it. A call always indexes at least one day, so progress
-    ///      is guaranteed; the budget bounds what one call adds beyond that.
-    uint256 internal constant TRANSPORT_INDEX_WORK_CAP = 64;
+    /// @dev How far back from a day's newest epoch an UNHINTED indexing call
+    ///      may walk to find a late epoch's place (Codex #2276 r7 P2). Every
+    ///      step is one read; past the cap the call refuses and the caller
+    ///      names the predecessor instead, which inserts in constant work.
+    uint256 internal constant TRANSPORT_INDEX_WALK_CAP = 128;
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
     ///         EPOCH: one untyped balance, spendable only by the obligations
@@ -1678,14 +1676,13 @@ library LibRewardCustody {
     function materializeTransportBatchPage(
         LibVaipakam.Storage storage s,
         bytes32 batchId,
-        uint256[] calldata dayIds
+        uint256[] calldata dayIds,
+        bytes32[] memory hints
     ) internal returns (uint32 indexedDays) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
-        // The batch's key IS its packet's stamp, so the commitment is read
-        // through `batchId` directly.
         bytes32 committed = s.ingressPackets[batchId].dayListHash;
         bytes32 supplied = keccak256(abi.encode(dayIds));
         if (supplied != committed) {
@@ -1693,49 +1690,102 @@ library LibRewardCustody {
         }
         uint256 end = uint256(done) + TRANSPORT_INDEX_PAGE;
         if (end > dayIds.length) end = dayIds.length;
-        // A day's index is kept in ARRIVAL order BY CONSTRUCTION, whoever
-        // indexes it and in whatever order (Codex #2276 r5 P1). Materialization
-        // is permissionless and asynchronous, so an append order would be the
-        // caller's — which is why an append never was an ordering (Codex #2232
-        // r3) and why the draw's bounded window could not be trusted to hold
-        // the highest-priority epochs: a window is a PREFIX of the index, and
-        // a prefix of a caller-ordered index is the caller's choice. The key
-        // is the delivery's own arrival, `ingressPackets[batchId].arrivedAt`
-        // — written once by the ingress that received it, immutable, correct
-        // for a retrospective admission too (a rollout packet is admitted long
-        // after it arrived, and its true arrival is what the record holds).
-        // An epoch indexed late is inserted at its place by arrival, and never
-        // behind the day's cursor: the cursor counts leading EXHAUSTED epochs,
-        // so a live epoch placed behind it would be invisible to every draw.
-        // The shift is bounded by how many newer epochs a day already lists,
-        // which prompt indexing keeps near zero.
-        // Same-block arrivals share `arrivedAt`, so the batch id — the
-        // delivery's own immutable stamp — breaks the tie (Codex #2276 r6 P1):
-        // the index is totally ordered by (arrival, batch id) whoever
-        // materializes and in whatever order. The work one call takes on is
-        // budgeted (r6 P2): after a day whose insertion shifted past the
-        // budget, the page stops there — a call always indexes at least one
-        // day, and the next call resumes from it.
+        // Each day's epochs are an ORDERED LIST by (arrival, batch id), kept
+        // beside the membership array, whoever materializes and in whatever
+        // order (Codex #2276 r5, r6, r7): the draw reads a bounded window
+        // from the day's cursor, a window is a prefix of the order, and a
+        // prefix of a caller-ordered index was the caller's choice. A list
+        // inserts in CONSTANT work given the predecessor — a materializer
+        // may name it (`hints`, aligned with `dayIds`; zero = at the head) —
+        // and without one the ledger walks back from the newest for at most
+        // `TRANSPORT_INDEX_WALK_CAP` steps, one read each, and refuses past
+        // that rather than taking on unbounded work (r7 P2: an arrival-sorted
+        // array had to shift every newer entry, which no per-call budget
+        // could bound for the day itself). The key is the delivery's own
+        // arrival, written once by the ingress that received it — correct
+        // for a retrospective admission too — with the batch id breaking
+        // same-block ties (r6). A late epoch is never placed behind the
+        // day's cursor: the cursor counts leading EXHAUSTED epochs, so a live
+        // epoch behind it would be invisible; when a late epoch's place is
+        // before the cursor, it becomes the cursor.
         uint64 arrived = s.ingressPackets[batchId].arrivedAt;
-        uint256 work;
+        bool hinted = hints.length != 0;
         for (uint256 i = done; i < end; ++i) {
-            bytes32[] storage idx = s.transportBatchesByDay[dayIds[i]];
-            uint256 j = idx.length;
-            idx.push(batchId);
-            uint256 floor_ = s.transportDayCursor[dayIds[i]];
-            while (j > floor_) {
-                bytes32 prev = idx[j - 1];
-                uint64 prevAt = s.ingressPackets[prev].arrivedAt;
-                if (prevAt < arrived || (prevAt == arrived && prev < batchId)) break;
-                idx[j] = prev;
-                unchecked { --j; ++work; }
-            }
-            idx[j] = batchId;
-            if (work >= TRANSPORT_INDEX_WORK_CAP && i + 1 < end) end = i + 1;
+            uint256 d = dayIds[i];
+            _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
+            s.transportBatchesByDay[d].push(batchId);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
+    }
+
+    /// @dev Whether `(aAt, a)` orders before `b` by (arrival, batch id).
+    function _keyBefore(
+        LibVaipakam.Storage storage s,
+        uint64 aAt,
+        bytes32 a,
+        bytes32 b
+    ) private view returns (bool) {
+        uint64 bAt = s.ingressPackets[b].arrivedAt;
+        return aAt < bAt || (aAt == bAt && a < b);
+    }
+
+    /// @dev Link `id` into day `d`'s ordered list at its place by (arrival,
+    ///      batch id) — after `hint` when `hinted` (verified, constant work),
+    ///      else after the newest node older than it, found by a bounded walk
+    ///      back from the tail. Idempotent: a batch already in the list is
+    ///      left where it is.
+    function _linkIntoDay(
+        LibVaipakam.Storage storage s,
+        uint256 d,
+        bytes32 id,
+        uint64 arrived,
+        bytes32 hint,
+        bool hinted
+    ) private {
+        bytes32 head = s.transportDayHead[d];
+        if (head == id || s.transportDayPrev[d][id] != bytes32(0)) return; // already listed
+        if (head == bytes32(0)) {
+            s.transportDayHead[d] = id;
+            s.transportDayTail[d] = id;
+            return;
+        }
+        bytes32 prev;
+        if (hinted) {
+            prev = hint;
+            if (prev != bytes32(0)) {
+                bool inList = prev == head || s.transportDayPrev[d][prev] != bytes32(0);
+                if (!inList || !_keyBefore(s, s.ingressPackets[prev].arrivedAt, prev, id)) {
+                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                }
+            }
+            bytes32 succ = prev == bytes32(0) ? head : s.transportDayNext[d][prev];
+            if (succ != bytes32(0) && !_keyBefore(s, arrived, id, succ)) {
+                revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+            }
+        } else {
+            bytes32 node = s.transportDayTail[d];
+            uint256 steps;
+            while (node != bytes32(0) && _keyBefore(s, arrived, id, node)) {
+                if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
+                node = s.transportDayPrev[d][node];
+            }
+            prev = node;
+        }
+        bytes32 nxt = prev == bytes32(0) ? head : s.transportDayNext[d][prev];
+        s.transportDayPrev[d][id] = prev;
+        s.transportDayNext[d][id] = nxt;
+        if (prev == bytes32(0)) s.transportDayHead[d] = id;
+        else s.transportDayNext[d][prev] = id;
+        if (nxt == bytes32(0)) s.transportDayTail[d] = id;
+        else s.transportDayPrev[d][nxt] = id;
+        // The cursor is the last EXHAUSTED node at the front (zero = none):
+        // a new node placed at or before it would sit inside the exhausted
+        // prefix, so the node before the new one becomes the cursor and the
+        // window starts at the new node.
+        bytes32 cur = s.transportDayCursorNode[d];
+        if (cur != bytes32(0) && _keyBefore(s, arrived, id, cur)) s.transportDayCursorNode[d] = prev;
     }
 
     /// @notice #1566 transport epochs PR 3b — PARK what this batch's
@@ -1748,7 +1798,7 @@ library LibRewardCustody {
     ///
     ///         The remainder stays MEMBERSHIP-BOUND — it carries the same flat
     ///         commitment 3a stamped on the packet — so a late obligation
-    ///         whose day is in this list can still restore against it after
+    ///         whose day is in this list can still restore against it succ
     ///         the index itself has been retired, rather than finding the
     ///         value in a general pool it has no claim on.
     ///
@@ -1788,7 +1838,7 @@ library LibRewardCustody {
     ///         RELEASES a batch, so what remains of its packet becomes
     ///         classifiable.
     /// @dev    The second half of the release, and the whole of the gate:
-    ///         after this, {packetBatchReleased} answers yes for the batch's
+    ///         succ this, {packetBatchReleased} answers yes for the batch's
     ///         packet and {authenticatedFresh} derives the classification's
     ///         bound from the packet's immutable attested caps NET of what the
     ///         batch's own transport legs already spent.
@@ -2021,32 +2071,27 @@ library LibRewardCustody {
         uint256[] memory ovFresh,
         uint256[] memory ovRecycled
     ) internal view returns (TransportDrawPlan memory plan) {
-        bytes32[] storage index = s.transportBatchesByDay[dayId];
-        uint256 len = index.length;
-        uint256 i = s.transportDayCursor[dayId];
-        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
-        if (end > len) end = len;
-        plan.capHit = end < len;
-        uint256 n = end > i ? end - i : 0;
-        bytes32[] memory ids = new bytes32[](n);
-        uint256[] memory bals = new uint256[](n);
-        uint256[] memory fRoom = new uint256[](n);
-        uint256[] memory rRoom = new uint256[](n);
-        uint256[] memory keys = new uint256[](n);
+        bytes32 cur = s.transportDayCursorNode[dayId];
+        bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory fRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory rRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory keys = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256 live;
-        for (; i < end; ) {
-            bytes32 id = index[i];
-            LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+        uint256 seen;
+        while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+            LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
-                (uint256 ovF, uint256 ovR) = _overlayOf(ovIds, ovFresh, ovRecycled, id);
+                (uint256 ovF, uint256 ovR) = _overlayOf(ovIds, ovFresh, ovRecycled, node);
                 bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal != 0) {
-                    (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal, ovF, ovR);
-                    LibVaipakam.IngressPacket storage p = s.ingressPackets[id];
+                    (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
                     // dayCount in the high bits, arrival below: one ascending key.
-                    uint256 key = (uint256(b.dayCount) << 64) | uint256(p.arrivedAt);
-                    // Stable insertion keeps index position as the final tie-break.
+                    uint256 key = (uint256(b.dayCount) << 64) | uint256(s.ingressPackets[node].arrivedAt);
+                    // Stable insertion keeps list position — (arrival, batch
+                    // id) — as the final tie-break.
                     uint256 k = live;
                     while (k != 0 && keys[k - 1] > key) {
                         ids[k] = ids[k - 1];
@@ -2056,17 +2101,23 @@ library LibRewardCustody {
                         keys[k] = keys[k - 1];
                         unchecked { --k; }
                     }
-                    ids[k] = id;
+                    ids[k] = node;
                     bals[k] = bal;
                     fRoom[k] = fr;
                     rRoom[k] = rr;
                     keys[k] = key;
-                    plan.available += bal;
+                    // Coverage counts only what is drawable through at least
+                    // one leg (Codex #2276 r7 P2): the unit a scaling residual
+                    // can leave outside both recorded caps is reserved for the
+                    // close-out's disposition path and is not funding.
+                    plan.available += fr + rr < bal ? fr + rr : bal;
                     unchecked { ++live; }
                 }
             }
-            unchecked { ++i; }
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++seen; }
         }
+        plan.capHit = node != bytes32(0);
         assembly ("memory-safe") {
             mstore(ids, live)
             mstore(bals, live)
@@ -2351,8 +2402,7 @@ library LibRewardCustody {
                 unchecked { ++k; }
             }
         }
-        bytes32[] storage index = s.transportBatchesByDay[dayId];
-        pruned = _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
+        pruned = _pruneTransportDayCursor(s, dayId);
     }
 
     /// @dev The packet half of a draw: the batch is keyed by its packet's
@@ -2376,39 +2426,38 @@ library LibRewardCustody {
     }
 
     /// @notice Advance `dayId`'s consumption cursor past every exhausted epoch
-    ///         at the front of its index — at most one scan window per call.
-    /// @dev    Run by every draw, and permissionless through the facet. The
-    ///         case that needs the standalone entry: an epoch drained by
-    ///         ANOTHER day's draws still sits in this day's index (a batch's
-    ///         day list is a hash, not an enumerable set, so a draw cannot
-    ///         advance its sibling days), and a window full of such husks
-    ///         would read as a cap hit with zero coverage — a day that defers
-    ///         forever because nothing ever draws on it. So the settle
-    ///         wrapper prunes on its way out of a deferred day, and a keeper
-    ///         may prune any day at any time; both are idempotent. An epoch
-    ///         whose membership is not yet whole is not exhausted and stops
-    ///         the prune: it becomes drawable when its last page is indexed.
+    ///         at the front of its list — at most one scan window per call.
+    /// @dev Run by every draw, and permissionless through the facet. The
+    ///      case that needs the standalone entry: an epoch drained by
+    ///      ANOTHER day's draws still sits in this day's list (a batch's
+    ///      day list is a hash, not an enumerable set, so a draw cannot
+    ///      advance its sibling days), and a window full of such husks
+    ///      would read as a cap hit with zero coverage — a day that defers
+    ///      forever because nothing ever draws on it. So the settle
+    ///      wrapper prunes on its way out of a deferred day, and a keeper
+    ///      may prune any day at any time; both are idempotent. An epoch
+    ///      whose membership is not yet whole is not exhausted and stops
+    ///      the prune: it becomes drawable when its last page is indexed.
+    ///      The cursor is a NODE (Codex #2276 r7): the last EXHAUSTED epoch at
+    ///      the front of the list, zero when none is; the window starts after
+    ///      it, and the lens reports its position as the count of leading
+    ///      exhausted epochs — the same figure the array cursor was.
     function pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) internal returns (bool moved) {
-        bytes32[] storage index = s.transportBatchesByDay[dayId];
-        return _pruneTransportDayCursor(s, dayId, index, index.length, s.transportDayCursor[dayId]);
+        return _pruneTransportDayCursor(s, dayId);
     }
 
-    function _pruneTransportDayCursor(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        bytes32[] storage index,
-        uint256 len,
-        uint256 cursor
-    ) private returns (bool moved) {
-        uint256 i = cursor;
-        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
-        if (end > len) end = len;
-        while (i < end && s.transportBatches[index[i]].balance == 0) {
-            unchecked { ++i; }
+    function _pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
+        bytes32 cur = s.transportDayCursorNode[dayId];
+        bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        uint256 steps;
+        while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && s.transportBatches[node].balance == 0) {
+            cur = node;
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++steps; }
         }
-        if (i != cursor) {
-            s.transportDayCursor[dayId] = i;
-            emit TransportDayCursorAdvanced(dayId, i);
+        if (steps != 0) {
+            s.transportDayCursorNode[dayId] = cur;
+            emit TransportDayCursorAdvanced(dayId, cur);
             moved = true;
         }
     }

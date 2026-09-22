@@ -2473,7 +2473,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2488,6 +2488,7 @@ contract HelperTest {
         selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         selectors[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        selectors[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors

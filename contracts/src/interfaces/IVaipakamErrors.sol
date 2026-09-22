@@ -646,6 +646,13 @@ interface IVaipakamErrors {
     ///         primitive priced against the same read in the same
     ///         transaction; kept as the assertion that the two agree.
     error TransportDrawExceedsCoverage(uint256 dayId, uint256 requested, uint256 available);
+    /// @dev Indexing this batch into this day without a predecessor hint would
+    ///      walk back past more newer epochs than one call is allowed to; the
+    ///      caller names the predecessor instead (Codex #2276 r7).
+    error TransportIndexWalkExceeded(bytes32 batchId, uint256 dayId);
+    /// @dev The named predecessor is not in the day's list, or the batch does
+    ///      not belong between it and its successor by (arrival, batch id).
+    error TransportIndexHintInvalid(bytes32 batchId, uint256 dayId, bytes32 hint);
     /// @notice A split attestation arrived from a chain that is not this
     ///         deployment's canonical (Base) chain. Messenger authentication
     ///         proves a message came from a configured peer, never that the

@@ -3060,7 +3060,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3074,6 +3074,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         s[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        s[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:

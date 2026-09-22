@@ -7553,6 +7553,22 @@ library LibVaipakam {
         mapping(uint256 => bytes32[]) transportBatchesByDay;
         mapping(uint256 => uint256) transportDayCursor;
         mapping(bytes32 => TransportRemainder) transportRemainders;
+        /// @dev #1566 transport epochs PR 3b-ii-A (Codex #2276 r7), appended —
+        ///      each day's epochs as an ORDERED LIST by (arrival, batch id),
+        ///      kept beside the membership array `transportBatchesByDay`:
+        ///      `transportDayHead` / `transportDayTail` are its ends,
+        ///      `transportDayNext` / `transportDayPrev` its links, and
+        ///      `transportDayCursorNode` the day's consumption cursor as a
+        ///      NODE (zero = the head). A list inserts in constant work given
+        ///      the predecessor, which is what bounds a late epoch's indexing;
+        ///      an arrival-sorted ARRAY had to shift every newer entry, which
+        ///      no budget could bound for the day itself. The array index
+        ///      cursor `transportDayCursor` above is retired and unread.
+        mapping(uint256 => bytes32) transportDayHead;
+        mapping(uint256 => bytes32) transportDayTail;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
+        mapping(uint256 => bytes32) transportDayCursorNode;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

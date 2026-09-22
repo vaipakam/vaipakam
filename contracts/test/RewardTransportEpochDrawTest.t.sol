@@ -57,7 +57,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     /// @dev Declared locally so `expectEmit` can name it; the emitter is the
     ///      library inlined into the epoch facet.
     event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
-    event TransportDayCursorAdvanced(uint256 indexed dayId, uint256 cursor);
+    event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
 
     function setUp() public {
         setupHelper();
@@ -296,7 +296,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         uint256 unclBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
 
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit TransportDayCursorAdvanced(1, 1);
+        emit TransportDayCursorAdvanced(1, h); // the cursor is the exhausted epoch itself (r7)
         assertEq(_claim(), NEED, "paid in full from both sources");
 
         (uint256 lf, ) = _legs(h);
@@ -800,11 +800,10 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(page[1], hi);
     }
 
-    /// @dev A materialization call indexes at least one day and stops its page
-    ///      once the arrival-order shifts exceed the work budget (Codex #2276
-    ///      r6 P2): an old two-day epoch indexed after 70 newer ones on each
-    ///      day takes two calls, each landing its day at the front.
-    function test_Materialization_ProgressesOneDayPerCall_UnderTheWorkBudget() public {
+    /// @dev A late epoch links into its place in constant work (Codex #2276
+    ///      r7 P2): an old two-day epoch indexed after 70 newer ones on each
+    ///      day indexes both days in ONE call and leads both lists.
+    function test_Materialization_LinksALateEpochInConstantWork() public {
         uint256[] memory both = _two(1, 2);
         _ingress().onRewardBudgetReceived(address(vpfi), 1e18, both, CHAIN_BASE, 70, REMITTER, 0, 0, keccak256("old"), false);
         bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("old")));
@@ -812,13 +811,84 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         for (uint256 i; i < 70; ++i) {
             _epochOf(1, both, 100 + i, keccak256(abi.encode("newer", i)));
         }
-        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 1, "the first call indexes one day and stops");
-        (bytes32[] memory p1, , , ) = _epoch().getTransportDayBatches(1, 0, 1);
+        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 2, "both days in one call");
+        (bytes32[] memory p1, , uint256 t1, ) = _epoch().getTransportDayBatches(1, 0, 1);
+        assertEq(t1, 71);
         assertEq(p1[0], hOld, "at the front of day 1");
-        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 2, "the second call indexes the other");
         (bytes32[] memory p2, , , ) = _epoch().getTransportDayBatches(2, 0, 1);
         assertEq(p2[0], hOld, "at the front of day 2");
     }
+
+    /// @dev Without a predecessor hint the ledger walks back a bounded number
+    ///      of steps and refuses past it; with the hint (the head here) the
+    ///      same epoch links in constant work (Codex #2276 r7 P2).
+    function test_Materialization_RefusesAnUnboundedWalk_UnlessHinted() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 80, REMITTER, 0, 0, keccak256("older"), false);
+        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older")));
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        for (uint256 i; i < 130; ++i) {
+            _epochOf(1, d1, 200 + i, keccak256(abi.encode("newer", i)));
+        }
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexWalkExceeded.selector, hOld, 1));
+        _epoch().materializeTransportBatchPage(hOld, d1);
+        bytes32[] memory hints = new bytes32[](1); // zero: at the head
+        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints), 1, "linked with the hint");
+        (bytes32[] memory page, , uint256 total, ) = _epoch().getTransportDayBatches(1, 0, 1);
+        assertEq(total, 131);
+        assertEq(page[0], hOld, "at the front");
+        bytes32 wrong = page[0];
+        vm.expectRevert();
+        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong)); // already listed: idempotent, refused as whole
+    }
+
+    function _hintOf(bytes32 h) internal pure returns (bytes32[] memory a) {
+        a = new bytes32[](1);
+        a[0] = h;
+    }
+
+    /// @dev A day's reported coverage counts only what its epochs can pay
+    ///      through at least one leg (Codex #2276 r7 P2): a 1F/2R split on 2
+    ///      wei records 0 fresh room and 1 recycled room, and the day can fund
+    ///      1, not 2.
+    function test_TheCoverage_CountsOnlyWhatIsDrawable() public {
+        _epochOf(2, _one(1), 90, keccak256("two-wei"));
+        _attest(90, 1, 2);
+        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 1, "the residual wei is reserved for the disposition path");
+    }
+
+    /// @dev A day deferred on the scan window ends the whole call's walk, on
+    ///      every side (Codex #2276 r7 P2): the claimant covers day 1 on both
+    ///      sides, 64 husks lead the day and a funded epoch sits beyond them.
+    ///      The first claim pays nothing and prunes; the preview agrees; the
+    ///      second claim pays both sides from the now-visible epoch.
+    function test_ACapHitDeferral_EndsTheWalkOnEverySide() public {
+        _mut().setDayPoolStampRaw(1, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        for (uint256 i; i < 64; ++i) {
+            bytes32 h = _epochOf(1, _one(1), 400 + i, keccak256(abi.encode("husk", i)));
+            _mut().parkTransportBatchRaw(h);
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(2 * NEED, _one(1), 500, keccak256("funded"));
+        assertEq(_preview(), 0, "the preview stops at the window too");
+        assertEq(_claim(), 0, "deferred on the window; the walk ended on both sides");
+        assertEq(_cursor(1), 64, "and the prune persisted");
+        assertEq(_claim(), 2 * NEED, "the next call pays both sides from the funded epoch");
+    }
+
+    /// @dev A draw records its exit on the PACKET too, so the packet's own
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no
     ///      epoch value (Codex #2276 r5 P1), on Codex's shape: forfeited day A

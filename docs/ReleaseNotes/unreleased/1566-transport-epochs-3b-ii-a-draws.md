@@ -74,13 +74,19 @@ within that component's remaining cap; where the split arrives after
 draws, the legs already drawn are re-typed so the caps hold, the epoch's
 total unchanged. A deferred settlement's cursor move is progress the
 claim keeps even when it paid nothing, so a retry never scans the same
-exhausted window twice. The residual leg of an epoch's coverage is chosen
+exhausted window twice, and such a deferral ends that call's settlement on
+every side, so the preview — which cannot move the cursor — describes what
+the claim did. A day's reported coverage counts only what its epochs can
+pay through at least one leg. The residual leg of an epoch's coverage is chosen
 on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's index is kept in **arrival order** whoever indexes it — an epoch
 indexed late takes its place by arrival, never behind the day's cursor,
-same-block arrivals in a fixed order by delivery identity, and the work
-one indexing call takes on is budgeted so indexing always progresses —
+same-block arrivals in a fixed order by delivery identity, and each epoch
+linked into its place in constant work (a materializer may name the
+predecessor; without one the ledger searches back from the newest for a
+bounded number of steps and refuses beyond that), so indexing an epoch
+late never costs more than indexing it on time —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
