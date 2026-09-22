@@ -424,9 +424,10 @@ the means to write to it is closer to proof, and the difference is what this
 step buys.
 
 **What a user sees during the window: the read surface stops answering.**
-Every new request to the indexer and the agent is refused with a 503 for the
-length of the window — every route, new live-update connections included, and
-on the agent even routes that touch no database at all. That bluntness is
+Every new application request to the indexer and the agent is refused with a
+503 for the length of the window, whatever route it asks for — new live-update
+connections included, and on the agent even routes that touch no database at
+all. That bluntness is
 deliberate: an answer drawn from a database about to be discarded would be
 worse than no answer, and a per-route list of which routes read the database is
 exactly the enumeration the mechanism exists to avoid. Requests **fail rather
