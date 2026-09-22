@@ -88,10 +88,11 @@ on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's index is kept in **arrival order** whoever indexes it — an epoch
 indexed late takes its place by arrival, or, when that place is among the
-epochs the day's cursor has already passed, the first place of the window,
-so it is never behind the cursor and the cursor never moves back (which is
-what lets the day report its consumption as an exact count in constant
-work); same-block arrivals in a fixed order by delivery identity, and each epoch
+epochs the day's cursor has already passed, its place by arrival among the
+epochs after the cursor, so it is never behind the cursor, the cursor never
+moves back (which is what lets the day report its consumption as an exact
+count in constant work), and which late epochs a window holds is the
+ledger's choice and not the indexer's; same-block arrivals in a fixed order by delivery identity, and each epoch
 linked into its place in constant work (a materializer may name the
 predecessor; without one the ledger searches back from the newest for a
 bounded number of steps and refuses beyond that), so indexing an epoch
@@ -105,10 +106,12 @@ epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
 **fewest days first**, the oldest arrival on ties; the order is a
 property of the epochs in the window, never of who indexed them or how
-they were read. Each leg is served first from the capacity that could
-serve only it, and the rest of each epoch's balance — what either leg
-may take — then pays the residual asks, so the two legs are paid the
-most any assignment could pay them, and coverage one leg's cap rejects
+they were read, and that order is the priority in which epochs are spent.
+An epoch's flexible balance — what either leg may take — is held back
+from a leg only where a later epoch's capacity for the other leg could
+not otherwise be used, so the two legs are paid the most any assignment
+could pay them without a lower-priority epoch being spent ahead of a
+higher one, and coverage one leg's cap rejects
 is offered to the other leg; a day indexed before the ordered list
 existed and wider than one window defers, drawing nothing, until enough
 of its members are exhausted or the catch-up has linked it; an attested

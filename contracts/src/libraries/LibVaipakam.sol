@@ -7557,7 +7557,9 @@ library LibVaipakam {
         ///      each day's epochs as an ORDERED LIST by (arrival, batch id),
         ///      kept beside the membership array `transportBatchesByDay`:
         ///      `transportDayHead` / `transportDayTail` are its ends,
-        ///      `transportDayNext` / `transportDayPrev` its links, and
+        ///      `transportDayNext` / `transportDayPrev` its links (a passed
+        ///      node's `prev` is `LibRewardCustody.TRANSPORT_PASSED`: never
+        ///      followed, it marks the node as behind the window), and
         ///      `transportDayCursorNode` the day's consumption cursor as a
         ///      NODE (zero = the head). A list inserts in constant work given
         ///      the predecessor, which is what bounds a late epoch's indexing;

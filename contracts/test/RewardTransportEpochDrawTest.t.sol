@@ -1108,6 +1108,46 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(linked, 0, "never linked");
     }
 
+    /// @dev The split spends in plan order, and holds an epoch's flexible
+    ///      balance back only where a later epoch's capacity for the other
+    ///      leg could not otherwise be used (Codex #2276 r12 P1), on Codex's
+    ///      shape: a flexible one-day epoch ahead of a fresh-only two-day
+    ///      epoch, a fresh-only obligation on the first day — the one-day
+    ///      epoch pays, and the two-day epoch keeps its fresh for the other
+    ///      day; the round-5 shape (both legs asked) still reserves it.
+    function test_TheSplit_HonoursPlanPriority_ReservingOnlyAsNeeded() public {
+        _scene(NEED);
+        bytes32 one = _epochOf(NEED, _one(1), 51, keccak256("one-day"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 two = _epochOf(NEED, _two(1, 2), 52, keccak256("two-day"));
+        _attest(52, NEED, 0); // fresh-only
+        assertEq(_claim(), NEED);
+        (uint256 lf1, ) = _legs(one);
+        (uint256 lf2, ) = _legs(two);
+        assertEq(lf1, NEED, "the one-day epoch pays: the priority");
+        assertEq(lf2, 0, "the two-day epoch is kept for its other day");
+    }
+
+    /// @dev The preview's overlay holds every draw of a chunk and grows as it
+    ///      goes (Codex #2276 r12 P1): thirty two-day epochs worth one and a
+    ///      half days, day one draws twenty, day two sees ten — the preview
+    ///      and the claim both pay one day.
+    function test_ThePreview_OverlayScalesAcrossAChunk() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        for (uint256 i; i < 30; ++i) {
+            _epochOf(NEED / 20, _two(1, 2), 100 + i, keccak256(abi.encode("slice", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        assertEq(_preview(), NEED, "one day, not two: every draw of day one is remembered");
+        assertEq(_claim(), NEED, "and the claim agrees");
+    }
+
     /// @dev The split pays the most either leg can be paid (Codex #2276 r9
     ///      P1), on Codex's shape: an older unattested one-wei epoch (wholly
     ///      flexible) ahead of an attested two-wei epoch with one wei of room
@@ -1291,13 +1331,57 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hints = new bytes32[](1); // zero: at the head — inside the passed prefix
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, older, 1, bytes32(0)));
         _epoch().materializeTransportBatchPageHinted(older, d1, hints);
-        hints[0] = e1; // the cursor: the one hint such an epoch may carry
+        hints[0] = e1; // the cursor may precede an epoch older than itself
         assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "still");
-        assertEq(order[1], older, "the latest-linked late epoch leads the window");
+        assertEq(order[1], older, "the older late epoch leads the window, by key");
         assertEq(order[2], late);
         assertEq(order[3], e2);
+    }
+
+    /// @dev Late epochs after the cursor are ordered by key among themselves
+    ///      whoever links them and in whatever order (Codex #2276 r12 P1):
+    ///      arrivals 50 then 1 read [1, 50]; one at 25 finds its place between
+    ///      them unhinted, or hinted at the epoch before it; a hint at a
+    ///      passed epoch other than the cursor, or at the head, is refused.
+    function test_LateEpochs_KeepTheirOrderAfterTheCursor() public {
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        _scene(NEED);
+        uint256[] memory d1 = _one(1);
+        bytes32 e0 = _epochOf(1, d1, 1, keccak256("e0"));
+        _mut().parkTransportBatchRaw(e0);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 e1 = _epochOf(NEED, d1, 2, keccak256("e1"));
+        assertEq(_claim(), NEED);
+        assertEq(_cursor(1), 2, "e0 and e1 passed");
+        bytes32[] memory hs = new bytes32[](3);
+        uint64[3] memory at = [uint64(50), 1, 25];
+        for (uint256 i; i < 3; ++i) {
+            _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 10 + i, REMITTER, 0, 0, keccak256(abi.encode("late", i)), false);
+            hs[i] = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("late", i))));
+            _mut().setPacketArrivedAtRaw(hs[i], at[i]);
+        }
+        _epoch().materializeTransportBatchPage(hs[0], d1); // arrival 50
+        _epoch().materializeTransportBatchPage(hs[1], d1); // arrival 1, linked second
+        (bytes32[] memory order, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(cursor, 2, "the cursor did not move");
+        assertEq(order[2], hs[1], "arrival 1 leads the window");
+        assertEq(order[3], hs[0], "arrival 50 after it, although linked first");
+        bytes32[] memory hints = new bytes32[](1);
+        hints[0] = e0; // passed, and not the cursor
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, e0));
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        hints[0] = bytes32(0); // the head: behind the window
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, bytes32(0)));
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        hints[0] = hs[1]; // arrival 1: the epoch before arrival 25
+        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints), 1);
+        (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(cursor, 2);
+        assertEq(order[2], hs[1]);
+        assertEq(order[3], hs[2], "arrival 25 between them");
+        assertEq(order[4], hs[0]);
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

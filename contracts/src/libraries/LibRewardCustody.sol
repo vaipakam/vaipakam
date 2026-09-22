@@ -1314,6 +1314,14 @@ library LibRewardCustody {
     ///      step is one read; past the cap the call refuses and the caller
     ///      names the predecessor instead, which inserts in constant work.
     uint256 internal constant TRANSPORT_INDEX_WALK_CAP = 128;
+    /// @dev The `transportDayPrev` link of a node the day's cursor has PASSED
+    ///      (Codex #2276 r12 P1). Nothing is ever placed before the cursor,
+    ///      so the back-links of the passed prefix are never followed; the
+    ///      value instead answers, in one read, whether a node is behind the
+    ///      window — which is what lets a hint into the epochs after the
+    ///      cursor be verified in constant work. Non-zero, so a passed node
+    ///      still reads as listed. Never a batch id.
+    bytes32 internal constant TRANSPORT_PASSED = bytes32(uint256(1));
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
     ///         EPOCH: one untyped balance, spendable only by the obligations
@@ -1707,8 +1715,9 @@ library LibRewardCustody {
         // same-block ties (r6). A late epoch is never placed behind the
         // day's cursor: the cursor counts leading EXHAUSTED epochs, so a live
         // epoch behind it would be invisible; when a late epoch's place is
-        // among the epochs the cursor has passed, it takes the first place of
-        // the window instead, and the cursor never moves back (r11).
+        // among the epochs the cursor has passed, it takes its place by key
+        // among the epochs after the cursor, and the cursor never moves back
+        // (r11, r12).
         //
         // A day indexed before the list existed holds its members in the
         // array alone (Codex #2276 r8 P1): such a day is read from the array
@@ -1782,6 +1791,11 @@ library LibRewardCustody {
         }
     }
 
+    /// @dev Whether the day's cursor has passed `node` (Codex #2276 r12 P1).
+    function _passed(LibVaipakam.Storage storage s, uint256 d, bytes32 node) private view returns (bool) {
+        return s.transportDayPrev[d][node] == TRANSPORT_PASSED;
+    }
+
     /// @dev Whether `(aAt, a)` orders before `b` by (arrival, batch id).
     function _keyBefore(
         LibVaipakam.Storage storage s,
@@ -1813,25 +1827,29 @@ library LibRewardCustody {
             s.transportDayTail[d] = id;
             return;
         }
+        // Nothing is ever placed before the cursor (Codex #2276 r11, r12 P1
+        // — the root of rounds 7, 8, 10 and 11 on this cursor): the cursor
+        // only advances, so its position is an exact stored figure. An epoch
+        // whose arrival would place it among the epochs the cursor has
+        // passed takes its place BY KEY among the epochs after the cursor —
+        // older than every live epoch there, so the window still holds the
+        // oldest first, and ordered among such late epochs by the same key,
+        // so which of them a window holds is the ledger's choice and not the
+        // materializer's. The cursor marks every node it passes, so a hint is
+        // refused in one read when it points behind the window.
         bytes32 prev;
         bytes32 cur = s.transportDayCursorNode[d];
-        if (cur != bytes32(0) && !_keyBefore(s, s.ingressPackets[cur].arrivedAt, cur, id)) {
-            // Its place by key is among the epochs the cursor has passed: it
-            // takes the FIRST place of the window instead (Codex #2276 r11
-            // P2, the root of rounds 7, 8 and 10 on this cursor). It is older
-            // than every live epoch there, so the window still holds the
-            // oldest first; and the cursor never moves back, which is what
-            // makes its position an exact stored figure. The only hint such
-            // an epoch may carry is the cursor itself. (A hint inside the
-            // passed prefix for an epoch NEWER than the cursor fails the
-            // successor check below: everything in the prefix is older.)
-            if (hinted && hint != cur) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
-            prev = cur;
-        } else if (hinted) {
+        if (hinted) {
             prev = hint;
-            if (prev != bytes32(0)) {
+            if (prev == bytes32(0)) {
+                // The head's place is behind the window once anything is passed.
+                if (cur != bytes32(0)) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+            } else {
                 bool inList = prev == head || s.transportDayPrev[d][prev] != bytes32(0);
-                if (!inList || !_keyBefore(s, s.ingressPackets[prev].arrivedAt, prev, id)) {
+                if (!inList) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                if (prev == cur) {
+                    // The cursor may precede an epoch older than itself.
+                } else if (_passed(s, d, prev) || !_keyBefore(s, s.ingressPackets[prev].arrivedAt, prev, id)) {
                     revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
                 }
             }
@@ -1840,9 +1858,11 @@ library LibRewardCustody {
                 revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
             }
         } else {
+            // Back from the newest, stopping at the first node not after this
+            // one — or at the cursor, which is the first passed node met.
             bytes32 node = s.transportDayTail[d];
             uint256 steps;
-            while (node != bytes32(0) && _keyBefore(s, arrived, id, node)) {
+            while (node != bytes32(0) && !_passed(s, d, node) && _keyBefore(s, arrived, id, node)) {
                 if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
                 node = s.transportDayPrev[d][node];
             }
@@ -2050,11 +2070,11 @@ library LibRewardCustody {
         bool capHit;
     }
 
-    /// @dev The ONE split of a plan into per-epoch legs — each leg first from
-    ///      the capacity that could serve only it, then the residual asks from
-    ///      each epoch's flexible balance, in the plan's order. The
-    ///      allocation's last step, the draw and the dry run's overlay all use
-    ///      it, so what was priced is what is drawn.
+    /// @dev The ONE split of a plan into per-epoch legs — in the plan's
+    ///      order, each epoch's flexible balance held back from a leg only
+    ///      where a later epoch's capacity for the other leg could not
+    ///      otherwise be used. The allocation's last step, the draw and the
+    ///      dry run's overlay all use it, so what was priced is what is drawn.
     struct TransportTakes {
         uint256[] fresh;
         uint256[] recycled;
@@ -2073,7 +2093,9 @@ library LibRewardCustody {
         uint256 bucket;
         /// @dev The preview's simulation of draws already planned on earlier
         ///      days of the same dry run, by leg (a leg counts against its
-        ///      cap's room); empty on the settle path.
+        ///      cap's room), as a hash table over batch ids — length zero or
+        ///      a power of two, empty slots zero (Codex #2276 r12 P1); empty
+        ///      on the settle path.
         bytes32[] ovIds;
         uint256[] ovFresh;
         uint256[] ovRecycled;
@@ -2296,30 +2318,31 @@ library LibRewardCustody {
     }
 
     /// @notice Split a plan into per-epoch legs for the two asks: the most
-    ///         either leg can be paid, in the plan's order.
-    /// @dev    Two stages over the plan, and the second is the exact form of
-    ///         "least able to serve the other" that round 5's ordering by raw
-    ///         room approximated (Codex #2276 r9 P1: equal rooms on unequal
-    ///         balances still let the greedy spend an epoch's flexible unit on
-    ///         fresh and find the recycled ask short, although the reverse
-    ///         covered both). Each epoch's balance decomposes into what could
+    ///         either leg can be paid, spent in the plan's order.
+    /// @dev    One pass in plan order — the PRIORITY (Codex #2276 r12 P1:
+    ///         round 9's exclusive-capacity-first pass spent a lower-priority
+    ///         fresh-only epoch ahead of a higher-priority flexible one on an
+    ///         obligation that had only a fresh leg, and left another listed
+    ///         day unfunded). Each epoch's balance decomposes into what could
     ///         serve ONLY fresh (the balance beyond its recycled room, within
     ///         its fresh room), what could serve ONLY recycled (the mirror),
-    ///         and a FLEXIBLE remainder either leg may take; an unattested
-    ///         epoch is wholly flexible, an attested one with independent
-    ///         rooms wholly exclusive. Stage one takes each leg from the
-    ///         exclusive capacities, which costs the other leg nothing; stage
-    ///         two takes the residual asks from the flexible remainders,
-    ///         fresh then recycled. By the cut bound on two sources this
-    ///         covers the maximum any assignment can, and within each stage
-    ///         plan order — the priority — decides which epochs pay. Both
-    ///         stages depend only on the plan and the running asks, so the
-    ///         split is IDEMPOTENT on its own result: splitting again for
-    ///         exactly the legs it covered reproduces the same per-epoch
-    ///         legs, which is what lets the settle wrapper re-derive the
-    ///         allocation's legs from the plan and the two totals alone.
-    ///         Where the rooms keep a leg short, the residual falls to the
-    ///         shared sources or the day defers — never past a cap.
+    ///         and a FLEXIBLE remainder either leg may take. Each epoch gives
+    ///         its exclusive capacities first (they cost the other leg
+    ///         nothing), then its flexible remainder to the demand the LATER
+    ///         epochs' exclusive capacities cannot meet — fresh first — and
+    ///         only then to the rest, fresh first. So an epoch's flexible
+    ///         balance is held back from a leg exactly where a later epoch's
+    ///         capacity for the other leg could not otherwise be used, which
+    ///         is the reservation the cut bound on two sources requires; with
+    ///         that reservation every assignment attains the bound, and the
+    ///         plan order decides which epochs pay. Both figures depend only
+    ///         on the plan and the running asks, so the split is IDEMPOTENT
+    ///         on its own result: splitting again for exactly the legs it
+    ///         covered reproduces the same per-epoch legs, which is what lets
+    ///         the settle wrapper re-derive the allocation's legs from the
+    ///         plan and the two totals alone. Where the rooms keep a leg
+    ///         short, the residual falls to the shared sources or the day
+    ///         defers — never past a cap.
     function splitTransportTakes(
         TransportDrawPlan memory plan,
         uint256 askFresh,
@@ -2328,53 +2351,84 @@ library LibRewardCustody {
         uint256 n = plan.ids.length;
         t.fresh = new uint256[](n);
         t.recycled = new uint256[](n);
-        for (uint256 k; k < n; ) {
-            uint256 bal = plan.bals[k];
-            uint256 fr = plan.freshRoom[k];
-            uint256 rr = plan.recycledRoom[k];
-            uint256 xF = bal > rr ? bal - rr : 0;
-            if (xF > fr) xF = fr;
-            uint256 xR = bal > fr ? bal - fr : 0;
-            if (xR > rr) xR = rr;
-            uint256 bf = askFresh < xF ? askFresh : xF;
-            uint256 br = askRecycled < xR ? askRecycled : xR;
-            t.fresh[k] = bf;
-            t.recycled[k] = br;
-            askFresh -= bf;
-            askRecycled -= br;
-            t.coveredFresh += bf;
-            t.coveredRecycled += br;
-            unchecked { ++k; }
+        // The exclusive capacities of the epochs AFTER each position.
+        uint256[] memory sufF = new uint256[](n + 1);
+        uint256[] memory sufR = new uint256[](n + 1);
+        for (uint256 k = n; k > 0; ) {
+            unchecked { --k; }
+            (uint256 xF, uint256 xR) = _exclusive(plan, k);
+            sufF[k] = sufF[k + 1] + xF;
+            sufR[k] = sufR[k + 1] + xR;
         }
         for (uint256 k; k < n && askFresh + askRecycled != 0; ) {
-            uint256 left = plan.bals[k] - t.fresh[k] - t.recycled[k];
-            uint256 roomF = plan.freshRoom[k] - t.fresh[k];
-            uint256 bf = askFresh < left ? askFresh : left;
-            if (bf > roomF) bf = roomF;
-            t.fresh[k] += bf;
-            left -= bf;
-            askFresh -= bf;
-            t.coveredFresh += bf;
-            uint256 roomR = plan.recycledRoom[k] - t.recycled[k];
-            uint256 br = askRecycled < left ? askRecycled : left;
-            if (br > roomR) br = roomR;
-            t.recycled[k] += br;
-            askRecycled -= br;
-            t.coveredRecycled += br;
+            (uint256 f, uint256 r) = _exclusive(plan, k);
+            if (f > askFresh) f = askFresh;
+            if (r > askRecycled) r = askRecycled;
+            uint256 left = plan.bals[k] - f - r;
+            uint256 roomF = plan.freshRoom[k] - f;
+            uint256 roomR = plan.recycledRoom[k] - r;
+            // The flexible remainder: first to what the later epochs'
+            // exclusive capacity cannot meet, then to the rest; fresh first.
+            uint256 needF = askFresh - f > sufF[k + 1] ? askFresh - f - sufF[k + 1] : 0;
+            uint256 pf = _min3(needF, left, roomF);
+            uint256 needR = askRecycled - r > sufR[k + 1] ? askRecycled - r - sufR[k + 1] : 0;
+            uint256 pr = _min3(needR, left - pf, roomR);
+            pf += _min3(askFresh - f - pf, left - pf - pr, roomF - pf);
+            pr += _min3(askRecycled - r - pr, left - pf - pr, roomR - pr);
+            f += pf;
+            r += pr;
+            t.fresh[k] = f;
+            t.recycled[k] = r;
+            askFresh -= f;
+            askRecycled -= r;
+            t.coveredFresh += f;
+            t.coveredRecycled += r;
             unchecked { ++k; }
         }
     }
 
-    /// @dev What the overlay records as already drawn from `id`, by leg.
+    /// @dev An epoch's two EXCLUSIVE capacities: what could serve only fresh
+    ///      and what could serve only recycled; the rest of its balance is
+    ///      flexible. Unattested: both zero (wholly flexible); attested with
+    ///      independent rooms: the rooms themselves (wholly exclusive).
+    function _exclusive(TransportDrawPlan memory plan, uint256 k) private pure returns (uint256 xF, uint256 xR) {
+        uint256 bal = plan.bals[k];
+        uint256 fr = plan.freshRoom[k];
+        uint256 rr = plan.recycledRoom[k];
+        xF = bal > rr ? bal - rr : 0;
+        if (xF > fr) xF = fr;
+        xR = bal > fr ? bal - fr : 0;
+        if (xR > rr) xR = rr;
+    }
+
+    function _min3(uint256 a, uint256 b, uint256 c) private pure returns (uint256 m) {
+        m = a < b ? a : b;
+        if (c < m) m = c;
+    }
+
+    /// @dev What the overlay records as already drawn from `id`, by leg. The
+    ///      overlay is an open-addressing HASH TABLE over batch ids (Codex
+    ///      #2276 r12 P1): its length is zero or a power of two, an empty
+    ///      slot holds zero, and a key is probed linearly from
+    ///      `uint256(key) & (length - 1)`; the dry run keeps it under half
+    ///      full, so a probe is a few reads. A chunk of thirty days each
+    ///      drawing a window of epochs was a linear scan of every prior draw
+    ///      per plan entry — quadratic in the chunk — and is now a probe.
     function _overlayOf(
         bytes32[] memory ovIds,
         uint256[] memory ovFresh,
         uint256[] memory ovRecycled,
         bytes32 id
     ) private pure returns (uint256 f, uint256 r) {
-        for (uint256 j; j < ovIds.length; ) {
-            if (ovIds[j] == id) return (ovFresh[j], ovRecycled[j]);
-            unchecked { ++j; }
+        uint256 n = ovIds.length;
+        if (n == 0) return (0, 0);
+        uint256 mask = n - 1;
+        uint256 i = uint256(id) & mask;
+        while (true) {
+            bytes32 k = ovIds[i];
+            if (k == id) return (ovFresh[i], ovRecycled[i]);
+            if (k == bytes32(0)) return (0, 0);
+            i = (i + 1) & mask;
         }
     }
 
@@ -2579,9 +2633,10 @@ library LibRewardCustody {
     ///      The cursor is a NODE (Codex #2276 r7): the last EXHAUSTED epoch at
     ///      the front of the list, zero when none is; the window starts after
     ///      it, and its POSITION — the count of leading exhausted epochs — is
-    ///      kept beside it, exact because the cursor only advances (r11: a
-    ///      late epoch whose place is among the passed epochs takes the first
-    ///      place of the window rather than moving the cursor back). EXHAUSTED is
+    ///      kept beside it, exact because the cursor only advances (r11, r12:
+    ///      a late epoch whose place is among the passed epochs takes its
+    ///      place by key among the epochs after the cursor rather than moving
+    ///      the cursor back; each passed node is marked). EXHAUSTED is
     ///      nothing left, or — once the split is attested — no room left under
     ///      either recorded cap (Codex #2276 r8 P2): the unit a scaling
     ///      residual leaves outside both caps is not coverage, and this
@@ -2629,6 +2684,10 @@ library LibRewardCustody {
         bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
         uint256 steps;
         while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && _exhaustedForCursor(s, node)) {
+            // Marked as passed (Codex #2276 r12 P1): its back-link is never
+            // followed again, and the mark is what lets a hint be refused in
+            // one read when it points behind the window.
+            s.transportDayPrev[dayId][node] = TRANSPORT_PASSED;
             cur = node;
             node = s.transportDayNext[dayId][node];
             unchecked { ++steps; }
