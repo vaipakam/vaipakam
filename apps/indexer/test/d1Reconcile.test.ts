@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
+import { open } from "node:fs/promises";
 import {
   existsSync,
   mkdirSync,
@@ -2653,15 +2654,19 @@ describe("a table set that changed is evidence too", () => {
     child.stdout.on("data", (b) => (out += b));
     child.stderr.on("data", (b) => (out += b));
 
-    // The child is now blocked opening the FIFO, AFTER reading the
-    // manifest. Replace it with the artifact this guard exists to save.
+    // A HANDSHAKE, NOT A SLEEP (#2281 r19). Opening a FIFO for writing
+    // BLOCKS until a reader opens the other end — so this resolving is
+    // proof the child reached its evidence read, which it does only
+    // after reading the manifest. A timeout would merely hope for that,
+    // and on a loaded worker the parent could swap first, making the
+    // child reject through the provenance guard and the assertion pass
+    // for the wrong reason.
+    const writer = await open(fifo, "w");
     const restored = '{"the":"original mirror manifest, restored"}\n';
-    await new Promise((r) => setTimeout(r, 300));
     writeFileSync(manifest, restored);
 
     // Release the evidence; the command proceeds to publish.
-    writeFileSync(
-      fifo,
+    await writer.write(
       [
         `t ${d}`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
@@ -2670,6 +2675,7 @@ describe("a table set that changed is evidence too", () => {
         "",
       ].join("\n"),
     );
+    await writer.close();
     const code: number = await new Promise((r) => child.on("close", r));
 
     expect(code).not.toBe(0);
@@ -2831,7 +2837,7 @@ describe("a table set that changed is evidence too", () => {
       [
         `t ${d}`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
-        "shape t aaaaaaaaaaaaaaaa",
+        "shape t aaaaaaaaaaaaaaaa run:aa0002",
         "seq t 5",
         "seq-listing complete run:aa0002",
       ].join("\n"),
@@ -2870,7 +2876,7 @@ describe("a table set that changed is evidence too", () => {
     const run = (id: string) => [
       `t ${d}`,
       `${"\u2014".repeat(8)}   0  (1 tables) run:${id}`,
-      "shape t aaaaaaaaaaaaaaaa",
+      `shape t aaaaaaaaaaaaaaaa run:${id}`,
       "seq t 5",
       `seq-listing complete run:${id}`,
     ];
@@ -2885,12 +2891,12 @@ describe("a table set that changed is evidence too", () => {
       [
         `t ${d}`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0001`,
-        "shape t aaaaaaaaaaaaaaaa",
+        "shape t aaaaaaaaaaaaaaaa run:cc0001",
         "seq t 5",
         "seq-listing complete run:cc0001",
         `t ${d}`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0002`,
-        "shape t bbbbbbbbbbbbbbbb",
+        "shape t bbbbbbbbbbbbbbbb run:cc0002",
         "seq t 5",
         "seq-listing complete run:cc0002",
       ].join("\n"),
@@ -2916,7 +2922,7 @@ describe("a table set that changed is evidence too", () => {
         // a later identified run, after a key migration
         `t ${d}`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "shape t bbbbbbbbbbbbbbbb",
+        "shape t bbbbbbbbbbbbbbbb run:aa0001",
         "seq t 5",
         "seq-listing complete run:aa0001",
       ].join("\n"),
@@ -2956,6 +2962,24 @@ describe("a table set that changed is evidence too", () => {
       ].join("\n"),
     );
     expect(never.readings.paired).toBe(1);
+  });
+
+  // #2281 r19 — a shape binds to the run it NAMES, not to whichever
+  // enumeration happened to be open. Positional binding is a boundary
+  // read off the surroundings, and the surroundings can be cropped.
+  it("does not let a later run's shape land on an earlier enumeration", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`, // run 1: no shape, no seqs
+        `t ${d}`, // run 2 begins, its count line cropped
+        "shape t bbbbbbbbbbbbbbbb run:aa0002",
+        "seq t 5",
+        "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect([...e.shapes]).toEqual([]);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {

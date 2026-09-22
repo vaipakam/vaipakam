@@ -47,14 +47,27 @@ read.
 
 **That is change detection, not a single instant's photograph of the whole
 database, and the difference is worth stating plainly.** There is no way here to
-freeze everything at one moment, so one gap remains and is named rather than
-implied: a change to the **contents** of a table that has already been read
-twice, made while later tables are still being read, would not be caught. Every
-other kind is. The table set and the shape of every table are each read once
-more after all the row reading is finished — as one reading of the whole
-database, not table by table, so a change landing on a table whose own checks
-have already passed is still seen — and the identifier counters are compared
-across the entire read.
+freeze everything at one moment, so two gaps remain and are named rather than
+implied.
+
+A change to the **contents** of a table that has already been read twice, made
+while later tables are still being read, would not be caught — its rows are not
+read again, and nothing else it touches moves.
+
+And each kind of reading has a **first** observation, which cannot see a change
+completed before it. The record says it was taken from a moment early enough to
+precede every reading it contains, so a table created and filled in the gap
+between that moment and the first reading of the table set appears, identically,
+in everything that follows — and looks original. The window is small and the
+record errs toward claiming less than it looked at, but "nothing changed during
+this" is not what it can promise; what it promises is that nothing changed
+between the two readings of each thing.
+
+Within those bounds the coverage is broad: the table set and the shape of every
+table are each read once more after all the row reading is finished — as one
+reading of the whole database, not table by table, so a change landing on a
+table whose own checks have already passed is still seen — and the identifier
+counters are compared across the entire read.
 
 But the procedure's real protection is that it is run against a database
 nothing is writing to. These checks exist to catch that precondition having

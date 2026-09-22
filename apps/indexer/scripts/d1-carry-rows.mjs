@@ -999,7 +999,16 @@ function printDigest(label, map, runId = null) {
   const shapes = [];
   for (const [table, { digest, count, shape }] of [...map].sort()) {
     rows += count;
-    if (shape) shapes.push(`  shape ${table.padEnd(28)} ${shape}`);
+    // THE SHAPE LINE NAMES ITS OWN RUN (#2281 r19). Binding it by
+    // POSITION — to whichever enumeration was open — is defeated by
+    // cropping the lines in between, which is the r15 lesson: a
+    // boundary read off the surroundings can always have the
+    // surroundings removed. The producer states the binding instead.
+    if (shape) {
+      shapes.push(
+        `  shape ${table.padEnd(28)} ${shape}` + (runId ? ` run:${runId}` : ""),
+      );
+    }
     console.log(
       `  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}`,
     );
@@ -2109,24 +2118,36 @@ export function parseEvidence(text) {
     // `shape <table> <16-hex>` — how that table keyed and projected its
     // rows at the moment of the reading (#2281 r13). It is a value like
     // the digest, not a boundary: it closes nothing.
-    const shp = /^shape\s+([A-Za-z_][A-Za-z0-9_]*)\s+([0-9a-f]{16})$/.exec(
-      line,
-    );
+    const shp =
+      /^shape\s+([A-Za-z_][A-Za-z0-9_]*)\s+([0-9a-f]{16})(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
     if (shp) {
       mentioned.add(shp[1]);
-      // A SHAPE BELONGS TO THE RUN THAT PRINTED IT (#2281 r16). Stored
-      // in one global map, a shape line from a later cropped run stood
-      // in for the mirror-time run that never carried one — and `cover`
-      // then recorded `shape` as a covered dimension on the strength of
-      // a reading taken after the migration it was supposed to detect.
-      // A dimension counts as established only from the paired reading,
-      // so the line is bound to the enumeration whose count line
-      // preceded it.
+      // A SHAPE BELONGS TO THE RUN IT NAMES (#2281 r19, replacing the
+      // positional binding of r16).
       //
-      // `put` still runs, so two runs disagreeing about a table's shape
-      // is a conflict wherever they sit — that is evidence either way.
+      // r16 attached a shape line to whichever enumeration was open.
+      // That is a boundary read off the surroundings, and the
+      // surroundings can be cropped: run 1 keeps its count line and
+      // loses its shape and sequence section, run 2 keeps a
+      // post-migration shape and its marker and loses its count line —
+      // and run 2's shape lands on run 1. Closing the open run at the
+      // next digest line does not fix it either, because a crop can
+      // remove the digest lines too. The same door, a fourth time.
+      //
+      // So the producer states the binding, exactly as it does for the
+      // two lines that close a run. A shape that names no run, or names
+      // one with no enumeration, binds to nothing — it is still
+      // recorded for conflict detection, because two runs disagreeing
+      // about a table's shape is evidence wherever the lines sit.
       put(shapeLines, "shape", shp[1], shp[2]);
-      if (openRun !== null) openRun.shapes.set(shp[1], shp[2]);
+      const owner = shp[3]
+        ? enumerations.find((e) => e.run === shp[3])
+        : openRun && openRun.run === null
+          ? openRun
+          : null;
+      if (owner) owner.shapes.set(shp[1], shp[2]);
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
@@ -2447,17 +2468,26 @@ export function coverageProblems(tables, evidence) {
  * readings. Those span the whole read, so most concurrent writing shows
  * up somewhere.
  *
- * NOT caught, and this is now the only one: a change to the CONTENTS of
+ * NOT caught, first of two: a change to the CONTENTS of
  * a table whose second reading has already happened, made while later
  * tables are still being read. That table's rows are not read again,
  * and an UPDATE, a DELETE or an INSERT with a natural key moves neither
  * the table set, nor any declaration, nor a counter.
  *
- * The SHAPE version of that race is closed rather than disclosed
- * (#2281 r11): the per-table checks are themselves sequential, so a
- * terminal reading of the whole schema follows all of them — one query
- * over `sqlite_master` — and catches an ALTER landing on a table whose
- * own check has already passed.
+ * NOT caught, second: anything completed BEFORE a dimension's first
+ * observation (#2281 r19). `readStartedAt` precedes every read, which
+ * is the conservative direction for the claimed window — but the first
+ * table-set and schema reads happen after it, so a table created and
+ * filled in that gap appears identically in every later reading and
+ * reads as original. What this function establishes is that nothing
+ * changed BETWEEN the two readings of each thing, not that nothing
+ * changed during the interval the artifact names.
+ *
+ * The SHAPE version of the sequential race is closed rather than
+ * disclosed (#2281 r11): the per-table checks are themselves
+ * sequential, so a terminal reading of the whole schema follows all of
+ * them — one query over `sqlite_master` — and catches an ALTER landing
+ * on a table whose own check has already passed.
  *
  * Which is why the procedure runs this against a database nothing is
  * writing to. These checks are here to catch that precondition having
