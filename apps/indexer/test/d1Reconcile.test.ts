@@ -2273,7 +2273,7 @@ describe("a table set that changed is evidence too", () => {
       // every line names its run, as `digest` now emits them
       ...tables.map((t) => `${t} run:${id}`),
       `${"\u2014".repeat(8)}   0  (${tables.length} tables) run:${id}`,
-      `seq-listing complete run:${id}`,
+      `seq-listing complete run:${id} (0 entries)`,
     ];
   };
 
@@ -2879,7 +2879,7 @@ describe("a table set that changed is evidence too", () => {
       `${"\u2014".repeat(8)}   0  (1 tables) run:${id}`,
       `shape t aaaaaaaaaaaaaaaa run:${id}`,
       `seq t 5 run:${id}`,
-      `seq-listing complete run:${id}`,
+      `seq-listing complete run:${id} (1 entries)`,
     ];
     const e = parseEvidence([...run("bb0001"), ...run("bb0002")].join("\n"));
     expect(e.shapes.get("t")).toBe("aaaaaaaaaaaaaaaa");
@@ -3041,6 +3041,52 @@ describe("a table set that changed is evidence too", () => {
       e.conflicts.some((c) => c.includes("two different sequence readings")),
     ).toBe(true);
     expect(e.seqs.has("t")).toBe(false);
+  });
+
+  // #2281 r22 — "complete" on its own is a claim nothing can check.
+  // The digest block's closing line has carried its count since it was
+  // written; the sequence marker had not, so a dropped `seq` line made
+  // its table read as a stated ZERO — a reset promoted as original.
+  it("refuses a sequence listing short of the count it declares", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d} run:aaaaa1`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa1`,
+        // the `seq t 5` line was dropped from the paste
+        "seq-listing complete run:aaaaa1 (1 entries)",
+      ].join("\n"),
+    );
+    expect(
+      e.conflicts.some((c) => c.includes("declares 1 entr(ies) and carries 0")),
+    ).toBe(true);
+    expect(e.readings.sequences).toBe(0);
+  });
+
+  it("accepts a sequence listing that matches its count", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d} run:aaaaa2`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa2`,
+        "seq t 5 run:aaaaa2",
+        "seq-listing complete run:aaaaa2 (1 entries)",
+      ].join("\n"),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(e.readings.paired).toBe(1);
+    expect(e.seqs.get("t")).toBe(5);
+  });
+
+  it("accepts the never-allocated form, which declares zero entries", () => {
+    const e = parseEvidence(
+      [
+        `${"\u2014".repeat(8)}   0  (0 tables) run:aaaaa3`,
+        "seq-listing complete run:aaaaa3 (0 entries)   (nothing has ever allocated here)",
+      ].join("\n"),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(e.readings.paired).toBe(1);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {

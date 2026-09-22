@@ -2094,11 +2094,27 @@ export function parseEvidence(text) {
     // `digest` emits exactly two forms, with and without the
     // never-allocated note, so those are the two accepted.
     const done =
-      /^seq-listing complete(?:\s+run:([0-9a-f]{6,64}))?(?:\s+\(nothing has ever allocated here\))?$/.exec(
+      /^seq-listing complete(?:\s+run:([0-9a-f]{6,64}))?(?:\s+\((\d+) entries\))?(?:\s+\(nothing has ever allocated here\))?$/.exec(
         line,
       );
     if (done) {
       const bucket = done[1] ? runOf(done[1]) : null;
+      // A DECLARED COUNT IS CHECKED, exactly as the digest block's is.
+      // A listing short of what it declares was pasted in part, so its
+      // silences are not zeros and it is not a closed reading at all.
+      if (done[2] !== undefined) {
+        const present = (bucket ? bucket.seqs : openSeqs).size;
+        if (Number(done[2]) !== present) {
+          conflicts.push(
+            `a sequence listing declares ${done[2]} entr(ies) and carries ` +
+              `${present}. Part of it is missing, so a table it does not ` +
+              `name cannot be read as one that never allocated`,
+          );
+          if (done[1]) closedSeqRuns.add(done[1]);
+          else openSeqs = new Map();
+          continue;
+        }
+      }
       if (done[1]) closedSeqRuns.add(done[1]);
       seqReadings.push({
         seqs: bucket ? bucket.seqs : openSeqs,
@@ -4112,9 +4128,12 @@ async function main() {
             `set and the allocation marks were recorded by the SAME ` +
             `"digest" run could not be established. Halves from two runs ` +
             `describe two moments, and an identifier allocated and ` +
-            `released between them would be absorbed here. Evidence ` +
-            `recorded before that identifier existed cannot carry it, ` +
-            `and a mirror that has passed cannot be re-recorded.\n\n`) +
+            `released between them would be absorbed here.\n\nSuch a ` +
+            `listing also states no entry count, so that a "seq" line ` +
+            `dropped from the paste cannot be told from a table that ` +
+            `never allocated — its absence is read as a zero either way. ` +
+            `Evidence recorded before these were emitted cannot carry ` +
+            `them, and a mirror that has passed cannot be re-recorded.\n\n`) +
         (dimensions.includes("shape")
           ? ""
           : `AND: the evidence carries no "shape" ` +
@@ -4183,12 +4202,19 @@ async function main() {
       // allocated" — a known zero — or "the operator pasted only part of
       // this". Those are different facts, and `cover` must not guess
       // between them, so the listing says of itself that it is whole.
-      console.log(`  seq-listing complete run:${runId}`);
+      // THE MARKER CARRIES ITS COUNT, as the digest block's closing
+      // line has since it was written (#2281 r22). "Complete" on its
+      // own is a claim nothing can check: drop one `seq` line from a
+      // pasted listing and the table it named reads as a stated ZERO —
+      // a reset or a recreated table, promoted as original.
+      console.log(
+        `  seq-listing complete run:${runId} (${usable.length} entries)`,
+      );
     } catch (err) {
       if (!isMissingSequenceTable(err)) throw err;
       console.log(
-        `\n  seq-listing complete run:${runId}   (nothing has ever ` +
-          `allocated here)`,
+        `\n  seq-listing complete run:${runId} (0 entries)   (nothing ` +
+          `has ever allocated here)`,
       );
     }
     return;
