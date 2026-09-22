@@ -631,18 +631,35 @@ difference it names is settled by a person. That repeats until two consecutive
 runs come back clean — and then **keeps repeating, weekly, for as long as the
 old database is kept**.
 
-**Three of the situations it can report have no settlement that makes the next
-run clean, and the procedure says so rather than leaving an operator to
-discover it.** Two are resolved by changing the data — apply the value the old
-database holds, or insert the row it has and the new one lacks — and the next
-run stops reporting them. Three are resolved instead by *judgement to leave
-things as they are*: a key already allocated on both sides, a row deliberately
-left deleted on one side or the other. The data is unchanged by design, so the
-comparison reports them again, and again. A run carrying only those, each
-logged with the decision taken, counts as clean; a rule that demanded silence
-would be one an operator could satisfy only by giving up on the check. Letting
-the comparison record a decision and honour it is tracked separately, as
-#2279.
+**Most of what it reports never stops reporting, and the procedure says so
+rather than leaving an operator to discover it.** Two situations settle into
+silence: applying the value the old database holds, or inserting a row it has
+that the new one lacks. Four do not.
+
+Two of those four are settled by deciding the data stands as it is — a row
+deliberately left deleted on one side or the other — so nothing either database
+holds changes and the same line comes back. A third is a spent identifier: the
+old database allocated one and the row was deleted, so there is nothing to
+apply, and the new database's own counter reaching the same number later is not
+evidence of anything, since it allocates identifiers for its own records every
+minute.
+
+**The fourth is not a decision to do nothing, and the distinction matters.**
+Where one identifier is allocated on both sides to different records, the
+settlement is to insert the old database's record into the new one under a
+fresh identifier. That is a real data change and it has to be made — reading
+this as a decision to leave things alone would quietly discard a record. What
+persists afterwards is only the report, because the contested identifier is
+still allocated on both sides.
+
+So a clean run is not a silent one. A run is as resolved as it is going to get
+once every line it carries has already been recorded **by table and by key**,
+with the decision taken — by key, because the same situation on a different key
+is a new difference nobody has decided, and matching on the situation's name
+alone would wave it through. Such a run counts as the clean run for the two-run
+rule, and the weekly re-runs continue, because their job is to surface what is
+new. Letting the comparison record a decision and honour it directly is tracked
+separately, as #2279.
 
 Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and
