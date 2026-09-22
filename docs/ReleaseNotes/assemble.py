@@ -215,6 +215,24 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     # fragments ever committed begin with either, so the refusal costs nothing
     # and the normalisation was guarding a case that has never occurred —
     # #2149's pattern for the third time on this change.
+    #
+    # TWO NORMALISATIONS DO SURVIVE BELOW, and the rule separating them from
+    # the two above is worth stating, because "it normalises" is not by itself
+    # the defect:
+    #
+    #   NORMALISE ONLY WHAT CANNOT CHANGE HOW THE PUBLISHED BYTES RENDER.
+    #
+    # Leading blank lines are skipped, and a trailing `\r` is stripped, purely
+    # so the line can be MATCHED. Neither changes what the fragment renders as
+    # once folded: blank lines before a heading leave it a heading, and CRLF
+    # is an ordinary line ending. A BOM and a front-matter fence both fail
+    # that test — each renders as one thing at the top of its own file and as
+    # something else mid-document, which is precisely why deciding on the
+    # normalised form and publishing the raw form disagreed.
+    #
+    # Audited against `build()` for this reason (#2290 r12): it appends the
+    # snapshot verbatim, so any transformation here that the published bytes
+    # do not also undergo is a divergence waiting to be found.
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
     i = 0
     while i < len(lines) and not lines[i].strip():
