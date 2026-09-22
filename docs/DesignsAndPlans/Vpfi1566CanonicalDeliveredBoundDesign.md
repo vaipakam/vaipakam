@@ -6980,7 +6980,10 @@ on the live era alone.
   membership-bound restore into the epoch, the operator dispositions
   (repatriation or evidence-backed classification, keyed by the batch,
   with the refusal they leave standing), and batch-bound replacement
-  funding that clears a disposition by amount.
+  funding that clears a disposition by amount — offered only where a
+  disposition leaves a RECORDED surviving liability, which under B's
+  default closure rule none does (see the replacement paragraph in the
+  3b-ii-A blueprint).
 - **What 3b defers, and this is the question for the owner:** a CONTESTED
   allocation is REFUSED with a named reason until 3c lands, rather than
   settled immediately — where a draw is contested exactly when the batch
@@ -7010,6 +7013,631 @@ on the live era alone.
   refusals; and the holder invariants under a handler that delivers
   old-wire packets.
 
+> **3b-ii SCOUTED 2026-09-21, and cut in two on the same kind of evidence
+> that split 3b.** Two measurements, taken after 3b-i merged (`ff92150df`):
+>
+> - **Round count.** 3b-i carried roughly a third of the bullets above and
+>   took sixteen Codex rounds, past the fifteen-round cap, with the last
+>   round arrested at the root. The remaining two thirds in one PR would
+>   not fit under the cap; the cap is the owner's, so the cut is.
+> - **Headroom, on `main` after 3b-i** (quick profile, same viaIR and
+>   optimizer as production): `InteractionRewardsLensFacet` 1,318 bytes
+>   free, `RewardReconciliationFacet` 1,413, `RewardCustodyFacet` 1,667,
+>   `InteractionRewardsFacet` 1,734, `RewardClaimFacet` 1,870,
+>   `RewardHorizonSweepFacet` 2,804; `RewardEpochFacet` 21,695.
+>   `LibInteractionRewards` is inlined into four of the six tightest, so
+>   every line the draw adds to the day walk lands in all four at once.
+>   The 3b-i note's rule stands: the pass is hosted on `RewardEpochFacet`
+>   and each consumer carries only the call.
+>
+> The seam is SPEND versus CLOSE-OUT, so each half is again whole:
+>
+> - **3b-ii-A — the draws (SPEND).** Everything an obligation needs to be
+>   PAID from an epoch: the `eraBalance(era)` interface reading zero; the
+>   per-day two-leg allocation rule (matching transport first per
+>   component, scarce transport split by typed shortfall, fresh first on
+>   ties, the unarrived-day necessity constraint) hosted on
+>   `RewardEpochFacet`; the split `transportPaid / eraPaid / livePaid`
+>   recorded at the claim's day walk, the forfeit sweep (row 1), the expiry
+>   sweep (row 5) and settlement, each downstream chokepoint seeing only
+>   its residual; the recycled leg's commitment released without a bucket
+>   debit; a transport-funded absorption as the in-holder
+>   `Unclassified → Recycled` attribution move (an epoch's value rests in
+>   the holder's `Unclassified` row — the draw is a debit of that row, so
+>   the conservation invariant the 3b-i suite already pins keeps holding);
+>   the leg counters as written quantities inside the per-packet bound;
+>   staging with batch references, deferred exhaustion transitions,
+>   permissionless expiry, the batch-keyed cooldown and priority-mode
+>   reservations; row 13's PREPARATION operation and its O(1) read; and
+>   the refusal of a CONTESTED allocation with a named reason until 3c.
+>   Nothing in this half opens the release entries.
+> - **3b-ii-B — the close-out (RELEASE).** The per-day obligation check
+>   #2258 asks for (below), the release entries opened on it — parking
+>   permissionless and refused while any listed day is open or any
+>   staging reference stands, the acknowledgment an operator act — the
+>   batch-keyed pending remainder and its membership-bound restore, the
+>   operator dispositions (repatriation, evidence-backed classification)
+>   with the refusal they leave standing, and batch-bound replacement
+>   funding that clears a disposition by amount, offered only where a
+>   disposition leaves a recorded surviving liability. Lands after A: a release
+>   before the draws exist would close out epochs nothing has drawn from.
+>
+> **The per-day obligation figure — what the scout found, and the shape
+> it recommends.** #2258 recorded that no per-day outstanding-obligation
+> figure exists and that answering the design's question meant walking
+> entries. Four facts from the code bound the design space:
+>
+> 1. An obligation is a `RewardEntry`, a DAY RANGE `[startDay, endDay)`
+>    per user and side; there is no per-day index of entries. A per-day
+>    counter maintained on the settlement paths costs O(window) wherever a
+>    settlement prices a whole window at once — and **that is only the
+>    PRE-ARMING legacy slice** (corrected, Codex #2274 r2 P2). The first
+>    draft of this fact said the forfeit and expiry sweeps price the
+>    remaining window in O(1) off the cumulative curves and never loop
+>    days, so a 365-day loan swept would write 365 cold slots (about 8M
+>    gas), or the sweeps would have to become resumable. The blueprint
+>    below establishes the opposite for ARMED days: both sweeps already
+>    settle ONE DAY PER CALL through `processUserSideDay`
+>    (`_forfeitEntryChunk` and `sweepExpiredEntry` each build a
+>    single-entry set at the entry's cursor day), so a terminated-per-day
+>    accumulator could ride the existing armed-day chunk — no new
+>    resumable state, no O(window) transaction. Only the pre-arming
+>    slice, which predates these transport batches and takes no transport
+>    term in A, is priced whole-window.
+>
+>    **This reprices mechanism (i), and the repricing is an OWNER
+>    question this note does not take.** The scout's rejection of per-day
+>    counters rested on the O(window) premise this correction removes.
+>    What survives it is narrower and still real: a hot-path write on
+>    every armed day of every loan on every chain, for a check only a
+>    mirror with a legacy delivery ever runs. Whether that is still
+>    dearer than the closure proof is the owner's call — the
+>    recommendation below is left standing rather than reversed inside a
+>    scout note, with its cheapest rejected alternative now honestly
+>    priced.
+> 2. **A past day's covering set is FIXED.** Registration stamps
+>    `startDay = today + 1` on every entry (new and re-registered), and
+>    `_closeEntry` only ever SHRINKS `endDay` to `today + 1` — so no entry
+>    can ever begin covering a day that has passed, and none can stop
+>    covering one. "Every obligation on day `d` has terminated" is a
+>    monotone fact about `d` once `d` has passed: provable once, true
+>    forever, and a property of the DAY rather than of any batch listing it.
+> 3. **The chain already enumerates a day's covering entries, verified.**
+>    The mirror's commitment accumulation (`accumulateBatch`) takes
+>    ascending entry ids from a keeper, refuses any that does not cover the
+>    day, and proves COMPLETENESS by conservation: the walk is whole when
+>    the per-day sum of visited entries' `perDayNumeraire18` equals the
+>    day's recorded side total. That total is exact for the covering set
+>    because of fact 2 (the frontier drop in `_applyDelta` is reachable
+>    only by a retroactive close, which `_closeEntry` cannot produce).
+> 4. Per-entry termination is already observable in O(1): `processed` for
+>    a settled or swept entry, and for a part-claimed entry the claim
+>    cursor `rewardEntryClaimNextDay` having passed the day.
+>
+> Five mechanisms were priced against these. (i) Per-day counters on the
+> settlement paths — fact 1's O(window). (ii) A Fenwick tree over days —
+> O(log D) per point update, but that is 14–32 cold writes per update at
+> loan acceptance and at every termination; a claim already costs several
+> hundred thousand gas per walked day and this would add most of that
+> again per entry. (iii) Blocked prefix sums — four writes per termination
+> and about 110 reads per queried day; cheaper, still a hot-path cost paid
+> by every loan on every chain for a check only a mirror with a legacy
+> delivery ever runs. (iv) Staging references alone, which is the letter of
+> §5c's "a batch with outstanding staging references cannot be retired" —
+> O(1), but blind to an obligation that has not yet drawn, which is
+> exactly the #2258 scenario the owner chose to refuse. (v) **A per-day
+> CLOSURE PROOF, which this note recommends and 3b-ii-B is written
+> against unless the owner overrules it:** a permissionless, resumable
+> walk with the SAME shape as the accumulation — ascending ids, a per-side
+> cursor, the cover check, the conservation completeness test — where
+> every visited entry must be terminated (fact 4) or the call reverts
+> naming the entry, and completion stamps `dayObligationsClosed[d]`. Zero
+> cost on any settlement path; paid once per day, ever, by whoever wants
+> the batch closed; reused by every batch that lists the day. Two
+> conditions the accumulation already carries apply here with more force,
+> because this stamp is irreversible (Codex #2274 r1, two P1s):
+>
+> - **Admissible only after the mirror's OWN day close.** The side totals
+>   the completeness test compares against are final only once
+>   `RewardReporterFacet.closeDay` has folded the day
+>   (`hasLocalInterestClose`); a Base grace/force-finalize stamps this
+>   mirror's funding before that, and until the fold a busy day reads
+>   as two zero totals — an EMPTY walk would pass conservation and stamp
+>   a day closed with every covering entry unsettled. The send path
+>   already refuses the report on exactly this race; the proof refuses
+>   the same way, and a day never locally closed can never be stamped.
+>
+>   **The close stamp alone is NOT that guarantee — the fold frontier
+>   must have REACHED the day** (Codex #2274 r2, P1; verified in code).
+>   `hasLocalInterestClose` is `s.chainReportSentAt[d] != 0`
+>   (`LibCommitmentReport.sol:194-199`), and `closeDay` stamps it
+>   unconditionally after calling `advanceLenderThrough(d)` /
+>   `advanceBorrowerThrough(d)` ONCE. Each helper advances at most
+>   `MAX_FRONTIER_ADVANCE_DAYS` (730) and CLAMPS rather than reverting —
+>   `if (through > cap) through = cap`, then stores the CLAMPED value as
+>   the frontier — and `closeDay` never checks that either frontier
+>   arrived at `d`. So after a deployment or reporter gap wider than 730
+>   days, a permissionless caller can locally "close" a farther past day
+>   whose side totals are still zero, and the r1 guard above then admits
+>   the same empty walk it was added to refuse. The proof therefore
+>   requires `lenderFrontierDay >= d` AND `borrowerFrontierDay >= d` in
+>   addition to the close stamp. **And B adds a permissionless, resumable
+>   frontier-advance entry** (Codex #2274 r4 P1): today `advanceLenderThrough`
+>   / `advanceBorrowerThrough` run only inside `closeDay`, which stamps the
+>   day after one clamped advance and cannot be retried, so a gap wider
+>   than one advance would leave the frontier short of a stamped day with
+>   no call able to move it — the guard would then block closure for every
+>   batch listing that day. **The entry is bounded to strictly-past days**
+>   (Codex #2274 r5 P1): the advance helpers cap each call only at
+>   `frontier + 730`, so an unbounded permissionless entry would let anyone
+>   run both frontiers years into the future, after which every loan
+>   registered at `today + 1` finds its start and end writes silently
+>   dropped by `_applyDelta` and is omitted from the folded totals — false
+>   totals, false reports, false closure proofs. The entry carries the same
+>   past-day bound `closeDay` does. **And the report already published is
+>   a separate defect, not B's** (Codex #2274 r5 P1): `closeDay` stamps and
+>   dispatches after its single clamped advance, so a day closed more than
+>   730 days ahead ships a zero or partial report to Base that the
+>   catch-up can move the frontiers for but can never resend. That is a
+>   pre-existing reporter bug — filed as #2277: `closeDay` must not stamp
+>   or dispatch until both frontiers reach the day, with a recovery for
+>   days already stamped short — and B's frontier guard is sound only on
+>   top of it, which is why it is a prerequisite rather than a B
+>   deliverable. With the entry, catching a frontier up is permissionless
+>   and already chunked, so the condition is always reachable by whoever
+>   wants the day closed — it delays a proof, it cannot block one.
+> - **A walk is the STARTER's, keyed `(day, starter, nonce)`, not a shared
+>   per-day cursor.** With one shared cursor, a caller who submits a high
+>   id while omitting a lower covering one advances the cursor past the
+>   omission and the walk can never complete — every batch listing the
+>   day is blocked, and the accumulation's remedy for that
+>   (`resetCommitmentAccumulation`) is ADMIN-only. Per-starter walks
+>   make the omission cost only its author: the poisoned walk is
+>   abandoned, a fresh nonce starts another, and the day is stamped by
+>   the first walk that completes. No reset entry, no admin in the loop,
+>   and no way for one caller to spoil another's proof. Parking then
+> re-supplies the batch's day list against its 3a commitment and requires
+> every listed day stamped closed — paged with a cursor for a pre-cap
+> batch whose list exceeds one page, which is the resumable RETIRING path
+> the plan already names.
+>
+> **Residue, stated rather than implied — every condition that leaves an
+> entry unterminated, and so a day unclosed** (the first draft named only
+> the missing stamp; Codex #2274 r1 P2 named the rest). A day closes only
+> when every entry covering it has terminated, and an entry terminates
+> only by claim, forfeit or expiry. Each of these leaves it standing
+> indefinitely:
+>
+> - a funding stamp that never arrives — the entry is unpriceable, so
+>   neither claimable nor sweepable; exit: the lane's own remedies
+>   (force-finalize, the manual budget path);
+> - the protocol paused — the expiry clock is blocked and no claim runs;
+>   exit: unpause, the clock resumes;
+> - aggregate backing short of the entry's transfer test — the expiry
+>   clock is blocked until funding lands; exit: funding;
+> - `rewardClaimHorizonDays` disabled — no entry ever expires; exit: a
+>   configuration act, with the horizon activation epoch guarding the
+>   restart;
+> - **a remainder that prices to zero** (Codex #2274 r5 P1) — a closed,
+>   non-forfeited entry whose remaining window rounds to nothing (a last
+>   day that rounds away, a cap already exhausted) prices to nothing
+>   payable — and the two ways it does so leave DIFFERENT marks in the
+>   pricing core (Codex #2274 r7 P1): an empty raw window is marked
+>   UNPRICED (the core's empty-window state), while a remainder the
+>   loan-side cap trims to zero is PRICED, with a zero capped user split
+>   and its raw split standing. In both the expiry sweep returns without
+>   processing it (nothing is pool-capped payable) and the executability
+>   gate never starts its clock; unless its owner
+>   submits a zero-value claim it is never `processed`, and a proof
+>   testing `processed` would refuse the day forever over an obligation
+>   that owes nothing. Exit: **B adds a permissionless retirement for
+>   exactly this state**, and it is NOT a bare flag (Codex #2274 r6 P1):
+>   the two ways a remainder prices to zero differ in what they leave
+>   outstanding, and B tests them by TWO predicates, never by a single
+>   "unpriced" reading — the core's empty-window mark for the first, the
+>   priced-with-zero-payable state for the second (Codex #2274 r7 P1: a
+>   retirement keyed on "unpriced" alone would retire raw dust and leave
+>   every cap-exhausted entry, its days and its batches unclosable). A
+>   genuinely empty raw window owes nothing and is marked
+>   processed, moving nothing. A remainder trimmed to zero by a CAP still
+>   carries its raw armed entitlement and the commitment behind it, so
+>   the retirement runs the day primitive's ordinary terminal accounting
+>   for it — the truncate-and-consume a capped day already takes, which
+>   retires the commitment through `consumeArmedFresh` / the recycled
+>   release and persists the day — rather than marking the entry done
+>   over a commitment left outstanding forever. Either way the proof's
+>   termination test stays "processed, or the claim cursor past the day"
+>   and needs no second notion of done;
+> - **the loan still open** (Codex #2274 r7 P2) — an entry whose loan is
+>   `Active` or `FallbackPending` and whose window was not explicitly
+>   closed is neither claimable nor sweepable: the claimability test
+>   refuses it and the expiry sweep returns before processing it, so an
+>   elapsed window stands until the loan itself ends. Exit: the loan's
+>   own terminal — repayment, default, liquidation, the fallback's
+>   resolution — or the lender sale that closes the entry; the entry then
+>   routes by the terminal reason (a defaulted or liquidated loan forfeits
+>   the borrower's side to treasury; a clean terminal and the lender's
+>   side pay out). Until then every batch listing its days waits with it;
+> - **the entry's owner sanctioned** — the claim refuses them and the
+>   expiry clock does not advance while they are flagged, so the entry
+>   can stand for as long as the flag does, and nothing the platform
+>   controls clears it.
+>
+> While any of these holds, every batch listing that day is unparkable,
+> and therefore unclassifiable and unrepatriable: the value stays
+> protected and visible in `Unclassified`. That is the conservative side
+> the owner chose (#2258, Reading B). Six of these have exits the
+> platform or its operator already holds, or that B adds. The sanctioned
+> owner does not, and it is
+> recorded here as an OWNER QUESTION for 3b-ii-B rather than decided: a
+> single flagged claimant on one listed day holds a whole batch's
+> release indefinitely. The two answers are to accept that (the
+> earmark outlives the flag, value is never lost), or to give B one
+> named, explicit exception — an operator disposition that may stamp a
+> day closed over entries blocked ONLY by a sanctions flag, with the
+> write-off recorded — which is the kind of machine-bypass B otherwise
+> exists to remove. B proceeds on the first absent a different answer.
+>
+> Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
+> allocations to 3c (the plan recommends yes, and A is written that way);
+> and whether the closure proof above is the accepted mechanism, on which
+> B proceeds as recommended absent a different answer.
+
+> **3b-ii-A implementation blueprint (scouted 2026-09-21, before code).**
+> Where the draw lands at each of the four sites, read off the settlement
+> paths as they stand, and the two places the scout found the plan's
+> wording needs a decision.
+>
+> *The claim (settlement, and the figures row 13 reads).* The claim already
+> walks a user's side days one at a time — `_walkSideDays` calls
+> `processUserSideDay(user, d, set, pool, dry)` for the lowest pending day,
+> gets a `DayCharge` whose `toUser` / `toTreasury` / `cappedOff` are each a
+> two-leg `EntrySplit`, persists the day and advances the entries'
+> `rewardEntryClaimNextDay` — bounded per call by
+> `MAX_INTERACTION_CLAIM_DAYS` and resumable. So the per-day two-leg need
+> the allocation rule wants is ALREADY computed per day, and a day settles
+> atomically inside the call that priced it. The transport term therefore
+> enters PER DAY, inside the day primitive: once the pre-pass has summed
+> the day's two gross needs, the primitive asks the epoch facet for the
+> day's allocation (`getTransportAllocationForDay` — the plan through the
+> one shared index walk, split by §5c's rule) and applies it by INFLATING
+> the attribution loop's local bounds — the transport fresh is added to
+> the delivered bound and the transport recycled to the bucket, the loop
+> itself untouched — so the attribution keeps exactly the fresh a
+> transport-first pass would. What the epochs paid is then read off the
+> aggregates BY DESTINATION AND BY SOURCE: `DayCharge.transportUser` and
+> `DayCharge.transportTreasury`, each a fresh leg and a recycled leg, the
+> user's legs filled first as the loop's user pass is. Four figures, not
+> the two an earlier draft of this paragraph named (Codex #2274 r8 P1): a
+> single two-leg total could not say whether an epoch-paid fresh unit
+> leaves `Unclassified` for the claimant's wallet or is reattributed to
+> `Recycled` for an absorption, nor yield the two residual operands the
+> facet charges; as built, every payout, absorption, delivered charge and
+> bucket operation reads its own leg. All of it comes **AFTER the
+> `PoolBudget.fresh` term, which binds the FULL fresh entitlement** (Codex
+> #2274 r2, P1). `fresh` is not a funding
+> ledger: it carries the 69M lifetime emission cap and the D1 ceiling
+> (`LibInteractionRewards.sol:5690-5708`, which says so and explains why
+> the delivered bound is kept out of it), and a transport-funded payout
+> is still emission — which is why the chokepoint paragraph below has
+> `interactionPoolPaidOut` taking the full fresh figure. Deducting
+> transport from the component first would invert that: a 5-fresh day
+> with 5 matching transport passes a zero-headroom bound on a zero
+> residual, then raises `interactionPoolPaidOut` by 5 past the cap. So
+> the lifetime cap and the D1 ceiling are applied to the whole fresh
+> entitlement before transport is attributed, and only the delivered
+> ledger and the bucket operate on residuals.
+>
+> The primitive stays a view (the preview shares it); the settle wrapper
+> then DRAWS exactly the four legs' sum from the batches, in the plan the
+> read returned — the read and the debit are one transaction, so a claim
+> needs no staging. The preview's dry run carries a SHADOW balance per
+> scanned batch through the whole domain pass (Codex #2274 r8 P1): each
+> day's planned draw is folded into an overlay the next day's coverage
+> read subtracts, so a batch listing two days is counted once across a
+> preview, the expiry gate's reading and the settlement alike — as built,
+> `ovIds` / `ovDrawn` on the dry-run state, pinned by the preview's
+> two-day cell; the settle path passes an empty overlay, since the storage
+> the draw just wrote is its truth.
+> `_persistDay` persists the FULL slices — the entitlement paid, whatever
+> funded it, so the D1 allowance, the loan-side lifetime allowance, the
+> rewarded-day counts and the entry cursors all record it (Codex #2274 r4
+> P1; the code does this: the transport-covered fresh is inside the kept
+> amount the loop writes) — and only the pool-budget debits that follow
+> see the residual legs.
+>
+> *The allocation DOMAIN is the settlement call, and the deficits are
+> totalled over it* (Codex #2274 r2 P1 and r3 P1, together). §5c rules
+> that scarce transport is split by typed-source contention — each day's
+> matching transport relieves the leg carrying the greater deficit against
+> the shared typed sources, fresh first on ties — and not by that day's
+> local shortfalls alone: with day A needing 5F/5R and holding a matching
+> 5-batch, day B needing 5R, shared live fresh 5 and bucket 5, a local
+> rule parks A's transport on fresh, drains the bucket on A, and B reverts
+> against nothing although transport→A-recycled, live→A-fresh, bucket→B
+> settles everything. But a WHOLE-OBLIGATION prepass is not the rule
+> either (r3): an obligation is a whole `RewardEntry` and a long one
+> settles across many calls, so scanning its 31–365-day remainder before
+> every draw defeats the gas bound the settlement model rests on. The
+> domain is therefore the one the model already has: **the days one call
+> prices for one claimant** — at most `MAX_INTERACTION_CLAIM_DAYS` for a
+> claim, exactly one for a sweep's SETTLEMENT. That is the ALLOCATION
+> domain — how one epoch's coverage is divided between a day's two legs
+> as that call settles it — and nothing else (Codex #2274 r7 P1): row
+> 13's executability reading, in the sweep's own pre-removal gate exactly
+> as in the view, is always taken over the CLAIM's domain — the
+> claimant's whole chunk, every entry and the legacy window — through the
+> claim's dry run (the armed-need view → the hosted dry run → the claim's
+> domain pass; A1's code does this and nothing else), so an entry with
+> matching transport whose sibling is unfunded reads non-executable
+> exactly as it does today, and the terminal sweep's one-day domain
+> changes only how that day's coverage is split when it is settled.
+> Typed demand is totalled over that
+> domain ONCE per call, through the same dry-run pricing the previews
+> already run (hosted on the epoch facet, and skipped entirely on a chain
+> with no epochs); the walk carries the remaining domain needs down, and
+> each day's allocation relieves the day's own shortfalls first — a day
+> cannot settle otherwise — then hands the rest to the leg with the
+> greater remaining domain deficit, fresh first on ties. Nothing is
+> persisted and nothing crosses a chunk. What crosses a chunk — a long
+> obligation's later days, and other claimants' demand on the same
+> shared sources — is the overlapping-membership matching §5c assigns to
+> an off-chain plan verified on chain, which is 3c; A states that residue
+> in those words rather than implying a scan it cannot afford. The
+> previews row 13 reads run the same domain pass, so the predicate and
+> the settlement split a day identically.
+>
+> *Row 13.* In A1 the predicate's need comes through the same bounded
+> per-day coverage read the settle makes — the dry run prices each day
+> against its cursor-visible epochs, within the scan window, and reports
+> the net armed need — so with transport as the only backing the
+> executable-now reading is TRUE, the expiry clock accrues, and an
+> abandoned entry expires and absorbs from the epoch (pinned by the A1
+> suite's expiry test). What the preparation operation adds in A2 is the
+> O(1) staged figure for a day WIDER than one window; §5c's "the
+> predicate cannot run the bounded batch scan" is a statement about that
+> case, not about a day one window covers (Codex #2274 r4 P1 read it as
+> the general case). Concretely: `_entryExecutableNow` tests an aggregate need against
+> `deliveredFreshBound` and the bucket. It gains the same per-day allowance
+> through the dry-run walk the previews already use, so the predicate and
+> the settlement price a day identically; the drought and delivered tests
+> run on the residual legs, as the matrix requires.
+>
+> *Rows 1 and 5 (the sweeps).* CORRECTED on a second read of the sweeps
+> (the first draft of this paragraph said they price whole windows and
+> would need a new per-day walk): only the PRE-ARMING legacy slice is
+> priced whole-window in O(1) off the cumulative curves. For ARMED days
+> both sweeps already settle ONE DAY PER CALL through the same
+> `processUserSideDay` the claim uses — `_forfeitEntryChunk` builds a
+> single-entry set at the entry's cursor day and `sweepExpiredEntry` does
+> the same — and persist it with `_persistDay`. So the four sites (the
+> claim walk, the preview walk row 13 reads, the forfeit chunk, the
+> expiry sweep) reach ONE function for an armed day, and the transport
+> term enters there once: the day primitive reads the day's cursor-visible
+> coverage itself, the three settle wrappers draw what the charge reports,
+> and the dry-run wrapper draws nothing. No new walk. The legacy slice's
+> days predate the arming and are funded by the schedule; they take no
+> transport term in A, which is stated rather than implied — **and there
+> is a population that leaves waiting** (Codex #2274 r4 P1): an active
+> mirror can receive an untyped old-wire remittance listing a pre-`D*`
+> day, since the canonical send passes pre-cutover days through, and 3b-i
+> opens an epoch for it. Closure 2 bounds the legacy claim and sweep
+> branches by delivered headroom, which that packet does not feed until
+> it is classified, and classification is gated on the release, which
+> the owner closed until B (#2258). So that obligation waits — but it
+> waits on the RELEASE, not on A's draws: before 3b-i it would have been
+> funded by classifying the packet, and that door is the one #2258 shut.
+> A per-day transport draw for the whole-window legacy slice is a
+> different piece of work (the slice is priced in O(1) off the cumulative
+> curves and has no per-day loop to hook), and it is recorded as A2's
+> beside the staging, with the population named; the value stays in its
+> epoch meanwhile, exactly as a wide day's does. Cost: one
+> storage read per settled day when no batch lists it, and **a global
+> short-circuit — no batch ever admitted on this chain — makes it zero**,
+> which is every chain without a legacy delivery.
+>
+> *The chokepoints, with what each sees.* Read from `RewardClaimFacet`'s
+> settlement sequence and the two sweep facets:
+> `interactionPoolPaidOut` and `consumeArmedFresh` take the FULL fresh
+> figure — the first is the 69M emission cap and a transport-funded payout
+> is still emission, the second retires the commitment the delivery made,
+> which ends whether the epoch or the live ledger paid it;
+> `chargeDeliveredFresh` (the delivered ledger) and `LibVpfiRecycle.consume`
+> (the bucket debit) take RESIDUALS only; the recycled leg's commitment is
+> released through `releaseCommitment` with no bucket debit (the design's
+> transport-specific retirement); the payout primitives
+> (`custodyPayoutToWallet`, `vaultCreditFromRewardCustodyERC20`) gain a
+> third, transport leg released from the holder's `Unclassified` row, where
+> an epoch's value rests; and an absorption's transport share
+> (`absorbRewardFresh` at rows 1 and 5 and on the forfeit branch of a
+> claim) becomes the in-holder `Unclassified → Recycled` move with the
+> bucket credited and no delivered-ledger charge.
+>
+> *What a draw steps down, and what backs what* (Codex #2274 r3, two
+> P1s; both verified against the code). A draw's packet half steps
+> `IngressPacket.unclassified`, `rewardCustodyUnclassifiedUncounted` and
+> `rewardBudgetFreshUncounted` down through the SAME function a
+> classification's take uses — extracted so the two exits cannot drift —
+> and touches none of the classified figures: a draw spends untyped value
+> on an obligation, it does not type it. It records the same amount as the
+> packet's own `drawn` exit (appended), so the packet's declared identity
+> `unclassified + classifiedFresh + classifiedRecycled + disposed + drawn
+> == protectedCumulative` holds after every draw (Codex #2274 r8 P1: the
+> first cut stepped the remainder down alone and the packet identity, as
+> distinct from the batch's, stopped balancing on the first draw; the
+> invariant suite's packet cell and the draw suite now state it with the
+> term). The `Unclassified` row identity
+> (row == uncounted held + returned held) therefore holds after every
+> draw, and the batch's conservation identity is `admitted == balance +
+> parked + debited + consumedFresh + consumedRecycled`, which the
+> invariant suite already carries. And live BACKING is separated from the
+> emission cap at all three sites: the 69M/D1 term stays the pool budget
+> applied to the FULL fresh leg (an epoch-paid payout is still emission),
+> while live backing bounds only the live-paid residual — the sweep
+> facets fold it into the delivered term rather than into the pool budget
+> (a backing shortfall still defers, now as a delivered-caused one, and an
+> epoch-paid forfeit or expiry settles while the live row is empty), the
+> claim's backing check reads the fresh net of the epoch-paid legs, and
+> row 13's need comes through the same netted dry run.
+>
+> *Replacement funding — what it is for, and how it is consumed* (Codex
+> #2274 r7, r8 and r9, resolved together). Under B's closure rule no
+> disposition precedes a day's terminal closure: parking and disposition
+> follow the proof that every entry covering the day has terminated, and
+> no entry can begin covering a past day afterwards (fact 2). A
+> disposition therefore leaves no obligation behind it, and value funded
+> "in replacement" after one would have no consumer — a draw could never
+> reach it, and the earlier drafts of this paragraph, which had draws
+> spending replacement packets after the original, described a path that
+> cannot arise (Codex r9). Replacement funding exists for exactly ONE
+> case: a disposition that leaves a SURVIVING LIABILITY on record — the
+> named exception above, an operator stamping a day closed over an entry
+> blocked only by a sanctions flag, with the write-off recorded. That is
+> an owner question; B proceeds WITHOUT the exception, and without it
+> offers no replacement funding at all. Where the exception is taken, the
+> write-off record is the consumer: it names the claimant, the day and
+> the two legs written off, and a replacement transfer "clears the
+> disposition by amount" by stepping that record's outstanding figure
+> down — never by re-entering the day draw. Each transfer is its own
+> packet (kind `Replacement`, keyed by the batch and a per-batch sequence,
+> its own `actualReceived`, never rewritten — Codex r8: one second packet
+> could hold only the first transfer), and it leaves through ONE recorded
+> exit, `liabilityFunded`, so its identity `unclassified +
+> liabilityFunded == protectedCumulative` holds per packet; the batch
+> keeps the cumulative `replacementFunded` beside `admitted`, the identity
+> gaining it on the funded side and the funded liability on the exit
+> side. No draw ever crosses a replacement packet: the hot path is the
+> liability record — O(1) per transfer, O(1) per payout — and the
+> provenance list is read only by paginated reconciliation views, so a
+> disposition refilled through many small transfers costs each transfer
+> its own record and nothing more (Codex r9). The draw's packet half
+> above is therefore always the ORIGINAL packet's, one draw source per
+> batch: the batch's leg counters and the packet's `drawn` agree by
+> construction, and `authenticatedFresh` nets the packet's own fresh
+> draws exactly (Codex r9: per-packet component counters would be needed
+> only where a second packet can be drawn from, and none can). Nothing in
+> A1 changes: A1 admits no replacement and records no write-off.
+>
+> *Hosted where.* The draw and the leg-counter writes live on
+> `RewardEpochFacet` (21.7 KB free) behind a Diamond-internal entry;
+> `LibInteractionRewards` carries the allocation call in the day primitive,
+> the `_attributeLegs` ordering, the four-leg `transportUser` /
+> `transportTreasury` figures on `DayCharge`, and one cross-facet draw call
+> in each of the three settle wrappers. The
+> `eraBalance(era)` read is one interface returning zero, in the middle
+> position, so PR C changes a body and not an order.
+>
+> *Ratified departures — PR #2276 through its second Codex round.* Each
+> item below is a decision THIS DESIGN takes, superseding the paragraph
+> above that it names; the paragraphs are read subject to it, A2, B and
+> 3c build on the ratified form, and the implementation conforms to it —
+> the list is the record, not the code (Codex #2274 r9: a note that let
+> the implementation override the design would have reversed the
+> repository's precedence rule and turned any discrepancy into a
+> specification change). (1) the
+> coverage read, the allocation, the draw and every dry run walk a day's
+> index through ONE plan (`planTransportDraw`) — fewest listed days first,
+> oldest arrival on ties, index position last — and a batch whose
+> membership is still being paged is invisible until whole; (2) the
+> claim's dry run, the domain pass and the domain probe are hosted on a
+> read-only `RewardEpochViewFacet` (the ledger facet went over EIP-170
+> carrying them) and reached by staticcall, the wallet-or-vault delivery of an epoch-paid
+> claim on the custody facet, and the sweeps' epoch-paid legs are absorbed
+> through the hosted settle — the lens facet fell from 25 KB to 13 KB and
+> the settle facets keep only a few hundred bytes of EIP-170 headroom, so
+> A2 adds its reads beside the view facet's, never on a settle facet;
+> (3) row 13 reads the walk's OWN draw on the bucket (a deferred day
+> included) and a scan-window flag, delivered as one `ArmedNeed` struct
+> the three gates decode once, and the lens keeps its flat shape with
+> three outputs appended; the public armed need counts the epoch-paid
+> fresh and reports the live-funded part beside it; (4) the domain pass
+> decides from the ledger — the chunk's own days, enumerated without
+> pricing — whether any listed epoch is in reach, so there is no admission
+> counter and nothing to backfill on an in-place upgrade; (5) the draw
+> records `drawn` on the packet, so the packet identity above holds;
+> (6) the two sweeps carry the pool cap and the backing room to the engine
+> separately, and the per-batch "which bound binds" flag is gone.
+>
+> **Two decisions the plan's wording leaves open, and how A takes them.**
+>
+> 1. **Staging is the EXCEPTION path, and A ships without it — as A1.** A
+>    claim's day and a sweep's entry each settle inside the call that
+>    drew, so the only case that leaves draws unsettled is a scan cap hit
+>    mid-day: more batches list the day than one call may scan. A1 draws
+>    NOTHING on such a day — the day defers exactly as a bucket shortfall
+>    defers it today, and a sweep returns retryable — so there is nothing
+>    to stage and nothing to unwind; §5c's "draws reverted leave the next
+>    retry facing the same live batches with no progress" is the cost, and
+>    it is bounded to days wider than the cap. A2 adds the staging record
+>    with batch references, deferred exhaustion, permissionless expiry, the
+>    batch-keyed cooldown, priority-mode reservations and row 13's
+>    PREPARATION operation — the machinery that makes a wide day
+>    progress. The reason for the cut is the same as 3b-i's: a single PR
+>    carrying both would not fit under the round cap, and the cap-hit
+>    refusal is the conservative side (value stays in the epoch; the
+>    obligation waits).
+>
+>    **What "the obligation waits" costs, stated rather than implied**
+>    (Codex #2274 r2, P1). Nothing bounds how many batches may list one
+>    day — the legacy lane can legitimately produce arbitrarily many
+>    small batches for a single day — so a day listed past the scan cap
+>    does not merely defer: NO call can make progress on it. Every claim
+>    and every permissionless sweep reaching that day waits until A2
+>    lands, however well backed the obligation is, and the retry faces
+>    the same live batches each time. The cap hit is conservative about
+>    VALUE (nothing is drawn, nothing is stranded) and not about
+>    LIVENESS, and the earlier "bounded to days wider than the cap"
+>    described the trigger, not the duration. Codex reads this as making
+>    the staging machinery a correctness prerequisite rather than a later
+>    slice — i.e. that A1 and A2 should ship as one deployment.
+>    **That is a question about the A1/A2 cut, which a scout note does
+>    not get to settle; it is recorded here for the owner** alongside the
+>    CONTESTED deferral below. Note the answer is additive either way: if
+>    they ship together, A1 as written is unchanged, it simply gains A2.
+> 2. **"Contested" is read as the plan's own definition of KNOWN.** The
+>    plan refuses a draw when the batch is listed by the day of another
+>    known unmet obligation. There is no per-day enumeration of unmet
+>    obligations (the closure-proof note above is what it would cost to
+>    build one), and §5c's machinery names an obligation as known to a
+>    batch when it holds a STAGING REFERENCE on it. A therefore reads
+>    contested as "another obligation's reference stands on this batch" —
+>    an O(1) test at draw time and again at settlement — which in A1, with
+>    no references yet, is never true, so every A1 draw is uncontested and
+>    settles at once. The wider reading ("any other listed day not yet
+>    proven closed") was rejected because it deadlocks every multi-day
+>    batch until 3c — no day can draw while another listed day is open,
+>    and the other days cannot close without drawing. This is the same
+>    owner question the plan carries (defer contested to 3c), stated with
+>    the reading A takes, so a different answer changes A2, not A1.
+>
+>    **And what "never true in A1" costs, stated** (Codex #2274 r2, P1).
+>    With no staging references in A1 the contention guard is
+>    unreachable, so every A1 draw settles at once — including a draw on
+>    a batch that a second, less flexible obligation was the only
+>    feasible claimant of. First caller wins, and the other obligation is
+>    stranded until 3c's challenge machinery can reorder them: the
+>    cross-obligation failure §5c's machinery exists to prevent. The
+>    narrow reading is still the one A takes, because the wider one
+>    deadlocks every multi-day batch until 3c (above) — but it is taken
+>    KNOWING this, not on the premise that A1 has no contention to guard.
+>    Both readings are now recorded with their cost, and which one A1
+>    ships with is the owner's open question, not this note's.
+>
+>    **And across chunks** (Codex #2274 r7 P1, recorded with the two
+>    above). A1 persists no allocation across settlement chunks and
+>    settles every draw at once, so an early chunk's split can spend a
+>    scarce shared epoch on a leg the live sources could have paid and
+>    leave a later chunk — the same obligation's later days, or another
+>    claimant's — short, with nothing staged for 3c to displace once the
+>    value is paid. A1's two mitigations are real and partial: each day
+>    relieves its own shortfalls first, and the draw order spends the
+>    epoch listing the fewest days first, keeping a wide epoch for the
+>    days only it can fund. What they do not cover is the cross-chunk
+>    case, and the remedy named — persist the full-domain decision, or
+>    defer a draw whose feasibility depends on later chunks — is the
+>    staging record A2 adds. It is the same A1/A2 cut question, and it
+>    stands with the other two for the owner.
+>
 **Transport epochs PR 3c — the contested-allocation machinery.** The
 bonded exclusive challenger slot as one O(1) transport-domain flag; plans
 as committed roots over paginated assignment pages, shadow-validated
