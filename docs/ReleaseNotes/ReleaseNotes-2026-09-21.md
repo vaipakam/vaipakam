@@ -423,15 +423,25 @@ cannot name a database. Watching a database hold still is evidence; removing
 the means to write to it is closer to proof, and the difference is what this
 step buys.
 
-**What a user sees during the window: the read surface is not slow, it is
-closed.** Every route the indexer and the agent serve answers 503 for the
-length of the window — including the live-update socket, and including agent
-routes that touch no database at all. That bluntness is deliberate: an answer
-drawn from a database about to be discarded would be worse than no answer, and
-a per-route list of which routes read the database is exactly the enumeration
-the mechanism exists to avoid. The practical consequence is that requests
-**fail rather than queue**, so anything a user was part-way through has to be
-retried once the window closes. Nothing resumes on its own.
+**What a user sees during the window: the read surface stops answering.**
+Every new request to the indexer and the agent is refused with a 503 for the
+length of the window — every route, new live-update connections included, and
+on the agent even routes that touch no database at all. That bluntness is
+deliberate: an answer drawn from a database about to be discarded would be
+worse than no answer, and a per-route list of which routes read the database is
+exactly the enumeration the mechanism exists to avoid. Requests **fail rather
+than queue**, so anything a user was part-way through has to be retried once
+the window closes. Nothing resumes on its own.
+
+**Two things are deliberately not refused, and both exist so that the refusal
+works.** A browser's preflight still succeeds — refuse it and the browser never
+issues the real request, so nobody ever sees the 503. And a live-update
+connection accepted *before* the maintenance build went out is not hunted down
+and closed: it stays open and keeps answering pings until the client notices it
+is no longer being given fresh data and falls back to polling. Closing those
+deliberately would mean reaching every one of them, which can only be done by
+enumerating the chains — the same unfinishable list this refusal exists to
+replace.
 
 Indexed activity also stops advancing, so once the surface is back, recently
 confirmed on-chain actions take longer than usual to appear. *That* part is
@@ -449,18 +459,21 @@ disclosure it qualifies.** The keeper is deployed but deliberately
 **unscheduled** — its cron list is empty, by an operator decision taken after
 it was measured exceeding its CPU limit on essentially every invocation. Its
 passes therefore do not run today, before this window or after it. What follows
-is what the window costs **once that schedule is restored and the pass in
-question is armed** — the keeper gates each pass on its own flag as well, so a
-restored cron with the liquidator still un-armed leaves first-party liquidation
-off for a reason that is again not this window. Attributing any of it to the
-move while the keeper is dark would blame a maintenance window for a standing
-outage.
+is what the window costs **once that schedule is restored** — and, for some
+passes, only once their own arming flag is set as well. Not every pass carries
+one, which is why the two examples below have different prerequisites.
+Attributing any of this to the move while the keeper is dark would blame a
+maintenance window for a standing outage.
 
-With both of those true, two especially direct examples. An alert that fires
+Two especially direct examples, with their prerequisites. An alert that fires
 on a threshold being *crossed* is generated from the crossing, not from the
 state afterwards, so a position that crosses a health band and recovers again
-inside the window produces no alert at all, then or later. And the platform's
-own liquidator declines every scheduled tick for as long as the window lasts,
+inside the window produces no alert at all, then or later — and that watcher
+carries no arming flag, so a restored schedule is all it needs. The platform's
+own liquidator *does* carry one, and returns immediately without it, so a
+restored schedule alone still leaves first-party liquidation off for a reason
+that is again not this window. With both, it
+declines every scheduled tick for as long as the window lasts,
 so a position that becomes undercollateralised during it is not acted on by the
 protocol's own keeper — liquidation is permissionless and a third party can
 still act, so what pauses is the first-party cover, not the mechanism.
