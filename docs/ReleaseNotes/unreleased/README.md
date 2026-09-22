@@ -63,11 +63,15 @@ PRs landing the same day never append-conflict.
    change`, a subsection of the fragment above them, so a reader's outline
    presents each as something an unrelated change does *not* do.
 
-   It warns rather than refuses because a substantial minority of fragments
-   open that way, and refusing them would block work already in flight.
-   (Counts with the rule, as above.) Open at `##` unless you mean to be a
-   subsection of the change before you — and you cannot know which change
-   that will be.
+   It warns rather than refuses because about one fragment in ten opens that
+   way, and refusing them would block work already in flight. (Counts with
+   the rule, as above.) Open at `##` unless you mean to be a subsection of
+   the change before you — and you cannot know which change that will be.
+
+   If nothing precedes it, a `###` opener is not absorbed at all; it sits
+   under the release title at a level that skips one. Which of the two you
+   get depends on the fold order, so the warning names both rather than
+   guessing.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.

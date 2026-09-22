@@ -194,6 +194,19 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     means parsing HTML, which is the unbounded surface this function exists
     to avoid.
     """
+    # A UTF-8 BOM is stripped from the START OF THE FILE before anything else
+    # (#2290 r11). An editor that writes one leaves `\xef\xbb\xbf# Title` on
+    # line one; CommonMark ignores U+FEFF, so GitHub renders that as a level-1
+    # heading, while a byte-level match sees neither a `#` at column zero nor
+    # `---`. The fragment then took the no-heading allowance and published the
+    # peer title and its placeholder — permit-by-misrecognition, the same
+    # shape as the six findings that made this function stop scanning.
+    #
+    # Only at offset zero, and only once: a U+FEFF anywhere else is a
+    # zero-width no-break space, which is content rather than an encoding
+    # artefact, and is left alone.
+    if body.startswith(b"\xef\xbb\xbf"):
+        body = body[3:]
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
     i = 0
     # Front matter: `---` EXACTLY at column zero, line one, closed the same.
@@ -1633,17 +1646,24 @@ class Assembly:
                 )
         if not bad:
             if deep:
-                err(
-                    "Warning: these fragment headings open below level 2, and will be"
-                )
-                err("absorbed into the section above them:")
+                err("Warning: these fragment headings open below level 2:")
                 err("")
                 for line in deep:
                     err(f"  {line}")
                 err("")
-                err("A ## heading becomes a section of the release. A ### one becomes a")
-                err("SUBSECTION of whichever fragment was folded before it, so outlines")
-                err("and screen-reader navigation attribute it to that other change.")
+                err("A ## heading becomes a section of the release. A ### one does not,")
+                err("and what happens to it depends on what precedes it in the finished")
+                err("file: after a ## section it becomes a SUBSECTION OF THAT OTHER")
+                err("CHANGE, so outlines and screen-reader navigation attribute it to")
+                err("them; with no ## before it, it sits under the release title at a")
+                err("level that skips one. The first has happened twice in published")
+                err("notes, the second once.")
+                err("")
+                err("Which one you get is not stated here on purpose: it depends on the")
+                err("fold order and on the levels of the fragments ahead of you, and")
+                err("working it out a second time in this check is how the two answers")
+                err("drift apart. Open at ## and neither applies.")
+                err("")
                 err("Assembly continues — this is a warning, not a refusal.")
                 err("")
             return
