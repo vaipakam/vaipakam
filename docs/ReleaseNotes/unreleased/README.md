@@ -61,22 +61,25 @@ PRs landing the same day never append-conflict.
    under the release title, and assembly refuses it. `###` or deeper is
    **not** refused, but it is not harmless either, and assembly prints a
    warning naming the file. A `##` heading becomes a section of the release;
-   a `###` one becomes a **subsection of whichever fragment was folded before
-   it**, so outlines and screen-reader navigation attribute your change to
-   that other change. This has happened twice in published notes — two
-   fragments in `ReleaseNotes-2026-08-25.md` sit under `## What it does not
-   change`, a subsection of the fragment above them, so a reader's outline
-   presents each as something an unrelated change does *not* do.
+   a deeper one becomes a **subsection of the nearest preceding heading
+   shallower than itself**, so outlines and screen-reader navigation file
+   your change under that one. That is usually the fragment folded before
+   you, but not always — if that fragment ends in a `####`, your `###`
+   closes it and attaches further back instead. This has happened twice in
+   published notes: two fragments in `ReleaseNotes-2026-08-25.md` sit under
+   `## What it does not change`, a subsection of an earlier change, so a
+   reader's outline presents each as something an unrelated change does
+   *not* do.
 
    It warns rather than refuses because about one fragment in ten opens that
    way, and refusing them would block work already in flight. (Counts with
    the rule, as above.) Open at `##` unless you mean to be a subsection of
-   the change before you — and you cannot know which change that will be.
+   something — and you cannot know what that will be.
 
-   If nothing precedes it, a `###` opener is not absorbed at all; it sits
-   under the release title at a level that skips one. Which of the two you
-   get depends on the fold order, so the warning names both rather than
-   guessing.
+   If nothing shallower precedes it, a deep opener is not absorbed at all;
+   it sits under the release title at a level that skips one. Which of the
+   two you get depends on the fold order and on the heading levels of every
+   fragment ahead of yours, so the warning names both rather than guessing.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
