@@ -768,6 +768,22 @@ because step 3 below is the part of it that had to be re-learned.
       > **re-read the row itself** before counting a run clean on the
       > strength of a line you have seen before.
       >
+      > **Rows in credential-keyed tables cannot be re-read that way, and
+      > must not be recorded by their printed key either** (#2286 r7).
+      > `telegram_links` is keyed by the live handshake code, so the
+      > report prints an HMAC under a key generated fresh per run and
+      > never stored (`d1-carry-rows.mjs:1094-1148`). Cross-run
+      > correlation is given up DELIBERATELY there — a six-digit code is
+      > a million candidates, so a stable fingerprint would hand the
+      > reader the credential. Consequences, both of them: the printed
+      > value cannot be used to query the database, and the same row
+      > carries a different value in this week's report than in last
+      > week's, so it can never match a previously recorded decision.
+      > Record and review these **at table level**, and note the
+      > mitigation the tool's own design rests on: the code is live for
+      > ten minutes, so a conflict that survives into the next weekly run
+      > is a conflict about a credential that has already expired.
+      >
       > Do not narrow that to a list of situations. An intermediate
       > revision of this note named `source-changed` and
       > `destination-deleted-source-changed`, which is wrong in the
@@ -784,12 +800,28 @@ because step 3 below is the part of it that had to be re-learned.
       > manifest-only classification deliberately emits conflicts with no
       > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
       > table, or its key, looks like from archive's side. Record those by
-      > **table plus the kind of line**, and treat a run carrying only
-      > such already-recorded lines as clean on the same terms. Without
-      > this they can never be recorded to the rule's satisfaction and the
-      > retirement gate stays blocked forever, which is the
-      > check-that-can-never-pass shape this procedure keeps having to
-      > remove. What it does cost is the property that made
+      > **table, the kind of line, AND THE FIGURES THE LINE REPORTS** —
+      > for a sequence advance, both marks; for a manifest-only conflict,
+      > its counts. Then treat a run carrying only such already-recorded
+      > lines as clean on the same terms, and treat the SAME line with
+      > DIFFERENT figures as new and undecided.
+      >
+      > Table-plus-kind alone is not enough, and for the same reason the
+      > by-key test is not (#2286 r7): a sequence that advances again
+      > after a decision, or a dropped table taking another late write,
+      > reports under the same table and the same kind. The re-read above
+      > cannot rescue these — an allocation that was inserted and deleted
+      > has no row left to re-read, and a manifest-only finding carries no
+      > row identity to re-read BY. The reported figures are the only
+      > state these lines expose, so they are what a decision has to be
+      > recorded against.
+      >
+      > Without some identity here they could never be recorded to the
+      > rule's satisfaction at all and the retirement gate would stay
+      > blocked forever, which is the check-that-can-never-pass shape this
+      > procedure keeps having to remove — but an identity that cannot
+      > change is the opposite failure, and waves a real late write
+      > through. What it does cost is the property that made
       > "repeat until clean" self-checking, which is why this is written
       > down rather than left for an operator to work out at 2am.
       >

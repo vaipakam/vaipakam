@@ -424,12 +424,26 @@ the means to write to it is closer to proof, and the difference is what this
 step buys.
 
 **What a user sees during the window.** Indexed activity stops advancing, so
-recently confirmed on-chain actions take longer than usual to appear; alerts
-and notifications pause. Nothing is lost — the chain is the record, and the
-services resume reading from it when the move completes. No funds are moved,
-touched, or at risk at any point: this is a move of off-chain bookkeeping
-between two databases, and the database being left behind is **retained** in
-full afterwards, so nothing depends on the move having been perfect.
+recently confirmed on-chain actions take longer than usual to appear, and
+alerts and notifications pause. Most of that is delay rather than loss: the
+chain is the record, and the services resume reading from it when the move
+completes.
+
+**Two things are not merely delayed, and this note names them rather than
+rounding them to "nothing is lost".** An alert that fires on a threshold being
+*crossed* is generated from the crossing, not from the state afterwards — so a
+position that crosses a health band and recovers again inside the window
+produces no alert at all, then or later. And the platform's own liquidator
+declines every scheduled tick for as long as the window lasts, so a position
+that becomes undercollateralised during it is not acted on by the protocol's
+own keeper. Liquidation is permissionless and a third party can still act; what
+is paused is the first-party cover, not the mechanism.
+
+The move itself neither holds nor transfers funds — it carries off-chain
+bookkeeping between two databases, and the database being left behind is
+**retained** in full afterwards, so nothing depends on the move having been
+perfect. But "no funds at risk at any point" is a stronger claim than the
+window supports, and it is not made here.
 
 **What happens next.** Once the services are confirmed to be serving with no
 database access, the old database is read twice ten minutes apart to confirm it
@@ -628,16 +642,9 @@ against the new database, the old one is read again and anything that turned up
 late is **reported** — the step reads both databases and writes to neither, so
 nothing the services have written since can be disturbed by it. Each
 difference it names is settled by a person. That repeats until two consecutive
-runs come back clean — and then **keeps repeating, weekly, for as long as the
-old database is kept**.
-
-**Some of what that comparison reports never stops reporting**, because the
-only settlement available is a decision rather than a data change — and a
-decision is not something either database holds. So a clean run is not a silent
-one. The operator runbook carries the rule, the places it is weaker than it
-sounds, and what to do meanwhile; #2279 is the work that would let a recorded
-decision quiet a line properly. The section on the move itself, later in this
-file, describes the behaviour once — it is not restated here.
+runs come back clean — which is not the same as silent, for reasons set out
+below — and then **keeps repeating, weekly, for as long as the old database is
+kept**.
 
 Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and
