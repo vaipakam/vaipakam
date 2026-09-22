@@ -2520,6 +2520,33 @@ check "no fragment consumed"    "$(pending "$W")"                         "1"
 check "the heading is not duplicated" \
   "$(count_in '^## dup' "$out/ReleaseNotes-2026-08-16.md")"               "1"
 
+case_start "T78b: a heading below the opening line still stops a markerless run"
+W="$ROOT/t78b"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# A REPRODUCED DATA-LOSS BUG, pinned because the suite did not catch it and a
+# review did (#2290 r12). `check_heading_conformance` judges the line a
+# fragment OPENS with; this guard has to find the heading WHEREVER it is,
+# because a legacy interrupted run wrote the fragment's whole body into the
+# dated file. Sharing the opening-only parser between them returned None for a
+# fragment that opens with prose, so this guard saw nothing to match: the run
+# appended the fragment a SECOND time and then consumed the pending source —
+# two copies, exit 0, the one outcome here that loses work rather than
+# refusing it. Measured before and after the fix.
+#
+# Sharing was right when the two differed by accident and wrong once they
+# asked different questions. Re-unify them and this case fails.
+printf 'intro prose\n\n## Later heading (PR #4321)\n\nbody text\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\nintro prose\n\n## Later heading (PR #4321)\n\nbody text\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"   "$?"                                      "1"
+check "naming the fragment"      "$(says "$msg" '0001-a.md')"              "1"
+check "no fragment consumed"     "$(pending "$W")"                         "1"
+check "the heading is not duplicated" \
+  "$(count_in '^## Later heading' "$out/ReleaseNotes-2026-08-16.md")"      "1"
+
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"
 out="$W/docs/ReleaseNotes"
