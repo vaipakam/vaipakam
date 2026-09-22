@@ -993,7 +993,7 @@ async function digestDatabase(
   return out;
 }
 
-function printDigest(label, map) {
+function printDigest(label, map, runId = null) {
   console.log(`\n${label}`);
   let rows = 0;
   const shapes = [];
@@ -1005,7 +1005,8 @@ function printDigest(label, map) {
     );
   }
   console.log(
-    `  ${"—".repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)`,
+    `  ${"—".repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)` +
+      (runId ? ` run:${runId}` : ""),
   );
   // AFTER the count line, so the line that closes the table-set reading
   // still does (#2281 r13). These say how each table keys and projects
@@ -1336,6 +1337,13 @@ function readManifest(path, src) {
             // disclosed wherever the verdict is reported, not only where
             // it was decided.
             `\n  Covered on: ${(prov.coveredDimensions ?? ["rows", "sequences"]).join(", ")}` +
+            ((prov.coveredDimensions ?? []).includes("run-pairing")
+              ? ""
+              : `\n  NOT ESTABLISHED: that the table set and the ` +
+                `allocation marks in the evidence came from the SAME ` +
+                `"digest" run. Halves from two runs describe two ` +
+                `moments, and an identifier allocated and released ` +
+                `between them is absorbed into this baseline.`) +
             ((prov.coveredDimensions ?? []).includes("shape")
               ? ""
               : `\n  NOT ESTABLISHED: how each table keys and projects ` +
@@ -2028,9 +2036,6 @@ export function parseEvidence(text) {
   const enumerations = [];
   const seqReadings = [];
   const unterminatedSeqs = [];
-  const pairedRuns = [];
-  let pendingEnumeration = null;
-  let openShapes = new Set();
   let openDigests = new Map();
   let openSeqs = new Map();
   let sawAnyComplete = false;
@@ -2040,21 +2045,10 @@ export function parseEvidence(text) {
     const line = raw.trim();
     // Closes a SEQUENCE reading, and only that.
     if (line.startsWith("seq-listing complete")) {
-      seqReadings.push(openSeqs);
+      const id = /\brun:([0-9a-f]{6,64})\b/.exec(line);
+      seqReadings.push({ seqs: openSeqs, run: id ? id[1] : null });
       openSeqs = new Map();
-      openShapes = new Set();
       sawAnyComplete = true;
-      // AND IF AN ENUMERATION WAS CLOSED SINCE THE LAST ONE, THE TWO
-      // ARE THE SAME RUN (#2281 r12). One `digest` run prints its
-      // digests, its count line, its `seq` lines, then this marker — so
-      // an enumeration closed since the previous marker, with no other
-      // marker between, is this run's own. That pairing is what makes
-      // the two halves evidence about ONE moment; two markers taken
-      // from different runs describe two.
-      if (pendingEnumeration !== null) {
-        pairedRuns.push(pendingEnumeration);
-        pendingEnumeration = null;
-      }
       continue;
     }
     // Closes a DIGEST reading. `printDigest` prints this line at the end
@@ -2073,12 +2067,17 @@ export function parseEvidence(text) {
     // the first run and omitted from the second — a known zero, which is
     // a RESET — then reads as one reading of 5, and a reconstruction
     // sitting at 5 passes over a log that proves the sequence moved.
-    const tot = /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)$/.exec(line);
+    const tot =
+      /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
     if (tot) {
-      enumerations.push({ digests: openDigests, declared: Number(tot[1]) });
-      pendingEnumeration = enumerations.length - 1;
+      enumerations.push({
+        digests: openDigests,
+        declared: Number(tot[1]),
+        run: tot[2] ?? null,
+      });
       openDigests = new Map();
-      openShapes = new Set();
       if (openSeqs.size > 0) {
         // Never closed, so it contributes its values and no zeros.
         unterminatedSeqs.push(openSeqs);
@@ -2094,19 +2093,6 @@ export function parseEvidence(text) {
     );
     if (shp) {
       mentioned.add(shp[1]);
-      // A REPEATED SHAPE LINE IS ANOTHER RUN (#2281 r14). `digest`
-      // prints each table's shape ONCE per run, after the count line —
-      // so unlike a digest line, a shape line following an enumeration
-      // is ordinary. Seeing the SAME table twice is not: the second one
-      // belongs to a later run, whose own count line is not in the
-      // file. Leaving the pairing pending then joins run 1's tables to
-      // run 2's allocations, which is the r13 defect by the door r13
-      // opened.
-      if (openShapes.has(shp[1])) {
-        pendingEnumeration = null;
-        openShapes = new Set();
-      }
-      openShapes.add(shp[1]);
       put(shapes, "shape", shp[1], shp[2]);
       continue;
     }
@@ -2143,15 +2129,6 @@ export function parseEvidence(text) {
     );
     if (dig) {
       mentioned.add(dig[1]);
-      // A DIGEST LINE AFTER A CLOSED ENUMERATION IS A NEW RUN (#2281
-      // r13). One run prints its digests, its count line, its `seq`
-      // lines, then its marker — digests never follow the count line of
-      // their own run. So an enumeration still waiting to be paired
-      // when digests start again is one whose sequence section is not
-      // in the file, and pairing it with the NEXT run's marker joins
-      // one run's tables to another run's allocations. That is the
-      // shape this pairing exists to reject, reached from inside.
-      pendingEnumeration = null;
       openDigests.set(dig[1], dig[2]);
       put(digests, "digest", dig[1], dig[2]);
     }
@@ -2188,7 +2165,31 @@ export function parseEvidence(text) {
     );
   }
 
-  const paired = pairedRuns.filter((i) => readings.includes(enumerations[i]));
+  // PAIRING IS STATED, NOT INFERRED (#2281 r15). Rounds 12 through 15
+  // each found another crop that joined one run's tables to another
+  // run's allocations, and each fix read the boundary off a line that
+  // happened to be present — a digest line, a repeated shape line.
+  // There was always another crop, because the boundary was never IN
+  // the evidence. It is now: both lines that close a run carry the same
+  // `run:<id>`, and halves pair when they agree on it.
+  //
+  // Evidence recorded before the identifier existed carries none. That
+  // pairing cannot be established at all — a single enumeration and a
+  // single sequence listing look identical whether they came from one
+  // run or two — so it is reported as unestablished rather than
+  // guessed. The caller decides what to do about it; this function does
+  // not pretend to know.
+  const runsWithIds = new Set(
+    [...readings, ...seqReadings].map((r) => r.run).filter(Boolean),
+  );
+  const paired = [...runsWithIds].filter(
+    (id) =>
+      readings.some((e) => e.run === id) &&
+      seqReadings.some((r) => r.run === id),
+  );
+  const unidentified =
+    readings.filter((e) => !e.run).length +
+    seqReadings.filter((r) => !r.run).length;
 
   const seqs = new Map();
   for (const table of mentioned) {
@@ -2200,7 +2201,7 @@ export function parseEvidence(text) {
     // so this is a fold over observations rather than a closed pass with
     // a trailing special case bolted on.
     const seen = [
-      ...seqReadings.map((r) => (r.has(table) ? r.get(table) : 0)),
+      ...seqReadings.map((r) => (r.seqs.has(table) ? r.seqs.get(table) : 0)),
       ...unterminatedSeqs.filter((r) => r.has(table)).map((r) => r.get(table)),
     ];
     let agreed;
@@ -2234,13 +2235,15 @@ export function parseEvidence(text) {
       // How many runs closed BOTH halves, with the enumeration still
       // valid — the only kind of reading that describes one moment.
       paired: paired.length,
-      // AND HOW MANY CLOSED READINGS ARE NOT PART OF ONE. Each is half
-      // of a run whose other half is missing from the file — a moment
-      // the evidence half-records. The mirror's own run may be that
-      // one, and its missing half is then simply absent while the run
-      // beside it answers in its place.
+      // Halves that CARRY an identifier and did not find their partner.
+      // Each is a run whose other half is missing from the file.
       unpaired:
-        readings.length - paired.length + (seqReadings.length - paired.length),
+        readings.filter((e) => e.run && !paired.includes(e.run)).length +
+        seqReadings.filter((r) => r.run && !paired.includes(r.run)).length,
+      // Halves that carry NO identifier, so nothing about them can be
+      // paired or refuted. Evidence recorded before `run:<id>` existed
+      // is entirely of this kind.
+      unidentified,
     },
     conflicts,
   };
@@ -3765,7 +3768,21 @@ async function main() {
     // sequence — no conflict anywhere, and a reconstruction carrying
     // that late allocation is promoted with no mirror-time sequence
     // evidence at all.
-    if (evidence.readings.paired === 0 || evidence.readings.unpaired > 0) {
+    // A HALF THAT NAMES ITS RUN AND FINDS NO PARTNER IS A REFUSAL; a
+    // half that names no run at all is a DISCLOSURE (#2281 r15).
+    //
+    // Identified halves can be checked, so they are: an unpaired one is
+    // a run recorded without its other half, and the run beside it
+    // would answer in its place. Unidentified halves cannot be checked
+    // in either direction — a lone enumeration and a lone sequence
+    // listing look the same whether they came from one run or two — and
+    // that is the state of every record made before `run:<id>` existed,
+    // including the one covering the retained database now. Refusing
+    // those would make the documented rollback unfollowable for exactly
+    // the artifact this verb rebuilds, which is the defect this PR
+    // removes rather than adds. So it says so instead, here and in the
+    // artifact and in every later `reconcile`.
+    if (evidence.readings.unpaired > 0) {
       fail(
         `${expect} does not hold a whole "digest" run: ` +
           `${evidence.readings.paired} run(s) closed both halves and ` +
@@ -3831,10 +3848,13 @@ async function main() {
     const shapesSeen = [...Object.keys(doc.tables ?? {})].filter((t) =>
       evidence.shapes?.has(t),
     ).length;
-    const dimensions =
-      shapesSeen === nTables && nTables > 0
-        ? ["rows", "sequences", "shape"]
-        : ["rows", "sequences"];
+    const dimensions = ["rows", "sequences"];
+    if (shapesSeen === nTables && nTables > 0) dimensions.push("shape");
+    // Pairing counts as established only when NO half is anonymous: one
+    // unidentified half is enough for the file to be two moments.
+    if (evidence.readings.paired > 0 && evidence.readings.unidentified === 0) {
+      dimensions.push("run-pairing");
+    }
     doc.provenance = {
       ...prov,
       interval: "covered",
@@ -3845,8 +3865,12 @@ async function main() {
         `${expect}` +
         (dimensions.includes("shape")
           ? ""
-          : ` — the evidence carries no "shape" lines, so how each table ` +
-            `keys and projects its rows was NOT established`),
+          : ` — no "shape" lines, so row identity was NOT established`) +
+        (dimensions.includes("run-pairing")
+          ? ""
+          : ` — ${evidence.readings.unidentified} half-reading(s) carry ` +
+            `no "run:<id>", so it was NOT established that both halves ` +
+            `came from one run`),
     };
     writeFileSync(
       `${path}.tmp-${process.pid}`,
@@ -3860,9 +3884,19 @@ async function main() {
     console.log(
       `${path} is now COVERED: every table in it matches ${expect} on ` +
         `${dimensions.join(", ")}.\n\n` +
+        (dimensions.includes("run-pairing")
+          ? ""
+          : `WHAT THIS DOES NOT COVER: ${evidence.readings.unidentified} ` +
+            `half-reading(s) carry no "run:<id>", so whether the table ` +
+            `set and the allocation marks were recorded by the SAME ` +
+            `"digest" run could not be established. Halves from two runs ` +
+            `describe two moments, and an identifier allocated and ` +
+            `released between them would be absorbed here. Evidence ` +
+            `recorded before that identifier existed cannot carry it, ` +
+            `and a mirror that has passed cannot be re-recorded.\n\n`) +
         (dimensions.includes("shape")
           ? ""
-          : `WHAT THIS DOES NOT COVER: the evidence carries no "shape" ` +
+          : `AND: the evidence carries no "shape" ` +
             `lines, so how each table keys and projects its rows at the ` +
             `mirror was not established — only that the rows and the ` +
             `allocation marks agree. A table recreated with a different ` +
@@ -3889,7 +3923,22 @@ async function main() {
     const name = opts["--db"];
     if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
     const db = name === shared.name ? shared : await resolveByName(name);
-    printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
+    // ONE RUN, ONE IDENTIFIER, ON BOTH CLOSING LINES (#2281 r15).
+    //
+    // Rounds 12, 13, 14 and 15 each found another way to pair one run's
+    // tables with another run's allocations, and each fix inferred the
+    // boundary from a line that happened to be there — a digest line, a
+    // repeated shape line. r15 is the crop that leaves none of them: a
+    // run reduced to a `seq` line and its marker. There is always
+    // another crop, because the boundary was never IN the evidence; it
+    // was being guessed from what surrounded it.
+    //
+    // So the producer states it. Both lines that close a run carry the
+    // same identifier, and `cover` pairs halves that agree on it rather
+    // than halves that nothing came between. No inference is left to
+    // defeat.
+    const runId = randomBytes(6).toString("hex");
+    printDigest(`${db.name} (${db.id})`, await digestDatabase(db), runId);
     // THE SEQUENCES TOO, so a run log made from this output carries the
     // evidence `cover` requires (#2281 r3). Rows alone cannot cover an
     // interval: an identifier allocated and released after a mirror
@@ -3911,11 +3960,12 @@ async function main() {
       // allocated" — a known zero — or "the operator pasted only part of
       // this". Those are different facts, and `cover` must not guess
       // between them, so the listing says of itself that it is whole.
-      console.log("  seq-listing complete");
+      console.log(`  seq-listing complete run:${runId}`);
     } catch (err) {
       if (!isMissingSequenceTable(err)) throw err;
       console.log(
-        "\n  seq-listing complete   (nothing has ever allocated here)",
+        `\n  seq-listing complete run:${runId}   (nothing has ever ` +
+          `allocated here)`,
       );
     }
     return;

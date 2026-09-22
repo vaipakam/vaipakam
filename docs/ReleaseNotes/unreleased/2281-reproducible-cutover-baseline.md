@@ -68,6 +68,15 @@ another does not is the same proof — including a table named only in a final,
 cut-off run, which is still a table that was not there when the database was last
 listed in full.
 
+Each reading of the old database now stamps the same short identifier on both
+of the lines that close it, so the record itself says which figures were taken
+together. Two halves of one reading can then be told from halves of two —
+figures taken minutes apart, with an identifier handed out and given back in
+between, which is exactly the change the counters exist to catch. Records made
+before that identifier existed carry none, and are not rejected for it; the
+promotion simply states that it could not establish the two halves belong
+together.
+
 The comparison also covers how each table **identifies** its rows, not only what
 they contain — a table rebuilt with a different key over the same values holds
 the same contents and would otherwise pass, while everything that reads the

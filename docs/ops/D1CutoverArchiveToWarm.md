@@ -523,6 +523,19 @@ because step 3 below is the part of it that had to be re-learned.
       > one run's tables joined to another run's allocations is two
       > moments presented as one.
       >
+      > **Both closing lines carry the same `run:<id>`** (#2281 r15) —
+      > the rule-and-count line and `seq-listing complete`. That is how
+      > `cover` knows the table set and the allocation marks came from
+      > ONE run. Paste them as printed; do not edit the ids, and do not
+      > assemble a "clean" block from two runs, which is precisely what
+      > the identifier exists to catch.
+      >
+      > Evidence recorded before the identifier existed carries none.
+      > `cover` does not refuse it — the mirror it describes has passed
+      > and cannot be re-recorded — but it cannot establish that the two
+      > halves came from one run, so it says so and leaves
+      > `run-pairing` out of `coveredDimensions`.
+      >
       > **`digest` also prints a `shape <table> <hex>` line per table**
       > (#2281 r13) — how that table keys and projects its rows. Paste
       > those too. Contents cannot speak for row identity: a table

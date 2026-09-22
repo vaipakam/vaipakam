@@ -2265,11 +2265,15 @@ describe("a table set that changed is evidence too", () => {
   // A complete run's digest section ends with the rule-and-count line
   // `printDigest` prints — that line is what makes the run a reading of
   // the TABLE SET, and it is printed even when the count is zero.
-  const run = (...tables: string[]) => [
-    ...tables,
-    `${"\u2014".repeat(8)}   0  (${tables.length} tables)`,
-    "seq-listing complete",
-  ];
+  let runSeq = 0;
+  const run = (...tables: string[]) => {
+    const id = `aa00${String(++runSeq).padStart(2, "0")}`;
+    return [
+      ...tables,
+      `${"\u2014".repeat(8)}   0  (${tables.length} tables) run:${id}`,
+      `seq-listing complete run:${id}`,
+    ];
+  };
 
   // The sequence side learned this a round earlier; the digest side had
   // the same hole. A table created between two recorded runs is absent
@@ -2565,11 +2569,10 @@ describe("a table set that changed is evidence too", () => {
     expect(JSON.parse(r.after).provenance.interval).toBe("uncovered");
   });
 
-  it("will not promote against halves taken from different runs", () => {
-    // The r12 scenario at the verb: an early run keeps its count line
-    // and loses its sequence section, and the later run — taken after
-    // an AUTOINCREMENT insert-and-delete — answers for the sequences.
-    // Rows agree throughout, so nothing conflicts.
+  it("will not promote halves that name different runs", () => {
+    // The r15 crop at the verb: rows agree, the later run's sequence is
+    // advanced, and only the identifiers reveal that the two halves are
+    // two moments.
     const d = "1".repeat(16);
     const r = runCover(
       reconstructed({
@@ -2577,17 +2580,40 @@ describe("a table set that changed is evidence too", () => {
       }),
       [
         `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`,
-        `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq t 6",
-        "seq-listing complete",
+        "seq-listing complete run:aa0002",
         "",
       ].join("\n"),
     );
     expect(r.ok).toBe(false);
     expect(r.out).toContain("half-run");
     expect(JSON.parse(r.after).provenance.interval).toBe("uncovered");
+  });
+
+  it("promotes unidentified halves but records what was not established", () => {
+    // Evidence from before the identifier existed. It is not refused —
+    // that would make the documented rollback unfollowable for the one
+    // artifact this verb rebuilds — but the promotion says so.
+    const d = "1".repeat(16);
+    const r = runCover(
+      reconstructed({
+        t: { key: ["id"], cols: ["id"], seq: 5, rows: {}, digest: d },
+      }),
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        "seq-listing complete",
+        "",
+      ].join("\n"),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.out).toContain("WHAT THIS DOES NOT COVER");
+    const prov = JSON.parse(r.after).provenance;
+    expect(prov.interval).toBe("covered");
+    expect(prov.coveredDimensions).toEqual(["rows", "sequences"]);
+    expect(prov.coveredDimensions).not.toContain("run-pairing");
   });
 
   it("will not promote a manifest that carries no provenance at all", () => {
@@ -2661,9 +2687,46 @@ describe("a table set that changed is evidence too", () => {
     expect(e.seqs.get("t")).not.toBe(9007199254740992);
   });
 
-  // #2281 r12 — both halves have to come from the SAME run, or they
-  // describe two moments presented as one.
-  it("pairs an enumeration with the sequence listing of its own run", () => {
+  // #2281 r15 — PAIRING IS STATED, NOT INFERRED. Rounds 12-15 each
+  // found another crop that joined one run's tables to another run's
+  // allocations, because the boundary was read off whatever lines
+  // happened to surround it. Both closing lines now carry the same
+  // `run:<id>`, so there is nothing left to infer and nothing left to
+  // crop around.
+  it("pairs the two halves that name the same run", () => {
+    const e = parseEvidence(
+      [
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0099`,
+        "seq t 5",
+        "seq-listing complete run:aa0099",
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(1);
+    expect(e.readings.unpaired).toBe(0);
+    expect(e.readings.unidentified).toBe(0);
+  });
+
+  it("refuses to pair halves that name different runs", () => {
+    // The r15 crop: run 1 keeps its digests and count line and loses
+    // its sequence section; run 2 is reduced to a `seq` line and its
+    // marker. No intervening line betrays the boundary — only the ids.
+    const e = parseEvidence(
+      [
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        "seq t 6",
+        "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(0);
+    expect(e.readings.unpaired).toBe(2);
+  });
+
+  it("reports halves that name no run as unidentified, not as paired", () => {
+    // Every record made before the identifier existed looks like this,
+    // and a lone enumeration beside a lone sequence listing is the same
+    // text whether it came from one run or two. It is not guessed.
     const e = parseEvidence(
       [
         "t 1111111111111111",
@@ -2672,112 +2735,9 @@ describe("a table set that changed is evidence too", () => {
         "seq-listing complete",
       ].join("\n"),
     );
-    expect(e.readings.paired).toBe(1);
-  });
-
-  it("leaves a run recorded without its sequence section unpaired", () => {
-    // The r12 scenario exactly: an early block keeps its count line and
-    // loses its sequence section; a later WHOLE block follows, recorded
-    // after an AUTOINCREMENT insert-and-delete. Rows are unchanged, so
-    // nothing conflicts — the only trace is the unpaired half.
-    const d = "1".repeat(16);
-    const e = parseEvidence(
-      [
-        `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`,
-        `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`,
-        "seq t 6",
-        "seq-listing complete",
-      ].join("\n"),
-    );
-    expect(e.conflicts).toEqual([]);
-    expect(e.readings.paired).toBe(1);
-    expect(e.readings.unpaired).toBe(1);
-  });
-
-  // #2281 r13 — an intervening digest block means a new run began, so a
-  // pending enumeration can never pair with a later run's marker.
-  it("voids a pending pairing when the next run's digests begin", () => {
-    const d = "1".repeat(16);
-    const e = parseEvidence(
-      [
-        `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`, // run 1 closes its enumeration
-        `t ${d}`, // run 2's digests begin — run 1 never got its seqs
-        "seq t 6",
-        "seq-listing complete", // run 2's marker, with no summary of its own
-      ].join("\n"),
-    );
     expect(e.readings.paired).toBe(0);
-    expect(e.readings.unpaired).toBe(2);
-  });
-
-  // #2281 r13 — contents and allocations cannot speak for row identity.
-  it("catches a table recreated with a different key over the same values", () => {
-    const d = "1".repeat(16);
-    const atMirror = shapeFingerprint(["id"], ["id", "email"]);
-    const problems = coverageProblems(
-      {
-        t: {
-          key: ["email"],
-          cols: ["id", "email"],
-          seq: 0,
-          rows: {},
-          digest: d,
-        },
-      },
-      {
-        digests: new Map([["t", d]]),
-        shapes: new Map([["t", atMirror]]),
-        seqs: new Map([["t", 0]]),
-        seqListingComplete: true,
-        conflicts: [],
-        readings: { tableSets: 1, sequences: 1, paired: 1, unpaired: 0 },
-      },
-    );
-    // Same digest, same sequence — only the key differs.
-    expect(
-      problems.some((p) => p.includes("REDECLARED between the mirror")),
-    ).toBe(true);
-  });
-
-  // #2281 r14 — `digest` prints each table's shape once per run, so a
-  // repeated shape line proves another run began even though a shape
-  // line after a count line is ordinary within one run.
-  it("voids a pending pairing when a shape line repeats", () => {
-    const d = "1".repeat(16);
-    const sh = "abcdef0123456789";
-    const e = parseEvidence(
-      [
-        `t ${d}`,
-        `${"\u2014".repeat(8)}   0  (1 tables)`,
-        `shape t ${sh}`, // run 1's shape; its sequence section is lost
-        `shape t ${sh}`, // run 2 begins, cropped to shape + seq
-        "seq t 6",
-        "seq-listing complete",
-      ].join("\n"),
-    );
-    expect(e.readings.paired).toBe(0);
-    expect(e.readings.unpaired).toBe(2);
-  });
-
-  it("still pairs a whole run that carries shape lines", () => {
-    const d = "1".repeat(16);
-    const e = parseEvidence(
-      [
-        `t ${d}`,
-        `u ${d}`,
-        `${"\u2014".repeat(8)}   0  (2 tables)`,
-        `shape t abcdef0123456789`,
-        `shape u 0123456789abcdef`,
-        "seq t 5",
-        "seq-listing complete",
-      ].join("\n"),
-    );
-    expect(e.readings.paired).toBe(1);
     expect(e.readings.unpaired).toBe(0);
-    expect(e.conflicts).toEqual([]);
+    expect(e.readings.unidentified).toBe(2);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {
