@@ -4508,15 +4508,39 @@ check "nothing left pending" "$(pending "$W")" "0"
 # docstring). Refusing a fifth of real input, some of it in flight elsewhere,
 # is how a check gets deleted rather than obeyed. A `###` opener
 # nests under nothing; it is untidy, not a second document title.
-case_start "T217k: a level-3 opener is untidy, not refused"
+case_start "T217k: a level-3 opener is WARNED, and still folded"
 W="$ROOT/t217k"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
 printf '### Thread — opens deeper than the template (PR #4247)\n' > "$u/0003-l3.md"
 printf '#### Thread — deeper still (PR #4248)\n'                   > "$u/0004-l4.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run succeeds"     "$?"                                                                  "0"
 check "both folded in"       "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
 check "nothing left pending" "$(pending "$W")"                                                     "0"
+# The warning is the whole point of allowing it — a silent allowance would
+# publish the misattribution below with nothing said.
+check "it warns"             "$(says "$msg" 'open below level 2')"        "1"
+check "naming the level-3"   "$(says "$msg" '0003-l3.md')"                "1"
+check "naming the level-4"   "$(says "$msg" '0004-l4.md')"                "1"
+check "and says what happens" "$(says "$msg" 'absorbed into the section above')" "1"
+check "and that it continues" "$(says "$msg" 'not a refusal')"            "1"
+
+# A WARNING MUST NOT EXEMPT THE REFUSAL. The first version of the warning
+# block `continue`d, which let `### Title (PR #TBD)` publish its placeholder
+# because the heading happened to be deep. Warnings and refusals are
+# independent tests of the same line.
+case_start "T217k2: a deep heading is still refused for its placeholder"
+W="$ROOT/t217k2"; build "$W"
+printf '### Thread — deep AND unsubstituted (PR #TBD)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-deep-ph.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"       "$?"                              "1"
+check "as a placeholder"      "$(says "$msg" 'placeholder')"     "1"
+check "nothing was consumed"  "$(pending "$W")"                  "3"
+
+# And a refusing run does not also print the warning — one verdict per run,
+# so the operator is not told "assembly continues" by a run that stopped.
+check "no warning on a refusal" "$(says "$msg" 'not a refusal')" "0"
 
 # ── EVERY PR token is checked, not just the first (#2290 r6) ────────────────
 # `(PR #123, PR #TBD)` satisfied a `search`, which returns the numeric one and

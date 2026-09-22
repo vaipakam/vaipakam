@@ -1472,12 +1472,24 @@ class Assembly:
         obvious rule and is wrong against practice: of the 758 distinct
         fragments ever committed, 605 open at `##`, 81 at `#` and **72 at
         `###`**, one of the last in a pull request open at the time this was
-        written and owned by other work. A level-3 opener is an inconsistency
-        of style — it
-        nests under nothing — while a level-1 opener is the structural defect
-        this guard exists to prevent, and only the second is worth refusing a
-        release over. Refusing a fifth of every fragment ever written, some of
-        it already in flight elsewhere, is how a check gets disabled.
+        written and owned by other work. Refusing a fifth of every fragment
+        ever written, some of it already in flight elsewhere, is how a check
+        gets disabled.
+
+        A LEVEL-3 OPENER IS WARNED, NOT IGNORED, and it is not merely untidy
+        — an earlier revision of this docstring said it "nests under nothing",
+        which is false (#2290 r10). In the assembled file it becomes a CHILD
+        of the nearest preceding `##`, which belongs to the fragment folded
+        before it, so outlines and screen-reader navigation attribute the
+        change to a different change. Two fragments in
+        `ReleaseNotes-2026-08-25.md` sit under `## What it does not change` for
+        exactly this reason, each presented as something an unrelated change
+        does NOT do.
+
+        So the three outcomes are distinct on purpose: level 1 is REFUSED
+        (a second document title, unrecoverable once folded), level 3+ is
+        WARNED (recoverable by the author, at a moment they can still act),
+        and level 2 passes silently.
 
         Both reached a publishable file in #2286 — two fragments at `#`, one
         still carrying the placeholder — and nothing between authoring and
@@ -1544,6 +1556,7 @@ class Assembly:
         original may be being edited while this runs.
         """
         bad: list[str] = []
+        deep: list[str] = []
         for f in self.frags:
             name = self.frag_name[f]
             body = checked(
@@ -1580,6 +1593,32 @@ class Assembly:
                     f"{name}: opens at level 1, a second document title  ->  {shown}"
                 )
                 continue
+            if level >= 3:
+                # Allowed, but NOT harmless, and the previous revision of this
+                # said "nests under nothing" — which is false (#2290 r10). In
+                # the assembled file a `###` opener becomes a CHILD of the
+                # nearest preceding `##`, which belongs to the fragment above
+                # it. Outlines and screen-reader navigation then attribute the
+                # change to a different change.
+                #
+                # It has happened, twice, in published notes: two fragments in
+                # ReleaseNotes-2026-08-25 sit under `## What it does not
+                # change`, a subsection of the fragment before them — so a
+                # reader's outline presents each as something an unrelated
+                # change does NOT do.
+                #
+                # Warned rather than refused because refusing it stops a
+                # substantial minority of real fragments, including work in
+                # flight in other pull requests. A warning is visible at the
+                # one moment somebody can still act on it, and costs nobody a
+                # release. See the docstring for the figures.
+                #
+                # NO `continue` HERE, deliberately: a warning must not exempt
+                # the fragment from the PR-reference check below, or
+                # `### Title (PR #TBD)` would publish its placeholder because
+                # the heading was merely deep. Warnings and refusals are
+                # independent; the first revision of this block got that wrong.
+                deep.append(f"{name}: opens at level {level}  ->  {shown}")
             # EVERY `PR #` token on the line, not just the first (#2290 r6).
             # `(PR #123, PR #TBD)` is accepted by a `search`, which returns
             # the numeric one and never looks further — the guard passing on
@@ -1593,6 +1632,20 @@ class Assembly:
                     f"rather than a number  ->  {shown}"
                 )
         if not bad:
+            if deep:
+                err(
+                    "Warning: these fragment headings open below level 2, and will be"
+                )
+                err("absorbed into the section above them:")
+                err("")
+                for line in deep:
+                    err(f"  {line}")
+                err("")
+                err("A ## heading becomes a section of the release. A ### one becomes a")
+                err("SUBSECTION of whichever fragment was folded before it, so outlines")
+                err("and screen-reader navigation attribute it to that other change.")
+                err("Assembly continues — this is a warning, not a refusal.")
+                err("")
             return
 
         err("Error: these fragment headings do not match the template:")

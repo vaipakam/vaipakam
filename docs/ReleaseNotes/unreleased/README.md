@@ -54,10 +54,20 @@ PRs landing the same day never append-conflict.
    The heading must also open at `##`, not `#` — a fragment opening at `#`
    lands in the dated file as a second document title rather than nesting
    under the release title, and assembly refuses it. `###` or deeper is
-   untidy rather than wrong (it nests under nothing) and is **not** refused:
-   a substantial minority of fragments open that way, and refusing them would
-   block work already in flight over a matter of style. (Counts with the rule,
-   as above.)
+   **not** refused, but it is not harmless either, and assembly prints a
+   warning naming the file. A `##` heading becomes a section of the release;
+   a `###` one becomes a **subsection of whichever fragment was folded before
+   it**, so outlines and screen-reader navigation attribute your change to
+   that other change. This has happened twice in published notes — two
+   fragments in `ReleaseNotes-2026-08-25.md` sit under `## What it does not
+   change`, a subsection of the fragment above them, so a reader's outline
+   presents each as something an unrelated change does *not* do.
+
+   It warns rather than refuses because a substantial minority of fragments
+   open that way, and refusing them would block work already in flight.
+   (Counts with the rule, as above.) Open at `##` unless you mean to be a
+   subsection of the change before you — and you cannot know which change
+   that will be.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
