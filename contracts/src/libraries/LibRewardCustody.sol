@@ -1322,6 +1322,23 @@ library LibRewardCustody {
     ///      cursor be verified in constant work. Non-zero, so a passed node
     ///      still reads as listed. Never a batch id.
     bytes32 internal constant TRANSPORT_PASSED = bytes32(uint256(1));
+    /// @dev How many epochs one settlement CALL may draw from, over every
+    ///      day it settles (Codex #2276 r14 P1). Each day's window is bounded,
+    ///      but a claimant whose every day is funded by a window of small
+    ///      epochs would write thousands of them in one transaction — past
+    ///      any block — and, the chunk being fixed, could never progress. A
+    ///      day whose draw would take the call past this cap DEFERS, exactly
+    ///      as a day whose epochs exceed one window does: nothing is drawn,
+    ///      the walk ends, the days before it stand, and the next call starts
+    ///      there. At about eighty thousand gas per epoch written this is
+    ///      roughly ten million gas of draws, a fraction of a block.
+    uint256 internal constant TRANSPORT_DRAW_CALL_CAP = 128;
+    /// @dev The TRANSIENT slot counting the epochs this transaction's draws
+    ///      have written (Codex #2276 r14 P1): read by every allocation of the
+    ///      call, stepped by every draw, gone with the transaction. Transient
+    ///      because the count is the call's and no facet may keep it — the
+    ///      settle facets carry no room for a counter of their own.
+    bytes32 internal constant TRANSPORT_WRITES_TSLOT = keccak256("vaipakam.transport.draw-writes.transient");
 
     /// @notice #1566 transport epochs PR 3b — open this delivery's TRANSPORT
     ///         EPOCH: one untyped balance, spendable only by the obligations
@@ -1728,11 +1745,13 @@ library LibRewardCustody {
         bool hinted = hints.length != 0;
         for (uint256 i = done; i < end; ++i) {
             uint256 d = dayIds[i];
-            bool listed = _dayLinked(s, d);
+            bool listed = transportDayListed(s, d);
             s.transportBatchesByDay[d].push(batchId);
             if (listed) {
                 _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
                 s.transportDayLinked[d] = s.transportBatchesByDay[d].length;
+                // A day born under the list has nothing to convert.
+                if (!s.transportDayConverted[d]) s.transportDayConverted[d] = true;
             }
         }
         indexedDays = uint32(end);
@@ -1748,7 +1767,7 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         uint256 dayId
     ) private view returns (bool listed, uint256 pos, bytes32 node) {
-        listed = _dayLinked(s, dayId);
+        listed = transportDayListed(s, dayId);
         if (listed) {
             bytes32 cur = s.transportDayCursorNode[dayId];
             node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
@@ -1804,6 +1823,16 @@ library LibRewardCustody {
         return s.transportDayLinked[d] == s.transportBatchesByDay[d].length;
     }
 
+    /// @notice Whether day `d` is read from its LIST: the list holds every
+    ///         member AND the day's consumption count has been carried over
+    ///         to the list's order (Codex #2276 r14 P2) — or the day has no
+    ///         member yet and is born under the list. Until then the day is
+    ///         read from its array, whose cursor is exact.
+    function transportDayListed(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
+        if (!_dayLinked(s, d)) return false;
+        return s.transportDayConverted[d] || s.transportBatchesByDay[d].length == 0;
+    }
+
     /// @notice Link the next entries of day `dayId`'s membership array into
     ///         its ordered list — the catch-up for a day indexed before the
     ///         list existed (Codex #2276 r8 P1). Permissionless, idempotent,
@@ -1819,32 +1848,39 @@ library LibRewardCustody {
     ///         by the same prune every draw performs: the array cursor
     ///         counted leading exhausted entries in array order, which is not
     ///         a position in the list.
-    /// @return linked How many entries the list now holds.
-    /// @return total  How many the array holds.
+    /// @return linked    How many entries the list now holds.
+    /// @return total     How many the array holds.
+    /// @return converted Whether the day now reads from its list.
     function linkTransportDayIndex(
         LibVaipakam.Storage storage s,
         uint256 dayId,
         bytes32[] memory hints
-    ) internal returns (uint256 linked, uint256 total) {
+    ) internal returns (uint256 linked, uint256 total, bool converted) {
         bytes32[] storage arr = s.transportBatchesByDay[dayId];
         total = arr.length;
         linked = s.transportDayLinked[dayId];
-        if (linked >= total) return (linked, total);
-        bool hinted = hints.length != 0;
-        uint256 to = linked + (hinted ? hints.length : TRANSPORT_INDEX_PAGE);
-        if (to > total) to = total;
-        for (uint256 i = linked; i < to; ++i) {
-            bytes32 id = arr[i];
-            _linkIntoDay(s, dayId, id, s.ingressPackets[id].arrivedAt, hinted ? hints[i - linked] : bytes32(0), hinted);
+        if (linked < total) {
+            bool hinted = hints.length != 0;
+            uint256 to = linked + (hinted ? hints.length : TRANSPORT_INDEX_PAGE);
+            if (to > total) to = total;
+            for (uint256 i = linked; i < to; ++i) {
+                bytes32 id = arr[i];
+                _linkIntoDay(s, dayId, id, s.ingressPackets[id].arrivedAt, hinted ? hints[i - linked] : bytes32(0), hinted);
+            }
+            s.transportDayLinked[dayId] = to;
+            linked = to;
         }
-        s.transportDayLinked[dayId] = to;
-        linked = to;
-        if (to == total) {
-            // The array position retires with the array; the list's is
-            // derived over the order from the head by the ordinary prune.
-            s.transportDayCursor[dayId] = 0;
-            _pruneTransportDayCursor(s, dayId);
+        // The CONVERSION (Codex #2276 r14 P2): once the list holds every
+        // member, its consumption count is carried over by the ordinary
+        // bounded prune, one window per call, and the day switches to the
+        // list only when a prune stops short of its bound — until then the
+        // day keeps reading from its array, whose cursor is exact, so what
+        // it reports never changes at the switch. The array's count is not
+        // the list's: the two orders differ, so it cannot be copied over.
+        if (linked == total && !s.transportDayConverted[dayId]) {
+            if (_pruneList(s, dayId) < TRANSPORT_DRAW_SCAN_CAP) s.transportDayConverted[dayId] = true;
         }
+        converted = s.transportDayConverted[dayId];
     }
 
     /// @dev Whether the day's cursor has passed `node` (Codex #2276 r12 P1).
@@ -2566,6 +2602,27 @@ library LibRewardCustody {
             if (tf2 > needFresh) tf2 = needFresh;
             if (tf2 > tf) t = splitTransportTakes(plan, tf2, t.coveredRecycled);
         }
+        // The call's epoch-write budget (Codex #2276 r14 P1): the epochs this
+        // day would write, over what the transaction's draws have written
+        // (and, in a dry run, what its simulated draws have), must fit
+        // `TRANSPORT_DRAW_CALL_CAP`; past it the day is reported as a cap
+        // hit with no coverage, which the day primitive defers on — the walk
+        // ends, the days before stand, the next call starts here.
+        {
+            uint256 writes;
+            for (uint256 k; k < plan.ids.length; ) {
+                if (t.fresh[k] + t.recycled[k] != 0) {
+                    unchecked { ++writes; }
+                }
+                unchecked { ++k; }
+            }
+            (uint256 simulated, ) = overlayOf(q.ovIds, q.ovFresh, q.ovRecycled, transportWritesKey());
+            if (_transientWrites() + simulated + writes > TRANSPORT_DRAW_CALL_CAP) {
+                AllocResult memory deferred;
+                deferred.capHit = true;
+                return deferred;
+            }
+        }
         r.transportFresh = t.coveredFresh;
         r.transportRecycled = t.coveredRecycled;
         r.planIds = plan.ids;
@@ -2617,6 +2674,7 @@ library LibRewardCustody {
                     dayId, fresh + recycled, t.coveredFresh + t.coveredRecycled
                 );
             }
+            uint256 written;
             for (uint256 k; k < plan.ids.length; ) {
                 uint256 bf = t.fresh[k];
                 uint256 br = t.recycled[k];
@@ -2628,9 +2686,13 @@ library LibRewardCustody {
                     b.consumedRecycled += br;
                     _spendUntypedForDraw(s, batchId, bf + br);
                     emit TransportDrawn(batchId, dayId, bf, br);
+                    unchecked { ++written; }
                 }
                 unchecked { ++k; }
             }
+            // The call's count of written epochs (Codex #2276 r14 P1): what
+            // the next day's allocation reads against the budget.
+            if (written != 0) _addTransientWrites(written);
         }
         pruned = _pruneTransportDayCursor(s, dayId);
     }
@@ -2708,6 +2770,31 @@ library LibRewardCustody {
         return fr + rr == 0;
     }
 
+    /// @notice The overlay key under which a dry run carries how many epochs
+    ///         its simulated draws have written so far (Codex #2276 r14 P1),
+    ///         as the entry's fresh figure: the plan adds it to the
+    ///         transaction's own count so the preview stops where the claim
+    ///         would. Keyed apart from every batch id.
+    function transportWritesKey() internal pure returns (bytes32) {
+        return keccak256("vaipakam.transport.draw-writes");
+    }
+
+    /// @dev The epochs this transaction's draws have written so far.
+    function _transientWrites() private view returns (uint256 n) {
+        bytes32 slot = TRANSPORT_WRITES_TSLOT;
+        assembly ("memory-safe") {
+            n := tload(slot)
+        }
+    }
+
+    /// @dev Step the transaction's count of written epochs by `n`.
+    function _addTransientWrites(uint256 n) private {
+        bytes32 slot = TRANSPORT_WRITES_TSLOT;
+        assembly ("memory-safe") {
+            tstore(slot, add(tload(slot), n))
+        }
+    }
+
     /// @notice The overlay key under which a dry run records that it settled
     ///         `dayId` (Codex #2276 r9 P2): an entry with a fresh figure of one
     ///         under this key tells the plan the live draw's prune has run on
@@ -2717,10 +2804,17 @@ library LibRewardCustody {
     }
 
     function _pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
-        if (!_dayLinked(s, dayId)) return _pruneArrayCursor(s, dayId);
+        if (!transportDayListed(s, dayId)) return _pruneArrayCursor(s, dayId);
+        return _pruneList(s, dayId) != 0;
+    }
+
+    /// @dev The list's prune: pass up to one window of leading exhausted
+    ///      nodes, marking each, keeping the node cursor and its position.
+    ///      Returns how many were passed — equal to the bound when there may
+    ///      be more (the conversion reads that).
+    function _pruneList(LibVaipakam.Storage storage s, uint256 dayId) private returns (uint256 steps) {
         bytes32 cur = s.transportDayCursorNode[dayId];
         bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
-        uint256 steps;
         while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && _exhaustedForCursor(s, node)) {
             // Marked as passed (Codex #2276 r12 P1): its back-link is never
             // followed again, and the mark is what lets a hint be refused in
@@ -2735,9 +2829,8 @@ library LibRewardCustody {
             // The position is kept beside the node (Codex #2276 r11 P2): the
             // cursor only advances, so the count of leading exhausted epochs
             // is exact for the cost of this write, and the lens reads it.
-            s.transportDayCursor[dayId] += steps;
+            s.transportDayListCursor[dayId] += steps;
             emit TransportDayCursorAdvanced(dayId, cur);
-            moved = true;
         }
     }
 

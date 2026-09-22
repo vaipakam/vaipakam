@@ -2859,7 +2859,8 @@ library LibInteractionRewards {
     /// @dev Hand the plan of day `d` a COMPACT overlay: only the entries it
     ///      can look up — the ids the day's scan can reach (at most one
     ///      prune's worth and one window, read from the epoch facet) and the
-    ///      day's settled mark — rebuilt as a small table from the run's full
+    ///      day's settled mark and the run's count of written epochs —
+    ///      rebuilt as a small table from the run's full
     ///      one (Codex #2276 r13 P1: the full table, up to thousands of slots
     ///      over a chunk, crossed every day's call and was copied per day,
     ///      growing memory past any budget). Empty when the run has drawn
@@ -2877,12 +2878,16 @@ library LibInteractionRewards {
         if (acc.ovCount == 0 || s.transportBatchesByDay[d].length == 0) return;
         bytes32[] memory ids = LibRewardCustody.callTransportDayScanIds(d);
         uint256 n = ids.length;
-        bytes32[] memory keys = new bytes32[](n + 1);
-        uint256[] memory fs = new uint256[](n + 1);
-        uint256[] memory rs = new uint256[](n + 1);
+        bytes32[] memory keys = new bytes32[](n + 2);
+        uint256[] memory fs = new uint256[](n + 2);
+        uint256[] memory rs = new uint256[](n + 2);
         uint256 m;
-        for (uint256 i; i <= n; ) {
-            bytes32 k = i < n ? ids[i] : LibRewardCustody.transportDaySettledKey(d);
+        // The day's ids, then the day's settled mark, then the run's count of
+        // written epochs (r14 P1) — the three things a plan can look up.
+        for (uint256 i; i <= n + 1; ) {
+            bytes32 k = i < n
+                ? ids[i]
+                : (i == n ? LibRewardCustody.transportDaySettledKey(d) : LibRewardCustody.transportWritesKey());
             (uint256 f, uint256 r) = LibRewardCustody.overlayOf(acc.ovIds, acc.ovFresh, acc.ovRecycled, k);
             if (f + r != 0) {
                 keys[m] = k;
@@ -2909,12 +2914,20 @@ library LibInteractionRewards {
 
     function _foldOverlay(DomainAcc memory acc, DayCharge memory charge) private pure {
         uint256 n = charge.planIds.length;
+        uint256 writes;
         for (uint256 k; k < n; ) {
             uint256 f = charge.planFresh[k];
             uint256 r = charge.planRecycled[k];
-            if (f + r != 0) _overlayAdd(acc, charge.planIds[k], f, r);
+            if (f + r != 0) {
+                _overlayAdd(acc, charge.planIds[k], f, r);
+                unchecked { ++writes; }
+            }
             unchecked { ++k; }
         }
+        // The simulated count of written epochs (Codex #2276 r14 P1), so the
+        // plan measures each later day against the same budget the claim's
+        // draws would have spent by then.
+        if (writes != 0) _overlayAdd(acc, LibRewardCustody.transportWritesKey(), writes, 0);
     }
 
     function _spendDomain(PoolBudget memory pool, DayCharge memory charge) private pure {

@@ -430,8 +430,9 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         // position, exact in one read, on this selector's numeric contract
         // (r10, r11 P2). {getTransportDayBatchesFrom} pages from any node
         // for the cost of the page alone.
-        cursor = s.transportDayCursor[dayId];
-        if (s.transportDayLinked[dayId] == total) {
+        bool listed = LibRewardCustody.transportDayListed(s, dayId);
+        cursor = listed ? s.transportDayListCursor[dayId] : s.transportDayCursor[dayId];
+        if (listed) {
             bytes32 node = s.transportDayHead[dayId];
             uint256 pos;
             uint256 w;
@@ -471,7 +472,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         bytes32[] storage arr = s.transportBatchesByDay[dayId];
         bytes32[] memory buf = new bytes32[](limit);
         uint256 w;
-        if (s.transportDayLinked[dayId] == arr.length) {
+        if (LibRewardCustody.transportDayListed(s, dayId)) {
             bytes32 head = s.transportDayHead[dayId];
             // A node outside the day's order pages nothing rather than itself.
             bool listed = from == bytes32(0) || from == head || s.transportDayPrev[dayId][from] != bytes32(0);
@@ -517,17 +518,21 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         {epochLinkTransportDayIndex} has caught it up (Codex #2276 r8
     ///         P1) — and the consumption cursor as the NODE it is (r10 P2: the
     ///         last exhausted epoch at the front of the order, zero when none
-    ///         is), which {getTransportDayBatchesFrom} pages from.
+    ///         is), which {getTransportDayBatchesFrom} pages from — and
+    ///         whether the day reads from its list yet (r14 P2: a day indexed
+    ///         before the list switches only once its consumption count has
+    ///         been carried over exactly; until then its array is read).
     function getTransportDayIndex(uint256 dayId)
         external
         view
-        returns (uint256 linked, uint256 total, bytes32 cursor)
+        returns (uint256 linked, uint256 total, bytes32 cursor, bool converted)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32[] storage arr = s.transportBatchesByDay[dayId];
         linked = s.transportDayLinked[dayId];
         total = arr.length;
-        if (linked == total) {
+        converted = LibRewardCustody.transportDayListed(s, dayId);
+        if (converted) {
             cursor = s.transportDayCursorNode[dayId];
         } else {
             uint256 c = s.transportDayCursor[dayId];
@@ -538,12 +543,13 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @notice Link the next entries of `dayId`'s membership into its ordered
     ///         list — the catch-up for a day indexed before the list existed
     ///         (Codex #2276 r8 P1). Permissionless, idempotent and bounded;
-    ///         see {LibRewardCustody.linkTransportDayIndex} for the page and
-    ///         the hints.
+    ///         see {LibRewardCustody.linkTransportDayIndex} for the page, the
+    ///         hints, and the conversion that follows the last page (r14
+    ///         P2): call again until `converted` reads true.
     function epochLinkTransportDayIndex(uint256 dayId, bytes32[] calldata hints)
         external
         nonReentrant
-        returns (uint256 linked, uint256 total)
+        returns (uint256 linked, uint256 total, bool converted)
     {
         return LibRewardCustody.linkTransportDayIndex(LibVaipakam.storageSlot(), dayId, hints);
     }

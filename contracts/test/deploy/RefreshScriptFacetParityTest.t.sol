@@ -6,7 +6,6 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
-import {RedeployFacets} from "../../script/RedeployFacets.s.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 
 /**
@@ -80,14 +79,6 @@ import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 ///      it actually produced. A subclass is needed because `_deployItems()` must
 ///      stay non-public on the script itself — it DEPLOYS all 73 facets, so it is
 ///      not something an operator should be able to invoke by accident.
-/// @dev The curated refresh's retired vault-credit set, exposed for the pin
-///      below (Codex #2276 r13 P2).
-contract RedeployVaultRetiredProbe is RedeployFacets {
-    function vaultRetired() external pure returns (bytes4[] memory) {
-        return _legacyVaultFactoryRemovedSelectors();
-    }
-}
-
 contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function deployItemsForTest() external returns (Item[] memory) {
         return _deployItems();
@@ -469,37 +460,21 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
         }
         assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
-        // The curated refresh retires the four-argument vault credit too
-        // (Codex #2276 r13 P2): its set names exactly that selector, the
-        // all-facets refresh lists the same one, and the current deploy does
-        // not route it — so the Remove strands nothing and the two scripts
-        // cannot disagree about what a refreshed Diamond stops routing.
-        bytes4 vaultLegacy = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        bytes4[] memory curated = new RedeployVaultRetiredProbe().vaultRetired();
-        assertEq(curated.length, 1, "the curated refresh's vault removal set is exactly one selector");
-        assertEq(curated[0], vaultLegacy, "and it is the retired four-argument vault credit");
-        bool allFacetsNamesIt;
+        // 3b-ii-A (Codex #2276 r3 P1, r14 P2) — the four-argument vault credit
+        // is NOT retired: it is a compatibility entry on the refreshed
+        // VaultFactoryFacet, routed by the deploy to the SAME facet as its
+        // five-argument successor, so a settle facet from before the epoch
+        // leg keeps delivering to the vault after a facet-by-facet refresh —
+        // and the retired list must not name it, or the refresh would remove
+        // a live route.
+        bytes4 fourArg = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        bytes4 fiveArg = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         for (uint256 i; i < retired.length; ++i) {
-            if (retired[i] == vaultLegacy) allFacetsNamesIt = true;
+            assertTrue(retired[i] != fourArg, "the four-argument vault credit is a live compatibility entry, not a retired selector");
         }
-        assertTrue(allFacetsNamesIt, "the all-facets refresh retires the same selector");
-        assertEq(IDiamondLoupe(diamond).facetAddress(vaultLegacy), address(0), "the current deploy does not route it");
-        // 3b-ii-A (Codex #2276 r3 P1) — the four-argument vault credit is
-        // retired, and its five-argument successor is routed.
-        bool namesOldVaultCredit;
-        for (uint256 i; i < retired.length; ++i) {
-            if (
-                retired[i]
-                    == bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"))
-            ) namesOldVaultCredit = true;
-        }
-        assertTrue(namesOldVaultCredit, "the four-argument vaultCreditFromRewardCustodyERC20 selector is not retired");
-        assertTrue(
-            IDiamondLoupe(diamond).facetAddress(
-                bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"))
-            ) != address(0),
-            "the five-argument vault credit is not routed"
-        );
+        address vaultFacet = IDiamondLoupe(diamond).facetAddress(fiveArg);
+        assertTrue(vaultFacet != address(0), "the five-argument vault credit is not routed");
+        assertEq(IDiamondLoupe(diamond).facetAddress(fourArg), vaultFacet, "the four-argument vault credit is not routed to the same facet");
         assertTrue(
             IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
             "the epoch-bound seed is not routed"

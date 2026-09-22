@@ -90,6 +90,11 @@
         "name": "total",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "converted",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "nonpayable"
@@ -453,6 +458,11 @@
         "name": "cursor",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "converted",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

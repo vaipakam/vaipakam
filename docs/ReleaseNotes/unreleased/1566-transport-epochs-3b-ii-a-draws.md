@@ -99,8 +99,10 @@ bounded number of steps and refuses beyond that), so indexing an epoch
 late never costs more than indexing it on time; a day indexed before the
 ordered list existed is read exactly as it was, from its membership in
 the order it was indexed, until a permissionless, bounded catch-up has
-linked its members — so an in-place upgrade needs no migration step and
-no epoch is ever invisible —
+linked its members and carried its record of consumption over to the
+linked order exactly, so nothing the day reports changes at the switch —
+so an in-place upgrade needs no migration step and no epoch is ever
+invisible —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
@@ -135,7 +137,7 @@ shared sources, the day is deferred rather than paid short: nothing is
 drawn and nothing is staged, so there is nothing to unwind, and the day's
 cursor is moved past any epochs already exhausted by other days so the
 next attempt sees a fresh window. Anyone may run that cursor maintenance
-for a day at any time. The follow-up release adds the staging that lets a
+for a day at any time. A settlement call draws from at most one hundred and twenty-eight epochs over every day it settles; a day whose draw would take the call past that is deferred exactly as a day whose epochs exceed one window is — nothing drawn, the days before it standing — and the next call starts there, so a claimant funded by many small epochs progresses a few days per call rather than never. The follow-up release adds the staging that lets a
 day wider than one window make progress; until then such a day waits,
 with its value protected in its epochs. A day no epoch lists costs one
 storage read and no call, on every chain, and the domain rule's own pass

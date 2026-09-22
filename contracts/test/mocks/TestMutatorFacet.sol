@@ -2448,6 +2448,8 @@ contract TestMutatorFacet {
         delete s.transportDayTail[d];
         delete s.transportDayCursorNode[d];
         delete s.transportDayLinked[d];
+        delete s.transportDayConverted[d];
+        delete s.transportDayListCursor[d];
         delete s.transportDayCursor[d];
     }
 
@@ -2457,6 +2459,18 @@ contract TestMutatorFacet {
     ///         refresh can find it in: classified value recorded, no epoch yet.
     function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
         LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276 r14 P1) — clear the epoch
+    ///         facet's TRANSIENT count of epochs drawn this transaction. On
+    ///         chain every claim is its own transaction and starts at zero; a
+    ///         Foundry test is one transaction, so a second claim in the same
+    ///         test would otherwise read the first claim's count.
+    function resetTransportDrawWritesRaw() external {
+        bytes32 slot = LibRewardCustody.TRANSPORT_WRITES_TSLOT;
+        assembly ("memory-safe") {
+            tstore(slot, 0)
+        }
     }
 
     function parkTransportBatchRaw(bytes32 batchId) external returns (uint256) {

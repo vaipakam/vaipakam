@@ -571,6 +571,35 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 recycled,
         uint256 epoch
     ) external onlyDiamondInternal {
+        _vaultCreditFromRewardCustody(user, token, fresh, recycled, epoch);
+    }
+
+    /// @notice The four-argument vault credit the custody cutover shipped,
+    ///         kept as a COMPATIBILITY entry (Codex #2276 r3 P1, r14 P2): on
+    ///         a Diamond refreshed one facet at a time, a settle facet from
+    ///         before the epoch leg still reaches the credit through this
+    ///         signature, and it must land in the refreshed implementation —
+    ///         with no epoch leg, since such a caller has none — rather than
+    ///         in the previous one, or fall to wallet delivery once the route
+    ///         is gone. Part of the facet's surface, so every refresh routes
+    ///         it here; retiring it would need every caller cut atomically.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function vaultCreditFromRewardCustodyERC20(
+        address user,
+        address token,
+        uint256 fresh,
+        uint256 recycled
+    ) external onlyDiamondInternal {
+        _vaultCreditFromRewardCustody(user, token, fresh, recycled, 0);
+    }
+
+    function _vaultCreditFromRewardCustody(
+        address user,
+        address token,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 epoch
+    ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = _creditableVault(s, user);
         (address holder, address vpfi) = LibRewardCustody.boundHolderAndToken(s);

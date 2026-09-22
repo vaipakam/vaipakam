@@ -7565,11 +7565,10 @@ library LibVaipakam {
         ///      the predecessor, which is what bounds a late epoch's indexing;
         ///      an arrival-sorted ARRAY had to shift every newer entry, which
         ///      no budget could bound for the day itself. The index cursor
-        ///      `transportDayCursor` above is the day's cursor as a POSITION —
-        ///      the count of leading exhausted epochs in the day's order, the
-        ///      array's until the list holds the day whole and the list's
-        ///      after — kept exact because the cursor only advances (Codex
-        ///      #2276 r11 P2).
+        ///      `transportDayCursor` above is the day's cursor as a POSITION
+        ///      in the ARRAY's order — the count of leading exhausted epochs —
+        ///      read while the day is read from the array; the list's own is
+        ///      `transportDayListCursor` below (Codex #2276 r11, r14 P2).
         mapping(uint256 => bytes32) transportDayHead;
         mapping(uint256 => bytes32) transportDayTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
@@ -7585,6 +7584,21 @@ library LibVaipakam {
         ///      pushed, so its count always equals its length. No migration
         ///      step is needed and no epoch is ever invisible.
         mapping(uint256 => uint256) transportDayLinked;
+        /// @dev Whether a day whose list holds every member has had its
+        ///      consumption count carried over to the list's order (Codex
+        ///      #2276 r14 P2). A day indexed before the list keeps being read
+        ///      from the array — its array cursor exact — until a bounded
+        ///      conversion prune has run to a stop short of its bound; only
+        ///      then do reads switch, so the position the day reports is
+        ///      exact at the switch. A day first indexed under the list is
+        ///      converted from its first member.
+        mapping(uint256 => bool) transportDayConverted;
+        /// @dev The day's cursor as a POSITION in the LIST's order — the
+        ///      count of leading exhausted epochs — kept exact because the
+        ///      cursor only advances; `transportDayCursor` above is the same
+        ///      count in the ARRAY's order, read while the day is read from
+        ///      the array.
+        mapping(uint256 => uint256) transportDayListCursor;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

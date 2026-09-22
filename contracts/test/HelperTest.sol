@@ -100,7 +100,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](221); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](222); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -508,6 +508,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.resetTransportDayListRaw.selector; // 3b-ii-A r8: a day as it was before the list
         selectors[n++] = TestMutatorFacet.classifyPacketPreGateRaw.selector; // 3b-ii-A r9: a pre-gate classification
+        selectors[n++] = TestMutatorFacet.resetTransportDrawWritesRaw.selector; // 3b-ii-A r14: a new transaction's empty transient count
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -891,7 +892,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](32);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -931,7 +932,9 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[29] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[30] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        selectors[30] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        selectors[31] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         return selectors;
     }
 
@@ -2694,7 +2697,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](33);
+        selectors = new bytes4[](34);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -2731,7 +2734,9 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        selectors[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        selectors[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         return selectors;
     }
 
