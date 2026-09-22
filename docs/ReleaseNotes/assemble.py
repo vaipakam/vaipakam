@@ -68,12 +68,19 @@ MARKER_PREFIX = "<!-- assembled-fragment: "
 MARKER_RE = re.compile(
     r"^" + re.escape(MARKER_PREFIX) + r"(.+) sha256=([0-9a-f]{64}) -->\r?$"
 )
-HEADING_RE = re.compile(rb"^#{1,6} ")
-# The PR reference in a fragment heading, captured so the digits can be
-# tested rather than merely found: `_TEMPLATE.md` ships `(PR #<n>)` as the
-# literal `#NNNN`, and a present-but-unsubstituted reference is the defect
-# this exists to catch (#2288).
-PR_REF_RE = re.compile(rb"\(PR #([^)]*)\)")
+# Markdown allows an ATX heading up to THREE leading spaces; at four it is
+# an indented code block. Anchoring on `#` made ` # Thread — x (PR #1)`
+# invisible here while GitHub still rendered it as a level-1 heading, so a
+# fragment could take the deliberate no-heading allowance and publish the very
+# peer-document defect the conformance check exists to stop (#2290 r1).
+HEADING_RE = re.compile(rb"^ {0,3}#{1,6} ")
+# The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
+# literal `#NNNN`, and a present-but-unsubstituted one is the defect this
+# catches (#2288) — but the token has to stop at the first comma or space,
+# because `(PR #2184, issue #2099)` is an established heading shape in this
+# repository (seventeen of them) and capturing to the closing parenthesis
+# refused every one (#2290 r1).
+PR_REF_RE = re.compile(rb"\(PR #([^,)\s]*)")
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 
@@ -1384,9 +1391,15 @@ class Assembly:
         If a missing reference ever does ship, the answer is to conform the
         fixtures and tighten this — not to conclude the check was wrong.
 
+        RUNS BEFORE `clear_already_assembled`, which DELETES fragments. An
+        earlier revision ran after it and claimed in this docstring to run
+        "before anything is appended or cleared" — a run refused here would
+        have left recovered fragments already consumed, and the comment said
+        otherwise (#2290 r1).
+
         SCOPED TO `self.frags`, which is the PENDING set. A fragment in
         `already` has its text in the dated file: its heading was published
-        by some earlier run, so refusing now would block the clearing of
+        by some earlier run, so refusing it would block the clearing of
         finished work over a decision that can no longer be acted on.
 
         Reads the SNAPSHOT, like every other content check here, because the
@@ -1413,7 +1426,11 @@ class Assembly:
                 # than headings.
                 continue
             shown = first.decode("utf-8", errors="replace")
-            level = len(first) - len(first.lstrip(b"#"))
+            # Strip the permitted indentation before counting: `lstrip(b"#")`
+            # on ` # Thread — x` removes nothing, so the level would read 0
+            # and the heading would pass as neither 1 nor 2 (#2290 r1).
+            marker = first.lstrip(b" ")
+            level = len(marker) - len(marker.lstrip(b"#"))
             if level != 2:
                 bad.append(f"{name}: opens at {'#' * level}, not ##  ->  {shown}")
                 continue
@@ -1852,15 +1869,18 @@ class Assembly:
         marker_seen, marker_where = self.scan_markers()
         already, pending = self.classify(marker_seen, marker_where)
 
+        # BEFORE the recovery clear, not merely before the append (#2290 r1).
+        # `clear_already_assembled` DELETES fragments, so validating after it
+        # leaves a refused run with input already consumed — and the docstring
+        # claimed the opposite, which is worse than the ordering itself.
+        self.frags = pending
+        self.check_heading_conformance()
+
         if already:
             self.clear_already_assembled(already)
         if not pending:
             self.nothing_pending()
 
-        self.frags = pending
-        # Before anything is appended or cleared: a heading defect is only
-        # fixable while the fragment is still pending (#2288).
-        self.check_heading_conformance()
         self.check_markerless_duplicates()
         self.build()
         self.publish()

@@ -4298,6 +4298,57 @@ check "the run succeeds"          "$?"                                          
 check "all four are folded in"    "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
 check "nothing left pending"      "$(pending "$W")"                                               "0"
 
+# ── An INDENTED ATX heading is still a heading (#2290 r1) ───────────────────
+# Markdown permits up to three leading spaces; at four it becomes an indented
+# code block. Anchoring the heading test on `#` made ` # Thread — x` invisible
+# to the check while GitHub still rendered it as a level-1 title, so it took
+# the deliberate no-heading allowance and published the exact peer-document
+# defect the check exists to stop.
+case_start "T217d: an indented level-1 heading is refused, not read as absent"
+W="$ROOT/t217d"; build "$W"
+printf ' # Thread — indented past the anchor (PR #4243)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-indent.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"          "$?"                              "1"
+check "it names the file"        "$(says "$msg" '0003-indent.md')" "1"
+check "and reports level 1"      "$(says "$msg" 'opens at #, not ##')" "1"
+check "nothing was consumed"     "$(pending "$W")"                 "3"
+
+# ── A PR reference carrying more than the number is valid (#2290 r1) ────────
+# `(PR #2184, issue #2099)` is an established shape in this repository —
+# seventeen such headings — and capturing to the closing parenthesis refused
+# every one of them. A check that cannot pass on the project's own convention
+# is a check that gets deleted.
+case_start "T217e: a PR reference with trailing metadata is accepted"
+W="$ROOT/t217e"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '## Thread — names its issue too (PR #2184, issue #2099)\n' > "$u/0003-issue.md"
+printf '## Thread — supersedes another (PR #274, supersedes #273)\n' > "$u/0004-sup.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"                                                                  "0"
+check "all four folded in"   "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
+check "nothing left pending" "$(pending "$W")"                                                     "0"
+
+# ── A refusal must not have consumed the recovery set (#2290 r1) ────────────
+# `clear_already_assembled` DELETES fragments whose text is already in the
+# dated file. Validating after it meant a refused run had eaten its input,
+# while the docstring claimed validation came first.
+case_start "T217f: a malformed pending fragment does not consume an already-assembled one"
+W="$ROOT/t217f"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the first run succeeds" "$?"               "0"
+check "and consumed both"      "$(pending "$W")"  "0"
+# Put one back, so it is "already assembled" but pending again, and add a
+# malformed fragment beside it.
+printf '## 0001-a\n' > "$u/0001-a.md"
+printf '# Thread — malformed (PR #222)\n' > "$u/0002-bad.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the second run refuses"        "$?"                            "1"
+check "naming the malformed one"      "$(says "$msg" '0002-bad.md')"  "1"
+check "the recovered fragment SURVIVES" "$([ -f "$u/0001-a.md" ] && echo yes || echo no)" "yes"
+check "nothing was consumed at all"   "$(pending "$W")"               "2"
+
 echo ""
 if (( RETIRED > 0 )); then
   echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"
