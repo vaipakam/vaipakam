@@ -2270,7 +2270,8 @@ describe("a table set that changed is evidence too", () => {
   const run = (...tables: string[]) => {
     const id = `aa00${String(++runSeq).padStart(2, "0")}`;
     return [
-      ...tables,
+      // every line names its run, as `digest` now emits them
+      ...tables.map((t) => `${t} run:${id}`),
       `${"\u2014".repeat(8)}   0  (${tables.length} tables) run:${id}`,
       `seq-listing complete run:${id}`,
     ];
@@ -2580,9 +2581,9 @@ describe("a table set that changed is evidence too", () => {
         t: { key: ["id"], cols: ["id"], seq: 6, rows: {}, digest: d },
       }),
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "seq t 6",
+        "seq t 6 run:aa0001",
         "seq-listing complete run:aa0002",
         "",
       ].join("\n"),
@@ -2668,9 +2669,9 @@ describe("a table set that changed is evidence too", () => {
     // Release the evidence; the command proceeds to publish.
     await writer.write(
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "seq t 5",
+        "seq t 5 run:aa0001",
         "seq-listing complete run:aa0001",
         "",
       ].join("\n"),
@@ -2765,9 +2766,9 @@ describe("a table set that changed is evidence too", () => {
   it("pairs the two halves that name the same run", () => {
     const e = parseEvidence(
       [
-        "t 1111111111111111",
+        "t 1111111111111111 run:aa0099",
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0099`,
-        "seq t 5",
+        "seq t 5 run:aa0099",
         "seq-listing complete run:aa0099",
       ].join("\n"),
     );
@@ -2782,9 +2783,9 @@ describe("a table set that changed is evidence too", () => {
     // marker. No intervening line betrays the boundary — only the ids.
     const e = parseEvidence(
       [
-        "t 1111111111111111",
+        "t 1111111111111111 run:aa0001",
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "seq t 6",
+        "seq t 6 run:aa0001",
         "seq-listing complete run:aa0002",
       ].join("\n"),
     );
@@ -2818,9 +2819,9 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "seq t 5",
+        "seq t 5 run:aa0001",
         "seq-listing complete run:aa0001",
         // a later crop, contributing only a post-migration shape
         "shape t bbbbbbbbbbbbbbbb",
@@ -2835,10 +2836,10 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
         "shape t aaaaaaaaaaaaaaaa run:aa0002",
-        "seq t 5",
+        "seq t 5 run:aa0002",
         "seq-listing complete run:aa0002",
       ].join("\n"),
     );
@@ -2855,15 +2856,15 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         // run 1 enumerated `t` and said nothing about its shape
-        "seq t 5",
+        "seq t 5 run:aa0001",
         "seq-listing complete run:aa0001",
-        `t ${d}`,
+        `t ${d} run:aa0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
-        "shape t bbbbbbbbbbbbbbbb", // run 2, after a migration
-        "seq t 5",
+        "shape t bbbbbbbbbbbbbbbb run:aa0002", // run 2, after a migration
+        "seq t 5 run:aa0002",
         "seq-listing complete run:aa0002",
       ].join("\n"),
     );
@@ -2874,10 +2875,10 @@ describe("a table set that changed is evidence too", () => {
   it("establishes shape when every paired run states it and they agree", () => {
     const d = "1".repeat(16);
     const run = (id: string) => [
-      `t ${d}`,
+      `t ${d} run:${id}`,
       `${"\u2014".repeat(8)}   0  (1 tables) run:${id}`,
       `shape t aaaaaaaaaaaaaaaa run:${id}`,
-      "seq t 5",
+      `seq t 5 run:${id}`,
       `seq-listing complete run:${id}`,
     ];
     const e = parseEvidence([...run("bb0001"), ...run("bb0002")].join("\n"));
@@ -2889,15 +2890,15 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:cc0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0001`,
         "shape t aaaaaaaaaaaaaaaa run:cc0001",
-        "seq t 5",
+        "seq t 5 run:cc0001",
         "seq-listing complete run:cc0001",
-        `t ${d}`,
+        `t ${d} run:cc0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0002`,
         "shape t bbbbbbbbbbbbbbbb run:cc0002",
-        "seq t 5",
+        "seq t 5 run:cc0002",
         "seq-listing complete run:cc0002",
       ].join("\n"),
     );
@@ -2920,10 +2921,10 @@ describe("a table set that changed is evidence too", () => {
         "seq t 5",
         "seq-listing complete",
         // a later identified run, after a key migration
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "shape t bbbbbbbbbbbbbbbb run:aa0001",
-        "seq t 5",
+        "seq t 5 run:aa0001",
         "seq-listing complete run:aa0001",
       ].join("\n"),
     );
@@ -2935,7 +2936,7 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq-listing complete run:aa0001 WAS NOT CAPTURED",
       ].join("\n"),
@@ -2948,9 +2949,9 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const plain = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
-        "seq t 5",
+        "seq t 5 run:aa0002",
         "seq-listing complete run:aa0002",
       ].join("\n"),
     );
@@ -2971,12 +2972,49 @@ describe("a table set that changed is evidence too", () => {
     const d = "1".repeat(16);
     const e = parseEvidence(
       [
-        `t ${d}`,
+        `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`, // run 1: no shape, no seqs
         `t ${d}`, // run 2 begins, its count line cropped
         "shape t bbbbbbbbbbbbbbbb run:aa0002",
         "seq t 5",
         "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect([...e.shapes]).toEqual([]);
+  });
+
+  // #2281 r20 — a run's evidence is the set of lines that NAME it.
+  // Position was the last binding left, and it let two runs' digest
+  // lines be assembled into an enumeration no run ever read.
+  it("will not assemble one enumeration out of two runs' digest lines", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        // run A, summary cropped — one digest line survives
+        `x ${d} run:aaaaa1`,
+        // run B enumerates y and z, but its z line is cropped
+        `y ${d} run:bbbbb2`,
+        `${"\u2014".repeat(8)}   0  (2 tables) run:bbbbb2`,
+        "seq-listing complete run:bbbbb2",
+      ].join("\n"),
+    );
+    // Positionally, `x` and `y` sit in the block the summary closes and
+    // the count would match. By name, run B read only `y`.
+    expect(
+      e.conflicts.some((c) => c.includes("declares 2 table(s) but carries 1")),
+    ).toBe(true);
+  });
+
+  it("does not bind an anonymous shape to an anonymous enumeration", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        "seq-listing complete",
+        // a later crop, contributing only a post-migration shape
+        "shape t bbbbbbbbbbbbbbbb",
       ].join("\n"),
     );
     expect([...e.shapes]).toEqual([]);

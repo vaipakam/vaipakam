@@ -1010,7 +1010,8 @@ function printDigest(label, map, runId = null) {
       );
     }
     console.log(
-      `  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}`,
+      `  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}` +
+        (runId ? ` run:${runId}` : ""),
     );
   }
   console.log(
@@ -2046,6 +2047,30 @@ export function parseEvidence(text) {
   // a table set that changed between two moments in the log. It does not
   // matter which came first — either direction is a change — so there is
   // no ordering to get wrong, and no "trailing" special case to forget.
+  // A RUN'S EVIDENCE IS THE SET OF LINES THAT NAME IT (#2281 r20).
+  //
+  // Every positional rule in this parser has now been defeated by a
+  // crop: the pairing of halves (r12-r15), the binding of shape lines
+  // (r16-r19), and finally the digest lines themselves — leave one line
+  // of run A after its summary is cropped, and it joins run B's lines
+  // in the block that B's summary closes, producing an enumeration
+  // whose declared count matches and whose table set no run ever read.
+  //
+  // So `digest` now names its run on EVERY line it emits, and lines are
+  // grouped by the name rather than by what surrounds them. Nothing a
+  // crop leaves behind can join a run it does not name.
+  //
+  // Lines carrying no name at all are legacy evidence, written before
+  // the identifier existed. They still accumulate positionally, because
+  // there is nothing else to go on — and they can only ever form an
+  // UNIDENTIFIED reading, which cannot pair and is disclosed as such.
+  const byRun = new Map();
+  const runOf = (id) => {
+    if (!byRun.has(id)) {
+      byRun.set(id, { digests: new Map(), shapes: new Map(), seqs: new Map() });
+    }
+    return byRun.get(id);
+  };
   const enumerations = [];
   const seqReadings = [];
   const unterminatedSeqs = [];
@@ -2072,8 +2097,12 @@ export function parseEvidence(text) {
         line,
       );
     if (done) {
-      seqReadings.push({ seqs: openSeqs, run: done[1] ?? null });
-      openSeqs = new Map();
+      const bucket = done[1] ? runOf(done[1]) : null;
+      seqReadings.push({
+        seqs: bucket ? bucket.seqs : openSeqs,
+        run: done[1] ?? null,
+      });
+      if (!bucket) openSeqs = new Map();
       openRun = null;
       sawAnyComplete = true;
       continue;
@@ -2099,15 +2128,16 @@ export function parseEvidence(text) {
         line,
       );
     if (tot) {
+      const bucket = tot[2] ? runOf(tot[2]) : null;
       const entry = {
-        digests: openDigests,
+        digests: bucket ? bucket.digests : openDigests,
         declared: Number(tot[1]),
         run: tot[2] ?? null,
-        shapes: new Map(),
+        shapes: bucket ? bucket.shapes : new Map(),
       };
       enumerations.push(entry);
       openRun = entry;
-      openDigests = new Map();
+      if (!bucket) openDigests = new Map();
       if (openSeqs.size > 0) {
         // Never closed, so it contributes its values and no zeros.
         unterminatedSeqs.push(openSeqs);
@@ -2142,15 +2172,21 @@ export function parseEvidence(text) {
       // recorded for conflict detection, because two runs disagreeing
       // about a table's shape is evidence wherever the lines sit.
       put(shapeLines, "shape", shp[1], shp[2]);
-      const owner = shp[3]
-        ? enumerations.find((e) => e.run === shp[3])
-        : openRun && openRun.run === null
-          ? openRun
-          : null;
-      if (owner) owner.shapes.set(shp[1], shp[2]);
+      // AN ANONYMOUS SHAPE BINDS TO NOTHING (#2281 r20). The r19
+      // fallback kept the positional rule alive for legacy evidence: an
+      // anonymous run keeping its enumeration but losing its shape and
+      // sequence section, then a cropped run contributing only a
+      // post-migration anonymous shape, still landed on the first. A
+      // shape that cannot say which reading observed it cannot
+      // substantiate any reading — and legacy evidence carries no shape
+      // lines at all, so nothing real is lost by refusing to guess.
+      if (shp[3]) runOf(shp[3]).shapes.set(shp[1], shp[2]);
       continue;
     }
-    const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
+    const seq =
+      /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
     if (seq) {
       mentioned.add(seq[1]);
       // EXACTLY, or not at all (#2281 r11) — the same rule the manifest
@@ -2166,24 +2202,29 @@ export function parseEvidence(text) {
         );
         continue;
       }
-      const had = openSeqs.get(seq[1]);
+      const had = seq[3]
+        ? runOf(seq[3]).seqs.get(seq[1])
+        : openSeqs.get(seq[1]);
       if (had !== undefined && had !== value) {
         conflicts.push(
           `${seq[1]}: one sequence listing gives it twice, as ${had} and ` +
             `${seq[2]}`,
         );
       }
-      openSeqs.set(seq[1], value);
+      if (seq[3]) runOf(seq[3]).seqs.set(seq[1], value);
+      else openSeqs.set(seq[1], value);
       continue;
     }
     // `<table> [rowcount] <16-hex>` — the digest command prints a count
     // between them, and a hand-kept note may not.
-    const dig = /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})$/.exec(
-      line,
-    );
+    const dig =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
     if (dig) {
       mentioned.add(dig[1]);
-      openDigests.set(dig[1], dig[2]);
+      if (dig[3]) runOf(dig[3]).digests.set(dig[1], dig[2]);
+      else openDigests.set(dig[1], dig[2]);
       put(digests, "digest", dig[1], dig[2]);
     }
   }
@@ -4115,7 +4156,9 @@ async function main() {
       for (const r of [...usable].sort((a, b) =>
         String(a.name).localeCompare(b.name),
       )) {
-        console.log(`  seq ${String(r.name).padEnd(28)} ${Number(r.seq)}`);
+        console.log(
+          `  seq ${String(r.name).padEnd(28)} ${Number(r.seq)} run:${runId}`,
+        );
       }
       // ABSENCE HAS TO BE READABLE. A table that has never allocated has
       // no row here at all, so a missing line means either "never
