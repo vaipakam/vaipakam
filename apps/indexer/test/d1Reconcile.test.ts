@@ -2564,6 +2564,31 @@ describe("a table set that changed is evidence too", () => {
     expect(JSON.parse(r.after).provenance.interval).toBe("uncovered");
   });
 
+  it("will not promote against halves taken from different runs", () => {
+    // The r12 scenario at the verb: an early run keeps its count line
+    // and loses its sequence section, and the later run — taken after
+    // an AUTOINCREMENT insert-and-delete — answers for the sequences.
+    // Rows agree throughout, so nothing conflicts.
+    const d = "1".repeat(16);
+    const r = runCover(
+      reconstructed({
+        t: { key: ["id"], cols: ["id"], seq: 6, rows: {}, digest: d },
+      }),
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 6",
+        "seq-listing complete",
+        "",
+      ].join("\n"),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain("half-run");
+    expect(JSON.parse(r.after).provenance.interval).toBe("uncovered");
+  });
+
   it("will not promote a manifest that carries no provenance at all", () => {
     // Written before provenance existed, so the mirror wrote it — which
     // is what `readManifest` concludes from the same absence. Promoting
@@ -2633,6 +2658,41 @@ describe("a table set that changed is evidence too", () => {
     expect(e.conflicts.some((c) => c.includes("compare exactly"))).toBe(true);
     // And it is not recorded as a value that could then be matched.
     expect(e.seqs.get("t")).not.toBe(9007199254740992);
+  });
+
+  // #2281 r12 — both halves have to come from the SAME run, or they
+  // describe two moments presented as one.
+  it("pairs an enumeration with the sequence listing of its own run", () => {
+    const e = parseEvidence(
+      [
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(1);
+  });
+
+  it("leaves a run recorded without its sequence section unpaired", () => {
+    // The r12 scenario exactly: an early block keeps its count line and
+    // loses its sequence section; a later WHOLE block follows, recorded
+    // after an AUTOINCREMENT insert-and-delete. Rows are unchanged, so
+    // nothing conflicts — the only trace is the unpaired half.
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 6",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(e.readings.paired).toBe(1);
+    expect(e.readings.unpaired).toBe(1);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {

@@ -1976,6 +1976,8 @@ export function parseEvidence(text) {
   const enumerations = [];
   const seqReadings = [];
   const unterminatedSeqs = [];
+  const pairedRuns = [];
+  let pendingEnumeration = null;
   let openDigests = new Map();
   let openSeqs = new Map();
   let sawAnyComplete = false;
@@ -1988,6 +1990,17 @@ export function parseEvidence(text) {
       seqReadings.push(openSeqs);
       openSeqs = new Map();
       sawAnyComplete = true;
+      // AND IF AN ENUMERATION WAS CLOSED SINCE THE LAST ONE, THE TWO
+      // ARE THE SAME RUN (#2281 r12). One `digest` run prints its
+      // digests, its count line, its `seq` lines, then this marker — so
+      // an enumeration closed since the previous marker, with no other
+      // marker between, is this run's own. That pairing is what makes
+      // the two halves evidence about ONE moment; two markers taken
+      // from different runs describe two.
+      if (pendingEnumeration !== null) {
+        pairedRuns.push(pendingEnumeration);
+        pendingEnumeration = null;
+      }
       continue;
     }
     // Closes a DIGEST reading. `printDigest` prints this line at the end
@@ -2009,6 +2022,7 @@ export function parseEvidence(text) {
     const tot = /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)$/.exec(line);
     if (tot) {
       enumerations.push({ digests: openDigests, declared: Number(tot[1]) });
+      pendingEnumeration = enumerations.length - 1;
       openDigests = new Map();
       if (openSeqs.size > 0) {
         // Never closed, so it contributes its values and no zeros.
@@ -2086,6 +2100,8 @@ export function parseEvidence(text) {
     );
   }
 
+  const paired = pairedRuns.filter((i) => readings.includes(enumerations[i]));
+
   const seqs = new Map();
   for (const table of mentioned) {
     // ONE RULE OVER EVERY BLOCK (#2281 r10). A CLOSED reading always
@@ -2123,7 +2139,20 @@ export function parseEvidence(text) {
     // HOW MANY CLOSED READINGS THERE WERE, so a caller can tell an
     // evidence file that says nothing from one that says the database
     // was empty (#2281 r9). Both have empty maps.
-    readings: { tableSets: readings.length, sequences: seqReadings.length },
+    readings: {
+      tableSets: readings.length,
+      sequences: seqReadings.length,
+      // How many runs closed BOTH halves, with the enumeration still
+      // valid — the only kind of reading that describes one moment.
+      paired: paired.length,
+      // AND HOW MANY CLOSED READINGS ARE NOT PART OF ONE. Each is half
+      // of a run whose other half is missing from the file — a moment
+      // the evidence half-records. The mirror's own run may be that
+      // one, and its missing half is then simply absent while the run
+      // beside it answers in its place.
+      unpaired:
+        readings.length - paired.length + (seqReadings.length - paired.length),
+    },
     conflicts,
   };
 }
@@ -2267,6 +2296,18 @@ async function takeManifest(db) {
   };
 
   const before = await readSequences();
+  // THE WHOLE SCHEMA AS IT WAS, not just the carried tables' share of it
+  // (#2281 r12). The terminal comparison below is whole-to-whole, so
+  // both sides have to be whole: `ddlAtRead` is filled only inside the
+  // carried-table loop, and `declarations` returns every object with a
+  // declaration — `d1_migrations`, views, anything `tablesOf` excludes —
+  // so comparing one against the other reported a difference on every
+  // ordinary database and aborted the run.
+  //
+  // Whole-to-whole is also the stronger check: a migration applied while
+  // this manifest is being taken changes `d1_migrations`, and that is a
+  // database that moved, whatever it did to the carried tables.
+  const ddlWholeAtRead = new Map(await declarations(db.id, { fresh: true }));
   const tables = await tablesOf(db.id);
   const manifest = newManifestTables();
   const refused = [];
@@ -2459,16 +2500,25 @@ async function takeManifest(db) {
   // that limitation is stated rather than implied, here and in the
   // release note.
   const ddlFinal = await declarations(db.id, { fresh: true });
-  for (const table of new Set([...ddlAtRead.keys(), ...ddlFinal.keys()])) {
-    if ((ddlFinal.get(table) ?? null) !== (ddlAtRead.get(table) ?? null)) {
+  for (const name of new Set([...ddlWholeAtRead.keys(), ...ddlFinal.keys()])) {
+    if ((ddlFinal.get(name) ?? null) !== (ddlWholeAtRead.get(name) ?? null)) {
       fail(
-        `"${table}" was REDECLARED before this read finished.\n\nThe ` +
+        `"${name}" was REDECLARED before this read finished.\n\nThe ` +
           `per-table checks run one after another, so a change landing ` +
           `on a table they have already passed is caught only here — by ` +
           `one reading of the whole schema, taken after all of them.`,
       );
     }
   }
+  // AND THE WINDOW THIS ARTIFACT CLAIMS ENDS HERE (#2281 r12). The
+  // sequence comparison below needs one more remote read, so something
+  // has to be last and whatever follows the last schema reading is
+  // unobserved by it. Rather than leave that gap inside the stated
+  // window, the window ENDS at the earliest of the final observations —
+  // this one. The sequence read happens after it and therefore covers
+  // [start, here] as well, so every check covers the whole of what the
+  // artifact claims, which is the property that matters.
+  const readCompletedAt = new Date().toISOString();
 
   // AND the sequences, which the row digests cannot see: an identifier
   // allocated and released leaves no row behind.
@@ -2501,7 +2551,7 @@ async function takeManifest(db) {
     refused,
     digests: digestAtRead,
     readStartedAt,
-    readCompletedAt: new Date().toISOString(),
+    readCompletedAt,
   };
 }
 
@@ -3593,6 +3643,33 @@ async function main() {
           `line that was not pasted.\n\nPaste the whole of a "digest" ` +
           `run, including the "seq-listing complete" line that closes ` +
           `its sequence section.`,
+      );
+    }
+    // AND BOTH HALVES FROM THE SAME RUN (#2281 r12). Counting the two
+    // kinds of reading separately accepted one of each from DIFFERENT
+    // runs, which is two moments presented as one. An early block that
+    // kept its count line but lost its sequence section, followed by a
+    // whole block recorded after an AUTOINCREMENT insert-and-delete,
+    // gives unchanged row digests and only the later, advanced
+    // sequence — no conflict anywhere, and a reconstruction carrying
+    // that late allocation is promoted with no mirror-time sequence
+    // evidence at all.
+    if (evidence.readings.paired === 0 || evidence.readings.unpaired > 0) {
+      fail(
+        `${expect} does not hold a whole "digest" run: ` +
+          `${evidence.readings.paired} run(s) closed both halves and ` +
+          `${evidence.readings.unpaired} half-run(s) are recorded ` +
+          `without their other half.\n\nEach half describes the moment ` +
+          `its own run was taken, so halves from different runs describe ` +
+          `two moments. A run recorded WITHOUT its sequence section is ` +
+          `the dangerous shape: the row digests still agree, the run ` +
+          `beside it answers for the sequences in its place, and if that ` +
+          `other run was taken after an AUTOINCREMENT insert-and-delete ` +
+          `it carries an allocation the mirror never saw. One unpaired ` +
+          `half is enough for that, which is why every closed reading ` +
+          `has to belong to a run and not merely one of them.\n\nPaste ` +
+          `each "digest" run whole: its digests, its rule-and-count ` +
+          `line, its "seq" lines, and its "seq-listing complete".`,
       );
     }
     const saidSomething =
