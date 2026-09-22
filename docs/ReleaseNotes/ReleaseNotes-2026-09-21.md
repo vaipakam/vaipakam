@@ -627,9 +627,22 @@ afterwards. So the last step is not the switch: once the services are running
 against the new database, the old one is read again and anything that turned up
 late is **reported** — the step reads both databases and writes to neither, so
 nothing the services have written since can be disturbed by it. Each
-difference it names is applied by a person. That repeats until two consecutive
-runs find nothing — and then **keeps repeating, weekly, for as long as the old
-database is kept**.
+difference it names is settled by a person. That repeats until two consecutive
+runs come back clean — and then **keeps repeating, weekly, for as long as the
+old database is kept**.
+
+**Three of the situations it can report have no settlement that makes the next
+run clean, and the procedure says so rather than leaving an operator to
+discover it.** Two are resolved by changing the data — apply the value the old
+database holds, or insert the row it has and the new one lacks — and the next
+run stops reporting them. Three are resolved instead by *judgement to leave
+things as they are*: a key already allocated on both sides, a row deliberately
+left deleted on one side or the other. The data is unchanged by design, so the
+comparison reports them again, and again. A run carrying only those, each
+logged with the decision taken, counts as clean; a rule that demanded silence
+would be one an operator could satisfy only by giving up on the check. Letting
+the comparison record a decision and honour it is tracked separately, as
+#2279.
 
 Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and
