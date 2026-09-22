@@ -1,13 +1,13 @@
 # Release Notes — 2026-09-22
 
 One behaviour-changing merge, finishing the database move the previous day's
-notes describe. Four other merges landed the same day and are not written up
-below, because none of them changes anything a user or an operator can observe:
-PR #2271 and PR #2283 on what an inline-assembly annotation costs in bytecode
-and why a clean compile does not prove a contract still deploys, PR #2274
-scouting the next step of the reward-transport programme, and PR #2285 on the
-review cadence. PR #2271 is the one worth a word: it does touch three Solidity
-files, but every changed line in them is a comment.
+notes describe. Four others landed the same day and are not written up below,
+each for its own reason. PR #2271 and PR #2283 revised the contributor
+handbook's guidance on inline-assembly annotations and bytecode size — #2271
+also touched three Solidity files, in which every changed line is a comment.
+PR #2274 added a design-document scout of the next reward-transport step.
+PR #2285 lowered the review-round ceiling for documentation-only pull requests,
+which changes how this repository is worked on rather than anything it ships.
 
 The move leaves the old database in place and keeps comparing it against the
 new one, because work suspended across the move can still commit afterwards.
