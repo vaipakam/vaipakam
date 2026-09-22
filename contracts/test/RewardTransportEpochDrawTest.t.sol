@@ -59,6 +59,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      library inlined into the epoch facet.
     event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
     event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
+    event IngressPacketClassifiedBeyondCaps(bytes32 indexed packetHash, uint256 fresh, uint256 recycled);
 
     function setUp() public {
         setupHelper();
@@ -1445,10 +1446,14 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         }
         assertEq(_preview(), 2 * NEED, "the preview stops where the claim will");
         assertEq(_claim(), 2 * NEED, "two days of sixty-four epochs each: the budget");
+        // A settlement batched in the SAME transaction after the budget is
+        // spent (Codex #2276 r15 P2): its first day defers, the earlier draws
+        // are its progress, it pays nothing — and does not revert the batch.
+        assertEq(_claim(), 0, "batched after the budget: nothing paid, nothing reverted");
         // On chain the next claim is its own transaction and its transient
         // count starts at zero; a test is one transaction, so clear it.
         _mut().resetTransportDrawWritesRaw();
-        assertEq(_claim(), NEED, "the next call pays the third day");
+        assertEq(_claim(), NEED, "the next transaction pays the third day");
     }
 
     /// @dev A day indexed before the list switches to the list only once its
@@ -1487,6 +1492,33 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertTrue(listed);
         (bytes32[] memory page, , ) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 3);
         assertEq(page.length, 3, "the list is read now");
+    }
+
+    /// @dev An attestation that finds a classification already past its cap
+    ///      records the divergence rather than saturating it away (Codex
+    ///      #2276 r15 P1), on Codex's shape: a ten-token rollout packet
+    ///      classified seven recycled before the batch gate, admitted for
+    ///      three, then attested 8F/2R — the recycled excess of five is
+    ///      recorded and exposed, the recycled room is zero, and the epoch's
+    ///      three are fresh-only coverage.
+    function test_AnAttestation_RecordsAClassificationAlreadyPastItsCap() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 2, REMITTER, 0, 0, keccak256("roll"), false);
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("roll")));
+        _mut().unadmitTransportBatchRaw(h);
+        _mut().classifyPacketPreGateRaw(h, 0, 7e18);
+        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
+        _epoch().materializeTransportBatchPage(h, d1);
+        RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
+        vm.expectEmit(true, false, false, true);
+        emit IngressPacketClassifiedBeyondCaps(h, 0, 5e18);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 2, 8, 2); // caps 8e18 fresh / 2e18 recycled on 10e18
+        (uint256 exF, uint256 exR) = RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertEq(exF, 0);
+        assertEq(exR, 5e18, "the recycled classification exceeds its cap by five: recorded");
+        (uint256 tf, uint256 tr, ) = _alloc(1, 3e18, 3e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 3e18, "the epoch's three are fresh room");
+        assertEq(tr, 0, "and no recycled room remains under a cap the classification already exceeds");
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

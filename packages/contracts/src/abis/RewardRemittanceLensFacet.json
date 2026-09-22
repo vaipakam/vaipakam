@@ -392,6 +392,16 @@
             "name": "drawn",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "classifiedFreshBeyondCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "classifiedRecycledBeyondCap",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

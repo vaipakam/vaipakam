@@ -7814,6 +7814,18 @@ library LibVaipakam {
         ///      a scaling residual between the three, and none of that is a
         ///      packet exit.
         uint256 drawn;
+        /// @dev #1566 transport epochs PR 3b-ii-A (Codex #2276 r15 P1),
+        ///      appended — by how much a classification the packet carried
+        ///      BEFORE its split was attested exceeds the attested cap of
+        ///      that component: recorded at attestation as a DIVERGENCE for
+        ///      the correction path (a classification moved custody rows;
+        ///      only a correction moves them back), never satisfied by
+        ///      retyping. Zero for every packet classified after, or within,
+        ///      its attested caps. The caps net of classification saturate
+        ///      at zero meanwhile, so nothing further is drawn or classified
+        ///      on that component.
+        uint256 classifiedFreshBeyondCap;
+        uint256 classifiedRecycledBeyondCap;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one

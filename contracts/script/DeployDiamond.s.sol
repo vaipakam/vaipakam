@@ -3208,13 +3208,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
         s[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
         s[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
         s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        s[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
         s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
         s[8] = RewardReconciliationFacet.getFreshQueueState.selector;

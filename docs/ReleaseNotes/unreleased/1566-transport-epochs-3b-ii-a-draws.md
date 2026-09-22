@@ -73,7 +73,10 @@ netted by the fresh leg its epoch has already paid. Where a delivery's split is 
 within that component's remaining cap; where the split arrives after
 draws, the legs already drawn are re-typed so the caps hold, the epoch's
 total unchanged, each cap read net of the classification the delivery
-already carried. A deferred settlement's cursor move is progress the
+already carried; a classification recorded before the split that already
+exceeds a cap is not undone by the attestation — it is recorded as a
+divergence for the correction path, and no further draw or
+classification of that component is admitted meanwhile. A deferred settlement's cursor move is progress the
 claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
@@ -137,7 +140,7 @@ shared sources, the day is deferred rather than paid short: nothing is
 drawn and nothing is staged, so there is nothing to unwind, and the day's
 cursor is moved past any epochs already exhausted by other days so the
 next attempt sees a fresh window. Anyone may run that cursor maintenance
-for a day at any time. A settlement call draws from at most one hundred and twenty-eight epochs over every day it settles; a day whose draw would take the call past that is deferred exactly as a day whose epochs exceed one window is — nothing drawn, the days before it standing — and the next call starts there, so a claimant funded by many small epochs progresses a few days per call rather than never. The follow-up release adds the staging that lets a
+for a day at any time. A transaction draws from at most one hundred and twenty-eight epochs over every day it settles — the bound is the transaction's gas, so two settlements batched in one transaction share it; a day whose draw would take the transaction past that is deferred exactly as a day whose epochs exceed one window is — nothing drawn, the days before it standing, and a settlement batched after one that spent the budget pays nothing rather than failing the batch — and the next transaction starts there, so a claimant funded by many small epochs progresses a few days per transaction rather than never. The follow-up release adds the staging that lets a
 day wider than one window make progress; until then such a day waits,
 with its value protected in its epochs. A day no epoch lists costs one
 storage read and no call, on every chain, and the domain rule's own pass

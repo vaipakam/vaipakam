@@ -1040,6 +1040,11 @@ library LibRewardCustody {
     ///      recorded on the batch for the close-out's disposition path rather
     ///      than carried by a leg past its cap (Codex #2276 r6).
     event TransportLegsBeyondCaps(bytes32 indexed batchId, uint256 amount);
+    /// @notice A packet's split was attested and a classification it already
+    ///         carried exceeds a component's recorded cap by these amounts
+    ///         (Codex #2276 r15 P1) — a divergence recorded for the
+    ///         correction path, not resolved here.
+    event IngressPacketClassifiedBeyondCaps(bytes32 indexed packetHash, uint256 fresh, uint256 recycled);
     /// @notice #1566 transport epochs PR 3a — the canonical chain's recorded
     ///         split of a d2 remittance was attested for the packet that
     ///         delivered it, both caps scaled to what actually landed.
@@ -1322,16 +1327,21 @@ library LibRewardCustody {
     ///      cursor be verified in constant work. Non-zero, so a passed node
     ///      still reads as listed. Never a batch id.
     bytes32 internal constant TRANSPORT_PASSED = bytes32(uint256(1));
-    /// @dev How many epochs one settlement CALL may draw from, over every
-    ///      day it settles (Codex #2276 r14 P1). Each day's window is bounded,
-    ///      but a claimant whose every day is funded by a window of small
-    ///      epochs would write thousands of them in one transaction — past
-    ///      any block — and, the chunk being fixed, could never progress. A
-    ///      day whose draw would take the call past this cap DEFERS, exactly
-    ///      as a day whose epochs exceed one window does: nothing is drawn,
-    ///      the walk ends, the days before it stand, and the next call starts
-    ///      there. At about eighty thousand gas per epoch written this is
-    ///      roughly ten million gas of draws, a fraction of a block.
+    /// @dev How many epochs one TRANSACTION may draw from, over every day it
+    ///      settles (Codex #2276 r14 P1, r15 P2). Each day's window is
+    ///      bounded, but a claimant whose every day is funded by a window of
+    ///      small epochs would write thousands of them in one transaction —
+    ///      past any block — and, the chunk being fixed, could never
+    ///      progress. A day whose draw would take the transaction past this
+    ///      cap DEFERS, exactly as a day whose epochs exceed one window does:
+    ///      nothing is drawn, the walk ends, the days before it stand, and the
+    ///      next transaction starts there. The scope is the TRANSACTION and
+    ///      not the settlement call because the bound is the transaction's
+    ///      gas: two settlements batched in one transaction share it, and one
+    ///      batched after the budget is spent pays nothing and reports the
+    ///      earlier draws as its progress rather than failing the batch. At
+    ///      about eighty thousand gas per epoch written this is roughly ten
+    ///      million gas of draws, a fraction of a block.
     uint256 internal constant TRANSPORT_DRAW_CALL_CAP = 128;
     /// @dev The TRANSIENT slot counting the epochs this transaction's draws
     ///      have written (Codex #2276 r14 P1): read by every allocation of the
@@ -2695,6 +2705,14 @@ library LibRewardCustody {
             if (written != 0) _addTransientWrites(written);
         }
         pruned = _pruneTransportDayCursor(s, dayId);
+        // A draw of NOTHING in a transaction whose draws have already written
+        // epochs is the budget's deferral (Codex #2276 r15 P2): the progress
+        // the settlement keeps is those earlier draws — this call's earlier
+        // days, or an earlier settlement batched in the same transaction —
+        // so it is reported as progress, and a settlement batched after one
+        // that spent the budget returns nothing paid instead of reverting
+        // the whole batch as an empty claim.
+        if (fresh + recycled == 0 && _transientWrites() != 0) pruned = true;
     }
 
     /// @dev The packet half of a draw: the batch is keyed by its packet's
@@ -3062,13 +3080,33 @@ library LibRewardCustody {
         p.recycledAttested = recycledAttested;
         p.attested = true;
         emit IngressPacketSplitAttested(h, remitter, remitId, freshAttested, recycledAttested);
+        // A classification recorded BEFORE the split was attested may already
+        // exceed a cap (Codex #2276 r15 P1): a rollout packet classified
+        // recycled before the batch gate existed, then attested mostly
+        // fresh. Nothing here can undo it — a classification moved custody
+        // rows, and only the correction path moves them back — so the excess
+        // is RECORDED as a divergence, per component, for the reconciliation
+        // surface and the correction that follows; the caps net of
+        // classification saturate at zero meanwhile, so no further draw or
+        // classification of that component is admitted, and the identity
+        // this attestation keeps is stated over the transport legs alone.
+        {
+            uint256 exF = p.classifiedFresh > freshAttested ? p.classifiedFresh - freshAttested : 0;
+            uint256 exR = p.classifiedRecycled > recycledAttested ? p.classifiedRecycled - recycledAttested : 0;
+            if (exF + exR != 0) {
+                p.classifiedFreshBeyondCap = exF;
+                p.classifiedRecycledBeyondCap = exR;
+                emit IngressPacketClassifiedBeyondCaps(h, exF, exR);
+            }
+        }
         // RECONCILE FIRST (the 3b scope's rule; Codex #2276 r4 P1): a draw
         // that preceded this attestation typed its legs with nothing known to
         // bound them. Now that the caps are known, a leg past its cap is
         // re-typed into the other — the epoch's total and every settled
-        // obligation unchanged — so `classifiedFresh + consumedFresh` never
-        // exceeds `freshAttested` and `classifiedRecycled + consumedRecycled`
-        // never exceeds `recycledAttested`, and the classification allowance
+        // obligation unchanged — so the TRANSPORT LEGS never exceed the caps
+        // net of the classification the packet already carries (a
+        // classification that itself exceeds a cap is recorded as a
+        // divergence above, never satisfied), and the classification allowance
         // {authenticatedFresh} derives is the cap net of the packet's REAL
         // fresh use. Each cap is read NET of the classification the packet
         // already carries (Codex #2276 r9 P1): a packet that landed before

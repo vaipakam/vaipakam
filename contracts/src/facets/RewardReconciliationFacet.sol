@@ -445,6 +445,16 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return _envelope(LibVaipakam.storageSlot());
     }
 
+    /// @notice By how much a classification `packetHash` carried BEFORE its
+    ///         split was attested exceeds the attested cap of each component
+    ///         (Codex #2276 r15 P1): a divergence the attestation recorded for
+    ///         the correction path, zero for every packet classified after, or
+    ///         within, its caps.
+    function getPacketClassificationExcess(bytes32 packetHash) external view returns (uint256 fresh, uint256 recycled) {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        return (p.classifiedFreshBeyondCap, p.classifiedRecycledBeyondCap);
+    }
+
     /// @notice An imported envelope's record; `importedAt == 0` for an
     ///         unknown snapshot id.
     function getLegacyEnvelope(bytes32 snapshotId) external view returns (LibVaipakam.LegacyEnvelope memory) {
