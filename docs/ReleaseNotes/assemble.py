@@ -73,14 +73,27 @@ MARKER_RE = re.compile(
 # invisible here while GitHub still rendered it as a level-1 heading, so a
 # fragment could take the deliberate no-heading allowance and publish the very
 # peer-document defect the conformance check exists to stop (#2290 r1).
-HEADING_RE = re.compile(rb"^ {0,3}#{1,6} ")
+#
+# The delimiter after the marker is a space, a TAB, or the end of the line —
+# `#\tTitle` and a bare `#` are both level-1 headings to a Markdown renderer
+# (#2290 r2). Requiring a literal space let either through the same allowance,
+# which is the second time this regex has turned an exemption into a bypass:
+# a check that misses a shape does not merely fail to refuse it, it actively
+# permits it via the no-heading branch.
+HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
 # literal `#NNNN`, and a present-but-unsubstituted one is the defect this
-# catches (#2288) — but the token has to stop at the first comma or space,
-# because `(PR #2184, issue #2099)` is an established heading shape in this
-# repository (seventeen of them) and capturing to the closing parenthesis
-# refused every one (#2290 r1).
-PR_REF_RE = re.compile(rb"\(PR #([^,)\s]*)")
+# catches (#2288).
+#
+# The token stops at the first comma or space, because `(PR #2184, issue
+# #2099)` is an established heading shape here — seventeen of them — and
+# capturing to the closing parenthesis refused every one (#2290 r1).
+#
+# And `PR #` is matched WHEREVER it appears in the heading, not only just
+# inside the parenthesis. Eight published headings put it last —
+# `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
+# and the placeholder sailed through as "no reference at all" (#2290 r2).
+PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 

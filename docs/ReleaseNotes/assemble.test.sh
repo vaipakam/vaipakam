@@ -4349,6 +4349,45 @@ check "naming the malformed one"      "$(says "$msg" '0002-bad.md')"  "1"
 check "the recovered fragment SURVIVES" "$([ -f "$u/0001-a.md" ] && echo yes || echo no)" "yes"
 check "nothing was consumed at all"   "$(pending "$W")"               "2"
 
+# ── The PR reference is not always first in the parenthetical (#2290 r2) ────
+# Eight published headings put it last — `(T-090 v1.2 #428, PR #<n>)`. Anchored
+# on `\(PR #`, the check found nothing there, so a placeholder in that position
+# read as "no reference at all" and took the deliberate allowance. A check that
+# misses a shape does not merely fail to refuse it; it PERMITS it via the
+# exemption, which is the same way the indentation gap failed in r1.
+case_start "T217g: a placeholder later in the parenthetical is still caught"
+W="$ROOT/t217g"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '## Thread — late placeholder (T-090 v1.2 #428, PR #TBD)\n' > "$u/0003-late-ph.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                              "1"
+check "naming the file"        "$(says "$msg" '0003-late-ph.md')" "1"
+check "as a placeholder"       "$(says "$msg" 'placeholder')"     "1"
+check "nothing was consumed"   "$(pending "$W")"                  "3"
+
+case_start "T217g2: a REAL number later in the parenthetical is accepted"
+W="$ROOT/t217g2"; build "$W"
+printf '## Thread — late but real (T-090 v1.2 #429, PR #2232)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-late-ok.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"                                                                  "0"
+check "all three folded in"  "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "3"
+check "nothing left pending" "$(pending "$W")"                                                     "0"
+
+# ── A heading marker may be closed by a tab or by end-of-line (#2290 r2) ────
+# `#<TAB>Title` and a contentless `#` are both level-1 ATX headings. Requiring
+# a literal space let each one through the no-heading allowance.
+case_start "T217h: tab-delimited and contentless headings are seen"
+W="$ROOT/t217h"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '#\tThread — tab after the marker (PR #4243)\n' > "$u/0003-tab.md"
+printf '#\n'                                           > "$u/0004-bare.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"          "$?"                            "1"
+check "the tab one is named"     "$(says "$msg" '0003-tab.md')"  "1"
+check "the bare one is named"    "$(says "$msg" '0004-bare.md')" "1"
+check "nothing was consumed"     "$(pending "$W")"               "4"
+
 echo ""
 if (( RETIRED > 0 )); then
   echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"

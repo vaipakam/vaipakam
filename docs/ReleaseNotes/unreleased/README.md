@@ -16,6 +16,20 @@ PRs landing the same day never append-conflict.
    developer/operator reader. **No code snippets.** Match the tone of the
    committed `ReleaseNotes-<date>.md` files.
 3. Commit it as part of the PR.
+4. **Once GitHub has assigned the PR number, put it in the heading.** The
+   template ships `(PR #<n>)` as a placeholder, and assembly refuses a
+   fragment that still carries one — so this is not a tidiness step, it is
+   the difference between the run folding your fragment and stopping on it.
+
+   The refusal exists because a placeholder that survives assembly is
+   unfixable: it publishes a section nothing can trace back to the change
+   it documents, and a dated release note is never re-edited afterwards.
+   Around 170 published headings carry one, which is what the check is
+   there to stop adding to.
+
+   The heading must also open at `##`, not `#` — a fragment opening at `#`
+   lands in the dated file as a second document title rather than nesting
+   under the release title.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
