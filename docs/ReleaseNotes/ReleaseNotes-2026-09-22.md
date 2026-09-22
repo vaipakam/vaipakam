@@ -1,3 +1,16 @@
+# Release Notes — 2026-09-22
+
+One merge, finishing the database move the previous day's notes describe.
+
+The move leaves the old database in place and keeps comparing it against the
+new one, because work suspended across the move can still commit afterwards.
+That comparison — and the documented way back, which consults the same record
+before reversing anything — is only meaningful against a record of what the
+old database held at the moment of the move. Producing that record used to
+require writing to a database, which after the move is the live one. This
+release makes it obtainable by reading alone, and makes the record state what
+it does and does not stand for rather than leaving either to be assumed.
+
 # The record a database move is checked against can be taken again
 
 Moving the platform's off-chain database leaves one obligation behind: the old
@@ -117,3 +130,4 @@ rather than describing a reconstruction as the original.
 Verified against the real thing: a record taken this way after the move was
 compared against the one the copy produced during it — 43 tables, **no
 differences at all**.
+<!-- assembled-fragment: 2281-reproducible-cutover-baseline.md sha256=6c734072481e58ad6d9fe5c93962bbe8a79bf43a5cf95cca2f3679305ffc1165 -->
