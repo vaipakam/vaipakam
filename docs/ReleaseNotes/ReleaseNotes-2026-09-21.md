@@ -643,13 +643,16 @@ that a gap in it is visible.
 
 **What the runbook does not give it is a name.** "Whoever holds the runbook"
 is a duty attached to possession, not a person, a team or a rotation, so there
-is nobody the missed week is missed *by*. That matters more here than it would
-elsewhere: this comparison is the only thing that finds a late write, and its
-failure mode is silence — the run simply stops happening, the retirement
-checklist still reads as satisfiable, and the gap surfaces when the old
-database is deleted and takes the record with it. Naming an accountable party
-is an owner decision and is tracked as #2287; until it is made, this is a
-scheduled check with no one on the hook for it.
+is nobody the missed week is missed *by*.
+
+What that costs is time rather than safety, and the difference is worth being
+exact about. The retirement checklist demands this comparison be current, and
+every run is written down so that a gap in the record is visible — so an honest
+pass over that checklist stops at a lapsed cadence instead of deleting through
+one. What an unowned cadence does cost is that a late write stays undiscovered
+for as long as the lapse runs, and the old database is retained indefinitely
+behind a check nobody is tasked with keeping green. Naming an accountable party
+is an owner decision and is tracked as #2287.
 
 **The comparison holds up once the two databases stop being the same shape.**
 The new database keeps taking migrations; the old one never will. So a column
