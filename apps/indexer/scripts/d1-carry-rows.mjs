@@ -2066,6 +2066,24 @@ export function parseEvidence(text) {
   // UNIDENTIFIED reading, which cannot pair and is disclosed as such.
   const byRun = new Map();
   const closedSeqRuns = new Set();
+  // A RUN IS CLOSED BY ITS MARKER, AND CLOSED MEANS CLOSED (#2281 r24).
+  // Counts were checked against the LIVE per-run maps, so a line naming
+  // a run whose listing had already been accepted still landed in it:
+  // `seq t 5 run:A`, the marker declaring one entry, then `seq x 7
+  // run:A` — validated at one, used as two. `digest` never emits a line
+  // for a run after that run's marker, so one that appears has been
+  // added by hand or assembled from elsewhere.
+  const closedRuns = new Set();
+  const namesClosedRun = (id) => {
+    if (!id || !closedRuns.has(id)) return false;
+    conflicts.push(
+      `a line names run ${id} after that run's listing was closed. ` +
+        `Nothing this tool writes does that, so the evidence has been ` +
+        `assembled or edited — and a line accepted after its listing was ` +
+        `counted is a value the count never saw`,
+    );
+    return true;
+  };
   const runOf = (id) => {
     if (!byRun.has(id)) {
       byRun.set(id, { digests: new Map(), shapes: new Map(), seqs: new Map() });
@@ -2132,9 +2150,17 @@ export function parseEvidence(text) {
           continue;
         }
       }
-      if (done[1]) closedSeqRuns.add(done[1]);
+      if (done[1]) {
+        closedSeqRuns.add(done[1]);
+        closedRuns.add(done[1]);
+      }
       seqReadings.push({
-        seqs: bucket ? bucket.seqs : openSeqs,
+        // A SNAPSHOT, taken after the count was validated. With the
+        // closed-run guard above in place no input can reach this — it
+        // is defence in depth against a future path that fills a bucket
+        // without passing the line guard, not a second check, and it is
+        // not independently reachable today.
+        seqs: bucket ? new Map(bucket.seqs) : openSeqs,
         run: done[1] ?? null,
       });
       if (!bucket) openSeqs = new Map();
@@ -2165,7 +2191,9 @@ export function parseEvidence(text) {
     if (tot) {
       const bucket = tot[2] ? runOf(tot[2]) : null;
       const entry = {
-        digests: bucket ? bucket.digests : openDigests,
+        // A SNAPSHOT, not the live map the count was checked against —
+        // same defence in depth as the sequence side below.
+        digests: bucket ? new Map(bucket.digests) : openDigests,
         declared: Number(tot[1]),
         run: tot[2] ?? null,
         shapes: bucket ? bucket.shapes : new Map(),
@@ -2188,6 +2216,7 @@ export function parseEvidence(text) {
         line,
       );
     if (shp) {
+      if (namesClosedRun(shp[3])) continue;
       mentioned.add(shp[1]);
       // A SHAPE BELONGS TO THE RUN IT NAMES (#2281 r19, replacing the
       // positional binding of r16).
@@ -2223,6 +2252,7 @@ export function parseEvidence(text) {
         line,
       );
     if (seq) {
+      if (namesClosedRun(seq[3])) continue;
       mentioned.add(seq[1]);
       // EXACTLY, or not at all (#2281 r11) — the same rule the manifest
       // reader holds to. A mark this file cannot tell apart from its
@@ -2257,6 +2287,7 @@ export function parseEvidence(text) {
         line,
       );
     if (dig) {
+      if (namesClosedRun(dig[3])) continue;
       mentioned.add(dig[1]);
       if (dig[3]) runOf(dig[3]).digests.set(dig[1], dig[2]);
       else openDigests.set(dig[1], dig[2]);
@@ -4284,13 +4315,19 @@ async function main() {
           `is inside this baseline, indistinguishable from what the ` +
           `mirror saw, and no later reconciliation can report it. Present ` +
           `stillness does not substantiate past equality; only evidence ` +
-          `recorded AT the mirror does — its digests and row counts, ` +
-          `compared with what this reading finds.\n\n` +
+          `recorded AT the mirror does — its per-table digests AND its ` +
+          `sequence high-water marks, compared with what this reading ` +
+          `finds. Row counts are not that evidence: an AUTOINCREMENT row ` +
+          `inserted and deleted again leaves every count and every digest ` +
+          `identical while the mark has moved, which is the case the ` +
+          `marks exist for.\n\n` +
           `If you have that evidence, name it. If you do not, say so ` +
-          `plainly — a baseline that admits an uncovered interval is ` +
-          `usable with care, and one that hides it is not.\n\n` +
-          `  --stands-for "archive at the 19:56 mirror; digests at ` +
-          `19:40/19:51/19:57 identical, 43 tables / 1384 rows"\n` +
+          `plainly. An uncovered baseline is still useful for finding NEW ` +
+          `differences — what it must NEVER do is license the rollback's ` +
+          `reverse mirror, and one that hides its uncovered interval ` +
+          `invites exactly that.\n\n` +
+          `  --stands-for "archive at the 19:56 mirror; digests and ` +
+          `seq-listings at 19:40/19:51/19:57 identical, 43 tables"\n` +
           `  --stands-for "archive as of this reading only; the interval ` +
           `since the mirror is NOT covered"\n\n${USAGE}`,
       );

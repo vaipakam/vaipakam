@@ -3128,6 +3128,31 @@ describe("a table set that changed is evidence too", () => {
     expect(e.readings.unidentified).toBe(2);
   });
 
+  // #2281 r24 — counts were checked against the LIVE per-run maps, so a
+  // line naming a run whose listing had already been accepted still
+  // landed in it: validated at one entry, used as two.
+  it("refuses a line that names a run after its listing closed", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d} run:aaaaa1`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa1`,
+        "seq t 5 run:aaaaa1",
+        "seq-listing complete run:aaaaa1 (1 entries)",
+        // added afterwards — `digest` never emits this
+        "seq x 7 run:aaaaa1",
+      ].join("\n"),
+    );
+    expect(
+      e.conflicts.some((c) =>
+        c.includes("after that run's listing was closed"),
+      ),
+    ).toBe(true);
+    // and the accepted reading is the one the count was checked against
+    expect(e.seqs.get("t")).toBe(5);
+    expect(e.seqs.has("x")).toBe(false);
+  });
+
   it("reads a database with no tables as a reading, not as silence", () => {
     // `digest` over a source carrying no application tables prints
     // exactly this. Both value maps come back empty, which is why the
