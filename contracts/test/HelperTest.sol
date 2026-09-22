@@ -100,7 +100,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](220); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](221); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -507,6 +507,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setPacketDayListRaw.selector;
         selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.resetTransportDayListRaw.selector; // 3b-ii-A r8: a day as it was before the list
+        selectors[n++] = TestMutatorFacet.classifyPacketPreGateRaw.selector; // 3b-ii-A r9: a pre-gate classification
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed

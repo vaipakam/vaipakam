@@ -72,11 +72,13 @@ caps — holds after every draw, and a delivery's attested fresh cap is
 netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
 within that component's remaining cap; where the split arrives after
 draws, the legs already drawn are re-typed so the caps hold, the epoch's
-total unchanged. A deferred settlement's cursor move is progress the
+total unchanged, each cap read net of the classification the delivery
+already carried. A deferred settlement's cursor move is progress the
 claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
-the claim did. A day's reported coverage counts only what its epochs can
+the claim did, and the preview simulates the cursor advance a side's
+successful draw performs so its later sides read what the claim's would. A day's reported coverage counts only what its epochs can
 pay through at least one leg, and an epoch whose attested split leaves no
 room under either cap is passed by the day's cursor as exhausted even
 though a residual unit remains, so it cannot hold a window slot forever.
@@ -97,10 +99,15 @@ no epoch is ever invisible —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
-**fewest days first**, the oldest arrival on ties. Each leg is served
-first from the epochs least able to serve the other leg, so a flexible
-epoch is not spent on a leg a constrained one could have paid, and
-coverage one leg's cap rejects is offered to the other leg; an attested
+**fewest days first**, the oldest arrival on ties; the order is a
+property of the epochs in the window, never of who indexed them or how
+they were read. Each leg is served first from the capacity that could
+serve only it, and the rest of each epoch's balance — what either leg
+may take — then pays the residual asks, so the two legs are paid the
+most any assignment could pay them, and coverage one leg's cap rejects
+is offered to the other leg; a day indexed before the ordered list
+existed and wider than one window defers, drawing nothing, until enough
+of its members are exhausted or the catch-up has linked it; an attested
 epoch pays each leg only within that component's recorded cap, and the
 one unit a scaling residual can leave outside both caps is never drawn
 once the split is known — drawn before it was, it is recorded beyond

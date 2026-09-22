@@ -8,6 +8,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
@@ -1053,6 +1054,146 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (bytes32[] memory stray, , bytes32 next4) = _epoch().getTransportDayBatchesFrom(1, keccak256("elsewhere"), 10);
         assertEq(stray.length, 0, "a node outside the order pages nothing");
         assertEq(next4, bytes32(0));
+    }
+
+    // ─── round 9: a wide pre-list day; the exact split; caps net of classification; the preview's prune ──
+
+    /// @dev A pre-list day wider than one window defers rather than read a
+    ///      window of its array (Codex #2276 r9 P1): 65 live members, the
+    ///      list cleared — coverage reports the cap hit and nothing; the claim
+    ///      defers; the link, page by page, ends it. Never linked partway.
+    function test_AWidePreListDay_DefersUntilLinked() public {
+        _scene(NEED);
+        for (uint256 i; i < 65; ++i) {
+            _epochOf(1e18, _one(1), 100 + i, keccak256(abi.encode("wide", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        _mut().resetTransportDayListRaw(1);
+        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "a window of an unordered array is not read");
+        assertTrue(capHit, "the day is wider than one window");
+        assertEq(_preview(), 0, "deferred, nothing drawn");
+        // Nothing paid and no cursor moved: the empty claim reverts as ever.
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+        (uint256 linked, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        assertEq(linked, 32);
+        assertEq(_preview(), 0, "still deferred: the list is not whole");
+        _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (linked, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        assertEq(linked, 65, "the list is whole");
+        (avail, capHit) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 64e18, "the oldest window of the order");
+        assertTrue(capHit);
+        assertEq(_claim(), NEED, "and the claim pays from it");
+    }
+
+    /// @dev The other way out of a wide pre-list day (Codex #2276 r9 P1): its
+    ///      array cursor passes exhausted members. One husk then 64 live
+    ///      members — the deferred claim's own prune passes the husk, the
+    ///      remaining 64 fit one window, and the array serves the next claim
+    ///      by the same rule the list would; the day was never linked.
+    function test_AWidePreListDay_NarrowsByItsArrayCursor() public {
+        _scene(NEED);
+        bytes32 husk = _epochOf(1, _one(1), 99, keccak256("husk"));
+        _mut().parkTransportBatchRaw(husk);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        for (uint256 i; i < 64; ++i) {
+            _epochOf(1e18, _one(1), 100 + i, keccak256(abi.encode("live", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        _mut().resetTransportDayListRaw(1);
+        assertEq(_claim(), 0, "65 members from the array cursor: deferred");
+        assertEq(_cursor(1), 1, "the deferral's prune passed the husk");
+        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 64e18, "64 remain: the array holds every one");
+        assertFalse(capHit);
+        assertEq(_claim(), NEED, "served from the array");
+        (uint256 linked, ) = _epoch().getTransportDayIndexLinked(1);
+        assertEq(linked, 0, "never linked");
+    }
+
+    /// @dev The split pays the most either leg can be paid (Codex #2276 r9
+    ///      P1), on Codex's shape: an older unattested one-wei epoch (wholly
+    ///      flexible) ahead of an attested two-wei epoch with one wei of room
+    ///      per leg (wholly exclusive); asked 1F/2R, the exclusive epoch pays
+    ///      1F and 1R and the flexible one the last 1R — 1F/2R, where ordering
+    ///      by raw room paid 1F/1R.
+    function test_TheSplit_TakesExclusiveCapacityFirst() public {
+        _epochOf(1, _one(1), 31, keccak256("flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        _epochOf(2, _one(1), 32, keccak256("exclusive"));
+        _attest(32, 1, 1);
+        (uint256 tf, uint256 tr, ) = _alloc(1, 1, 2, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 1, "fresh from the exclusive epoch");
+        assertEq(tr, 2, "recycled from both");
+    }
+
+    /// @dev A late attestation reconciles against each cap NET of the
+    ///      classification the packet already carries (Codex #2276 r9 P1), on
+    ///      Codex's shape: a packet classified for half its value before the
+    ///      batch gate existed, admitted for the rest, drawn recycled while
+    ///      unattested, then attested 1:1 — the recycled cap is spent by the
+    ///      classification, so the leg is retyped fresh; the identity holds.
+    function test_ALateAttestation_ReconcilesNetOfPriorClassification() public {
+        _twoLegDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
+        assertGt(needR, 0, "fixture: a recycled leg");
+        _liveOf(needF, _one(1), 1, keccak256("live"));
+        // A packet that landed before the ledger: delivered, its epoch
+        // removed, half of it classified recycled as a pre-gate classification
+        // did, then admitted for what it still holds.
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 2 * needR, d1, CHAIN_BASE, 2, REMITTER, 0, 0, keccak256("pre"), false);
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre")));
+        _mut().unadmitTransportBatchRaw(h);
+        _mut().classifyPacketPreGateRaw(h, 0, needR);
+        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
+        _epoch().materializeTransportBatchPage(h, d1);
+        assertEq(_balance(h), needR, "fixture: the unclassified half is the epoch");
+        _mut().setOutstandingCommitRaw(0, needR);
+        assertEq(_claim(), NEED);
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lr, needR, "drawn recycled, nothing known to bound it");
+        assertEq(lf, 0);
+        _attest(2, 1, 1); // caps needR fresh / needR recycled on 2 * needR
+        (lf, lr) = _legs(h);
+        assertEq(lr, 0, "the recycled cap was spent by the classification");
+        assertEq(lf, needR, "so the leg is retyped fresh, within the fresh cap");
+        assertEq(_balance(h) + lf + lr + _beyond(h), needR, "the epoch's identity holds");
+    }
+
+    /// @dev The preview simulates the prune a successful draw performs, across
+    ///      sides (Codex #2276 r9 P2): 64 epochs that one side's need
+    ///      exhausts exactly, a funded 65th beyond the window, the other side
+    ///      on the same day. The claim's first side drains the 64 and prunes,
+    ///      its second side reads the 65th; the preview says the same.
+    function test_ThePreview_SimulatesTheDrawsPruneAcrossSides() public {
+        _mut().setDayPoolStampRaw(1, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        for (uint256 i; i < 64; ++i) {
+            _epochOf(NEED / 64, _one(1), 400 + i, keccak256(abi.encode("slice", i)));
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(NEED, _one(1), 500, keccak256("funded"));
+        assertEq(_preview(), 2 * NEED, "the preview reads the 65th for the second side");
+        assertEq(_claim(), 2 * NEED, "as the claim does");
+        assertEq(_cursor(1), 65, "every epoch drained and passed");
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

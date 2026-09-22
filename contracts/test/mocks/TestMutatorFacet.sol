@@ -2451,6 +2451,14 @@ contract TestMutatorFacet {
         delete s.transportDayCursor[d];
     }
 
+    /// @notice 3b-ii-A test-only (Codex #2276 r9 P1) — classify a packet the
+    ///         way a classification ran BEFORE the batch gate existed: the
+    ///         same take, no gate. Stands a packet in the state an in-place
+    ///         refresh can find it in: classified value recorded, no epoch yet.
+    function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
+        LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
+    }
+
     function parkTransportBatchRaw(bytes32 batchId) external returns (uint256) {
         return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }

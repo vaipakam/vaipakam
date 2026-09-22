@@ -2776,6 +2776,32 @@ library LibInteractionRewards {
     /// @dev 3b-ii-A — a dry-run day's planned epoch draws join the run's
     ///      overlay, so the next day is priced against balances net of them
     ///      (Codex #2276 r1 P2). Bounded by the scan window per day.
+    /// @dev Record in the dry run's overlay that this run settled day `d`
+    ///      (Codex #2276 r9 P2), under the key the plan reads; once per day.
+    function _markDaySettled(DryRunState memory dry, uint256 d) private pure {
+        bytes32 key = LibRewardCustody.transportDaySettledKey(d);
+        bytes32[] memory ids = dry.ovIds;
+        uint256 n = ids.length;
+        for (uint256 j; j < n; ) {
+            if (ids[j] == key) return;
+            unchecked { ++j; }
+        }
+        bytes32[] memory nIds = new bytes32[](n + 1);
+        uint256[] memory nF = new uint256[](n + 1);
+        uint256[] memory nR = new uint256[](n + 1);
+        for (uint256 j; j < n; ) {
+            nIds[j] = ids[j];
+            nF[j] = dry.ovFresh[j];
+            nR[j] = dry.ovRecycled[j];
+            unchecked { ++j; }
+        }
+        nIds[n] = key;
+        nF[n] = 1;
+        dry.ovIds = nIds;
+        dry.ovFresh = nF;
+        dry.ovRecycled = nR;
+    }
+
     function _foldOverlay(DryRunState memory dry, DayCharge memory charge) private pure {
         uint256 n = charge.planIds.length;
         if (n == 0) return;
@@ -3022,6 +3048,10 @@ library LibInteractionRewards {
             acc.recycled += charge.needRecycled;
             _spendDomain(pool, charge);
             _foldOverlay(dry, charge);
+            // The live draw on a listed day prunes its cursor before the next
+            // side reads it (Codex #2276 r9 P2): record the day as settled so
+            // the plan passes the same leading exhausted epochs.
+            if (s.transportBatchesByDay[d].length != 0) _markDaySettled(dry, d);
             _dryFoldDay(s, dry.loanSide, set, slices);
             // Advance the simulated cursors of the set members.
             for (uint256 i; i < work.length; ) {
