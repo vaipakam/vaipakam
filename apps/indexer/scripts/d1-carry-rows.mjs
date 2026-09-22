@@ -2065,6 +2065,7 @@ export function parseEvidence(text) {
   // there is nothing else to go on — and they can only ever form an
   // UNIDENTIFIED reading, which cannot pair and is disclosed as such.
   const byRun = new Map();
+  const closedSeqRuns = new Set();
   const runOf = (id) => {
     if (!byRun.has(id)) {
       byRun.set(id, { digests: new Map(), shapes: new Map(), seqs: new Map() });
@@ -2098,6 +2099,7 @@ export function parseEvidence(text) {
       );
     if (done) {
       const bucket = done[1] ? runOf(done[1]) : null;
+      if (done[1]) closedSeqRuns.add(done[1]);
       seqReadings.push({
         seqs: bucket ? bucket.seqs : openSeqs,
         run: done[1] ?? null,
@@ -2231,6 +2233,22 @@ export function parseEvidence(text) {
   // Whatever is still open was never closed, so it names tables — which
   // `mentioned` already holds — and says nothing by omission.
   if (openSeqs.size > 0) unterminatedSeqs.push(openSeqs);
+  // AND A NAMED BUCKET WHOSE MARKER NEVER ARRIVED (#2281 r21). Moving
+  // sequence lines into per-run buckets made an unclosed named run
+  // vanish: its `seq` lines were filed under its name, no reading was
+  // ever created for it, and only the ANONYMOUS leftovers were kept as
+  // partial observations. A line proving an allocation was therefore
+  // dropped from the comparison entirely — evidence deleted by being
+  // filed, which is worse than evidence never read.
+  //
+  // An unclosed named bucket is an unterminated block like any other:
+  // it contributes the values it states and no zeros, because nothing
+  // says its silences are complete.
+  for (const [id, bucket] of byRun) {
+    if (bucket.seqs.size > 0 && !closedSeqRuns.has(id)) {
+      unterminatedSeqs.push(bucket.seqs);
+    }
+  }
 
   // A declared count that does not match the lines present means the
   // block was pasted in part. It is then not a reading of the table set

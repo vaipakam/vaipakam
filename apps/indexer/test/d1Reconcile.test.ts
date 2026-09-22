@@ -3020,6 +3020,29 @@ describe("a table set that changed is evidence too", () => {
     expect([...e.shapes]).toEqual([]);
   });
 
+  // #2281 r21 — per-run bucketing made an unclosed NAMED run vanish:
+  // its lines were filed under its name, no reading was created for it,
+  // and only anonymous leftovers survived as partial observations.
+  // Evidence deleted by being filed is worse than evidence never read.
+  it("keeps a named sequence line whose marker never arrived", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d} run:aaaaa1`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa1`,
+        "seq t 5 run:aaaaa1",
+        "seq-listing complete run:aaaaa1",
+        // a later run, cropped before its marker — it still proves an
+        // allocation happened
+        "seq t 6 run:bbbbb2",
+      ].join("\n"),
+    );
+    expect(
+      e.conflicts.some((c) => c.includes("two different sequence readings")),
+    ).toBe(true);
+    expect(e.seqs.has("t")).toBe(false);
+  });
+
   it("reads a database with no tables as a reading, not as silence", () => {
     // `digest` over a source carrying no application tables prints
     // exactly this. Both value maps come back empty, which is why the
