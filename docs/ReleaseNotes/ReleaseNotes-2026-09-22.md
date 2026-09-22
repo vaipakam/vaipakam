@@ -1,6 +1,12 @@
 # Release Notes — 2026-09-22
 
-One merge, finishing the database move the previous day's notes describe.
+One behaviour-changing merge, finishing the database move the previous day's
+notes describe. Four other merges landed the same day and are not written up
+below, because all four changed documentation only and nothing a user or an
+operator can observe: PR #2271 and PR #2283 on what an inline-assembly
+annotation costs in bytecode and why a clean compile does not prove a contract
+still deploys, PR #2274 scouting the next step of the reward-transport
+programme, and PR #2285 on the review cadence.
 
 The move leaves the old database in place and keeps comparing it against the
 new one, because work suspended across the move can still commit afterwards.
@@ -11,7 +17,7 @@ require writing to a database, which after the move is the live one. This
 release makes it obtainable by reading alone, and makes the record state what
 it does and does not stand for rather than leaving either to be assumed.
 
-# The record a database move is checked against can be taken again
+## Thread — the record a database move is checked against can be taken again (PR #2282)
 
 Moving the platform's off-chain database leaves one obligation behind: the old
 database is kept, and it keeps being compared against the new one, because work

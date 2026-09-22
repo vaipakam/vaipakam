@@ -1,6 +1,8 @@
 # Release Notes — 2026-09-21
 
-Four merges today, in two unrelated strands.
+Four behaviour-changing merges today, in two unrelated strands. Two further
+merges landed the same day and are not written up below: PR #2265 and PR #2273
+were release notes themselves.
 
 **The off-chain database moved.** The shared store the indexer, keeper and
 agent all read was carried from one database to another, and the two sections
@@ -26,7 +28,7 @@ inconsistency in the deploy tooling, where four scripts built a per-chain
 artifact path by hand instead of through the redirectable root the rest of the
 tooling follows.
 
-### Reward transport epochs — the epoch ledger (#1566 PR 3b-i)
+## Thread — reward transport epochs, the epoch ledger (#1566 PR 3b-i, PR #2232)
 
 A reward budget that reaches a mirror chain over one of the older wires
 arrives as a single figure covering many days, with no statement of how much
@@ -407,7 +409,7 @@ Worth recording because the comment was load-bearing and wrong: the note on the 
 Closes #2261.
 <!-- assembled-fragment: 2261-artifact-path-rooting.md sha256=9ed25ce27c4e2f02feebdeb170323cd55393020c254542e619ffa3820ccdf43b -->
 
-# The writers are held while the off-chain database is moved
+## Thread — the writers are held while the off-chain database is moved (PR #2280)
 
 The platform's off-chain database is being moved to its successor. For the
 length of that move the three services that write to it — the indexer, the
@@ -443,7 +445,7 @@ finish; the operator runbook says what to do, and restoring the previous
 configuration is explicitly not it.
 <!-- assembled-fragment: 2214-cutover-barrier.md sha256=15180683598d1fd3b65ec207077dd62d27c313830a3813ff738aa47f2ce811d8 -->
 
-## Thread — the shared off-chain database moved, and the move was made all at once or not at all (PR #NNNN)
+## Thread — the shared off-chain database moved, and the move was made all at once or not at all (PR #2267)
 
 The platform's three background services and its nightly backup all read one
 shared database. That database has been replaced with a different one. Nothing
@@ -633,9 +635,21 @@ Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and
 how long such work can run has never been measured, so a record can still
 arrive after both. Keeping the old database makes such a record
-*recoverable*; only continuing to compare makes one *found*. The comparison
-has a named owner and every run is written down, clean ones included, because
-the value of that record is that a gap in it is visible.
+*recoverable*; only continuing to compare makes one *found*. So the runbook
+gives the comparison a cadence and a duty — weekly, by whoever holds the
+cutover runbook, from the switch until the old database is deleted — and every
+run is written down, clean ones included, because the value of that record is
+that a gap in it is visible.
+
+**What the runbook does not give it is a name.** "Whoever holds the runbook"
+is a duty attached to possession, not a person, a team or a rotation, so there
+is nobody the missed week is missed *by*. That matters more here than it would
+elsewhere: this comparison is the only thing that finds a late write, and its
+failure mode is silence — the run simply stops happening, the retirement
+checklist still reads as satisfiable, and the gap surfaces when the old
+database is deleted and takes the record with it. Naming an accountable party
+is an owner decision and is tracked as #2287; until it is made, this is a
+scheduled check with no one on the hook for it.
 
 **The comparison holds up once the two databases stop being the same shape.**
 The new database keeps taking migrations; the old one never will. So a column

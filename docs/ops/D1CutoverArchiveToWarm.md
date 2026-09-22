@@ -2169,6 +2169,16 @@ Order matters here, and this plan does not own all of it:
       the run log — including the clean ones, because the value of the
       record is that a gap in it is visible.
 
+      **"Whoever holds the runbook" is a duty, not an owner, and that is
+      an open gap** (#2287). It names no person, team or rotation, so a
+      week that is skipped is skipped by nobody in particular. This is the
+      only check that FINDS a late write — every other box below is gated
+      on it being current — and it fails silently: the run stops
+      happening, this list still reads as satisfiable, and the gap
+      surfaces when the predecessor is deleted and takes the record with
+      it. Assigning an accountable party is an owner decision; until it is
+      made, treat this box as unowned rather than as covered.
+
       **This is the prerequisite that makes the rest of the list safe, and
       it was missing** (#2267 r15). The whole reconciliation procedure
       rests on archive being retained so a late write stays recoverable;
