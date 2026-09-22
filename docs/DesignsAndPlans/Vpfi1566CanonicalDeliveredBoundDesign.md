@@ -7762,7 +7762,8 @@ closure 2's cutover PR.**
 > under-specified; on r2, which found the record's lifecycle
 > unaccounted between pages and its seam ungated; and on r3, which found
 > the domain resolving before it was whole and staged legs paid across a
-> revised cap).** A1 shipped the draws with every day settled inside
+> revised cap; and on r4, which found the domain without a lifecycle of
+> its own).** A1 shipped the draws with every day settled inside
 > the call that priced it. A2 adds what §5c's machinery calls staging: a
 > day that cannot be settled in one call keeps what it drew,
 > obligation-bound and UNPAID, until the call that can. This note opens
@@ -7853,11 +7854,24 @@ closure 2's cutover PR.**
 >    preparation cursor day by day, the settlement cursor stays where it
 >    was, and the resolution pass walks the staged days from the
 >    settlement cursor to the committed extent, persisting each as it
->    resolves. The domain resolves as a UNIT (r3 P1): no record in the
->    extent begins resolution until every day in the extent is covered
->    — and, once 3c lands, until its challenge window has closed — so an
->    early day's scarce allocation is never paid while a later day is
->    still short; a domain with one short day stays staged whole. The
+>    resolves. The domain resolves as a UNIT (r3 P1), through a
+>    lifecycle of its own (r4 P1): STAGING, until every day in the
+>    extent has its transport legs staged; then, once 3c lands, its
+>    challenge window; then RESERVING — a domain reservation cursor
+>    walks the extent's days, at most a bounded number per call, moving
+>    each day's residual legs from the live sources into the resolving
+>    row, with no payout anywhere until the cursor reaches the extent
+>    (r4 P1: a per-day coverage test would let two days count the same
+>    ten tokens of live balance, the first reserving and paying it and
+>    the second failing after the first's scarce allocation had become
+>    irreversible); then RESOLVING, in which each record runs its batch
+>    pages and pays on its last page, safe because every day's funding
+>    is now held; then CLEARED. A domain whose reservation cannot
+>    complete — a day whose live sources cannot bear the debit — stops
+>    in RESERVING with what it holds, subject to the domain deadline and
+>    teardown below, and pays nothing. So an early day's scarce
+>    allocation is never paid while a later day is still short, and a
+>    domain with one short day stays whole. The
 >    committed extent is a SNAPSHOT, not a comparison against the
 >    claimant's changing set (r3 P1): an entry that accrues after the
 >    staging pass begins is simply outside it and queues for the next
@@ -7972,7 +7986,20 @@ closure 2's cutover PR.**
 >    against its batches into the same record shape keyed by the slice's
 >    identity; the slice's settlement then consumes its staged coverage
 >    before schedule or era funding under every role, exactly as row 13
->    requires of prepared coverage. The alternative is to rescope: name
+>    requires of prepared coverage. The slice is a DOMAIN in the sense
+>    of question 3 (r4 P1): it is priced and persisted whole-window with
+>    no per-day loop, so its day records cannot be paid one at a time
+>    without leaving its processed marker behind them — a retry would
+>    price already-paid value again — and cannot be consumed all at
+>    once without the unbounded walk pagination removed. It therefore
+>    carries the domain lifecycle: a slice-level record with the
+>    preparation cursor over the window, a committed extent (the window
+>    and the entry), the reserving phase, a CONSUMPTION cursor for its
+>    resolution and aggregate four-figure totals accumulated as each day
+>    record resolves into the resolving row; the slice's whole-window
+>    persistence and payout fire exactly once, from the aggregates, when
+>    the consumption cursor reaches the extent, and the processed marker
+>    moves only then. The alternative is to rescope: name
 >    the population and record that it waits on B's release, with the
 >    fund-liveness consequence that a well-backed legacy obligation on a
 >    mirror stays unpaid until then.
@@ -8095,7 +8122,12 @@ closure 2's cutover PR.**
 >   move the residual legs from their live sources into the resolving
 >   row atomically — headroom debited, bucket debited, era balance
 >   debited — and a day whose live sources cannot bear that debit at
->   that moment is not covered and does not begin. Between pages the
+>   that moment is not covered and does not begin. That is the rule for
+>   a STANDALONE record — a one-chunk day, a sweep's day; a record
+>   inside a committed domain reserves nothing on its own and begins its
+>   batch pages only when the domain's RESERVING phase has completed for
+>   every day (question 3), since a per-day reservation would let two
+>   days of one domain claim the same live balance (r4 P1). Between pages the
 >   value is neither in its source row nor with a recipient, so it has
 >   a row of its own (r2 P1): each page moves the batch's staged
 >   components out of the packet's `Unclassified` row into an explicit
@@ -8144,7 +8176,18 @@ closure 2's cutover PR.**
 >   is reached) plus the grace, upward-only by the same rule, and every
 >   record in the extent expires with the domain, not before it. Past
 >   it anyone begins the unwind; a voluntary cancellation begins the
->   same unwind.
+>   same unwind. A domain's teardown is itself resumable and has a
+>   bounded terminal condition (r4 P1): a domain UNWIND cursor walks the
+>   extent's days at most a bounded number per call, each day's record
+>   running its own paginated unwind and its reserved residual returning
+>   to the live sources; the domain keeps a LIVE-RECORD count,
+>   incremented when a day's record is opened and decremented when a
+>   record has fully unwound or fully resolved, and the claimant-side
+>   committed extent is cleared exactly when that count reaches zero —
+>   an O(1) test, no rescan. Until it does, no new domain can be
+>   committed for that claimant-side, so a new domain never overlaps an
+>   old one's references, and a wide cancelled domain cannot block later
+>   claims for longer than its own bounded teardown.
 >   The priority window after ANY non-settlement release is keyed to the
 >   BATCH: the restored coverage is directly consumable by any competing
 >   obligation, and by a competitor too large for one scan through
@@ -8182,8 +8225,10 @@ closure 2's cutover PR.**
 >   bounded and question 10's static surface possible.
 > - **The legacy slice.** As question 11: a second draw path, preparation
 >   shaped, paginated over the slice's window, staging into records keyed
->   by the slice's identity, consumed by the slice's settlement before
->   schedule or era funding under every role.
+>   by the slice's identity, carried as a domain with a consumption
+>   cursor and aggregate totals, and paid exactly once by the slice's
+>   settlement — before schedule or era funding under every role — when
+>   its consumption cursor reaches its extent.
 >
 > *The host.* A1 left `RewardClaimFacet` at 61 bytes of EIP-170 headroom,
 > `RewardHorizonSweepFacet` at 223 and `InteractionRewardsFacet` at 868:
@@ -8219,7 +8264,9 @@ closure 2's cutover PR.**
 > obligation-day key, each with its commitment, four staged figures,
 > four resolved-not-paid figures, batch list with provenance,
 > continuation point, resolution cursor, opening time and deadline; the
-> per-claimant-side domain preparation cursor and committed extent;
+> per-claimant-side DOMAIN record — its phase, committed extent,
+> preparation cursor, reservation cursor, consumption cursor, unwind
+> cursor, live-record count and aggregate four-figure totals;
 > per-batch reference counts; per-batch cooldown windows; the priority
 > used-pair marks and per-batch waiting queues with their head cursors;
 > the per-domain deadline; the per-day late chain (head, tail and a
@@ -8253,9 +8300,14 @@ closure 2's cutover PR.**
 > mutating seam reverts for any caller but the Diamond; a multi-chunk
 > claim's preparation cursor advances while its settlement cursor
 > stands, an entry accrued after commitment queues for the next domain,
-> and no record in the extent resolves while any day in it is short;
-> resolution's first page reserves the residual legs from the live
-> sources and a day they cannot bear does not begin; a late epoch
+> and no record in the extent begins its batch pages until every day's
+> transport is staged and every day's residual is reserved; two days of
+> one domain cannot count the same live balance, because the reserving
+> phase debits each; a standalone record's first page reserves the
+> residual legs from the live sources and a day they cannot bear does
+> not begin; a cancelled wide domain tears down across calls and clears
+> its extent exactly when its last record is gone, and no new domain
+> commits before then; a late epoch
 > inserted ahead of a continuation point is found by the resume; a
 > one-page day inside a many-chunk domain does not expire before the
 > domain; an unwind restores exactly what was staged and nothing a
@@ -8271,7 +8323,9 @@ closure 2's cutover PR.**
 > two-obligation alternation cannot starve a batch; a multi-chunk claim
 > stages every chunk and pays nothing until the last is priced; the
 > legacy path stages a listed pre-`D*` day and the slice consumes it
-> before schedule funding; the preview equals the settlement including
+> before schedule funding, paying exactly once when its consumption
+> cursor reaches its extent, so a retry before that re-prices nothing
+> paid; the preview equals the settlement including
 > the staged terms — by construction for the CALL sites, and the static
 > read never exceeds staged coverage plus the one cursor batch; the split's restated tie
 > attains the cut bound on the round-17 shape.
