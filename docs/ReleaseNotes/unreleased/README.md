@@ -31,14 +31,18 @@ PRs landing the same day never append-conflict.
    **What the refusal does and does not cover**, so it is not relied on for
    more than it does:
 
-   - It reads the fragment's **opening line only**, and recognises a heading
-     there only in `#` form. A title underlined with `=` or `-` instead, or a
-     heading further down the file, is not examined — placeholder and all.
+   - It reads **one line**: the fragment's first line of content. YAML front
+     matter delimited by `---` at column zero, and any blank lines, are
+     skipped first, so a heading directly under front matter *is* examined —
+     placeholder and all. Nothing below that line is. A heading further down
+     the file, or a title underlined with `=` or `-` rather than prefixed
+     with `#`, is not examined.
    - A heading with **no PR reference at all** is not refused. That is not an
-     oversight: of the 758 fragments written so far, 457 carry none, and 69%
-     of published section headings carry none. The convention is the
-     template's, not a rule the corpus follows, so refusing its absence
-     would stop nine fragments in ten.
+     oversight: of the 758 fragments written so far, **457 carry none** (60%),
+     and 69% of published section headings carry none. The convention is the
+     template's, not a rule the corpus follows, so refusing its absence would
+     stop six fragments in ten *on top of* the three in ten already refused
+     for carrying a placeholder — nine in ten between them.
 
    What is refused is narrow and worth stating exactly: a reference that is
    **present and not a number**. That is the failure the template actually

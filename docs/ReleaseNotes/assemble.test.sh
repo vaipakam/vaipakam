@@ -4291,8 +4291,15 @@ check "nothing was consumed"        "$(pending "$W")"                         "3
 case_start "T217c: the check allows what it deliberately does not police"
 W="$ROOT/t217c"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
-# No PR reference at all: allowed. Requiring one fails every fixture in this
-# suite, which builds bare `## <stem>` headings in ~70 places.
+# No PR reference at all: allowed — because 457 of the 758 fragments ever
+# written carry none, and 69% of published section headings carry none. The
+# template's `(PR #<n>)` is a convention, not a rule the corpus follows.
+#
+# NOT because requiring one would need ~70 fixtures here conformed. That was
+# the reason this comment gave, a review round rejected it, and it is the
+# right rejection: test churn is never a reason to weaken production
+# behaviour. Left recorded rather than silently swapped, because it is the
+# argument a future maintainer is most likely to reach for again.
 printf '## a heading with no reference at all\n' > "$u/0003-noref.md"
 # No heading at all: allowed. T10's fixture is a bare line of prose because it
 # is testing rename pairing, not headings.
@@ -4354,7 +4361,7 @@ check "the recovered fragment SURVIVES" "$([ -f "$u/0001-a.md" ] && echo yes || 
 check "nothing was consumed at all"   "$(pending "$W")"               "2"
 
 # ── The PR reference is not always first in the parenthetical (#2290 r2) ────
-# Eight published headings put it last — `(T-090 v1.2 #428, PR #<n>)`. Anchored
+# Nine published headings put it last — `(T-090 v1.2 #428, PR #<n>)`. Anchored
 # on `\(PR #`, the check found nothing there, so a placeholder in that position
 # read as "no reference at all" and took the deliberate allowance. A check that
 # misses a shape does not merely fail to refuse it; it PERMITS it via the
