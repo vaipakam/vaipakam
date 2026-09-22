@@ -710,24 +710,31 @@ library Deployments {
             // `DeployDiamond.runWith` — a function this block is not in and
             // does not call. Verified by changing nothing else (#2253 r6).
             //
-            // viaIR rescues a deep frame with a stack-to-memory mover, and solc
-            // emits that mover only behind a `memoryguard`, which it withholds
-            // from the WHOLE contract if any inline-assembly block is
-            // unannotated. So one unannotated block here un-rescues every frame
-            // that inlines this library, and the error names the frame that
-            // overflowed rather than the block that caused it. solc does say so,
-            // on the last line of its own output: "No memoryguard was present."
-            // Five revisions of this PR moved a call around chasing the frame
-            // and never read that line.
+            // WHY the guard matters here, and nothing beyond that: solc
+            // withholds the `memoryguard` — and with it the stack-to-memory
+            // mover — from the WHOLE contract over a single unannotated block
+            // it cannot treat as safe. This block is inlined into every caller
+            // of this library, `runWith` among them, so leaving it bare
+            // un-rescues frames nowhere near it. solc names the overflowing
+            // frame, not the cause; the real diagnosis is the last line of its
+            // output, "No memoryguard was present."
             //
-            // The annotation is true, not merely convenient — and the reason
-            // is the ALLOCATION BOUND, not read-only-ness. `("memory-safe")`
-            // does not license arbitrary reads: once the mover is enabled it
-            // spills stack slots into memory, so a block reading outside
-            // Solidity's own allocations can observe those spills. What makes
-            // this block safe is that `err` is an allocated `bytes memory` the
-            // block already holds, and both `add(err, 0x20)` and `mload(err)`
-            // stay inside it (#2253 r7).
+            // WHY THIS BLOCK QUALIFIES: `err` is an allocated `bytes memory`
+            // the block already holds, and both `add(err, 0x20)` and
+            // `mload(err)` stay inside it (#2253 r7). Read-only-ness is NOT
+            // what qualifies it.
+            //
+            // EVERYTHING ELSE LIVES IN CLAUDE.md's "1 too deep in the stack"
+            // section — what puts a block in scope, what the exemption is, the
+            // bytecode trade, and what the #2268 measurement does and does not
+            // reach. **Do not restate any of it here.** This comment used to,
+            // and the copies went stale three review rounds running (#2271
+            // r13/r14/r15), each time because a claim was sharpened in
+            // CLAUDE.md and not here. One of those stale copies was a prose
+            // definition of memory-safety that CLAUDE.md had already DELETED
+            // for being the compiler's to give, not this repo's — so the
+            // hazard outlived its own removal. A pointer cannot drift; a
+            // paraphrase can.
             //
             // forge-lint: disable-next-line(unsafe-assembly)
             assembly ("memory-safe") {
