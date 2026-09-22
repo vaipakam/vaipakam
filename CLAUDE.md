@@ -1630,9 +1630,12 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 > no P1 findings; if its code related, then don't go beyond 30 rounds,
 > take a step back and see if you can fix the issue at the root rather
 > than patching them in every path." These caps are written INTO the two
-> bullets below rather than beside them; **10** replaces the 2026-08-07
-> two-round docs rule outright. The **30** it names as the coding loop's
-> outer bound is SUPERSEDED — see the next paragraph.
+> bullets below rather than beside them. **BOTH numbers this directive
+> names are now SUPERSEDED**, by separate later decisions: the docs **10**
+> by **5** (2026-09-22, in the docs bullet below), and the coding **30**
+> by **15** (2026-09-20, in the next paragraph). The quote is kept verbatim
+> because it is the record of what was asked on that date — read the two
+> bullets, not this quote, for the live numbers.
 >
 > **Round 15 — the MANDATORY root scout — user directive 2026-09-20,
 > verbatim:** "if the PR codex finding rounds go beyond 15 rounds, then
@@ -1668,15 +1671,18 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 > was caught short of it. Round 15 is the backstop for a loop that slipped
 > past all of them, not the point at which root-cause thinking begins.
 
-- **Docs-only PRs**: loop to convergence, and **never past round 10**;
-  at round 10 merge if **no P1 finding stands** (user directive
-  2026-09-13). Merge earlier the moment a round converges (zero P1/P2) —
-  most docs PRs still end at round 1 or 2. The 2026-08-07 "merge after 2
-  rounds" wording is SUPERSEDED: two rounds is no longer a gate to stop
-  at, and a docs PR with findings keeps looping up to the cap. (That
-  wording had itself superseded a 2026-07-10 "up to 5 rounds" directive;
-  the history is recorded here only so an operator who remembers an older
-  number knows which one is live.) The cap bounds ROUNDS, not diligence —
+- **Docs-only PRs**: loop to convergence, and **never past round 5**; at
+  round 5 merge if **no P1 finding stands** (user directive 2026-09-22,
+  verbatim: "if the PR is docs only then you may merge it after 5 rounds
+  of codex findings"). Merge earlier the moment a round converges (zero
+  P1/P2) — most docs PRs still end at round 1 or 2, and #2283 ended at 2.
+  **5 supersedes the 10 of 2026-09-13**, which had superseded a 2026-08-07
+  "merge after 2 rounds" gate, which had itself superseded a 2026-07-10
+  "up to 5 rounds" directive. The number has now returned to 5 by a
+  separate decision rather than by reverting one — the history is recorded
+  only so an operator who remembers an older number knows which one is
+  live. Two rounds is still not a gate to stop at: a docs PR with findings
+  keeps looping up to the cap. The cap bounds ROUNDS, not diligence —
   every finding still gets the accept-fix / refute / defer triage gate.
   Skipping Codex entirely remains OK for trivial mechanical edits — say
   so in the thread.
@@ -1725,7 +1731,7 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 - Merge gate: **coding PRs** only after a converged round AND green CI,
   never past round 15, and at round 15 only after the root scout the
   2026-09-20 directive requires, with no P1/P2 standing; **docs-only PRs** after a
-  converged round, or at the round-10
+  converged round, or at the round-5
   cap with no P1 standing, AND green CI. All review
   conversations must be resolved before merge (repo rule) in both cases —
   and on a repo whose ruleset sets `required_review_thread_resolution`,
