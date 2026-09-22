@@ -3076,7 +3076,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
         s[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
-        s[15] = RewardEpochFacet.getTransportDayIndexLinked.selector;
+        s[15] = RewardEpochFacet.getTransportDayIndex.selector;
         s[16] = RewardEpochFacet.epochLinkTransportDayIndex.selector;
     }
 

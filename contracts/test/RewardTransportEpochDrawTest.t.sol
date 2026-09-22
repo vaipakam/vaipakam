@@ -248,15 +248,10 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev The cursor's POSITION in the day's order — the count of leading
-    ///      exhausted epochs. The lens returns the cursor as a node (Codex
-    ///      #2276 r8 P2); its position is found in the order here.
+    ///      exhausted epochs — exact here because every day in this suite is
+    ///      shorter than the hundred nodes the read walks.
     function _cursor(uint256 d) internal view returns (uint256 c) {
-        (bytes32[] memory order, , , bytes32 cur) = _epoch().getTransportDayBatches(d, 0, 100);
-        if (cur == bytes32(0)) return 0;
-        for (uint256 i; i < order.length; ++i) {
-            if (order[i] == cur) return i + 1;
-        }
-        revert("cursor not in the order");
+        (, , , c) = _epoch().getTransportDayBatches(d, 0, 100);
     }
 
     // ─── the claim ──────────────────────────────────────────────────────────
@@ -912,20 +907,20 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _scene(NEED);
         bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("pre"));
         _mut().resetTransportDayListRaw(1);
-        (uint256 linked, uint256 total) = _epoch().getTransportDayIndexLinked(1);
+        (uint256 linked, uint256 total, ) = _epoch().getTransportDayIndex(1);
         assertEq(linked, 0, "fixture: nothing linked");
         assertEq(total, 1, "fixture: one member");
         (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 10e18, "coverage is read from the array");
-        (bytes32[] memory page, , , bytes32 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        (bytes32[] memory page, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(page[0], h, "the lens reads the array");
-        assertEq(cursor, bytes32(0));
+        assertEq(cursor, 0);
         assertEq(_claim(), NEED, "and the claim draws from it");
         (uint256 lf, ) = _legs(h);
         assertEq(lf, NEED);
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         bytes32 h2 = _epochOf(1e18, _one(1), 2, keccak256("post"));
-        (linked, total) = _epoch().getTransportDayIndexLinked(1);
+        (linked, total, ) = _epoch().getTransportDayIndex(1);
         assertEq(linked, 0, "a new member joins the array only");
         assertEq(total, 2);
         (avail, ) = _epoch().getTransportCoverageForDay(1);
@@ -1109,7 +1104,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(avail, 64e18, "64 remain: the array holds every one");
         assertFalse(capHit);
         assertEq(_claim(), NEED, "served from the array");
-        (uint256 linked, ) = _epoch().getTransportDayIndexLinked(1);
+        (uint256 linked, , ) = _epoch().getTransportDayIndex(1);
         assertEq(linked, 0, "never linked");
     }
 
@@ -1194,6 +1189,68 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_preview(), 2 * NEED, "the preview reads the 65th for the second side");
         assertEq(_claim(), 2 * NEED, "as the claim does");
         assertEq(_cursor(1), 65, "every epoch drained and passed");
+    }
+
+    // ─── round 10: the marker follows the live draw's reach; the lens's numeric cursor ──
+
+    /// @dev The preview marks a day settled only where the claim's settlement
+    ///      reaches the epoch draw (Codex #2276 r10 P2): a recycled-only day
+    ///      whose lender entry is forfeited — its recycled slice a release,
+    ///      no epoch leg, no draw call, no prune live — ahead of a payable
+    ///      borrower entry on the same day, behind 64 husks with a funded 65th.
+    ///      The claim's second side rescans the husks and defers; the preview
+    ///      says the same, where a marker on every advanced day let it read
+    ///      the 65th. The deferral's prune then makes the next claim pay.
+    function test_ThePreview_MarksADaySettled_OnlyWhereTheClaimPrunes() public {
+        _mut().setDayPoolStampRaw(1, 0, uint128(2e18)); // a recycled-only day
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true); // both sides
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint256 a = _entry(1, 2);
+        _mut().setRewardEntryForfeitedRaw(a);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
+        assertEq(needF, 0, "fixture: no fresh leg on a recycled-only day");
+        assertGt(needR, 0, "fixture: the borrower's recycled leg");
+        _mut().setOutstandingCommitRaw(0, needR);
+        for (uint256 i; i < 64; ++i) {
+            bytes32 h = _epochOf(1, _one(1), 400 + i, keccak256(abi.encode("husk", i)));
+            _mut().parkTransportBatchRaw(h);
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(needR, _one(1), 500, keccak256("funded"));
+        assertEq(_preview(), 0, "the preview rescans the husks on the second side, as the claim will");
+        assertEq(_claim(), 0, "deferred on the window; the prune is kept");
+        assertEq(_cursor(1), 64, "the husks are passed");
+        assertEq(_claim(), needR, "the next attempt pays the borrower from the 65th");
+    }
+
+    /// @dev The lens keeps its numeric cursor (Codex #2276 r10 P2): exact when
+    ///      the read's walk reaches it, a sentinel when it lies beyond; the
+    ///      node comes from the day-index view.
+    function test_TheLens_ReportsTheCursorsPositionWithinItsWalk() public {
+        bytes32[] memory hs = new bytes32[](3);
+        for (uint256 i; i < 3; ++i) {
+            hs[i] = _epochOf(1e18, _one(1), 800 + i, keccak256(abi.encode("c", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        _mut().parkTransportBatchRaw(hs[0]);
+        _mut().parkTransportBatchRaw(hs[1]);
+        _epoch().epochPruneTransportDayCursor(1);
+        (, , , uint256 c1) = _epoch().getTransportDayBatches(1, 0, 1);
+        assertEq(c1, type(uint256).max, "beyond a one-node walk");
+        (, , , uint256 c2) = _epoch().getTransportDayBatches(1, 0, 2);
+        assertEq(c2, 2, "within a two-node walk: two leading exhausted epochs");
+        (, , , uint256 c3) = _epoch().getTransportDayBatches(1, 1, 1);
+        assertEq(c3, 2, "an offset walks its prefix too");
+        (, , bytes32 node) = _epoch().getTransportDayIndex(1);
+        assertEq(node, hs[1], "the node itself, from the day-index view");
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

@@ -2776,6 +2776,21 @@ library LibInteractionRewards {
     /// @dev 3b-ii-A — a dry-run day's planned epoch draws join the run's
     ///      overlay, so the next day is priced against balances net of them
     ///      (Codex #2276 r1 P2). Bounded by the scan window per day.
+    /// @dev Whether the live settlement of `charge`'s day reaches the epoch
+    ///      draw, and so its prune: a nonzero draw, or a cap-hit deferral's
+    ///      draw of nothing — the rule {_drawAndFold} and
+    ///      {LibRewardCustody.callDrawTransportForDay} apply between them
+    ///      (Codex #2276 r10 P2). The dry run marks a day settled by this
+    ///      rule and no other, so the cursor advance the preview simulates
+    ///      is the one the claim performs. Stated here, beside the marker,
+    ///      rather than folded into `_drawAndFold`, which every settle facet
+    ///      inlines at its size limit.
+    function _liveDrawReached(DayCharge memory charge) private pure returns (bool) {
+        if (!charge.advanced) return charge.transportCapHit;
+        return charge.transportUser.armedFresh + charge.transportTreasury.armedFresh
+            + charge.transportUser.recycled + charge.transportTreasury.recycled != 0;
+    }
+
     /// @dev Record in the dry run's overlay that this run settled day `d`
     ///      (Codex #2276 r9 P2), under the key the plan reads; once per day.
     function _markDaySettled(DryRunState memory dry, uint256 d) private pure {
@@ -3048,10 +3063,12 @@ library LibInteractionRewards {
             acc.recycled += charge.needRecycled;
             _spendDomain(pool, charge);
             _foldOverlay(dry, charge);
-            // The live draw on a listed day prunes its cursor before the next
-            // side reads it (Codex #2276 r9 P2): record the day as settled so
-            // the plan passes the same leading exhausted epochs.
-            if (s.transportBatchesByDay[d].length != 0) _markDaySettled(dry, d);
+            // The live draw prunes the day's cursor before the next side reads
+            // it (Codex #2276 r9 P2) — but only where the settlement reaches
+            // the draw at all (r10 P2): a day paid with no epoch leg makes no
+            // call and moves nothing. Mark the day settled by exactly that
+            // rule, so the preview's later side reads what the claim's would.
+            if (_liveDrawReached(charge)) _markDaySettled(dry, d);
             _dryFoldDay(s, dry.loanSide, set, slices);
             // Advance the simulated cursors of the set members.
             for (uint256 i; i < work.length; ) {

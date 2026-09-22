@@ -271,7 +271,7 @@ contract RewardCustodyInvariant is SetupTest {
     /// deliveries all list day 1.
     function invariant_DayIndexIsLinkedAndOrdered() public view {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
-        (uint256 linked, uint256 total) = ep.getTransportDayIndexLinked(1);
+        (uint256 linked, uint256 total, ) = ep.getTransportDayIndex(1);
         assertEq(linked, total, "every member is linked");
         bytes32 from;
         uint256 seen;

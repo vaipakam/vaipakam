@@ -2492,7 +2492,7 @@ contract HelperTest {
         selectors[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
         selectors[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         selectors[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
-        selectors[15] = RewardEpochFacet.getTransportDayIndexLinked.selector;
+        selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
         selectors[16] = RewardEpochFacet.epochLinkTransportDayIndex.selector;
     }
 

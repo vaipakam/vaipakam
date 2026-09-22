@@ -407,12 +407,17 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @return arrivedAt Each returned batch's delivery arrival, same order as
     ///                   `page` — the ordering key, read from the packet.
     /// @return total     How many batches this day has ever indexed.
-    /// @return cursor    The day's consumption cursor: the last exhausted
-    ///                   epoch at the front of the order, zero when none is.
+    /// @return cursor    The day's consumption cursor as a POSITION — the
+    ///                   count of leading exhausted epochs — when it lies
+    ///                   within the `offset + limit` nodes this read walks;
+    ///                   `type(uint256).max` when it lies beyond them (read a
+    ///                   later page, or take the node from
+    ///                   {getTransportDayIndex}). Zero when nothing is
+    ///                   consumed. `cursor == total` reads the day exhausted.
     function getTransportDayBatches(uint256 dayId, uint256 offset, uint256 limit)
         external
         view
-        returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, bytes32 cursor)
+        returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, uint256 cursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32[] storage arr = s.transportBatchesByDay[dayId];
@@ -422,15 +427,19 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         arrivedAt = new uint64[](want);
         // The read costs what its own arguments ask — `offset + limit` steps
         // along the order, never a walk to the cursor's position (Codex
-        // #2276 r8 P2: that walk was unbounded by any argument). The cursor
-        // comes back as the NODE it is; {getTransportDayBatchesFrom} pages
-        // from any node for the cost of the page alone.
+        // #2276 r8 P2: that walk was unbounded by any argument) — and the
+        // cursor keeps this selector's numeric contract (r10 P2): its
+        // position when the walk reaches it, a sentinel when it does not.
+        // {getTransportDayBatchesFrom} pages from any node for the cost of
+        // the page alone.
         if (s.transportDayLinked[dayId] == total) {
-            cursor = s.transportDayCursorNode[dayId];
+            bytes32 cursorNode = s.transportDayCursorNode[dayId];
+            cursor = cursorNode == bytes32(0) ? 0 : type(uint256).max;
             bytes32 node = s.transportDayHead[dayId];
             uint256 pos;
             uint256 w;
             while (node != bytes32(0) && w < want) {
+                if (node == cursorNode) cursor = pos + 1;
                 if (pos >= offset) {
                     page[w] = node;
                     arrivedAt[w] = s.ingressPackets[node].arrivedAt;
@@ -441,9 +450,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             }
         } else {
             // A day indexed before the list existed and not yet linked: the
-            // array in its own order, the cursor the last entry passed.
-            uint256 c = s.transportDayCursor[dayId];
-            cursor = c == 0 ? bytes32(0) : arr[c - 1];
+            // array in its own order, the cursor its array position.
+            cursor = s.transportDayCursor[dayId];
             for (uint256 i; i < want; ++i) {
                 bytes32 id = arr[offset + i];
                 page[i] = id;
@@ -500,14 +508,28 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         }
     }
 
-    /// @notice How much of `dayId`'s membership its ordered list holds: equal
-    ///         figures for every day indexed under the list, and for a day
-    ///         indexed before it once {epochLinkTransportDayIndex} has caught
-    ///         it up (Codex #2276 r8 P1).
-    function getTransportDayIndexLinked(uint256 dayId) external view returns (uint256 linked, uint256 total) {
+    /// @notice The state of `dayId`'s index: how much of its membership the
+    ///         ordered list holds — equal figures for every day indexed under
+    ///         the list, and for a day indexed before it once
+    ///         {epochLinkTransportDayIndex} has caught it up (Codex #2276 r8
+    ///         P1) — and the consumption cursor as the NODE it is (r10 P2: the
+    ///         last exhausted epoch at the front of the order, zero when none
+    ///         is), which {getTransportDayBatchesFrom} pages from.
+    function getTransportDayIndex(uint256 dayId)
+        external
+        view
+        returns (uint256 linked, uint256 total, bytes32 cursor)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
         linked = s.transportDayLinked[dayId];
-        total = s.transportBatchesByDay[dayId].length;
+        total = arr.length;
+        if (linked == total) {
+            cursor = s.transportDayCursorNode[dayId];
+        } else {
+            uint256 c = s.transportDayCursor[dayId];
+            cursor = c == 0 ? bytes32(0) : arr[c - 1];
+        }
     }
 
     /// @notice Link the next entries of `dayId`'s membership into its ordered

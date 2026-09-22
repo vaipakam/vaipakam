@@ -78,7 +78,8 @@ claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
 the claim did, and the preview simulates the cursor advance a side's
-successful draw performs so its later sides read what the claim's would. A day's reported coverage counts only what its epochs can
+draw performs — exactly where the claim's settlement would reach that
+draw, and nowhere else — so its later sides read what the claim's would. A day's reported coverage counts only what its epochs can
 pay through at least one leg, and an epoch whose attested split leaves no
 room under either cap is passed by the day's cursor as exhausted even
 though a residual unit remains, so it cannot hold a window slot forever.
