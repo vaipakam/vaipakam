@@ -40,10 +40,16 @@ nothing.
 **What it cannot do is prove the database has not changed since the move, and
 it no longer implies otherwise.** Consider the very case the ongoing comparison
 exists to find: work suspended across the move commits afterwards, and the old
-database then goes quiet. Every check available today passes — it is not
-changing, nothing is connected to it — and a record taken now *contains that
-late write*, so every future comparison treats it as original and can never
-report it. Stillness now says nothing about what happened earlier.
+database then goes quiet. Every check the record's own taking can perform
+passes — it is not changing, nothing is connected to it — and a record taken
+now *contains that late write*, so every future comparison treats it as
+original and can never report it. Stillness now says nothing about what
+happened earlier.
+
+The evidence recorded at the time of the move is the exception, and it is the
+reason the promotion below exists: compared against that, a late row or a
+handed-out identifier makes the promotion fail. What cannot rescue a
+reconstruction is anything it can observe about the database *now*.
 
 So a record taken this way is always marked **not covering** the gap since the
 move, and nothing about the command that takes it can say otherwise. A separate

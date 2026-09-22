@@ -718,14 +718,26 @@ because step 3 below is the part of it that had to be re-learned.
       one place, the answer is a name, and the code that acts on it handles
       every name or throws — so a dropped question cannot be written.
 
-      > **THREE OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
+      > **SOME OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
       > GAP IN THIS PROCEDURE RATHER THAN A MISTAKE BY THE OPERATOR WHO
       > HITS IT** (#2279, found scouting the same seam for the fourth
-      > round running). The tool compares data. Three of the situations
-      > above have a legitimate resolution that **changes no data** — it is
-      > a decision to leave things as they are — and a decision is not
-      > something either database holds, so the next pass compares the same
-      > two rows and reports the same difference. Forever.
+      > round running). The tool compares data. Where a situation's
+      > legitimate resolution **changes no data** — a decision to leave
+      > things as they are — the next pass compares the same two rows and
+      > reports the same difference. Forever, because a decision is not
+      > something either database holds.
+      >
+      > **The table below names examples, not the whole set** (#2286 r8).
+      > It said THREE and was read as exhaustive, which is wrong in the
+      > direction that hurts: `destination-deleted-source-changed` can
+      > legitimately resolve by letting warm's deletion stand, and the
+      > source-deleted branch by keeping warm's newer value — both
+      > change no data and therefore both report forever, and neither is
+      > in the table. An operator who trusts a bound either forces a data
+      > change to make a line go away, which can undo a privacy deletion,
+      > or refuses to count a properly decided run as clean. **The test is
+      > the property, not membership of a list: if the resolution changes
+      > no data, the line will repeat.**
       >
       > Driving the shipped classifier against each resolution shows which:
       >
@@ -800,11 +812,25 @@ because step 3 below is the part of it that had to be re-learned.
       > manifest-only classification deliberately emits conflicts with no
       > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
       > table, or its key, looks like from archive's side. Record those by
-      > **table, the kind of line, AND THE FIGURES THE LINE REPORTS** —
-      > for a sequence advance, both marks; for a manifest-only conflict,
-      > its counts. Then treat a run carrying only such already-recorded
-      > lines as clean on the same terms, and treat the SAME line with
-      > DIFFERENT figures as new and undecided.
+      > **table, the kind of line, AND THE STATE THE LINE EXPOSES** —
+      > which differs by line, so take each on its own terms. A sequence
+      > advance exposes both marks, and those marks move whenever the
+      > allocation does, so recording them is enough.
+      >
+      > **A manifest-only conflict does NOT expose enough** (#2286 r8).
+      > It reports only how many rows were added, changed and deleted, so
+      > changing an already-changed row AGAIN leaves the line reading
+      > `0 added, 1 changed, 0 deleted` exactly as before, and a
+      > count-based record accepts the second write as the decided one.
+      > Counts are an identity that does not move when the data does.
+      > For these, record a **digest of the table as compared** — the
+      > per-table digest the tooling already computes — or re-review the
+      > whole table before counting the run clean. Do not record counts
+      > and treat them as state.
+      >
+      > Then treat a run carrying only already-recorded lines as clean on
+      > the same terms, and the SAME line with DIFFERENT state as new and
+      > undecided.
       >
       > Table-plus-kind alone is not enough, and for the same reason the
       > by-key test is not (#2286 r7): a sequence that advances again

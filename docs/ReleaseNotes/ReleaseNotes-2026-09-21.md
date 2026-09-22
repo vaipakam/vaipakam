@@ -441,9 +441,12 @@ is paused is the first-party cover, not the mechanism.
 
 The move itself neither holds nor transfers funds — it carries off-chain
 bookkeeping between two databases, and the database being left behind is
-**retained** in full afterwards, so nothing depends on the move having been
-perfect. But "no funds at risk at any point" is a stronger claim than the
-window supports, and it is not made here.
+**retained** in full afterwards, so a row the copy missed stays *recoverable*.
+That is a narrower guarantee than it may sound: until a later comparison finds
+such a row and someone applies it, the new database serves without it — a
+missing threshold, offer or support record is simply absent to the user in the
+meantime. Recoverable is not the same as unaffected, and "no funds at risk at
+any point" is a stronger claim than this window supports; neither is made here.
 
 **What happens next.** Once the services are confirmed to be serving with no
 database access, the old database is read twice ten minutes apart to confirm it
@@ -462,8 +465,10 @@ configuration is explicitly not it.
 ## Thread — the shared off-chain database moved, and the move was made all at once or not at all (PR #2267)
 
 The platform's three background services and its nightly backup all read one
-shared database. That database has been replaced with a different one. Nothing
-a user can see changes; what changes is which database is behind it.
+shared database. That database has been replaced with a different one. Once the
+move is done nothing a user can see changes — what changes is which database is
+behind it. The move itself is not invisible, and the section above says what it
+costs while it runs.
 
 **Every written reference to the database moves together, and a guard in the
 repository is what enforces that.** The database is named in four service
@@ -758,7 +763,8 @@ and the difference is not academic.** For any record there are three facts:
 was it in the copy, is it on the old database now, is it on the new one now.
 Those three answers are what let each divergence be *named* correctly — and
 naming it is the whole job, because the step writes to neither database and
-a person applies every difference it reports, including the simplest one (a
+a person decides what to do about every difference it reports, including the
+simplest one (a
 record that appeared on the old database after the copy and has never
 existed on the new one). Three of those divergences were being got wrong in
 ways that all *looked* like success:
