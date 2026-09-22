@@ -4633,6 +4633,63 @@ check "the run refuses"      "$?"                               "1"
 check "for the BOM"          "$(says "$msg" 'byte-order mark')" "1"
 check "nothing was consumed" "$(pending "$W")"                  "3"
 
+# ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
+# `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
+# either past the refusal and on to the no-heading allowance, publishing the
+# front matter as a thematic break plus a setext heading and leaving any
+# later `#` heading or placeholder unexamined.
+#
+# Trailing only. An INDENTED `---` is a thematic break rather than a fence —
+# the r5 finding — so `.strip()` here would re-make that mistake.
+case_start "T217n: a front-matter fence with trailing whitespace is still refused"
+W="$ROOT/t217n"; build "$W"
+printf -- '---   \ntitle: x\n---\n\n# Peer title (PR #TBD)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-fm-ws.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                      "1"
+check "naming the file"      "$(says "$msg" '0003-fm-ws.md')"          "1"
+check "nothing was consumed" "$(pending "$W")"                         "3"
+# A tab delimiter, same rule.
+W="$ROOT/t217n2"; build "$W"
+printf -- '---\t\ntitle: x\n---\n\n# Peer title (PR #TBD)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-fm-tab.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                      "1"
+check "nothing was consumed" "$(pending "$W")"                         "3"
+# And an INDENTED `---` is NOT front matter — it is a thematic break, so the
+# fragment is allowed (and simply has no heading). The allowance side.
+W="$ROOT/t217n3"; build "$W"
+printf -- ' ---\nnot front matter, a thematic break\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-fm-indent.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
+
+# ── A real number followed by punctuation is a real reference (r14) ────────
+# The capture runs to the next comma, bracket or space, so `PR #123: final`
+# captured `123:` and `isdigit()` called it a placeholder — refusing a valid
+# reference and telling the operator to replace a placeholder that is not
+# there. Verified against the published corpus before changing: the new rule
+# refuses the same 179 headings and the same four tokens, zero differences.
+case_start "T217o: a numeric reference followed by punctuation is accepted"
+W="$ROOT/t217o"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '## Thread — follow-up PR #123: final cleanup\n' > "$u/0003-colon.md"
+printf '## Thread — closes it out (PR #456).\n'         > "$u/0004-period.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"                                                                  "0"
+check "both folded in"       "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
+check "nothing left pending" "$(pending "$W")"                                                     "0"
+# The refusal side is unchanged: a token that does not start with a digit is
+# still a placeholder, punctuation or not.
+W="$ROOT/t217o2"; build "$W"
+printf '## Thread — still unsubstituted (PR #<n>): cleanup\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-ph-punct.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                              "1"
+check "as a placeholder"     "$(says "$msg" 'placeholder')"     "1"
+check "nothing was consumed" "$(pending "$W")"                  "3"
+
 case_start "T217k2: a deep heading is still refused for its placeholder"
 W="$ROOT/t217k2"; build "$W"
 printf '### Thread — deep AND unsubstituted (PR #TBD)\n' \

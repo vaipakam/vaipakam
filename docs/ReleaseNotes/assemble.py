@@ -1635,7 +1635,13 @@ class Assembly:
                 ),
                 None,
             )
-            if _first_content == b"---":
+            # `rstrip` of spaces and tabs ONLY (#2290 r14). `---   ` and
+            # `---\t` are valid YAML delimiters, and an exact comparison let
+            # either through the refusal and on to the no-heading allowance.
+            # Leading whitespace is deliberately NOT stripped: an indented
+            # `---` is a thematic break rather than a fence, which is the r5
+            # finding, and `.strip()` here would re-make that mistake.
+            if _first_content is not None and _first_content.rstrip(b" \t") == b"---":
                 bad.append(
                     f"{name}: opens with `---`, which is front matter in its own "
                     f"file and a thematic break once folded  ->  open with the "
@@ -1704,7 +1710,20 @@ class Assembly:
             # the evidence that it should have refused. No heading in the
             # corpus carries two tokens, so this refuses nothing that exists;
             # it removes a way for the check to be satisfied by a prefix.
-            bads = [t for t in PR_REF_RE.findall(first) if not t.isdigit()]
+            # A token is a real reference when it STARTS with digits and
+            # carries only punctuation after them (#2290 r14). `t.isdigit()`
+            # refused `PR #123: final cleanup`, because the capture runs to the
+            # next comma, bracket or space and so took the colon with it — a
+            # valid numeric reference reported as an unsubstituted placeholder,
+            # which is the over-refusal direction of this same check.
+            #
+            # `\d+\W*` keeps every placeholder the corpus actually contains
+            # (`<n>`, `TBD`, `__`, `PLACEHOLDER`, `NNNN`, `?`): none of them
+            # begins with a digit, so none matches.
+            bads = [
+                t for t in PR_REF_RE.findall(first)
+                if not re.fullmatch(rb"\d+\W*", t)
+            ]
             if bads:
                 bad.append(
                     f"{name}: heading still carries the template's placeholder "
