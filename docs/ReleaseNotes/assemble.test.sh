@@ -4176,6 +4176,74 @@ check "the lock is not left behind (guard)" \
 check "a later run is not blocked (guard)" \
   "$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1; echo $?)" "0"
 
+# ── A corpus figure lives in ONE file, enforced rather than remembered ─────
+# Rounds 6, 7, 8 and 11 of #2290 each found a fact stated in two places and
+# corrected in one, every round fixing whichever copy the finding cited. The
+# one-home rule was the answer; a convention nobody can check is how it went
+# wrong a fifth time, when the release-note fragment — written AFTER the
+# de-duplication, so never covered by it — arrived carrying the published-
+# placeholder count again, and three manual sweeps missed it. So the rule is
+# now a test.
+#
+# This comment names no figure, deliberately. The first draft of it quoted
+# the count, and the guard below failed on its own explanation — which is
+# the rule working, and worth leaving as the reason not to quote one here.
+#
+# Derived, never hand-listed: the figures come from the measurement table in
+# `check_heading_conformance`'s docstring, so a new row is covered the moment
+# it is written and nothing here can drift from it.
+#
+# WHAT THIS DOES NOT CATCH, stated so it is not mistaken for a proof:
+#
+#  - Two-digit figures are excluded, because 60/66/69 collide with ordinary
+#    values — this suite alone has a `60`-second timeout, a retired-case
+#    count and a string slice. Checking them would report a correct tree.
+#  - A PROSE fraction attached to the wrong set. "A fifth" was right for the
+#    old level!=2 rule and wrong for `###` alone once the rule split, and no
+#    string test distinguishes those. That was round 11, and it stays a
+#    matter for review.
+#
+# It is a net for the duplication class, not a proof of consistency.
+case_start "T218: a corpus figure appears in exactly one file"
+_dup="$(python3 - "$DIR" <<'PYEOF'
+import re, sys, os
+d = sys.argv[1]
+src = open(os.path.join(d, "assemble.py"), encoding="utf-8").read()
+m = re.search(r"The corpus is the reason:(.*?)Read those two rows", src, re.S)
+if not m:
+    print("ANCHOR-MISSING")
+    raise SystemExit
+figures = {n for n in re.findall(r"\b(\d{3,})\b", m.group(1))}
+if not figures:
+    print("NO-FIGURES")
+    raise SystemExit
+others = ["assemble.test.sh", os.path.join("unreleased", "README.md")]
+frag_dir = os.path.join(d, "unreleased")
+if os.path.isdir(frag_dir):
+    others += [
+        os.path.join("unreleased", f)
+        for f in sorted(os.listdir(frag_dir))
+        if f.endswith(".md") and f not in ("README.md", "_TEMPLATE.md")
+    ]
+for rel in others:
+    p = os.path.join(d, rel)
+    if not os.path.isfile(p):
+        continue
+    txt = open(p, encoding="utf-8", errors="replace").read()
+    for fig in sorted(figures):
+        if re.search(r"\b" + fig + r"\b", txt):
+            print(f"{fig} in {rel}")
+PYEOF
+)"
+check "the docstring's figure table is still findable" \
+  "$(printf '%s' "$_dup" | grep -c 'ANCHOR-MISSING')" "0"
+check "it still holds figures" \
+  "$(printf '%s' "$_dup" | grep -c 'NO-FIGURES')"     "0"
+check "no figure is stated twice" "$(printf '%s' "$_dup" | grep -c .)" "0"
+if [ -n "$_dup" ]; then
+  printf '       duplicated: %s\n' "$_dup" >&2
+fi
+
 case_start "T211: every retirement in the table is real"
 # A retirement claims a case can no longer produce its fault. Read by
 # eye, that claim was wrong nineteen times (Codex #1898 r2) — three git

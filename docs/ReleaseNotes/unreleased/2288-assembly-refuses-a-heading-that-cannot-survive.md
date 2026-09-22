@@ -9,9 +9,9 @@ than as a section of the release, and a heading still carrying the
 template's `(PR #<n>)` placeholder, which leaves a published section with
 nothing pointing back at the change it describes. Nothing between writing a
 fragment and publishing it had ever looked at the line, and assembly is the
-last step that reads it — so what got past went out. Around 179 published
-headings carry a placeholder today, and 32 published sections render as
-peer titles (#2291).
+last step that reads it — so what got past went out. About a sixth of all
+published section headings carry a placeholder today, and 32 published
+sections render as peer titles (#2291).
 
 Assembly now stops on either, before anything is written or any fragment is
 consumed, and names the file and the problem. **What it refuses is
