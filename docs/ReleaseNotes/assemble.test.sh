@@ -4267,7 +4267,7 @@ printf '# Thread — opens at the wrong level (PR #4243)\n' > "$u/0003-level.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run refuses"              "$?"                                 "1"
 check "it names the offending file"  "$(says "$msg" '0003-level.md')"     "1"
-check "and what is wrong with it"    "$(says "$msg" 'opens at #, not ##')" "1"
+check "and what is wrong with it"    "$(says "$msg" 'opens at level 1, not level 2')" "1"
 check "nothing was consumed"         "$(pending "$W")"                    "3"
 check "no dated file was written"    "$([ -f "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md" ] && echo yes || echo no)" "no"
 
@@ -4311,7 +4311,7 @@ printf ' # Thread — indented past the anchor (PR #4243)\n' \
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run refuses"          "$?"                              "1"
 check "it names the file"        "$(says "$msg" '0003-indent.md')" "1"
-check "and reports level 1"      "$(says "$msg" 'opens at #, not ##')" "1"
+check "and reports level 1"      "$(says "$msg" 'opens at level 1, not level 2')" "1"
 check "nothing was consumed"     "$(pending "$W")"                 "3"
 
 # ── A PR reference carrying more than the number is valid (#2290 r1) ────────
@@ -4387,6 +4387,48 @@ check "the run refuses"          "$?"                            "1"
 check "the tab one is named"     "$(says "$msg" '0003-tab.md')"  "1"
 check "the bare one is named"    "$(says "$msg" '0004-bare.md')" "1"
 check "nothing was consumed"     "$(pending "$W")"               "4"
+
+# ── Markdown's OTHER heading syntax (#2290 r3) ──────────────────────────────
+# `Title` underlined by `=` is a level-1 heading and by `-` a level-2 one. The
+# check knew only ATX, so a setext title took the no-heading allowance and
+# published the peer-document defect. This was the THIRD round in which an
+# unrecognised heading form was PERMITTED rather than merely unrefused, which
+# is why the fix is one function covering both syntaxes — Markdown has exactly
+# two, so unlike "every shape", this enumeration closes.
+case_start "T217i: a setext level-1 heading is refused"
+W="$ROOT/t217i"; build "$W"
+printf 'Thread — underlined with equals (PR #4243)\n=========\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-setext1.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"       "$?"                                          "1"
+check "naming the file"       "$(says "$msg" '0003-setext1.md')"            "1"
+check "as level 1"            "$(says "$msg" 'opens at level 1, not level 2')" "1"
+check "nothing was consumed"  "$(pending "$W")"                             "3"
+
+case_start "T217i2: a setext level-2 heading is accepted, and its placeholder still caught"
+W="$ROOT/t217i2"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf 'Thread — underlined with dashes (PR #4244)\n---------\n' > "$u/0003-setext2.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "level 2 is accepted"  "$?"                "0"
+check "nothing left pending" "$(pending "$W")"   "0"
+# And the reference is still read out of the TEXT line, not the underline.
+W="$ROOT/t217i3"; build "$W"
+printf 'Thread — setext with a placeholder (PR #TBD)\n----\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-setext-ph.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the placeholder is caught" "$?"                          "1"
+check "named as a placeholder"    "$(says "$msg" 'placeholder')" "1"
+
+# A bare line of prose with no underline under it is still no heading — the
+# allowance has to survive the setext support, or T10 breaks again.
+case_start "T217i4: prose with no underline is still no heading"
+W="$ROOT/t217i4"; build "$W"
+printf 'just prose, and the next line is blank\n\nmore prose\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-prose.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
 
 echo ""
 if (( RETIRED > 0 )); then

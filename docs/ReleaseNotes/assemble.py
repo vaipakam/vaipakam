@@ -94,6 +94,46 @@ HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
 # and the placeholder sailed through as "no reference at all" (#2290 r2).
 PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
+# A setext underline: `=` for level 1, `-` for level 2, up to three leading
+# spaces, nothing else on the line. Requiring the WHOLE line keeps `- item`
+# and `--- a b` out; the caller additionally requires a non-blank text line
+# above it, without which `---` is a thematic break rather than a heading.
+SETEXT_UNDERLINE_RE = re.compile(rb"^ {0,3}(=+|-+)[ \t]*$")
+
+
+def first_heading(body: bytes) -> tuple[int, bytes] | None:
+    """The fragment's first heading as `(level, line)`, or None if it has none.
+
+    MARKDOWN HAS EXACTLY TWO HEADING SYNTAXES, and that is the point of this
+    function — it makes the enumeration closeable rather than another shape to
+    be caught next round:
+
+      ATX     `## Title`   — one to six `#`, up to three leading spaces,
+                             closed by a space, a tab, or end of line.
+      setext  `Title`      — a non-blank line underlined by `=` (level 1)
+              `=====`        or by `-` (level 2).
+
+    Three consecutive review rounds each found one form the check did not
+    recognise — an indented ATX marker (#2290 r1), a tab-or-EOL delimiter
+    (r2), and setext (r3) — and all three did the SAME damage. An
+    unrecognised heading does not merely go unrefused: it falls to the
+    deliberate no-heading allowance and is PERMITTED, publishing the very
+    peer-document title the check exists to stop. That is why this is one
+    function covering both syntaxes rather than a third patch to a regex.
+    """
+    lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
+    for i, line in enumerate(lines):
+        if HEADING_RE.match(line):
+            marker = line.lstrip(b" ")
+            return len(marker) - len(marker.lstrip(b"#")), line
+        # setext: THIS line is the text, the NEXT is the underline. The text
+        # has to be non-blank — an underline under nothing is a thematic
+        # break, not a heading.
+        if line.strip() and i + 1 < len(lines):
+            u = SETEXT_UNDERLINE_RE.match(lines[i + 1])
+            if u:
+                return (1 if u.group(1).startswith(b"=") else 2), line
+    return None
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 
@@ -1425,27 +1465,27 @@ class Assembly:
                 f"reading {name}",
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
-            first = None
-            for raw in body.split(b"\n"):
-                line = raw[:-1] if raw.endswith(b"\r") else raw
-                if HEADING_RE.match(line):
-                    first = line
-                    break
-            if first is None:
+            found = first_heading(body)
+            if found is None:
                 # A fragment with NO heading is outside this check's scope —
                 # see the docstring. It is not a shape the template produces,
                 # and refusing it here failed T10, whose fixture is a bare
                 # line of prose because it is testing rename pairing rather
                 # than headings.
+                #
+                # `first_heading` covers BOTH Markdown heading syntaxes, so
+                # reaching here means the fragment genuinely opens with prose
+                # — not that a heading went unrecognised, which is what this
+                # branch silently permitted three rounds running.
                 continue
+            level, first = found
             shown = first.decode("utf-8", errors="replace")
-            # Strip the permitted indentation before counting: `lstrip(b"#")`
-            # on ` # Thread — x` removes nothing, so the level would read 0
-            # and the heading would pass as neither 1 nor 2 (#2290 r1).
-            marker = first.lstrip(b" ")
-            level = len(marker) - len(marker.lstrip(b"#"))
             if level != 2:
-                bad.append(f"{name}: opens at {'#' * level}, not ##  ->  {shown}")
+                # Level, not `#`-count: a setext heading carries no `#` at
+                # all, and "opens at #, not ##" describing `Title` over
+                # `=====` is a message that sends the reader looking for a
+                # character that is not there (#2290 r3).
+                bad.append(f"{name}: opens at level {level}, not level 2  ->  {shown}")
                 continue
             ref = PR_REF_RE.search(first)
             if ref is not None and not ref.group(1).isdigit():
