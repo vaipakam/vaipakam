@@ -2241,15 +2241,50 @@ export function parseEvidence(text) {
     if (agreed !== undefined) seqs.set(table, agreed);
   }
 
-  // WHAT `cover` COMPARES SHAPE AGAINST: only readings that are part of
-  // a paired run (#2281 r16). A shape from an unpaired or unidentified
-  // reading was not observed in the run the coverage rests on, and
-  // treating it as though it were is how `shape` got recorded as
-  // established from a post-migration crop.
+  // EVERY COMPLETE READING THAT SAW THE TABLE MUST STATE IT, or the
+  // dimension is not established for that table (#2281 r17 — the root
+  // of r13, r16 and r17 together).
+  //
+  // Three rounds each fixed a different way for shape evidence to be
+  // ASSEMBLED out of several readings: taken globally, then unioned
+  // across paired runs, then an absent shape in one run answered by a
+  // present one in another. Each fix narrowed the assembly. The
+  // assembly was the defect.
+  //
+  // What the other two dimensions have and this one lacked is that
+  // THEIR ABSENCE IS ITSELF A STATEMENT. An enumeration names every
+  // table it read, so a table missing from one is a table that was not
+  // there — the table-set rule. A closed sequence listing means a
+  // missing line is a stated zero — the r5 rule. A missing SHAPE line
+  // says nothing at all, and nothing was making that silence count.
+  //
+  // So shape is held to the same standard the other two already meet:
+  // for each table, every paired run that ENUMERATED it must also state
+  // its shape, and they must agree. `printDigest` emits a shape for
+  // every table it enumerates, so a genuine run always satisfies this;
+  // what it rejects is a file assembled from runs that did not each
+  // observe it. One reading that stayed silent is missing evidence, not
+  // agreement — and `cover` then declines to claim the dimension rather
+  // than claiming it from whichever reading happened to speak.
+  const pairedReadings = readings.filter(
+    (e) => e.run && paired.includes(e.run),
+  );
   const shapes = new Map();
-  for (const e of readings) {
-    if (!e.run || !paired.includes(e.run)) continue;
-    for (const [t, v] of e.shapes) shapes.set(t, v);
+  for (const table of mentioned) {
+    const sawIt = pairedReadings.filter((e) => e.digests.has(table));
+    if (sawIt.length === 0) continue;
+    const stated = sawIt.map((e) => e.shapes.get(table));
+    if (stated.some((v) => v === undefined)) continue;
+    if (new Set(stated).size > 1) {
+      conflicts.push(
+        `${table}: complete readings disagree about how it keys and ` +
+          `projects its rows — ${[...new Set(stated)].join(" and ")}. The ` +
+          `table was REDECLARED between them, so neither can stand for ` +
+          `the mirror`,
+      );
+      continue;
+    }
+    shapes.set(table, stated[0]);
   }
 
   return {

@@ -2777,6 +2777,67 @@ describe("a table set that changed is evidence too", () => {
     expect(e.readings.paired).toBe(1);
   });
 
+  // #2281 r17 — the ROOT of the three shape rounds. Shape was the only
+  // dimension whose ABSENCE said nothing: an enumeration's silence
+  // about a table means the table was not there, a closed sequence
+  // listing's silence means a stated zero, and a missing shape line
+  // meant nothing at all. It is now held to the same standard.
+  it("does not establish shape when one paired run stayed silent", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        // run 1 enumerated `t` and said nothing about its shape
+        "seq t 5",
+        "seq-listing complete run:aa0001",
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
+        "shape t bbbbbbbbbbbbbbbb", // run 2, after a migration
+        "seq t 5",
+        "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect([...e.shapes]).toEqual([]);
+    expect(e.conflicts).toEqual([]);
+  });
+
+  it("establishes shape when every paired run states it and they agree", () => {
+    const d = "1".repeat(16);
+    const run = (id: string) => [
+      `t ${d}`,
+      `${"\u2014".repeat(8)}   0  (1 tables) run:${id}`,
+      "shape t aaaaaaaaaaaaaaaa",
+      "seq t 5",
+      `seq-listing complete run:${id}`,
+    ];
+    const e = parseEvidence([...run("bb0001"), ...run("bb0002")].join("\n"));
+    expect(e.shapes.get("t")).toBe("aaaaaaaaaaaaaaaa");
+    expect(e.conflicts).toEqual([]);
+  });
+
+  it("reports readings that disagree about a table's shape", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:cc0001`,
+        "shape t aaaaaaaaaaaaaaaa",
+        "seq t 5",
+        "seq-listing complete run:cc0001",
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:cc0002`,
+        "shape t bbbbbbbbbbbbbbbb",
+        "seq t 5",
+        "seq-listing complete run:cc0002",
+      ].join("\n"),
+    );
+    expect(
+      e.conflicts.some((c) => c.includes("keys and projects its rows")),
+    ).toBe(true);
+    expect([...e.shapes]).toEqual([]);
+  });
+
   it("reads a database with no tables as a reading, not as silence", () => {
     // `digest` over a source carrying no application tables prints
     // exactly this. Both value maps come back empty, which is why the
