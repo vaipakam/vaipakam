@@ -435,21 +435,31 @@ not replayed when they come back — a tick that did not happen does not happen
 later. So anything that depends on a *moment passing* is missed outright rather
 than deferred.
 
-Two consequences are worth naming because they are the ones a user feels. An
-alert that fires on a threshold being *crossed* is generated from the crossing,
-not from the state afterwards, so a position that crosses a health band and
-recovers again inside the window produces no alert at all, then or later. And
-the platform's own liquidator declines every scheduled tick for as long as the
-window lasts, so a position that becomes undercollateralised during it is not
-acted on by the protocol's own keeper — liquidation is permissionless and a
-third party can still act, so what pauses is the first-party cover, not the
-mechanism.
+**On this deployment that is conditional, and saying so matters more than the
+disclosure it qualifies.** The keeper is deployed but deliberately
+**unscheduled** — its cron list is empty, by an operator decision taken after
+it was measured exceeding its CPU limit on essentially every invocation. Its
+passes therefore do not run today, before this window or after it. What follows
+is what the window costs **once that schedule is restored**. Attributing it to
+the move while the keeper is dark would blame a maintenance window for a
+standing outage.
 
-**Those two are examples, not a bound.** Every scheduled pass is suspended, so
-any of them that is deadline- or window-sensitive can miss its moment the same
-way — a grace period that expires inside the window, a once-a-day snapshot
-whose only opportunity falls inside it. Which passes are enabled is a matter of
-deployment configuration, and this note does not claim to enumerate them.
+With the schedule restored, two especially direct examples. An alert that fires
+on a threshold being *crossed* is generated from the crossing, not from the
+state afterwards, so a position that crosses a health band and recovers again
+inside the window produces no alert at all, then or later. And the platform's
+own liquidator declines every scheduled tick for as long as the window lasts,
+so a position that becomes undercollateralised during it is not acted on by the
+protocol's own keeper — liquidation is permissionless and a third party can
+still act, so what pauses is the first-party cover, not the mechanism.
+
+**Those are examples, not a bound, and not the only ones a user would feel.**
+Every scheduled pass is suspended, so any that is deadline- or window-sensitive
+can miss its moment the same way — a grace period expiring inside the window,
+after which an extension is refused for good; a once-a-day snapshot whose only
+opportunity falls inside it, leaving a permanent gap in a chart. Which passes
+are enabled is a matter of deployment configuration, and this note does not
+claim to enumerate them.
 
 The move itself neither holds nor transfers funds — it carries off-chain
 bookkeeping between two databases, and the database being left behind is
@@ -810,7 +820,7 @@ record reached both sides independently; carrying it would fail outright on a
 uniqueness rule the destination enforces, so that is recognised and reported
 rather than attempted.
 
-### Three smaller things, each about what a report should and shouldn't do
+### Smaller things, each about what a report should and shouldn't do
 
 **A run that cannot do everything asked of it now does nothing.** The
 procedure promised that a run finding a conflict would change nothing, and
