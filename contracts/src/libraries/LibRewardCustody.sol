@@ -1707,7 +1707,8 @@ library LibRewardCustody {
         // same-block ties (r6). A late epoch is never placed behind the
         // day's cursor: the cursor counts leading EXHAUSTED epochs, so a live
         // epoch behind it would be invisible; when a late epoch's place is
-        // before the cursor, it becomes the cursor.
+        // among the epochs the cursor has passed, it takes the first place of
+        // the window instead, and the cursor never moves back (r11).
         //
         // A day indexed before the list existed holds its members in the
         // array alone (Codex #2276 r8 P1): such a day is read from the array
@@ -1773,7 +1774,12 @@ library LibRewardCustody {
         }
         s.transportDayLinked[dayId] = to;
         linked = to;
-        if (to == total) _pruneTransportDayCursor(s, dayId);
+        if (to == total) {
+            // The array position retires with the array; the list's is
+            // derived over the order from the head by the ordinary prune.
+            s.transportDayCursor[dayId] = 0;
+            _pruneTransportDayCursor(s, dayId);
+        }
     }
 
     /// @dev Whether `(aAt, a)` orders before `b` by (arrival, batch id).
@@ -1808,7 +1814,20 @@ library LibRewardCustody {
             return;
         }
         bytes32 prev;
-        if (hinted) {
+        bytes32 cur = s.transportDayCursorNode[d];
+        if (cur != bytes32(0) && !_keyBefore(s, s.ingressPackets[cur].arrivedAt, cur, id)) {
+            // Its place by key is among the epochs the cursor has passed: it
+            // takes the FIRST place of the window instead (Codex #2276 r11
+            // P2, the root of rounds 7, 8 and 10 on this cursor). It is older
+            // than every live epoch there, so the window still holds the
+            // oldest first; and the cursor never moves back, which is what
+            // makes its position an exact stored figure. The only hint such
+            // an epoch may carry is the cursor itself. (A hint inside the
+            // passed prefix for an epoch NEWER than the cursor fails the
+            // successor check below: everything in the prefix is older.)
+            if (hinted && hint != cur) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+            prev = cur;
+        } else if (hinted) {
             prev = hint;
             if (prev != bytes32(0)) {
                 bool inList = prev == head || s.transportDayPrev[d][prev] != bytes32(0);
@@ -1836,12 +1855,6 @@ library LibRewardCustody {
         else s.transportDayNext[d][prev] = id;
         if (nxt == bytes32(0)) s.transportDayTail[d] = id;
         else s.transportDayPrev[d][nxt] = id;
-        // The cursor is the last EXHAUSTED node at the front (zero = none):
-        // a new node placed at or before it would sit inside the exhausted
-        // prefix, so the node before the new one becomes the cursor and the
-        // window starts at the new node.
-        bytes32 cur = s.transportDayCursorNode[d];
-        if (cur != bytes32(0) && _keyBefore(s, arrived, id, cur)) s.transportDayCursorNode[d] = prev;
     }
 
     /// @notice #1566 transport epochs PR 3b — PARK what this batch's
@@ -2565,7 +2578,10 @@ library LibRewardCustody {
     ///      the prune: it becomes drawable when its last page is indexed.
     ///      The cursor is a NODE (Codex #2276 r7): the last EXHAUSTED epoch at
     ///      the front of the list, zero when none is; the window starts after
-    ///      it, and the lens returns it as the node it is. EXHAUSTED is
+    ///      it, and its POSITION — the count of leading exhausted epochs — is
+    ///      kept beside it, exact because the cursor only advances (r11: a
+    ///      late epoch whose place is among the passed epochs takes the first
+    ///      place of the window rather than moving the cursor back). EXHAUSTED is
     ///      nothing left, or — once the split is attested — no room left under
     ///      either recorded cap (Codex #2276 r8 P2): the unit a scaling
     ///      residual leaves outside both caps is not coverage, and this
@@ -2619,6 +2635,10 @@ library LibRewardCustody {
         }
         if (steps != 0) {
             s.transportDayCursorNode[dayId] = cur;
+            // The position is kept beside the node (Codex #2276 r11 P2): the
+            // cursor only advances, so the count of leading exhausted epochs
+            // is exact for the cost of this write, and the lens reads it.
+            s.transportDayCursor[dayId] += steps;
             emit TransportDayCursorAdvanced(dayId, cur);
             moved = true;
         }

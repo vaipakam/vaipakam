@@ -1231,10 +1231,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), needR, "the next attempt pays the borrower from the 65th");
     }
 
-    /// @dev The lens keeps its numeric cursor (Codex #2276 r10 P2): exact when
-    ///      the read's walk reaches it, a sentinel when it lies beyond; the
-    ///      node comes from the day-index view.
-    function test_TheLens_ReportsTheCursorsPositionWithinItsWalk() public {
+    /// @dev The lens keeps its numeric cursor on the existing selector and
+    ///      reports it EXACTLY whatever the read walks (Codex #2276 r10, r11
+    ///      P2): a stored position, since the cursor only advances; the node
+    ///      comes from the day-index view.
+    function test_TheLens_ReportsTheExactCursor_WhateverTheWalk() public {
         bytes32[] memory hs = new bytes32[](3);
         for (uint256 i; i < 3; ++i) {
             hs[i] = _epochOf(1e18, _one(1), 800 + i, keccak256(abi.encode("c", i)));
@@ -1244,13 +1245,59 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().parkTransportBatchRaw(hs[1]);
         _epoch().epochPruneTransportDayCursor(1);
         (, , , uint256 c1) = _epoch().getTransportDayBatches(1, 0, 1);
-        assertEq(c1, type(uint256).max, "beyond a one-node walk");
+        assertEq(c1, 2, "exact on a one-node walk");
         (, , , uint256 c2) = _epoch().getTransportDayBatches(1, 0, 2);
-        assertEq(c2, 2, "within a two-node walk: two leading exhausted epochs");
-        (, , , uint256 c3) = _epoch().getTransportDayBatches(1, 1, 1);
-        assertEq(c3, 2, "an offset walks its prefix too");
+        assertEq(c2, 2, "and on a two-node walk");
+        (bytes32[] memory none, , uint256 total, uint256 c3) = _epoch().getTransportDayBatches(1, 5, 1);
+        assertEq(none.length, 0, "an offset past the end pages nothing");
+        assertEq(c3, 2, "and still reports the cursor");
+        assertEq(total, 3);
+        _mut().parkTransportBatchRaw(hs[2]);
+        _epoch().epochPruneTransportDayCursor(1);
+        (, , , uint256 c4) = _epoch().getTransportDayBatches(1, 0, 0);
+        assertEq(c4, total, "cursor == total reads the day exhausted, on an empty page");
         (, , bytes32 node) = _epoch().getTransportDayIndex(1);
-        assertEq(node, hs[1], "the node itself, from the day-index view");
+        assertEq(node, hs[2], "the node itself, from the day-index view");
+    }
+
+    /// @dev A late epoch whose arrival places it among the epochs the cursor
+    ///      has passed takes the first place of the window, and the cursor
+    ///      does not move back (Codex #2276 r11 P2): the day's order reads
+    ///      exhausted, late, live; the position stays exact; coverage counts
+    ///      it. A still-older late epoch, hinted, may name only the cursor.
+    function test_ALateEpoch_OlderThanTheCursor_LeadsTheWindow() public {
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        _scene(NEED);
+        uint256[] memory d1 = _one(1);
+        bytes32 e1 = _epochOf(NEED, d1, 1, keccak256("e1"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 e2 = _epochOf(NEED, d1, 2, keccak256("e2"));
+        assertEq(_claim(), NEED, "paid from e1, the older");
+        assertEq(_cursor(1), 1, "e1 passed");
+        _ingress().onRewardBudgetReceived(address(vpfi), NEED, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("late"), false);
+        bytes32 late = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("late")));
+        _mut().setPacketArrivedAtRaw(late, 2); // landed long before e1; written down now
+        _epoch().materializeTransportBatchPage(late, d1);
+        (bytes32[] memory order, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(cursor, 1, "the cursor did not move back");
+        assertEq(order[0], e1);
+        assertEq(order[1], late, "the first place of the window");
+        assertEq(order[2], e2);
+        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 2 * NEED, "visible and counted");
+        _ingress().onRewardBudgetReceived(address(vpfi), NEED, d1, CHAIN_BASE, 4, REMITTER, 0, 0, keccak256("older"), false);
+        bytes32 older = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older")));
+        _mut().setPacketArrivedAtRaw(older, 1);
+        bytes32[] memory hints = new bytes32[](1); // zero: at the head — inside the passed prefix
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, older, 1, bytes32(0)));
+        _epoch().materializeTransportBatchPageHinted(older, d1, hints);
+        hints[0] = e1; // the cursor: the one hint such an epoch may carry
+        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints), 1);
+        (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(cursor, 1, "still");
+        assertEq(order[1], older, "the latest-linked late epoch leads the window");
+        assertEq(order[2], late);
+        assertEq(order[3], e2);
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

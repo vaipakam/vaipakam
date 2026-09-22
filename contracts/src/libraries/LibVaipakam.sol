@@ -7562,9 +7562,12 @@ library LibVaipakam {
         ///      NODE (zero = the head). A list inserts in constant work given
         ///      the predecessor, which is what bounds a late epoch's indexing;
         ///      an arrival-sorted ARRAY had to shift every newer entry, which
-        ///      no budget could bound for the day itself. The array index
-        ///      cursor `transportDayCursor` above is read only for a day the
-        ///      list does not yet hold whole (see `transportDayLinked`).
+        ///      no budget could bound for the day itself. The index cursor
+        ///      `transportDayCursor` above is the day's cursor as a POSITION —
+        ///      the count of leading exhausted epochs in the day's order, the
+        ///      array's until the list holds the day whole and the list's
+        ///      after — kept exact because the cursor only advances (Codex
+        ///      #2276 r11 P2).
         mapping(uint256 => bytes32) transportDayHead;
         mapping(uint256 => bytes32) transportDayTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
@@ -7788,7 +7791,12 @@ library LibVaipakam {
         ///      obligations: the packet-level EXIT a draw records beside its
         ///      step-down of `unclassified`, so the packet's own identity
         ///      holds after every draw exactly as its epoch's does (Codex
-        ///      #2274 r8 P1). Equals the epoch's two consumed legs together.
+        ///      #2274 r8 P1). Equals the epoch's two consumed legs together
+        ///      with what a late attestation recorded beyond both caps
+        ///      (`consumedFresh + consumedRecycled + consumedBeyondCaps`,
+        ///      Codex #2276 r11 P2): the attestation retypes legs and moves
+        ///      a scaling residual between the three, and none of that is a
+        ///      packet exit.
         uint256 drawn;
     }
 

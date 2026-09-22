@@ -267,11 +267,13 @@ contract RewardCustodyInvariant is SetupTest {
     /// #1566 transport epochs 3b-ii-A (Codex #2276 r8) — the day's ordered
     /// list holds every member the handler indexed, in (arrival, batch id)
     /// order: the linked count equals the membership, and the node pages walk
-    /// exactly that many, each ordered after the last. The handler's untyped
-    /// deliveries all list day 1.
+    /// exactly that many, each ordered after the last — except that the
+    /// order may restart right after the cursor, where a late epoch older
+    /// than the passed prefix takes the first place of the window (r11). The
+    /// handler's untyped deliveries all list day 1.
     function invariant_DayIndexIsLinkedAndOrdered() public view {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
-        (uint256 linked, uint256 total, ) = ep.getTransportDayIndex(1);
+        (uint256 linked, uint256 total, bytes32 cursorNode) = ep.getTransportDayIndex(1);
         assertEq(linked, total, "every member is linked");
         bytes32 from;
         uint256 seen;
@@ -280,6 +282,10 @@ contract RewardCustodyInvariant is SetupTest {
         while (true) {
             (bytes32[] memory page, uint64[] memory at, bytes32 next) = ep.getTransportDayBatchesFrom(1, from, 16);
             for (uint256 i = 0; i < page.length; ++i) {
+                if (last != bytes32(0) && last == cursorNode) {
+                    lastAt = 0;
+                    last = bytes32(0);
+                }
                 assertTrue(at[i] > lastAt || (at[i] == lastAt && page[i] > last), "in (arrival, batch id) order");
                 lastAt = at[i];
                 last = page[i];

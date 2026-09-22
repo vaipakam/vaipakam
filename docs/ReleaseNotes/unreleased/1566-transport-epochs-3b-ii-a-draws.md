@@ -87,8 +87,11 @@ The residual leg of an epoch's coverage is chosen
 on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's index is kept in **arrival order** whoever indexes it — an epoch
-indexed late takes its place by arrival, never behind the day's cursor,
-same-block arrivals in a fixed order by delivery identity, and each epoch
+indexed late takes its place by arrival, or, when that place is among the
+epochs the day's cursor has already passed, the first place of the window,
+so it is never behind the cursor and the cursor never moves back (which is
+what lets the day report its consumption as an exact count in constant
+work); same-block arrivals in a fixed order by delivery identity, and each epoch
 linked into its place in constant work (a materializer may name the
 predecessor; without one the ledger searches back from the newest for a
 bounded number of steps and refuses beyond that), so indexing an epoch

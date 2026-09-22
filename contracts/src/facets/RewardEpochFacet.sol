@@ -408,12 +408,12 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///                   `page` — the ordering key, read from the packet.
     /// @return total     How many batches this day has ever indexed.
     /// @return cursor    The day's consumption cursor as a POSITION — the
-    ///                   count of leading exhausted epochs — when it lies
-    ///                   within the `offset + limit` nodes this read walks;
-    ///                   `type(uint256).max` when it lies beyond them (read a
-    ///                   later page, or take the node from
-    ///                   {getTransportDayIndex}). Zero when nothing is
-    ///                   consumed. `cursor == total` reads the day exhausted.
+    ///                   count of leading exhausted epochs in the day's order,
+    ///                   exact and read in constant work (the cursor only
+    ///                   advances, so the figure is stored beside the node;
+    ///                   Codex #2276 r11 P2). Zero when nothing is consumed;
+    ///                   `cursor == total` reads the day exhausted. The node
+    ///                   itself is {getTransportDayIndex}'s.
     function getTransportDayBatches(uint256 dayId, uint256 offset, uint256 limit)
         external
         view
@@ -426,20 +426,16 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         page = new bytes32[](want);
         arrivedAt = new uint64[](want);
         // The read costs what its own arguments ask — `offset + limit` steps
-        // along the order, never a walk to the cursor's position (Codex
-        // #2276 r8 P2: that walk was unbounded by any argument) — and the
-        // cursor keeps this selector's numeric contract (r10 P2): its
-        // position when the walk reaches it, a sentinel when it does not.
-        // {getTransportDayBatchesFrom} pages from any node for the cost of
-        // the page alone.
+        // along the order (Codex #2276 r8 P2) — and the cursor is the stored
+        // position, exact in one read, on this selector's numeric contract
+        // (r10, r11 P2). {getTransportDayBatchesFrom} pages from any node
+        // for the cost of the page alone.
+        cursor = s.transportDayCursor[dayId];
         if (s.transportDayLinked[dayId] == total) {
-            bytes32 cursorNode = s.transportDayCursorNode[dayId];
-            cursor = cursorNode == bytes32(0) ? 0 : type(uint256).max;
             bytes32 node = s.transportDayHead[dayId];
             uint256 pos;
             uint256 w;
             while (node != bytes32(0) && w < want) {
-                if (node == cursorNode) cursor = pos + 1;
                 if (pos >= offset) {
                     page[w] = node;
                     arrivedAt[w] = s.ingressPackets[node].arrivedAt;
@@ -450,8 +446,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             }
         } else {
             // A day indexed before the list existed and not yet linked: the
-            // array in its own order, the cursor its array position.
-            cursor = s.transportDayCursor[dayId];
+            // array in its own order.
             for (uint256 i; i < want; ++i) {
                 bytes32 id = arr[offset + i];
                 page[i] = id;
