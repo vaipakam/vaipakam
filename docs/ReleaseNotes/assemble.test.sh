@@ -4176,87 +4176,31 @@ check "the lock is not left behind (guard)" \
 check "a later run is not blocked (guard)" \
   "$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1; echo $?)" "0"
 
-# ── A corpus figure lives in ONE file, enforced rather than remembered ─────
-# Rounds 6, 7, 8 and 11 of #2290 each found a fact stated in two places and
-# corrected in one, every round fixing whichever copy the finding cited. The
-# one-home rule was the answer; a convention nobody can check is how it went
-# wrong a fifth time, when the release-note fragment — written AFTER the
-# de-duplication, so never covered by it — arrived carrying the published-
-# placeholder count again, and three manual sweeps missed it. So the rule is
-# now a test.
+# ── The one-home rule is a CONVENTION, not a test — T218 was removed ───────
+# Rounds 6, 7, 8 and 11 each found a measured fact stated in two places and
+# corrected in one. The answer was to give every figure a single home: the
+# docstring of the rule it supports. A test (T218) was then added to enforce
+# it, and DELETED two rounds later, which is worth recording rather than
+# leaving as a gap somebody re-fills.
 #
-# This comment names no figure, deliberately. The first draft of it quoted
-# the count, and the guard below failed on its own explanation — which is
-# the rule working, and worth leaving as the reason not to quote one here.
+# It worked once — writing it immediately found a figure the release-note
+# fragment had restated, which three manual sweeps had missed. Then it
+# produced a false-positive finding in each of the next two rounds. Matching
+# bare integers flagged an unrelated `PR #758`; matching a number plus one
+# word from its row label flagged `758 published records`. Each fix bought
+# one case, which is the shape this whole change exists to stop repeating.
 #
-# Derived, never hand-listed: the figures come from the measurement table in
-# `check_heading_conformance`'s docstring, so a new row is covered the moment
-# it is written and nothing here can drift from it.
+# What settled it was not the false positives but the SCOPE. The guard read
+# every pending fragment, so it constrained every release note anyone writes
+# in future — unbounded, for a rule about one docstring's table. That is the
+# unbounded-predicate pattern CLAUDE.md records from #1995, and it is a
+# stiffer price than the defect.
 #
-# WHAT THIS DOES NOT CATCH, stated so it is not mistaken for a proof:
-#
-#  - Two-digit figures are excluded, because 60/66/69 collide with ordinary
-#    values — this suite alone has a `60`-second timeout, a retired-case
-#    count and a string slice. Checking them would report a correct tree.
-#  - A PROSE fraction attached to the wrong set. "A fifth" was right for the
-#    old level!=2 rule and wrong for `###` alone once the rule split, and no
-#    string test distinguishes those. That was round 11, and it stays a
-#    matter for review.
-#
-# It is a net for the duplication class, not a proof of consistency.
-case_start "T218: a corpus figure appears in exactly one file"
-_dup="$(python3 - "$DIR" <<'PYEOF'
-import re, sys, os
-d = sys.argv[1]
-src = open(os.path.join(d, "assemble.py"), encoding="utf-8").read()
-m = re.search(r"The corpus is the reason:(.*?)Read those two rows", src, re.S)
-if not m:
-    print("ANCHOR-MISSING")
-    raise SystemExit
-# A row is `<label>  <number>`, and BOTH halves are kept. Matching the bare
-# number reports a fragment that mentions `PR #758` or issue `#1084` for an
-# unrelated reason — a guard refusing correct input, which is the shape this
-# whole change kept finding. A restatement of a measurement names what it
-# counts, so the number alone is not the signal.
-rows = []
-for line in m.group(1).split("\n"):
-    r = re.match(r"\s*(\S.*?)\s{2,}(\d{3,})\b", line)
-    if r:
-        words = {w.lower() for w in re.findall(r"[A-Za-z]{6,}", r.group(1))}
-        rows.append((r.group(2), words))
-if not rows:
-    print("NO-FIGURES")
-    raise SystemExit
-others = ["assemble.test.sh", os.path.join("unreleased", "README.md")]
-frag_dir = os.path.join(d, "unreleased")
-if os.path.isdir(frag_dir):
-    others += [
-        os.path.join("unreleased", f)
-        for f in sorted(os.listdir(frag_dir))
-        if f.endswith(".md") and f not in ("README.md", "_TEMPLATE.md")
-    ]
-for rel in others:
-    p = os.path.join(d, rel)
-    if not os.path.isfile(p):
-        continue
-    for ln in open(p, encoding="utf-8", errors="replace").read().split("\n"):
-        low = ln.lower()
-        for fig, words in rows:
-            # `#758` is an issue or PR reference, never a restated count.
-            if not re.search(r"(?<!#)\b" + fig + r"\b", ln):
-                continue
-            if words & {w for w in re.findall(r"[a-z]{6,}", low)}:
-                print(f"{fig} in {rel}: {ln.strip()[:60]}")
-PYEOF
-)"
-check "the docstring's figure table is still findable" \
-  "$(printf '%s' "$_dup" | grep -c 'ANCHOR-MISSING')" "0"
-check "it still holds figures" \
-  "$(printf '%s' "$_dup" | grep -c 'NO-FIGURES')"     "0"
-check "no figure is stated twice" "$(printf '%s' "$_dup" | grep -c .)" "0"
-if [ -n "$_dup" ]; then
-  printf '       duplicated: %s\n' "$_dup" >&2
-fi
+# The rule stands and is stated where it applies. Enforcing it is review's
+# job, because it is a rule about PROSE — which this change concluded three
+# separate times is not mechanically checkable, and then tried to mechanise
+# anyway.
+
 
 case_start "T211: every retirement in the table is real"
 # A retirement claims a case can no longer produce its fault. Read by

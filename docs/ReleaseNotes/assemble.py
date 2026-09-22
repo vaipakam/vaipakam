@@ -183,10 +183,11 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     unexamined. That is one exotic shape, never once used, in exchange for
     an entire class of misreading.
 
-    Front matter is skipped first, matched STRICTLY: `---` alone at column
-    zero on the first line, closed by the same. Indented, `---` is a
-    thematic break and not a fence, which is what r5 caught in the previous
-    `.strip()` version.
+    Front matter is NOT skipped — it is refused, by `check_heading_conformance`
+    and before this function is reached. An earlier revision skipped it, and
+    this paragraph still described that after the behaviour changed (#2290
+    r12), which is the opposite of the truth for anyone reading the contract
+    here rather than the caller.
 
     The same holds for raw HTML — `<h1>Title</h1>` renders as a heading on
     GitHub but is not Markdown syntax and is not detected. Zero occurrences
@@ -1540,7 +1541,16 @@ class Assembly:
         This was reconsidered in r6 and r7 and MEASURED rather than argued,
         because the first version of this paragraph defended it by the cost of
         conforming the test fixtures — which is not a reason to weaken a
-        production rule, and a review round said so. The corpus is the reason:
+        production rule, and a review round said so. The corpus is the reason.
+
+        MEASURED OVER THE FRAGMENTS COMMITTED BEFORE THIS CHANGE, which is a
+        real cutoff and not a rounding: the change adds a fragment of its own,
+        so it would otherwise be counting itself and the totals below would be
+        wrong the moment they were written (#2290 r12). Quoting 759 instead
+        would be wrong again as soon as the next fragment lands, so the table
+        states a baseline rather than chasing a live number. The conclusions
+        are about proportions across hundreds of fragments and no single
+        addition moves them.
 
             distinct fragments with an ATX opening heading     758
               carrying NO `PR #` token at all                  457   (60%)
@@ -1782,11 +1792,30 @@ class Assembly:
             # line is exact; r6 showed the alternative, where a two-line
             # construct compared by its text alone refuses a fragment because
             # the dated file happens to contain that sentence as prose.
-            opening = first_heading(body)
-            if opening is not None:
-                line = opening[1]
+            # ITS OWN SCAN, and NOT `first_heading` (#2290 r12). Sharing the
+            # parser was right when the two consumers differed by accident;
+            # it is wrong now that they ask genuinely different questions.
+            #
+            # `check_heading_conformance` judges the line a fragment OPENS
+            # with — a fragment whose heading is further down is allowed, and
+            # deliberately unexamined. This guard asks something else: does
+            # this fragment's text already sit in a markerless dated file?
+            # For that, the heading has to be found WHEREVER it is, because a
+            # legacy interrupted run wrote the fragment's whole body.
+            #
+            # Using the opening-only parser here returned None for a fragment
+            # that opens with prose, so the guard saw nothing to match, the
+            # run appended the fragment a SECOND time and then consumed the
+            # pending source — two copies and exit 0. That is the one outcome
+            # in this script that loses work rather than refusing, and it was
+            # reproduced before this fix.
+            for ln in body.split(b"\n"):
+                line = ln[:-1] if ln.endswith(b"\r") else ln
+                if not HEADING_RE.match(line):
+                    continue
                 if any(line == other for other in normalised.split(b"\n")):
                     suspect.append(self.frag_name[f])
+                break
 
         if suspect and not out_has_markers and not self.force:
             err(f"Error: {os.path.basename(self.out)} carries no assembly markers at all, and already")
