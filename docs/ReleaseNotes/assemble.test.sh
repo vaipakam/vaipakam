@@ -524,7 +524,11 @@ W="$ROOT/t10"; build "$W"
 git -C "$W" mv docs/ReleaseNotes/unreleased/0001-a.md \
               docs/ReleaseNotes/unreleased/0001-a-rewritten.md
 # Replace the content wholesale so similarity detection cannot pair the two.
-printf 'totally different content, sharing no line with the original\n' \
+# The heading is INCIDENTAL to what this case tests — it is here only because
+# #2295 refuses a fragment whose opening line is not one, and this case is
+# about rename pairing, not headings. It shares no line with the original, so
+# the pairing it is testing is unaffected.
+printf '## Thread — totally different content, sharing no line (PR #4210)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a-rewritten.md"
 git -C "$W" add -A
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
@@ -4400,12 +4404,15 @@ u="$W/docs/ReleaseNotes/unreleased"
 # behaviour. Left recorded rather than silently swapped, because it is the
 # argument a future maintainer is most likely to reach for again.
 printf '## a heading with no reference at all\n' > "$u/0003-noref.md"
-# No heading at all: allowed. T10's fixture is a bare line of prose because it
-# is testing rename pairing, not headings.
-printf 'no heading here, just prose\n'           > "$u/0004-noheading.md"
+# NO HEADING AT ALL USED TO BE ALLOWED HERE TOO, and #2295 inverted it: a
+# fragment whose opening line is not an ATX heading is now REFUSED. The two
+# allowances were never the same decision, and keeping them in one case made
+# them look like one. A missing PR reference is a CONVENTION most real
+# fragments do not follow, measured; a missing heading is a shape no fragment
+# has ever had, and allowing it published eleven mangled shapes.
 bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
 check "the run succeeds"          "$?"                                                            "0"
-check "all four are folded in"    "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
+check "all three are folded in"   "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "3"
 check "nothing left pending"      "$(pending "$W")"                                               "0"
 
 # ── An INDENTED ATX heading is still a heading (#2290 r1) ───────────────────
@@ -4511,51 +4518,62 @@ check "nothing was consumed"     "$(pending "$W")"               "4"
 #
 # Pinned so that re-adding setext is a deliberate act with these three rounds
 # in view, and not a well-meant "the check missed one" patch.
-case_start "T217i: a setext level-1 title is ALLOWED — the stated residual"
+# ── THE FOUR CASES BELOW WERE INVERTED BY #2295 ────────────────────────────
+# Each one used to pin the no-heading ALLOWANCE: a shape the parser does not
+# recognise was published and its source consumed. That allowance is gone —
+# an unrecognised opening line is refused — so each case now pins the
+# refusal instead. They are kept rather than deleted because the shapes are
+# exactly the ones that reached published notes through the allowance, and a
+# future revision that re-introduces it should have to turn these red.
+case_start "T217i: a setext level-1 title is refused, not silently published"
 W="$ROOT/t217i"; build "$W"
 printf 'Thread — underlined with equals (PR #4243)\n=========\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-setext1.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                             "1"
+check "it names the file"    "$(says "$msg" '0003-setext1.md')"               "1"
+check "and names the line"   "$(says "$msg" 'opening line is not a')"         "1"
+check "nothing was consumed" "$(pending "$W")"                                "3"
 
-case_start "T217i2: a setext level-2 title is allowed too, placeholder and all"
+case_start "T217i2: a setext level-2 title is refused too, placeholder and all"
 W="$ROOT/t217i2"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
 printf 'Thread — underlined with dashes (PR #4244)\n---------\n' > "$u/0003-setext2.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"                "0"
-check "nothing left pending" "$(pending "$W")"   "0"
-# The placeholder in a setext title is NOT caught. That is the cost of the
-# removal, stated here rather than left to be discovered: the line is not
-# recognised as a heading, so neither rule reaches it.
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                "1"
+check "nothing was consumed" "$(pending "$W")"   "3"
+# A placeholder in a setext title used to escape BOTH rules — the line was not
+# recognised as a heading, so neither reached it, and the fragment published
+# its `(PR #TBD)` unexamined. It is now refused for the opening line rather
+# than for the placeholder, which is the right reason: the check cannot read
+# that line, and says so.
 W="$ROOT/t217i3"; build "$W"
 printf 'Thread — setext with a placeholder (PR #TBD)\n----\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-setext-ph.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "it is published, not refused" "$?"              "0"
-check "nothing left pending"         "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "it is refused, not published" "$?"                                     "1"
+check "for the opening line"         "$(says "$msg" 'opening line is not a')" "1"
+check "nothing was consumed"         "$(pending "$W")"                        "3"
 
-# A list above a thematic break — the r5 finding — is now simply not a
-# heading, rather than being one by accident. Pinned because it is the shape
-# that made the removal worth it.
-case_start "T217i3b: a list above a thematic break is not mistaken for a heading"
+# A list above a thematic break — the r5 finding — is not a heading, and is
+# now refused for that. Pinned because it is the shape that made removing the
+# setext parser worth it, and it would have been published before #2295.
+case_start "T217i3b: a list above a thematic break is refused, not published"
 W="$ROOT/t217i3b"; build "$W"
 printf -- '- one\n- two\n---\n\nbody\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-list-break.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
 
-# A bare line of prose with no underline under it is still no heading — the
-# allowance has to survive, or T10 breaks again.
-case_start "T217i4: prose with no underline is still no heading"
+case_start "T217i4: prose with no underline is refused"
 W="$ROOT/t217i4"; build "$W"
 printf 'just prose, and the next line is blank\n\nmore prose\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-prose.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                     "1"
+check "and names the line"   "$(says "$msg" 'opening line is not a')"  "1"
+check "nothing was consumed" "$(pending "$W")"                         "3"
 
 # ── Front matter is REFUSED, not skipped (#2290 r12) ───────────────────────
 # Skipping it was the previous answer, and it created a worse problem than
@@ -4645,20 +4663,30 @@ check "and that it continues"      "$(says "$msg" 'not a refusal')"             
 # removed twice. A BOM fragment is published, as it is on `main`, which has
 # no heading check at all. #2295 refuses it properly, as an unrecognised
 # opening line, without ever asking for a re-save.
-case_start "T217m: a BOM-bearing fragment is published, not refused"
+# #2295 REFUSES IT AGAIN, AND THE DIFFERENCE IS THE MESSAGE, NOT THE VERDICT.
+# The r11 refusal named the byte-order mark and told the author to re-save the
+# file — and that edit is what made the markerless duplicate guard stop
+# recognising the already-published copy, losing a fragment twice. The general
+# rule names the LINE instead, so no remedy it suggests rewrites the evidence
+# another guard matches on. Same outcome for the author, reached without the
+# trap; and it covers UTF-16/32 for free, which the r11 clause never did.
+case_start "T217m: a BOM-bearing fragment is refused for its opening line"
 W="$ROOT/t217m"; build "$W"
 printf '\xef\xbb\xbf## Thread — saved with a mark (PR #4249)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
-# UTF-16 likewise — the refusal that knew only UTF-8 is gone entirely.
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                                     "1"
+check "for the opening line"   "$(says "$msg" 'opening line is not a')"  "1"
+check "never says re-save"     "$(says "$msg" 're-save')"                "0"
+check "nothing was consumed"   "$(pending "$W")"                         "3"
+# UTF-16 likewise, and it needs no clause of its own — the r11 refusal knew
+# only UTF-8 and let this one through.
 W="$ROOT/t217m2"; build "$W"
 printf '\xff\xfe## Thread — saved as UTF-16 LE (PR #4250)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom16.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
@@ -4683,14 +4711,20 @@ printf -- '---\t\ntitle: x\n---\n\n# Peer title (PR #TBD)\n' \
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run refuses"      "$?"                                      "1"
 check "nothing was consumed" "$(pending "$W")"                         "3"
-# And an INDENTED `---` is NOT front matter — it is a thematic break, so the
-# fragment is allowed (and simply has no heading). The allowance side.
+# And an INDENTED `---` is NOT front matter — it is a thematic break. That
+# distinction still holds and is still the point of this sub-case, but since
+# #2295 it decides the MESSAGE rather than the verdict: the fragment is
+# refused either way, and what this pins is that it is not refused as front
+# matter, because telling an author to remove front matter they did not write
+# sends them looking for something that is not there.
 W="$ROOT/t217n3"; build "$W"
 printf -- ' ---\nnot front matter, a thematic break\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-fm-indent.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                                     "1"
+check "for the opening line"   "$(says "$msg" 'opening line is not a')"  "1"
+check "not as front matter"    "$(says "$msg" 'front matter')"           "0"
+check "nothing was consumed"   "$(pending "$W")"                         "3"
 
 # ── A real number followed by punctuation is a real reference (r14) ────────
 # The capture runs to the next comma, bracket or space, so `PR #123: final`
@@ -4745,13 +4779,67 @@ check "nothing left pending" "$(pending "$W")"                                  
 # Pinned here so the claim is true and so removing the allowance later is a
 # visible decision rather than a silent behaviour change. Zero fragments have
 # ever opened this way.
-case_start "T217r: a raw-HTML heading is allowed — the documented residual"
+# INVERTED BY #2295. This used to be the worst instance of the allowance:
+# `<h1>` renders on GitHub as a peer document title AND carries an
+# unsubstituted placeholder, so the fragment published both defects the check
+# exists to stop — because the line was not Markdown. It is refused now, and
+# still without parsing any HTML: the rule is that the line must be an ATX
+# heading, not that it must not be something.
+case_start "T217r: a raw-HTML heading is refused, without parsing HTML"
 W="$ROOT/t217r"; build "$W"
 printf '<h1>Peer document title (PR #TBD)</h1>\n\nbody\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-rawhtml.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                     "1"
+check "for the opening line" "$(says "$msg" 'opening line is not a')"  "1"
+check "nothing was consumed" "$(pending "$W")"                         "3"
+
+# ── A heading inside a container is not a heading here (#2295) ─────────────
+# `> # Title` and `- # Title` render as headings on GitHub but are a block
+# quote and a list item. Before the inversion they took the no-heading
+# allowance and published a peer document title; now they are refused, and
+# without the check having to know what a block quote is.
+case_start "T217s: a heading inside a blockquote or list is refused"
+W="$ROOT/t217s"; build "$W"
+printf -- '> # Peer title in a quote (PR #TBD)\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-quote.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                     "1"
+check "for the opening line" "$(says "$msg" 'opening line is not a')"  "1"
+check "nothing was consumed" "$(pending "$W")"                         "3"
+W="$ROOT/t217s2"; build "$W"
+printf -- '- # Peer title in a list (PR #TBD)\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-listitem.md"
 bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+check "a list item too"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
+
+# ── CR-ONLY LINE ENDINGS (#2295) ───────────────────────────────────────────
+# NOT closed by the inversion, which is why it gets its own case rather than
+# a line in a list: a CR-only file's opening line IS a valid ATX heading, so
+# refusing unrecognised openers never reached it. What was wrong is narrower
+# — splitting on `\n` alone made the whole file read as ONE line, so the
+# PR-reference scan ran over the entire body and refused the fragment for a
+# `PR #<n>` written in its prose. Splitting on all three CommonMark line
+# endings bounds the heading correctly.
+#
+# Both directions are pinned, because a fix that only ever refuses is
+# indistinguishable from the bug it replaced.
+case_start "T217t: a CR-only fragment is judged on its heading, not its body"
+W="$ROOT/t217t"; build "$W"
+printf -- '## Thread — saved with CR endings (PR #4251)\r## a later heading\rbody mentioning PR #TBD\r' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-cr-ok.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "a valid heading passes"   "$?"              "0"
+check "nothing left pending"     "$(pending "$W")" "0"
+# And a placeholder in the heading of a CR-only file is still caught.
+W="$ROOT/t217t2"; build "$W"
+printf -- '## Thread — CR endings, unsubstituted (PR #TBD)\rbody\r' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-cr-ph.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"       "$?"                            "1"
+check "as a placeholder"      "$(says "$msg" 'placeholder')"   "1"
+check "nothing was consumed"  "$(pending "$W")"                "3"
 
 case_start "T217k2: a deep heading is still refused for its placeholder"
 W="$ROOT/t217k2"; build "$W"
