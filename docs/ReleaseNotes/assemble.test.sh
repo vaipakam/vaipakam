@@ -4213,8 +4213,18 @@ m = re.search(r"The corpus is the reason:(.*?)Read those two rows", src, re.S)
 if not m:
     print("ANCHOR-MISSING")
     raise SystemExit
-figures = {n for n in re.findall(r"\b(\d{3,})\b", m.group(1))}
-if not figures:
+# A row is `<label>  <number>`, and BOTH halves are kept. Matching the bare
+# number reports a fragment that mentions `PR #758` or issue `#1084` for an
+# unrelated reason — a guard refusing correct input, which is the shape this
+# whole change kept finding. A restatement of a measurement names what it
+# counts, so the number alone is not the signal.
+rows = []
+for line in m.group(1).split("\n"):
+    r = re.match(r"\s*(\S.*?)\s{2,}(\d{3,})\b", line)
+    if r:
+        words = {w.lower() for w in re.findall(r"[A-Za-z]{6,}", r.group(1))}
+        rows.append((r.group(2), words))
+if not rows:
     print("NO-FIGURES")
     raise SystemExit
 others = ["assemble.test.sh", os.path.join("unreleased", "README.md")]
@@ -4229,10 +4239,14 @@ for rel in others:
     p = os.path.join(d, rel)
     if not os.path.isfile(p):
         continue
-    txt = open(p, encoding="utf-8", errors="replace").read()
-    for fig in sorted(figures):
-        if re.search(r"\b" + fig + r"\b", txt):
-            print(f"{fig} in {rel}")
+    for ln in open(p, encoding="utf-8", errors="replace").read().split("\n"):
+        low = ln.lower()
+        for fig, words in rows:
+            # `#758` is an issue or PR reference, never a restated count.
+            if not re.search(r"(?<!#)\b" + fig + r"\b", ln):
+                continue
+            if words & {w for w in re.findall(r"[a-z]{6,}", low)}:
+                print(f"{fig} in {rel}: {ln.strip()[:60]}")
 PYEOF
 )"
 check "the docstring's figure table is still findable" \

@@ -32,10 +32,14 @@ published headings that exist, not by reasoning about what a fragment ought
 to look like; twice during review the obvious stricter rule turned out to
 refuse the majority of real work.
 
-The check reads one line — the fragment's first line of content, after any
-front matter — and recognises a heading there only in `#` form. A title
-underlined instead of prefixed, a heading further down the file, and raw
-HTML are not examined. That is a deliberate trade rather than an oversight:
+The check reads one line — the fragment's first line of content — and
+recognises a heading there only in `#` form. A title underlined instead of
+prefixed, a heading further down the file, and raw HTML are not examined. A
+fragment that opens with a byte-order mark or with `---` is refused outright
+rather than interpreted, because each reads as one thing at the top of its
+own file and as something else once folded, and the assembler publishes what
+the author wrote rather than a cleaned-up copy of it. That is a deliberate
+trade rather than an oversight:
 an earlier version scanned for the first heading anywhere in the file and
 produced six separate ways to be fooled, each one causing a real heading
 below to be skipped entirely. Reading a single line cannot mask anything.

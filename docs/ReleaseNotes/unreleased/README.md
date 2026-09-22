@@ -32,12 +32,17 @@ PRs landing the same day never append-conflict.
    **What the refusal does and does not cover**, so it is not relied on for
    more than it does:
 
-   - It reads **one line**: the fragment's first line of content. YAML front
-     matter delimited by `---` at column zero, and any blank lines, are
-     skipped first, so a heading directly under front matter *is* examined —
-     placeholder and all. Nothing below that line is. A heading further down
-     the file, or a title underlined with `=` or `-` rather than prefixed
-     with `#`, is not examined.
+   - It reads **one line**: the fragment's first line of content, after any
+     blank lines. Nothing below that line is examined — not a heading
+     further down the file, and not a title underlined with `=` or `-`
+     rather than prefixed with `#`.
+   - A fragment that **opens with `---`, or starts with a byte-order mark,
+     is refused outright** — before its heading is looked at. Neither is a
+     shape any fragment has ever used, and both read as one thing at the top
+     of their own file and as something else once folded into the dated
+     note: `---` becomes a thematic break, and a byte-order mark stops the
+     line after it being a heading at all. Open with the `##` heading
+     itself.
    - A heading with **no PR reference at all** is not refused. That is not an
      oversight — most fragments written so far carry none, as do most
      published section headings. The `(PR #<n>)` convention is the template's,

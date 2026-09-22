@@ -1561,8 +1561,16 @@ class Assembly:
         be PRESENT stops the 457 — six fragments in ten — *in addition to* the
         235 already refused for carrying a placeholder. Nine in ten is the
         combined figure for requiring a NUMERIC reference; six in ten is what
-        requiring presence adds. Either way it would
-        contradict two thirds of everything already published. The template
+        requiring presence adds.
+
+        The two policies do not have the same cost on the published side
+        either, and an earlier revision said "either way … two thirds", which
+        flattened them. Against the 1084 published section headings:
+        requiring PRESENCE contradicts the 758 that carry no token — about
+        seven in ten. Requiring a NUMERIC reference contradicts those plus
+        the 179 carrying a placeholder — nearer nine in ten. The stricter
+        policy is the more expensive one on both corpora, and saying "either
+        way" understated it. The template
         ships `(PR #<n>)`, but the template's convention is not the corpus's
         practice, and a rule that refuses the overwhelming majority of real
         input is the rule that gets deleted — the same mistake this check made
