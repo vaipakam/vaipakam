@@ -632,19 +632,26 @@ runs come back clean — and then **keeps repeating, weekly, for as long as the
 old database is kept**.
 
 **Most of what it reports never stops reporting, and the procedure says so
-rather than leaving an operator to discover it.** Two situations settle into
-silence: applying the value the old database holds, or inserting a row it has
-that the new one lacks. Four do not.
+rather than leaving an operator to discover it.** Where the old database holds
+a changed value, or a row the new one does not have at all, the settlement is
+to apply or insert it, and the next run passes over it in silence.
 
-Two of those four are settled by deciding the data stands as it is — a row
-deliberately left deleted on one side or the other — so nothing either database
-holds changes and the same line comes back. A third is a spent identifier: the
-old database allocated one and the row was deleted, so there is nothing to
-apply, and the new database's own counter reaching the same number later is not
-evidence of anything, since it allocates identifiers for its own records every
-minute.
+The others do not fall silent, for different reasons. Where a row was
+deliberately left deleted on one side or the other, the settlement is a
+decision that the deletion stands: nothing either database holds changes, so
+the same line comes back.
 
-**The fourth is not a decision to do nothing, and the distinction matters.**
+**A report that the old database handed out identifiers after the move is not,
+by itself, a report that anything was deleted** — and reading it that way is
+how a late row gets lost. It says only that something was inserted. Those rows
+may still be there, in which case they appear on their own lines and are to be
+applied like any other; or they may have been inserted and deleted again, in
+which case the identifiers are spent and there is nothing to apply. Either way
+the line keeps reporting, because the new database's counter reaching the same
+number later says nothing — it advances on its own writes.
+
+**And one situation is not a decision to do nothing at all, which is the
+distinction that matters most here.**
 Where one identifier is allocated on both sides to different records, the
 settlement is to insert the old database's record into the new one under a
 fresh identifier. That is a real data change and it has to be made — reading
@@ -654,12 +661,17 @@ still allocated on both sides.
 
 So a clean run is not a silent one. A run is as resolved as it is going to get
 once every line it carries has already been recorded **by table and by key**,
-with the decision taken — by key, because the same situation on a different key
-is a new difference nobody has decided, and matching on the situation's name
-alone would wave it through. Such a run counts as the clean run for the two-run
-rule, and the weekly re-runs continue, because their job is to surface what is
-new. Letting the comparison record a decision and honour it directly is tracked
-separately, as #2279.
+with the decision taken — by key rather than by the situation's name, because
+the same situation on a different key is a difference nobody has decided. Such
+a run counts as the clean run for the two-run rule, and the weekly re-runs
+continue, because their job is to surface what is new.
+
+**That test is the one in force today, and it is weaker than it sounds.** A
+report names the table, the key and the kind of difference, and deliberately
+not the row's contents — so a row that changes *again*, after a decision about
+it was recorded, produces a line indistinguishable from the settled one and is
+waved through. Binding each decision to the state it was taken in, so the
+comparison speaks up when that state moves, is the work tracked as #2279.
 
 Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and

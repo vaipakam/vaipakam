@@ -756,7 +756,21 @@ because step 3 below is the part of it that had to be re-learned.
       > decision, treat a run carrying only already-recorded keys as the
       > clean run for the two-run rule, and keep the weekly re-runs
       > going** — their job is to surface anything NEW, and a fixed set of
-      > known-and-decided lines does not stop them doing it. What it does cost is the property that made
+      > known-and-decided lines does not stop them doing it.
+      >
+      > **The by-key test is weaker than it sounds, and this is its one
+      > hole** (#2286 r5). A report carries the table, the key and the
+      > kind, and deliberately NOT the row's contents. So a row that
+      > changes AGAIN after a decision was recorded about it emits a line
+      > identical to the settled one, and the by-key test waves it
+      > through. A `destination-deleted-source-changed` row taking a second
+      > late update is the concrete case. Until #2279 binds a decision to
+      > the state it was taken in, treat a recurring line as decided only
+      > for the state you actually reviewed — and where the situation is
+      > one whose source value can move (`source-changed`,
+      > `destination-deleted-source-changed`), re-read the source row
+      > before counting the run clean rather than matching on the key
+      > alone. What it does cost is the property that made
       > "repeat until clean" self-checking, which is why this is written
       > down rather than left for an operator to work out at 2am.
       >
