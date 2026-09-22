@@ -68,6 +68,14 @@ another does not is the same proof — including a table named only in a final,
 cut-off run, which is still a table that was not there when the database was last
 listed in full.
 
+The comparison also covers how each table **identifies** its rows, not only what
+they contain — a table rebuilt with a different key over the same values holds
+the same contents and would otherwise pass, while everything that reads the
+record afterwards sorts rows by the part that changed. Records made before that
+was captured cannot be re-made, because the moment they describe has passed, so
+they are not rejected; instead the promotion names the dimensions it actually
+compared, and says plainly which one it could not.
+
 The promotion is refused outright, and the file left untouched, if any table is
 short of either kind of evidence. A record that stays un-promoted is still
 useful for spotting new differences; what it must not do is authorise the step

@@ -36,6 +36,7 @@ import {
   verdictProblems,
   exactSequence,
   newManifestTables,
+  shapeFingerprint,
   writeManifest,
 } from "../scripts/d1-carry-rows.mjs";
 
@@ -2693,6 +2694,52 @@ describe("a table set that changed is evidence too", () => {
     expect(e.conflicts).toEqual([]);
     expect(e.readings.paired).toBe(1);
     expect(e.readings.unpaired).toBe(1);
+  });
+
+  // #2281 r13 — an intervening digest block means a new run began, so a
+  // pending enumeration can never pair with a later run's marker.
+  it("voids a pending pairing when the next run's digests begin", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`, // run 1 closes its enumeration
+        `t ${d}`, // run 2's digests begin — run 1 never got its seqs
+        "seq t 6",
+        "seq-listing complete", // run 2's marker, with no summary of its own
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(0);
+    expect(e.readings.unpaired).toBe(2);
+  });
+
+  // #2281 r13 — contents and allocations cannot speak for row identity.
+  it("catches a table recreated with a different key over the same values", () => {
+    const d = "1".repeat(16);
+    const atMirror = shapeFingerprint(["id"], ["id", "email"]);
+    const problems = coverageProblems(
+      {
+        t: {
+          key: ["email"],
+          cols: ["id", "email"],
+          seq: 0,
+          rows: {},
+          digest: d,
+        },
+      },
+      {
+        digests: new Map([["t", d]]),
+        shapes: new Map([["t", atMirror]]),
+        seqs: new Map([["t", 0]]),
+        seqListingComplete: true,
+        conflicts: [],
+        readings: { tableSets: 1, sequences: 1, paired: 1, unpaired: 0 },
+      },
+    );
+    // Same digest, same sequence — only the key differs.
+    expect(
+      problems.some((p) => p.includes("REDECLARED between the mirror")),
+    ).toBe(true);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {

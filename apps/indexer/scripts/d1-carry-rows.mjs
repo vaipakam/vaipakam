@@ -985,7 +985,10 @@ async function digestDatabase(
       key: live ? key : null,
       live,
     });
-    out.set(table, digestOf(rows, cols));
+    out.set(table, {
+      ...digestOf(rows, cols),
+      shape: shapeFingerprint(key, cols),
+    });
   }
   return out;
 }
@@ -993,8 +996,10 @@ async function digestDatabase(
 function printDigest(label, map) {
   console.log(`\n${label}`);
   let rows = 0;
-  for (const [table, { digest, count }] of [...map].sort()) {
+  const shapes = [];
+  for (const [table, { digest, count, shape }] of [...map].sort()) {
     rows += count;
+    if (shape) shapes.push(`  shape ${table.padEnd(28)} ${shape}`);
     console.log(
       `  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}`,
     );
@@ -1002,6 +1007,11 @@ function printDigest(label, map) {
   console.log(
     `  ${"—".repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)`,
   );
+  // AFTER the count line, so the line that closes the table-set reading
+  // still does (#2281 r13). These say how each table keys and projects
+  // its rows — the part of a manifest that content equality cannot
+  // speak for.
+  for (const line of shapes) console.log(line);
 }
 
 // ------------------------------------------------------------------- carry
@@ -1824,6 +1834,32 @@ export function classifyForReconcile({
 }
 
 /**
+ * A fingerprint of a table's ROW IDENTITY and PROJECTION.
+ *
+ * Coverage compared contents and allocations and nothing else, so it
+ * never established that a reconstruction keys and projects its rows the
+ * way the mirror-time baseline did (#2281 r13). A migration after the
+ * mirror can rename a column, or recreate a table with a different
+ * primary key over the same column-order values: `digestOf` reads the
+ * same bytes in the same order and returns the same digest, the
+ * sequence need not move, and the artifact is promoted with different
+ * `key` and `cols` than the mirror would have written. Reconciliation
+ * then classifies rows by those fields and licenses a reverse mirror on
+ * the strength of it.
+ *
+ * Content equality is not manifest equality, and this is the part of a
+ * manifest that content cannot speak for.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function shapeFingerprint(key, cols) {
+  return createHash("sha256")
+    .update(JSON.stringify({ key: key ?? [], cols: cols ?? [] }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
  * The container a manifest's tables go in — prototype-free, always.
  *
  * A TABLE MAY BE CALLED `__proto__` (#2281 r10). It is a legal SQLite
@@ -1914,6 +1950,7 @@ export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
  */
 export function parseEvidence(text) {
   const digests = new Map();
+  const shapes = new Map();
   // A RUN LOG HOLDS SEVERAL READINGS, AND THEY MAY DISAGREE (#2281 r4).
   // The documented barrier takes two digests ten minutes apart and a
   // third after the carry, so pasting the log in means repeated table
@@ -2031,6 +2068,17 @@ export function parseEvidence(text) {
       }
       continue;
     }
+    // `shape <table> <16-hex>` — how that table keyed and projected its
+    // rows at the moment of the reading (#2281 r13). It is a value like
+    // the digest, not a boundary: it closes nothing.
+    const shp = /^shape\s+([A-Za-z_][A-Za-z0-9_]*)\s+([0-9a-f]{16})$/.exec(
+      line,
+    );
+    if (shp) {
+      mentioned.add(shp[1]);
+      put(shapes, "shape", shp[1], shp[2]);
+      continue;
+    }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
     if (seq) {
       mentioned.add(seq[1]);
@@ -2064,6 +2112,15 @@ export function parseEvidence(text) {
     );
     if (dig) {
       mentioned.add(dig[1]);
+      // A DIGEST LINE AFTER A CLOSED ENUMERATION IS A NEW RUN (#2281
+      // r13). One run prints its digests, its count line, its `seq`
+      // lines, then its marker — digests never follow the count line of
+      // their own run. So an enumeration still waiting to be paired
+      // when digests start again is one whose sequence section is not
+      // in the file, and pairing it with the NEXT run's marker joins
+      // one run's tables to another run's allocations. That is the
+      // shape this pairing exists to reject, reached from inside.
+      pendingEnumeration = null;
       openDigests.set(dig[1], dig[2]);
       put(digests, "digest", dig[1], dig[2]);
     }
@@ -2134,6 +2191,7 @@ export function parseEvidence(text) {
 
   return {
     digests,
+    shapes,
     seqs,
     seqListingComplete: sawAnyComplete,
     // HOW MANY CLOSED READINGS THERE WERE, so a caller can tell an
@@ -2214,6 +2272,25 @@ export function coverageProblems(tables, evidence) {
           `baseline read ${entry.seq ?? 0} — something allocated in ` +
           `between`,
       );
+    }
+    // SHAPE, WHERE THE EVIDENCE CARRIES IT (#2281 r13). Contents and
+    // allocations cannot speak for row identity: a migration that
+    // renames a column, or recreates a table with a different primary
+    // key over the same column-order values, leaves the digest and the
+    // sequence untouched while `key` and `cols` differ from what the
+    // mirror would have written — and reconciliation classifies rows by
+    // exactly those fields.
+    const expectedShape = evidence.shapes?.get(table);
+    if (expectedShape !== undefined) {
+      const mine = shapeFingerprint(entry.key, entry.cols);
+      if (mine !== expectedShape) {
+        problems.push(
+          `${table}: the evidence records shape ${expectedShape}, this ` +
+            `baseline keys and projects its rows as ${mine} — the table ` +
+            `was REDECLARED between the mirror and this reading, so its ` +
+            `rows are not identified the same way`,
+        );
+      }
     }
   }
   // BOTH MAPS, NOT JUST THE DIGESTS (#2281 r5). A `seq <table> <n>` line
@@ -2499,6 +2576,18 @@ async function takeManifest(db) {
   // read twice, changed while later tables are still being read — and
   // that limitation is stated rather than implied, here and in the
   // release note.
+  // THE WINDOW CLOSES BEFORE THE TERMINAL READS ARE ISSUED (#2281 r13).
+  // Stamping this after the schema response ARRIVES leaves the flight
+  // time inside the claimed window: SQLite executes the query, an ALTER
+  // commits, the response comes back describing the older schema, and
+  // the change precedes a completion time that nothing observed.
+  //
+  // Taken first, every terminal observation happens after it, so the
+  // window is bounded by a moment both of them are later than. It is
+  // the conservative endpoint rather than the latest defensible one,
+  // which is the right direction for a claim an artifact makes about
+  // itself.
+  const readCompletedAt = new Date().toISOString();
   const ddlFinal = await declarations(db.id, { fresh: true });
   for (const name of new Set([...ddlWholeAtRead.keys(), ...ddlFinal.keys()])) {
     if ((ddlFinal.get(name) ?? null) !== (ddlWholeAtRead.get(name) ?? null)) {
@@ -2510,15 +2599,6 @@ async function takeManifest(db) {
       );
     }
   }
-  // AND THE WINDOW THIS ARTIFACT CLAIMS ENDS HERE (#2281 r12). The
-  // sequence comparison below needs one more remote read, so something
-  // has to be last and whatever follows the last schema reading is
-  // unobserved by it. Rather than leave that gap inside the stated
-  // window, the window ENDS at the earliest of the final observations —
-  // this one. The sequence read happens after it and therefore covers
-  // [start, here] as well, so every check covers the whole of what the
-  // artifact claims, which is the property that matters.
-  const readCompletedAt = new Date().toISOString();
 
   // AND the sequences, which the row digests cannot see: an identifier
   // allocated and released leaves no row behind.
@@ -3709,13 +3789,33 @@ async function main() {
     // Promoted only here, with the comparison that licenses it recorded
     // alongside — so the artifact says what was checked, not merely that
     // something was.
+    // WHICH DIMENSIONS WERE ACTUALLY COMPARED (#2281 r13). Shape
+    // evidence is newer than the evidence some operators already hold —
+    // the record made at a mirror that has passed cannot be re-taken —
+    // so requiring it would make the rollback unfollowable for exactly
+    // the artifact this verb exists to rebuild. But a dimension that
+    // was not compared must not be left to be assumed: the artifact
+    // records what it stands on, and the command says so out loud.
+    const nTables = Object.keys(doc.tables ?? {}).length;
+    const shapesSeen = [...Object.keys(doc.tables ?? {})].filter((t) =>
+      evidence.shapes?.has(t),
+    ).length;
+    const dimensions =
+      shapesSeen === nTables && nTables > 0
+        ? ["rows", "sequences", "shape"]
+        : ["rows", "sequences"];
     doc.provenance = {
       ...prov,
       interval: "covered",
       coveredAt: new Date().toISOString(),
+      coveredDimensions: dimensions,
       coveredBy:
-        `${Object.keys(doc.tables ?? {}).length} table(s) matched ` +
-        `on digest and sequence against ${expect}`,
+        `${nTables} table(s) matched on ${dimensions.join(", ")} against ` +
+        `${expect}` +
+        (dimensions.includes("shape")
+          ? ""
+          : ` — the evidence carries no "shape" lines, so how each table ` +
+            `keys and projects its rows was NOT established`),
     };
     writeFileSync(
       `${path}.tmp-${process.pid}`,
@@ -3728,7 +3828,18 @@ async function main() {
     renameSync(`${path}.tmp-${process.pid}`, path);
     console.log(
       `${path} is now COVERED: every table in it matches ${expect} on ` +
-        `both the content digest and the allocation high-water mark.\n\n` +
+        `${dimensions.join(", ")}.\n\n` +
+        (dimensions.includes("shape")
+          ? ""
+          : `WHAT THIS DOES NOT COVER: the evidence carries no "shape" ` +
+            `lines, so how each table keys and projects its rows at the ` +
+            `mirror was not established — only that the rows and the ` +
+            `allocation marks agree. A table recreated with a different ` +
+            `primary key over the same column-order values reads ` +
+            `identical here. Newer "digest" output records shape; ` +
+            `evidence taken before it cannot, and a mirror that has ` +
+            `passed cannot be re-recorded. The artifact says which ` +
+            `dimensions it stands on.\n\n`) +
         `That is what licenses the rollback's reverse mirror. Record in ` +
         `the run log where the evidence came from — this artifact now ` +
         `says WHAT was compared, and only you know where it was written ` +

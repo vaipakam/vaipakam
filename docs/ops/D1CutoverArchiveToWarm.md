@@ -519,7 +519,25 @@ because step 3 below is the part of it that had to be re-learned.
       >
       > It also refuses if the count and the number of digest lines
       > disagree, rather than reading a part-pasted block as a complete
-      > reading.
+      > reading, and if the two closing lines come from DIFFERENT runs —
+      > one run's tables joined to another run's allocations is two
+      > moments presented as one.
+      >
+      > **`digest` also prints a `shape <table> <hex>` line per table**
+      > (#2281 r13) — how that table keys and projects its rows. Paste
+      > those too. Contents cannot speak for row identity: a table
+      > recreated with a different primary key over the same
+      > column-order values produces the SAME digest and need not move
+      > its sequence, and reconciliation classifies rows by exactly the
+      > fields that changed.
+      >
+      > Evidence recorded before this line existed has none, and a
+      > mirror that has passed cannot be re-recorded — so `cover` does
+      > not refuse for want of it. It compares shape where the evidence
+      > carries it, prints what it did NOT establish when it does not,
+      > and writes `coveredDimensions` into the artifact so the record
+      > says which dimensions it stands on. **Read that field before
+      > relying on a promotion made from older evidence.**
       >
       > **Rows alone cannot cover an interval.** A straggler that inserts
       > an AUTOINCREMENT row after the mirror and deletes it again leaves
