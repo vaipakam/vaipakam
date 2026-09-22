@@ -93,7 +93,18 @@ HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # inside the parenthesis. Eight published headings put it last —
 # `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
 # and the placeholder sailed through as "no reference at all" (#2290 r2).
-PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
+# Everything up to whitespace. The DELIMITER is deliberately not enumerated
+# (#2290 r15): three consecutive rounds landed on this capture, each naming a
+# separator the previous list had missed — first the closing bracket, then a
+# colon, then an em dash with no spaces around it. Each fix bought one
+# character and left the next one waiting, which is the shape this change
+# exists to stop repeating.
+#
+# The validation below tests only whether the FIRST character is a digit, so
+# the token's tail never has to be classified and there is no separator list
+# to be incomplete. Verified across 2,076 published headings: the same 179
+# refusals, and not one heading changes verdict.
+PR_REF_RE = re.compile(rb"PR #(\S*)")
 # There is deliberately no setext-underline pattern here. `first_heading`
 # recognises ATX only; its docstring records why the setext branch was
 # removed rather than refined (#2290 r6).
@@ -1620,11 +1631,27 @@ class Assembly:
             # title, so anything that reads differently at the top of its own
             # file than it does mid-document is a fragment the check cannot
             # honestly bless — see `first_heading` for the two worked cases.
-            if body.startswith(b"\xef\xbb\xbf"):
+            # EVERY standard byte-order mark, not only UTF-8's (#2290 r15).
+            # The contributor note promises that a fragment starting with a
+            # byte-order mark is refused; recognising `EF BB BF` alone left a
+            # UTF-16 or UTF-32 file to take the no-heading allowance and
+            # publish mixed-encoding bytes into a UTF-8 document, consuming
+            # the source. These are fixed byte signatures, so the check is
+            # exact rather than a guess — UTF-32 first, because its little-
+            # endian mark begins with UTF-16's.
+            if body.startswith(
+                (
+                    b"\xef\xbb\xbf",          # UTF-8
+                    b"\xff\xfe\x00\x00",      # UTF-32 LE
+                    b"\x00\x00\xfe\xff",      # UTF-32 BE
+                    b"\xff\xfe",              # UTF-16 LE
+                    b"\xfe\xff",              # UTF-16 BE
+                )
+            ):
                 bad.append(
-                    f"{name}: starts with a UTF-8 byte-order mark, which is "
-                    f"invisible at the top of its own file and an ordinary "
-                    f"zero-width character once folded  ->  save it without one"
+                    f"{name}: starts with a byte-order mark, which is invisible "
+                    f"at the top of its own file and is not valid mid-document "
+                    f"once folded  ->  save it as UTF-8 without one"
                 )
                 continue
             _first_content = next(
@@ -1710,20 +1737,18 @@ class Assembly:
             # the evidence that it should have refused. No heading in the
             # corpus carries two tokens, so this refuses nothing that exists;
             # it removes a way for the check to be satisfied by a prefix.
-            # A token is a real reference when it STARTS with digits and
-            # carries only punctuation after them (#2290 r14). `t.isdigit()`
-            # refused `PR #123: final cleanup`, because the capture runs to the
-            # next comma, bracket or space and so took the colon with it — a
-            # valid numeric reference reported as an unsubstituted placeholder,
-            # which is the over-refusal direction of this same check.
+            # THE FIRST CHARACTER AFTER `PR #`, and nothing else (#2290 r15).
+            # A reference that has been substituted begins with a digit; the
+            # template's placeholder does not. Every placeholder the corpus
+            # contains — `<n>`, `TBD`, `__`, `PLACEHOLDER`, `NNNN`, `?` —
+            # starts with a non-digit, and no real reference does.
             #
-            # `\d+\W*` keeps every placeholder the corpus actually contains
-            # (`<n>`, `TBD`, `__`, `PLACEHOLDER`, `NNNN`, `?`): none of them
-            # begins with a digit, so none matches.
-            bads = [
-                t for t in PR_REF_RE.findall(first)
-                if not re.fullmatch(rb"\d+\W*", t)
-            ]
+            # This is the ROOT of three rounds of findings. Earlier revisions
+            # classified the whole token, so each one needed to know which
+            # characters may follow a number: `)` was missed, then `:`, then an
+            # em dash. Testing one character asks a question with no separator
+            # list in it at all.
+            bads = [t for t in PR_REF_RE.findall(first) if not t[:1].isdigit()]
             if bads:
                 bad.append(
                     f"{name}: heading still carries the template's placeholder "

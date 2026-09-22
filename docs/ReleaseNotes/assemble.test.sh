@@ -4671,6 +4671,50 @@ check "nothing left pending" "$(pending "$W")" "0"
 # reference and telling the operator to replace a placeholder that is not
 # there. Verified against the published corpus before changing: the new rule
 # refuses the same 179 headings and the same four tokens, zero differences.
+# ── Every standard byte-order mark, not only UTF-8's (#2290 r15) ──────────
+# The contributor note promises that a fragment starting with a byte-order
+# mark is refused. Recognising `EF BB BF` alone let a UTF-16 file take the
+# no-heading allowance and publish mixed-encoding bytes, consuming the source.
+case_start "T217p: a UTF-16 byte-order mark is refused like UTF-8's"
+W="$ROOT/t217p"; build "$W"
+printf '\xff\xfe# Thread — saved as UTF-16 LE (PR #4251)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-bom16le.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                "1"
+check "naming the file"      "$(says "$msg" '0003-bom16le.md')"  "1"
+check "saying why"           "$(says "$msg" 'byte-order mark')"  "1"
+check "nothing was consumed" "$(pending "$W")"                   "3"
+W="$ROOT/t217p2"; build "$W"
+printf '\xfe\xff# Thread — saved as UTF-16 BE (PR #4252)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-bom16be.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
+
+# ── The reference test names no separator at all (#2290 r15) ──────────────
+# Three consecutive rounds landed on the capture, each naming a delimiter the
+# previous list had missed — `)`, then `:`, then an em dash with no spaces.
+# The rule is now "the first character after `PR #` is a digit", which asks a
+# question with no separator list in it. Verified across 2,076 published
+# headings: the same 179 refusals, not one heading changing verdict.
+case_start "T217q: a number followed by any separator is a real reference"
+W="$ROOT/t217q"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '## Thread — em dash, no spaces PR #123—final cleanup\n' > "$u/0003-emdash.md"
+printf '## Thread — slashed PR #456/backport\n'                 > "$u/0004-slash.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"                                                                  "0"
+check "both folded in"       "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
+check "nothing left pending" "$(pending "$W")"                                                     "0"
+# And a placeholder is still a placeholder whatever follows it.
+W="$ROOT/t217q2"; build "$W"
+printf '## Thread — still unsubstituted PR #<n>—cleanup\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-ph-emdash.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                          "1"
+check "as a placeholder"     "$(says "$msg" 'placeholder')" "1"
+check "nothing was consumed" "$(pending "$W")"              "3"
+
 case_start "T217o: a numeric reference followed by punctuation is accepted"
 W="$ROOT/t217o"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
