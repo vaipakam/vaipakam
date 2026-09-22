@@ -2547,6 +2547,32 @@ check "no fragment consumed"     "$(pending "$W")"                         "1"
 check "the heading is not duplicated" \
   "$(count_in '^## Later heading' "$out/ReleaseNotes-2026-08-16.md")"      "1"
 
+case_start "T78c: remediating a BOM does not orphan the published copy"
+W="$ROOT/t78c"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# THE FIX THIS SCRIPT ASKS FOR CHANGES THE EVIDENCE THIS GUARD MATCHES ON
+# (#2290 r20). A BOM-bearing fragment already folded into a legacy markerless
+# file sits there as `<BOM>## Title`; HEADING_RE does not match a line
+# starting with the BOM, so the guard said nothing and the conformance check
+# refused the BOM, telling the operator to save without one. The remediated
+# fragment then read `## Title`, which no longer equalled the published
+# `<BOM>## Title` — so the rerun matched nothing, appended a second copy and
+# consumed the source. Measured: pre-fix exit=0, copies=2, pending=0.
+#
+# Both sides of the comparison are now BOM-stripped. This is the r16 ordering
+# finding's BOM instance; the class is filed rather than patched a third time.
+printf '## Thread — already published (PR #4400)\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## Thread — already published (PR #4400)\n\nbody\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"  "$?"                                              "1"
+check "naming the fragment"     "$(says "$msg" '0001-a.md')"                      "1"
+check "no fragment consumed"    "$(pending "$W")"                                 "1"
+check "not duplicated" \
+  "$(count_in 'already published' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"
 out="$W/docs/ReleaseNotes"

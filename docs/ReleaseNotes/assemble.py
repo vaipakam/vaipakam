@@ -1892,11 +1892,32 @@ class Assembly:
             # pending source — two copies and exit 0. That is the one outcome
             # in this script that loses work rather than refusing, and it was
             # reproduced before this fix.
+            # A LEADING BOM IS STRIPPED FROM BOTH SIDES OF THE COMPARISON
+            # (#2290 r20), and the reason is a trap worth naming: THE FIX THIS
+            # SCRIPT ASKS FOR CHANGES THE EVIDENCE THIS GUARD MATCHES ON.
+            #
+            # A BOM-bearing fragment already folded into a legacy markerless
+            # file sits there as `<BOM>## Title`. `HEADING_RE` does not match
+            # a line starting with the BOM, so the guard found no heading and
+            # said nothing; the conformance check then refused the BOM and
+            # told the operator to save without one. After that remediation
+            # the fragment reads `## Title`, which no longer equals the
+            # published `<BOM>## Title` — so the rerun matched nothing,
+            # appended a second copy and consumed the source. Reproduced.
+            #
+            # Normalising both sides makes the match survive the remediation.
+            # The same shape was fixed by reordering at r16; this is its BOM
+            # instance, and the class — a refusal whose remedy edits the text
+            # this guard compares — is filed rather than patched again.
+            def _debom(b: bytes) -> bytes:
+                return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
+
+            out_lines = [_debom(o) for o in normalised.split(b"\n")]
             for ln in body.split(b"\n"):
-                line = ln[:-1] if ln.endswith(b"\r") else ln
+                line = _debom(ln[:-1] if ln.endswith(b"\r") else ln)
                 if not HEADING_RE.match(line):
                     continue
-                if any(line == other for other in normalised.split(b"\n")):
+                if any(line == other for other in out_lines):
                     suspect.append(self.frag_name[f])
                 break
 
