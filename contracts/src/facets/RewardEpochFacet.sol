@@ -401,47 +401,126 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         arrival order to preserve, and the batch id breaks the tie
     ///         deterministically for any reader that needs a total order.
     /// @param  dayId  The day.
-    /// @param  offset Where to start in the index.
+    /// @param  offset Where to start in the order.
     /// @param  limit  How many to return.
-    /// @return page      The batch ids in that window.
+    /// @return page      The batch ids in that window, in the day's order.
     /// @return arrivedAt Each returned batch's delivery arrival, same order as
     ///                   `page` — the ordering key, read from the packet.
     /// @return total     How many batches this day has ever indexed.
-    /// @return cursor    The day's consumption cursor.
+    /// @return cursor    The day's consumption cursor: the last exhausted
+    ///                   epoch at the front of the order, zero when none is.
     function getTransportDayBatches(uint256 dayId, uint256 offset, uint256 limit)
         external
         view
-        returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, uint256 cursor)
+        returns (bytes32[] memory page, uint64[] memory arrivedAt, uint256 total, bytes32 cursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.transportBatchesByDay[dayId].length;
-        // The page is read in the day's ORDER — the list by (arrival, batch
-        // id) — and `cursor` is the position of the consumption cursor in
-        // that order (Codex #2276 r7: the list replaced an arrival-sorted
-        // array whose insertion no budget could bound).
-        bytes32 cursorNode = s.transportDayCursorNode[dayId];
-        bytes32 node = s.transportDayHead[dayId];
-        uint256 pos;
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        total = arr.length;
         uint256 want = offset >= total ? 0 : (total - offset < limit ? total - offset : limit);
         page = new bytes32[](want);
         arrivedAt = new uint64[](want);
-        uint256 w;
-        bool cursorSeen = cursorNode == bytes32(0);
-        while (node != bytes32(0)) {
-            if (!cursorSeen) {
-                // The cursor is the last exhausted node: its position counts it.
-                cursor = pos + 1;
-                if (node == cursorNode) cursorSeen = true;
+        // The read costs what its own arguments ask — `offset + limit` steps
+        // along the order, never a walk to the cursor's position (Codex
+        // #2276 r8 P2: that walk was unbounded by any argument). The cursor
+        // comes back as the NODE it is; {getTransportDayBatchesFrom} pages
+        // from any node for the cost of the page alone.
+        if (s.transportDayLinked[dayId] == total) {
+            cursor = s.transportDayCursorNode[dayId];
+            bytes32 node = s.transportDayHead[dayId];
+            uint256 pos;
+            uint256 w;
+            while (node != bytes32(0) && w < want) {
+                if (pos >= offset) {
+                    page[w] = node;
+                    arrivedAt[w] = s.ingressPackets[node].arrivedAt;
+                    unchecked { ++w; }
+                }
+                node = s.transportDayNext[dayId][node];
+                unchecked { ++pos; }
             }
-            if (pos >= offset && w < want) {
-                page[w] = node;
-                arrivedAt[w] = s.ingressPackets[node].arrivedAt;
+        } else {
+            // A day indexed before the list existed and not yet linked: the
+            // array in its own order, the cursor the last entry passed.
+            uint256 c = s.transportDayCursor[dayId];
+            cursor = c == 0 ? bytes32(0) : arr[c - 1];
+            for (uint256 i; i < want; ++i) {
+                bytes32 id = arr[offset + i];
+                page[i] = id;
+                arrivedAt[i] = s.ingressPackets[id].arrivedAt;
+            }
+        }
+    }
+
+    /// @notice A page of `dayId`'s epochs in the day's order starting AT
+    ///         `from` (zero: the head), with the node the next page starts
+    ///         at (zero: none) — each page costs its own length (Codex #2276
+    ///         r8 P2).
+    /// @dev    For a day indexed before the list existed and not yet linked
+    ///         the order is the array's and `from` is found by position, so
+    ///         that read costs the scan to it as well; the link ends that.
+    function getTransportDayBatchesFrom(uint256 dayId, bytes32 from, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory page, uint64[] memory arrivedAt, bytes32 next)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        bytes32[] memory buf = new bytes32[](limit);
+        uint256 w;
+        if (s.transportDayLinked[dayId] == arr.length) {
+            bytes32 head = s.transportDayHead[dayId];
+            // A node outside the day's order pages nothing rather than itself.
+            bool listed = from == bytes32(0) || from == head || s.transportDayPrev[dayId][from] != bytes32(0);
+            bytes32 node = !listed ? bytes32(0) : (from == bytes32(0) ? head : from);
+            while (node != bytes32(0) && w < limit) {
+                buf[w] = node;
+                unchecked { ++w; }
+                node = s.transportDayNext[dayId][node];
+            }
+            next = node;
+        } else {
+            uint256 i;
+            if (from != bytes32(0)) {
+                while (i < arr.length && arr[i] != from) {
+                    unchecked { ++i; }
+                }
+            }
+            for (; i < arr.length && w < limit; ++i) {
+                buf[w] = arr[i];
                 unchecked { ++w; }
             }
-            if (cursorSeen && w == want) break;
-            node = s.transportDayNext[dayId][node];
-            unchecked { ++pos; }
+            next = i < arr.length ? arr[i] : bytes32(0);
         }
+        page = new bytes32[](w);
+        arrivedAt = new uint64[](w);
+        for (uint256 k; k < w; ++k) {
+            page[k] = buf[k];
+            arrivedAt[k] = s.ingressPackets[buf[k]].arrivedAt;
+        }
+    }
+
+    /// @notice How much of `dayId`'s membership its ordered list holds: equal
+    ///         figures for every day indexed under the list, and for a day
+    ///         indexed before it once {epochLinkTransportDayIndex} has caught
+    ///         it up (Codex #2276 r8 P1).
+    function getTransportDayIndexLinked(uint256 dayId) external view returns (uint256 linked, uint256 total) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        linked = s.transportDayLinked[dayId];
+        total = s.transportBatchesByDay[dayId].length;
+    }
+
+    /// @notice Link the next entries of `dayId`'s membership into its ordered
+    ///         list — the catch-up for a day indexed before the list existed
+    ///         (Codex #2276 r8 P1). Permissionless, idempotent and bounded;
+    ///         see {LibRewardCustody.linkTransportDayIndex} for the page and
+    ///         the hints.
+    function epochLinkTransportDayIndex(uint256 dayId, bytes32[] calldata hints)
+        external
+        nonReentrant
+        returns (uint256 linked, uint256 total)
+    {
+        return LibRewardCustody.linkTransportDayIndex(LibVaipakam.storageSlot(), dayId, hints);
     }
 
     /// @notice Open the transport epoch of an old-wire packet that landed

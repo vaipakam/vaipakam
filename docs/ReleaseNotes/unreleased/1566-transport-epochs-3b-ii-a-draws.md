@@ -77,7 +77,10 @@ claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
 the claim did. A day's reported coverage counts only what its epochs can
-pay through at least one leg. The residual leg of an epoch's coverage is chosen
+pay through at least one leg, and an epoch whose attested split leaves no
+room under either cap is passed by the day's cursor as exhausted even
+though a residual unit remains, so it cannot hold a window slot forever.
+The residual leg of an epoch's coverage is chosen
 on each leg's deficit net of what the day's own shortfalls already drew.
 
 A day's index is kept in **arrival order** whoever indexes it — an epoch
@@ -86,7 +89,11 @@ same-block arrivals in a fixed order by delivery identity, and each epoch
 linked into its place in constant work (a materializer may name the
 predecessor; without one the ledger searches back from the newest for a
 bounded number of steps and refuses beyond that), so indexing an epoch
-late never costs more than indexing it on time —
+late never costs more than indexing it on time; a day indexed before the
+ordered list existed is read exactly as it was, from its membership in
+the order it was indexed, until a permissionless, bounded catch-up has
+linked its members — so an in-place upgrade needs no migration step and
+no epoch is ever invisible —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the

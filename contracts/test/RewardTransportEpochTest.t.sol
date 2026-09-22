@@ -158,11 +158,11 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
 
         assertEq(_epoch().materializeTransportBatchPage(h, _days(3)), 3, "indexed whole in one page");
         for (uint256 d = 1; d <= 3; ++d) {
-            (bytes32[] memory page, , uint256 total, uint256 cursor) =
+            (bytes32[] memory page, , uint256 total, bytes32 cursor) =
                 _epoch().getTransportDayBatches(d, 0, 10);
             assertEq(total, 1, "the day lists the batch");
             assertEq(page[0], h, "and it is this one");
-            assertEq(cursor, 0, "no draw has consumed it");
+            assertEq(cursor, bytes32(0), "no draw has consumed it");
         }
         // A day the delivery did NOT list is untouched — membership is a
         // filter, not a broadcast.
@@ -844,10 +844,10 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
             // Admission is compact, so each batch is indexed here.
             _epoch().materializeTransportBatchPage(bh, _days(1));
         }
-        (bytes32[] memory page, , uint256 total, uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 2);
+        (bytes32[] memory page, , uint256 total, bytes32 cursor) = _epoch().getTransportDayBatches(1, 0, 2);
         assertEq(total, 5, "every batch this day ever listed");
         assertEq(page.length, 2, "one window");
-        assertEq(cursor, 0, "nothing consumed");
+        assertEq(cursor, bytes32(0), "nothing consumed");
 
         (bytes32[] memory tail, , , ) = _epoch().getTransportDayBatches(1, 4, 10);
         assertEq(tail.length, 1, "a window clamped to the end");

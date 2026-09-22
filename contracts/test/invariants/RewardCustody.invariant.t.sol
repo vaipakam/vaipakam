@@ -264,6 +264,33 @@ contract RewardCustodyInvariant is SetupTest {
         }
     }
 
+    /// #1566 transport epochs 3b-ii-A (Codex #2276 r8) — the day's ordered
+    /// list holds every member the handler indexed, in (arrival, batch id)
+    /// order: the linked count equals the membership, and the node pages walk
+    /// exactly that many, each ordered after the last. The handler's untyped
+    /// deliveries all list day 1.
+    function invariant_DayIndexIsLinkedAndOrdered() public view {
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        (uint256 linked, uint256 total) = ep.getTransportDayIndexLinked(1);
+        assertEq(linked, total, "every member is linked");
+        bytes32 from;
+        uint256 seen;
+        uint64 lastAt;
+        bytes32 last;
+        while (true) {
+            (bytes32[] memory page, uint64[] memory at, bytes32 next) = ep.getTransportDayBatchesFrom(1, from, 16);
+            for (uint256 i = 0; i < page.length; ++i) {
+                assertTrue(at[i] > lastAt || (at[i] == lastAt && page[i] > last), "in (arrival, batch id) order");
+                lastAt = at[i];
+                last = page[i];
+                ++seen;
+            }
+            if (page.length == 0 || next == bytes32(0)) break;
+            from = next;
+        }
+        assertEq(seen, total, "and no more");
+    }
+
     /// #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the recorded spent
     /// and released figures fall only by a correction (which moves them
     /// with the units it moves): after any other action each is at least

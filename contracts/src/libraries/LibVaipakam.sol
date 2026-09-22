@@ -7563,12 +7563,23 @@ library LibVaipakam {
         ///      the predecessor, which is what bounds a late epoch's indexing;
         ///      an arrival-sorted ARRAY had to shift every newer entry, which
         ///      no budget could bound for the day itself. The array index
-        ///      cursor `transportDayCursor` above is retired and unread.
+        ///      cursor `transportDayCursor` above is read only for a day the
+        ///      list does not yet hold whole (see `transportDayLinked`).
         mapping(uint256 => bytes32) transportDayHead;
         mapping(uint256 => bytes32) transportDayTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
         mapping(uint256 => bytes32) transportDayCursorNode;
+        /// @dev How many of `transportBatchesByDay[d]`'s leading entries the
+        ///      day's list holds (Codex #2276 r8 P1). A day indexed before the
+        ///      list existed has a full array and an empty list, and is READ
+        ///      FROM THE ARRAY — its pre-list order and its array cursor
+        ///      `transportDayCursor` — until a permissionless, bounded link
+        ///      has caught the list up; then the list is the order. A day
+        ///      first indexed under the list links each entry as it is
+        ///      pushed, so its count always equals its length. No migration
+        ///      step is needed and no epoch is ever invisible.
+        mapping(uint256 => uint256) transportDayLinked;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

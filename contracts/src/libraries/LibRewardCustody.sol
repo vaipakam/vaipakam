@@ -1708,16 +1708,72 @@ library LibRewardCustody {
         // day's cursor: the cursor counts leading EXHAUSTED epochs, so a live
         // epoch behind it would be invisible; when a late epoch's place is
         // before the cursor, it becomes the cursor.
+        //
+        // A day indexed before the list existed holds its members in the
+        // array alone (Codex #2276 r8 P1): such a day is read from the array
+        // until {linkTransportDayIndex} has caught the list up, and a new
+        // member joins the ARRAY only, so the list stays a prefix of the array
+        // and the day never reads two partial sources.
         uint64 arrived = s.ingressPackets[batchId].arrivedAt;
         bool hinted = hints.length != 0;
         for (uint256 i = done; i < end; ++i) {
             uint256 d = dayIds[i];
-            _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
+            bool listed = _dayLinked(s, d);
             s.transportBatchesByDay[d].push(batchId);
+            if (listed) {
+                _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
+                s.transportDayLinked[d] = s.transportBatchesByDay[d].length;
+            }
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
+    }
+
+    /// @dev Whether day `d`'s list holds every member of its array — false
+    ///      for a day indexed before the list existed until a link has caught
+    ///      it up (Codex #2276 r8 P1). While false the day is read from the
+    ///      array, as it was before the list.
+    function _dayLinked(LibVaipakam.Storage storage s, uint256 d) private view returns (bool) {
+        return s.transportDayLinked[d] == s.transportBatchesByDay[d].length;
+    }
+
+    /// @notice Link the next entries of day `dayId`'s membership array into
+    ///         its ordered list — the catch-up for a day indexed before the
+    ///         list existed (Codex #2276 r8 P1). Permissionless, idempotent,
+    ///         and bounded: with no hints, up to `TRANSPORT_INDEX_PAGE`
+    ///         entries, each placed by the bounded walk back from the newest
+    ///         (which refuses past `TRANSPORT_INDEX_WALK_CAP`, exactly as an
+    ///         unhinted materialization does); with hints, exactly
+    ///         `hints.length` entries — clamped to what remains — each after
+    ///         its named predecessor (zero = at the head), verified.
+    /// @dev    Entries link in array order, so the list is always a PREFIX
+    ///         of the array and `transportDayLinked` its length. When the
+    ///         last entry links, the day's cursor is derived over the ORDER
+    ///         by the same prune every draw performs: the array cursor
+    ///         counted leading exhausted entries in array order, which is not
+    ///         a position in the list.
+    /// @return linked How many entries the list now holds.
+    /// @return total  How many the array holds.
+    function linkTransportDayIndex(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32[] memory hints
+    ) internal returns (uint256 linked, uint256 total) {
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        total = arr.length;
+        linked = s.transportDayLinked[dayId];
+        if (linked >= total) return (linked, total);
+        bool hinted = hints.length != 0;
+        uint256 to = linked + (hinted ? hints.length : TRANSPORT_INDEX_PAGE);
+        if (to > total) to = total;
+        for (uint256 i = linked; i < to; ++i) {
+            bytes32 id = arr[i];
+            _linkIntoDay(s, dayId, id, s.ingressPackets[id].arrivedAt, hinted ? hints[i - linked] : bytes32(0), hinted);
+        }
+        s.transportDayLinked[dayId] = to;
+        linked = to;
+        if (to == total) _pruneTransportDayCursor(s, dayId);
     }
 
     /// @dev Whether `(aAt, a)` orders before `b` by (arrival, batch id).
@@ -2071,8 +2127,21 @@ library LibRewardCustody {
         uint256[] memory ovFresh,
         uint256[] memory ovRecycled
     ) internal view returns (TransportDrawPlan memory plan) {
-        bytes32 cur = s.transportDayCursorNode[dayId];
-        bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        // The window's source is the day's list once it holds every member,
+        // else the membership array from its array cursor — a day indexed
+        // before the list existed, read as it was (Codex #2276 r8 P1). One
+        // scan either way.
+        bool listed = _dayLinked(s, dayId);
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        uint256 pos;
+        bytes32 node;
+        if (listed) {
+            bytes32 cur = s.transportDayCursorNode[dayId];
+            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        } else {
+            pos = s.transportDayCursor[dayId];
+            node = pos < arr.length ? arr[pos] : bytes32(0);
+        }
         bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory fRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
@@ -2114,7 +2183,12 @@ library LibRewardCustody {
                     unchecked { ++live; }
                 }
             }
-            node = s.transportDayNext[dayId][node];
+            if (listed) {
+                node = s.transportDayNext[dayId][node];
+            } else {
+                unchecked { ++pos; }
+                node = pos < arr.length ? arr[pos] : bytes32(0);
+            }
             unchecked { ++seen; }
         }
         plan.capHit = node != bytes32(0);
@@ -2440,17 +2514,34 @@ library LibRewardCustody {
     ///      the prune: it becomes drawable when its last page is indexed.
     ///      The cursor is a NODE (Codex #2276 r7): the last EXHAUSTED epoch at
     ///      the front of the list, zero when none is; the window starts after
-    ///      it, and the lens reports its position as the count of leading
-    ///      exhausted epochs — the same figure the array cursor was.
+    ///      it, and the lens returns it as the node it is. EXHAUSTED is
+    ///      nothing left, or — once the split is attested — no room left under
+    ///      either recorded cap (Codex #2276 r8 P2): the unit a scaling
+    ///      residual leaves outside both caps is not coverage, and this
+    ///      release cannot dispose of it, so it must not hold a window slot
+    ///      forever. Both are terminal here: a balance only falls, and rooms
+    ///      only shrink once the caps are recorded. A day indexed before the
+    ///      list existed prunes its array cursor by the same rule.
     function pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) internal returns (bool moved) {
         return _pruneTransportDayCursor(s, dayId);
     }
 
+    /// @dev An epoch the cursor may pass: see {pruneTransportDayCursor}.
+    function _exhaustedForCursor(LibVaipakam.Storage storage s, bytes32 id) private view returns (bool) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+        uint256 bal = b.balance;
+        if (bal == 0) return true;
+        if (!s.ingressPackets[id].attested) return false;
+        (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal, 0, 0);
+        return fr + rr == 0;
+    }
+
     function _pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
+        if (!_dayLinked(s, dayId)) return _pruneArrayCursor(s, dayId);
         bytes32 cur = s.transportDayCursorNode[dayId];
         bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
         uint256 steps;
-        while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && s.transportBatches[node].balance == 0) {
+        while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && _exhaustedForCursor(s, node)) {
             cur = node;
             node = s.transportDayNext[dayId][node];
             unchecked { ++steps; }
@@ -2458,6 +2549,25 @@ library LibRewardCustody {
         if (steps != 0) {
             s.transportDayCursorNode[dayId] = cur;
             emit TransportDayCursorAdvanced(dayId, cur);
+            moved = true;
+        }
+    }
+
+    /// @dev The array cursor of a day the list does not yet hold whole (Codex
+    ///      #2276 r8 P1): the same rule over array positions, the event
+    ///      naming the last entry passed.
+    function _pruneArrayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        uint256 cursor = s.transportDayCursor[dayId];
+        uint256 i = cursor;
+        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
+        if (end > arr.length) end = arr.length;
+        while (i < end && _exhaustedForCursor(s, arr[i])) {
+            unchecked { ++i; }
+        }
+        if (i != cursor) {
+            s.transportDayCursor[dayId] = i;
+            emit TransportDayCursorAdvanced(dayId, arr[i - 1]);
             moved = true;
         }
     }

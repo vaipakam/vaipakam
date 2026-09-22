@@ -246,8 +246,16 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         return (r.transportFresh, r.transportRecycled, r.capHit);
     }
 
+    /// @dev The cursor's POSITION in the day's order — the count of leading
+    ///      exhausted epochs. The lens returns the cursor as a node (Codex
+    ///      #2276 r8 P2); its position is found in the order here.
     function _cursor(uint256 d) internal view returns (uint256 c) {
-        (, , , c) = _epoch().getTransportDayBatches(d, 0, 100);
+        (bytes32[] memory order, , , bytes32 cur) = _epoch().getTransportDayBatches(d, 0, 100);
+        if (cur == bytes32(0)) return 0;
+        for (uint256 i; i < order.length; ++i) {
+            if (order[i] == cur) return i + 1;
+        }
+        revert("cursor not in the order");
     }
 
     // ─── the claim ──────────────────────────────────────────────────────────
@@ -889,6 +897,163 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev A draw records its exit on the PACKET too, so the packet's own
+
+    // ─── round 8: days indexed before the list; residual-only epochs; the lens ──
+
+    /// @dev A day indexed before the ordered list existed — a full membership
+    ///      array and no list, what an in-place refresh leaves — is read from
+    ///      the array as it was (Codex #2276 r8 P1): coverage, the lens and
+    ///      the claim's draw all find the epoch; a new epoch joins the array
+    ///      and is found too; the permissionless link catches the list up, in
+    ///      arrival order, and reads the same members; linking again is a
+    ///      no-op.
+    function test_APreListDay_IsReadFromItsArray_UntilLinked() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("pre"));
+        _mut().resetTransportDayListRaw(1);
+        (uint256 linked, uint256 total) = _epoch().getTransportDayIndexLinked(1);
+        assertEq(linked, 0, "fixture: nothing linked");
+        assertEq(total, 1, "fixture: one member");
+        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 10e18, "coverage is read from the array");
+        (bytes32[] memory page, , , bytes32 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(page[0], h, "the lens reads the array");
+        assertEq(cursor, bytes32(0));
+        assertEq(_claim(), NEED, "and the claim draws from it");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, NEED);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        bytes32 h2 = _epochOf(1e18, _one(1), 2, keccak256("post"));
+        (linked, total) = _epoch().getTransportDayIndexLinked(1);
+        assertEq(linked, 0, "a new member joins the array only");
+        assertEq(total, 2);
+        (avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 10e18 - NEED + 1e18, "and is found there");
+        (linked, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        assertEq(linked, 2, "the link caught the list up");
+        (bytes32[] memory order, , bytes32 next) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 10);
+        assertEq(order.length, 2, "the list holds every member");
+        assertEq(order[0], h, "in arrival order");
+        assertEq(order[1], h2);
+        assertEq(next, bytes32(0));
+        (avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 10e18 - NEED + 1e18, "the same coverage from the list");
+        (linked, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        assertEq(linked, 2, "idempotent");
+    }
+
+    /// @dev A day indexed before the list prunes its ARRAY cursor by the same
+    ///      rule (Codex #2276 r8 P1): 64 exhausted husks ahead of a funded
+    ///      epoch, the list cleared — the first claim defers and prunes past
+    ///      them, the second pays. The link then catches the list up: one
+    ///      unhinted page, then the rest by hint; the cursor is derived over
+    ///      the order and the funded epoch keeps paying from the list.
+    function test_APreListDay_PrunesItsArrayCursor_AndLinksByPageAndHint() public {
+        _scene(NEED);
+        bytes32[] memory hs = new bytes32[](65);
+        for (uint256 i; i < 64; ++i) {
+            hs[i] = _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("dust", i)));
+            _mut().parkTransportBatchRaw(hs[i]);
+            vm.warp(vm.getBlockTimestamp() + 1); // distinct arrivals: the array IS the order
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        hs[64] = _epochOf(2 * NEED, _one(1), 300, keccak256("funded"));
+        _mut().resetTransportDayListRaw(1);
+        assertEq(_claim(), 0, "deferred on the array window");
+        assertEq(_cursor(1), 64, "the array cursor passed the husks");
+        assertEq(_claim(), NEED, "the next attempt pays from the array");
+        (uint256 linked, uint256 total) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        assertEq(linked, 32, "an unhinted call links one page");
+        assertEq(total, 65);
+        assertEq(_cursor(1), 64, "still read from the array");
+        // The rest by hint: each entry after its predecessor in the array.
+        bytes32[] memory hints = new bytes32[](40);
+        for (uint256 i; i < 33; ++i) hints[i] = hs[31 + i];
+        (linked, ) = _epoch().epochLinkTransportDayIndex(1, hints);
+        assertEq(linked, 65, "every member linked; surplus hints ignored");
+        assertEq(_cursor(1), 64, "the cursor was derived over the order");
+        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, NEED, "what the funded epoch still holds");
+        assertFalse(capHit);
+    }
+
+    /// @dev An attested epoch with no room left under either cap is exhausted
+    ///      for the cursor even though a residual unit remains (Codex #2276 r8
+    ///      P2), reached the way a real one is: a two-leg day, an epoch one
+    ///      wei over the two legs attested at the legs' proportion, so the
+    ///      floors leave one wei outside both caps; the claim drains both
+    ///      rooms, the wei stays, and the prune passes the epoch.
+    function test_AResidualOnlyEpoch_IsExhaustedForTheCursor() public {
+        _twoLegDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
+        assertGt(needR, 0, "fixture: a recycled leg");
+        bytes32 h = _epochOf(needF + needR + 1, _one(1), 2, keccak256("e"));
+        _attest(2, needF, needR);
+        _mut().setOutstandingCommitRaw(0, needR);
+        assertEq(_claim(), NEED);
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, needF, "both rooms drained");
+        assertEq(lr, needR);
+        assertEq(_balance(h), 1, "the residual wei remains");
+        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "and is not coverage");
+        assertEq(_cursor(1), 1, "the draw's own prune passed the epoch");
+        _epoch().epochPruneTransportDayCursor(1);
+        assertEq(_cursor(1), 1, "idempotent");
+    }
+
+    /// @dev 64 residual-only epochs ahead of a funded one (Codex #2276 r8 P2):
+    ///      each holds one wei with both caps attested at zero. The first
+    ///      claim defers on the window and prunes past them; the second pays.
+    ///      Before r8 the prune passed only an empty epoch and the day was
+    ///      deferred forever.
+    function test_ResidualOnlyEpochs_DoNotHoldTheWindow() public {
+        _scene(NEED);
+        for (uint256 i; i < 64; ++i) {
+            _epochOf(1, _one(1), 600 + i, keccak256(abi.encode("residual", i)));
+            _attest(600 + i, 1, 1); // one wei at 1:1 floors to 0 fresh / 0 recycled
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(NEED, _one(1), 700, keccak256("funded"));
+        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "the residuals fund nothing");
+        assertTrue(capHit, "and fill the window");
+        assertEq(_claim(), 0, "deferred on the window");
+        assertEq(_cursor(1), 64, "the residual epochs are exhausted for the cursor");
+        assertEq(_claim(), NEED, "the funded epoch is reachable");
+    }
+
+    /// @dev Node-based pages each cost their own length (Codex #2276 r8 P2):
+    ///      a page from the head, the next from the node it names, the end.
+    function test_TheLens_PagesFromANode() public {
+        bytes32[] memory hs = new bytes32[](5);
+        for (uint256 i; i < 5; ++i) {
+            hs[i] = _epochOf(1e18, _one(1), 800 + i, keccak256(abi.encode("p", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        (bytes32[] memory p1, uint64[] memory at1, bytes32 next) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 2);
+        assertEq(p1.length, 2);
+        assertEq(p1[0], hs[0]);
+        assertEq(p1[1], hs[1]);
+        assertLt(at1[0], at1[1], "with their ordering keys");
+        assertEq(next, hs[2], "the next page starts at the node named");
+        (bytes32[] memory p2, , bytes32 next2) = _epoch().getTransportDayBatchesFrom(1, next, 10);
+        assertEq(p2.length, 3, "the rest");
+        assertEq(p2[0], hs[2]);
+        assertEq(p2[2], hs[4]);
+        assertEq(next2, bytes32(0), "the end");
+        (bytes32[] memory none, , bytes32 next3) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 0);
+        assertEq(none.length, 0, "an empty page");
+        assertEq(next3, hs[0], "starts where it was asked to");
+        (bytes32[] memory stray, , bytes32 next4) = _epoch().getTransportDayBatchesFrom(1, keccak256("elsewhere"), 10);
+        assertEq(stray.length, 0, "a node outside the order pages nothing");
+        assertEq(next4, bytes32(0));
+    }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no
     ///      epoch value (Codex #2276 r5 P1), on Codex's shape: forfeited day A
