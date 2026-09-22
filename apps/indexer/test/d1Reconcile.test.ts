@@ -2740,6 +2740,43 @@ describe("a table set that changed is evidence too", () => {
     expect(e.readings.unidentified).toBe(2);
   });
 
+  // #2281 r16 — a shape belongs to the run that printed it. Stored in
+  // one global map, a shape line from a later cropped run stood in for
+  // a mirror-time run that carried none, and `cover` recorded `shape`
+  // as established from a reading taken AFTER the migration it exists
+  // to detect.
+  it("ignores a shape line that no paired run printed", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        "seq t 5",
+        "seq-listing complete run:aa0001",
+        // a later crop, contributing only a post-migration shape
+        "shape t bbbbbbbbbbbbbbbb",
+      ].join("\n"),
+    );
+    expect([...e.shapes]).toEqual([]);
+    // still seen, so a disagreement between runs remains detectable
+    expect(e.shapeLines.get("t")).toBe("bbbbbbbbbbbbbbbb");
+  });
+
+  it("uses the shape lines the paired run printed", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
+        "shape t aaaaaaaaaaaaaaaa",
+        "seq t 5",
+        "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect(e.shapes.get("t")).toBe("aaaaaaaaaaaaaaaa");
+    expect(e.readings.paired).toBe(1);
+  });
+
   it("reads a database with no tables as a reading, not as silence", () => {
     // `digest` over a source carrying no application tables prints
     // exactly this. Both value maps come back empty, which is why the

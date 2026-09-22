@@ -1973,7 +1973,11 @@ export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
  */
 export function parseEvidence(text) {
   const digests = new Map();
-  const shapes = new Map();
+  // Every shape line anywhere, so a disagreement between runs is still
+  // a conflict. What `cover` COMPARES against comes from paired
+  // readings only — see `shapes` below.
+  const shapeLines = new Map();
+  let openRun = null;
   // A RUN LOG HOLDS SEVERAL READINGS, AND THEY MAY DISAGREE (#2281 r4).
   // The documented barrier takes two digests ten minutes apart and a
   // third after the carry, so pasting the log in means repeated table
@@ -2048,6 +2052,7 @@ export function parseEvidence(text) {
       const id = /\brun:([0-9a-f]{6,64})\b/.exec(line);
       seqReadings.push({ seqs: openSeqs, run: id ? id[1] : null });
       openSeqs = new Map();
+      openRun = null;
       sawAnyComplete = true;
       continue;
     }
@@ -2072,11 +2077,14 @@ export function parseEvidence(text) {
         line,
       );
     if (tot) {
-      enumerations.push({
+      const entry = {
         digests: openDigests,
         declared: Number(tot[1]),
         run: tot[2] ?? null,
-      });
+        shapes: new Map(),
+      };
+      enumerations.push(entry);
+      openRun = entry;
       openDigests = new Map();
       if (openSeqs.size > 0) {
         // Never closed, so it contributes its values and no zeros.
@@ -2093,7 +2101,19 @@ export function parseEvidence(text) {
     );
     if (shp) {
       mentioned.add(shp[1]);
-      put(shapes, "shape", shp[1], shp[2]);
+      // A SHAPE BELONGS TO THE RUN THAT PRINTED IT (#2281 r16). Stored
+      // in one global map, a shape line from a later cropped run stood
+      // in for the mirror-time run that never carried one — and `cover`
+      // then recorded `shape` as a covered dimension on the strength of
+      // a reading taken after the migration it was supposed to detect.
+      // A dimension counts as established only from the paired reading,
+      // so the line is bound to the enumeration whose count line
+      // preceded it.
+      //
+      // `put` still runs, so two runs disagreeing about a table's shape
+      // is a conflict wherever they sit — that is evidence either way.
+      put(shapeLines, "shape", shp[1], shp[2]);
+      if (openRun !== null) openRun.shapes.set(shp[1], shp[2]);
       continue;
     }
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
@@ -2221,9 +2241,21 @@ export function parseEvidence(text) {
     if (agreed !== undefined) seqs.set(table, agreed);
   }
 
+  // WHAT `cover` COMPARES SHAPE AGAINST: only readings that are part of
+  // a paired run (#2281 r16). A shape from an unpaired or unidentified
+  // reading was not observed in the run the coverage rests on, and
+  // treating it as though it were is how `shape` got recorded as
+  // established from a post-migration crop.
+  const shapes = new Map();
+  for (const e of readings) {
+    if (!e.run || !paired.includes(e.run)) continue;
+    for (const [t, v] of e.shapes) shapes.set(t, v);
+  }
+
   return {
     digests,
     shapes,
+    shapeLines,
     seqs,
     seqListingComplete: sawAnyComplete,
     // HOW MANY CLOSED READINGS THERE WERE, so a caller can tell an
@@ -2406,6 +2438,14 @@ async function takeManifest(db) {
     return seen;
   };
 
+  // THE INTERVAL STARTS BEFORE THE FIRST READ (#2281 r16). Stamped
+  // after the opening sequence, schema and table-set queries, the
+  // artifact claimed a window that excluded observations the baseline
+  // is built on — so an operator correlating it against a write or
+  // migration log was given a narrower interval than was actually
+  // looked at. The window has to contain every reading that went into
+  // the record, not merely the row reads.
+  const readStartedAt = new Date().toISOString();
   const before = await readSequences();
   // THE WHOLE SCHEMA AS IT WAS, not just the carried tables' share of it
   // (#2281 r12). The terminal comparison below is whole-to-whole, so
@@ -2424,7 +2464,6 @@ async function takeManifest(db) {
   const refused = [];
   const digestAtRead = new Map();
   const ddlAtRead = new Map();
-  const readStartedAt = new Date().toISOString();
 
   for (const table of tables) {
     const { cols, key } = await shapeOf(db.id, table);
