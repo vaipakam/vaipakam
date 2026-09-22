@@ -758,19 +758,38 @@ because step 3 below is the part of it that had to be re-learned.
       > going** — their job is to surface anything NEW, and a fixed set of
       > known-and-decided lines does not stop them doing it.
       >
-      > **The by-key test is weaker than it sounds, and this is its one
-      > hole** (#2286 r5). A report carries the table, the key and the
-      > kind, and deliberately NOT the row's contents. So a row that
-      > changes AGAIN after a decision was recorded about it emits a line
-      > identical to the settled one, and the by-key test waves it
-      > through. A `destination-deleted-source-changed` row taking a second
-      > late update is the concrete case. Until #2279 binds a decision to
-      > the state it was taken in, treat a recurring line as decided only
-      > for the state you actually reviewed — and where the situation is
-      > one whose source value can move (`source-changed`,
-      > `destination-deleted-source-changed`), re-read the source row
-      > before counting the run clean rather than matching on the key
-      > alone. What it does cost is the property that made
+      > **The by-key test is weaker than it sounds** (#2286 r5, r6). No
+      > report carries the row's CONTENTS — table, key and kind, and
+      > deliberately nothing more. So a row that changes AGAIN after a
+      > decision was recorded about it emits a line identical to the
+      > settled one, and the by-key test waves it through. Until #2279
+      > binds a decision to the state it was taken in, treat a recurring
+      > line as decided only for the state you actually REVIEWED, and
+      > **re-read the row itself** before counting a run clean on the
+      > strength of a line you have seen before.
+      >
+      > Do not narrow that to a list of situations. An intermediate
+      > revision of this note named `source-changed` and
+      > `destination-deleted-source-changed`, which is wrong in the
+      > dangerous direction: `key-collision` is re-derived from the rows on
+      > every run (`d1-carry-rows.mjs:1502-1515`), so a straggler updating
+      > the archive record after you copied it across leaves warm's copy
+      > stale behind an unchanged line, and the `new-on-source` unique
+      > clash behaves the same way. The property belongs to the REPORT
+      > FORMAT, not to particular situations, so it applies to all of them.
+      >
+      > **Some lines have no row identity at all, and "recorded by table
+      > and key" is not a test they can satisfy** (#2286 r6). A sequence
+      > advance is per TABLE (`d1-carry-rows.mjs:932-941`), and the
+      > manifest-only classification deliberately emits conflicts with no
+      > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
+      > table, or its key, looks like from archive's side. Record those by
+      > **table plus the kind of line**, and treat a run carrying only
+      > such already-recorded lines as clean on the same terms. Without
+      > this they can never be recorded to the rule's satisfaction and the
+      > retirement gate stays blocked forever, which is the
+      > check-that-can-never-pass shape this procedure keeps having to
+      > remove. What it does cost is the property that made
       > "repeat until clean" self-checking, which is why this is written
       > down rather than left for an operator to work out at 2am.
       >

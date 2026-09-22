@@ -631,47 +631,13 @@ difference it names is settled by a person. That repeats until two consecutive
 runs come back clean — and then **keeps repeating, weekly, for as long as the
 old database is kept**.
 
-**Most of what it reports never stops reporting, and the procedure says so
-rather than leaving an operator to discover it.** Where the old database holds
-a changed value, or a row the new one does not have at all, the settlement is
-to apply or insert it, and the next run passes over it in silence.
-
-The others do not fall silent, for different reasons. Where a row was
-deliberately left deleted on one side or the other, the settlement is a
-decision that the deletion stands: nothing either database holds changes, so
-the same line comes back.
-
-**A report that the old database handed out identifiers after the move is not,
-by itself, a report that anything was deleted** — and reading it that way is
-how a late row gets lost. It says only that something was inserted. Those rows
-may still be there, in which case they appear on their own lines and are to be
-applied like any other; or they may have been inserted and deleted again, in
-which case the identifiers are spent and there is nothing to apply. Either way
-the line keeps reporting, because the new database's counter reaching the same
-number later says nothing — it advances on its own writes.
-
-**And one situation is not a decision to do nothing at all, which is the
-distinction that matters most here.**
-Where one identifier is allocated on both sides to different records, the
-settlement is to insert the old database's record into the new one under a
-fresh identifier. That is a real data change and it has to be made — reading
-this as a decision to leave things alone would quietly discard a record. What
-persists afterwards is only the report, because the contested identifier is
-still allocated on both sides.
-
-So a clean run is not a silent one. A run is as resolved as it is going to get
-once every line it carries has already been recorded **by table and by key**,
-with the decision taken — by key rather than by the situation's name, because
-the same situation on a different key is a difference nobody has decided. Such
-a run counts as the clean run for the two-run rule, and the weekly re-runs
-continue, because their job is to surface what is new.
-
-**That test is the one in force today, and it is weaker than it sounds.** A
-report names the table, the key and the kind of difference, and deliberately
-not the row's contents — so a row that changes *again*, after a decision about
-it was recorded, produces a line indistinguishable from the settled one and is
-waved through. Binding each decision to the state it was taken in, so the
-comparison speaks up when that state moves, is the work tracked as #2279.
+**Some of what that comparison reports never stops reporting**, because the
+only settlement available is a decision rather than a data change — and a
+decision is not something either database holds. So a clean run is not a silent
+one. The operator runbook carries the rule, the places it is weaker than it
+sounds, and what to do meanwhile; #2279 is the work that would let a recorded
+decision quiet a line properly. The section on the move itself, later in this
+file, describes the behaviour once — it is not restated here.
 
 Two clean comparisons are two readings. Nothing available to the platform can
 withdraw the access that already-running work holds on the old database, and
@@ -736,22 +702,31 @@ gone — and a column-removing migration also puts the record of what was copied
 out of reach, so the very check that would have reported the loss is degraded
 by the change causing it.
 
-**Four kinds of difference will keep being reported no matter what the
-operator does about them, and the runbook now says so rather than leaving
-someone to discover it.** The comparison reports differences in data; some
-differences are resolved by a decision that changes no data — a deletion that
-should stand, a clash resolved by keeping both records under separate
-identifiers, a stale copy the operator decides to keep — and the next
-comparison therefore finds the same difference again. The fourth is not a
-record at all but an identifier: one the old database allocated and released
-after the copy, which leaves nothing to apply. The new database reaching the
-same number is no longer read as an answer, since it allocates identifiers for
-its own records constantly and by number the two are indistinguishable. Those are recorded once
-with the decision taken and the weekly comparison continues, since its job is
-to surface what is new. Making a decided difference stop reporting means
-recording decisions somewhere, which is a change to the one tool whose entire
-safety property is that it cannot write; that is tracked separately rather
-than improvised here.
+**Some differences will keep being reported no matter what the operator does
+about them, and the runbook now says so rather than leaving someone to
+discover it.** The comparison reports differences in data. Where the settlement
+is a decision that changes no data — a deletion that should stand, a stale copy
+the operator decides to keep — the next comparison finds the same difference
+again. One recurring line is not a record at all but an identifier the old
+database handed out after the copy; the new database reaching the same number
+is no longer read as an answer, since it allocates for its own records
+constantly and by number the two are indistinguishable. And one is not a
+decision to do nothing: where a single identifier is held on both sides by
+different records, the settlement is to copy the old database's record across
+under a fresh identifier — a real write that has to be made, after which only
+the report persists.
+
+Those are recorded once with the decision taken, and the weekly comparison
+continues, since its job is to surface what is new. **Two limits on that are
+stated rather than implied.** A report names a table and a kind of difference
+but deliberately not the record's contents, so a record that changes *again*
+after a decision was taken about it produces the same line and can be waved
+through. And some lines carry no record identity at all, being about a table or
+a counter rather than a row, so "recorded, by record" is not a test they can
+satisfy — the runbook says how those are recorded instead. Making a decided
+difference stop reporting means recording decisions somewhere, which is a
+change to the one tool whose entire safety property is that it cannot write;
+that is tracked separately rather than improvised here.
 
 **A late arrival and a late change are different problems, and only one of
 them is obvious.** A straggler that creates a new record leaves the new
@@ -847,8 +822,9 @@ So the ability to write was removed rather than guarded. The step now reads
 both databases and **reports every difference**, including the one case it
 used to apply on its own — a record the old database gained that the new one
 lacks. A person applies those, deliberately. Since the expected number is
-zero, and any that appear are records written in the seconds after a
-service was told to stop, that trade buys a human decision on every record
+zero, and any that appear are records written after a service was told to stop
+— how long after has never been measured, which is exactly why the comparison
+goes on running weekly — that trade buys a human decision on every record
 that moves after the switch and gives up an automation nobody should want
 racing a live database.
 
@@ -939,11 +915,16 @@ state, chain positions — exist only there. Reversing the configuration without
 carrying them across would strand them exactly the way going forwards without a
 copy would.
 
-A rollback is therefore performed the same way as the move: stop the writers,
-carry the rows, switch. An earlier version of this note said the move was
-reversible "with no data to recover because none was destroyed". Nothing is
-destroyed, which is true and is not the same claim — the data is not lost, it is
-in the wrong database, and getting it back is work rather than a config edit.
+A rollback therefore has to carry those rows back, not merely repoint the
+configuration. **How it carries them is the whole question**, and copying them
+*into* the old database — the obvious reading of "the move, in reverse" — is
+the one thing it must not do: that overwrites the late records the old database
+was kept to preserve. A later section of this note says why no check in the
+procedure can make that safe, and what the sound shape is instead. An earlier
+version of this note said the move was reversible "with no data to recover
+because none was destroyed". Nothing is destroyed, which is true and is not the
+same claim — the data is not lost, it is in the wrong database, and getting it
+back is work rather than a config edit.
 
 Retiring the old database is a separate, later decision, to be taken when
 somebody is confident it is no longer needed.
