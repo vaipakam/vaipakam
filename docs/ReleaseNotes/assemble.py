@@ -120,6 +120,17 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     deliberate no-heading allowance and is PERMITTED, publishing the very
     peer-document title the check exists to stop. That is why this is one
     function covering both syntaxes rather than a third patch to a regex.
+
+    ONE RESIDUAL, stated rather than left for a fourth round. Raw HTML —
+    `<h1>Title</h1>` — renders as a heading on GitHub but is not Markdown
+    syntax, and this does not detect it. Two reasons, and the second is the
+    load-bearing one: no fragment or dated note in this repository uses it
+    (checked, zero occurrences), and recognising it properly means parsing
+    HTML — attributes, case, whitespace, split tags — which is exactly the
+    open-ended enumeration this function exists to replace. "Markdown has
+    two heading syntaxes" is a closeable claim; "every way a heading can
+    render" is not, and a check built on the second would be back here next
+    round.
     """
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
     for i, line in enumerate(lines):
