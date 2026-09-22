@@ -1508,12 +1508,32 @@ offset 0 and wants its own verification rather than a bulk annotation — plus 9
 under `test/`. They are LATENT, not broken: those contracts compile today, and
 #2268 showed a blanket sweep is not the remedy.
 
-**Caveat on that 18, stated rather than smoothed over.** It was counted when
-this section's test was "touches memory", so it is a count of blocks with a
-memory opcode. The live test is EITHER shape, and a block exporting a computed
-pointer without a memory opcode would have been filed under the 6 rather than
-the 18. Nobody has re-counted against the corrected criterion, so treat 18 as a
-lower bound on the in-scope set and 6 as an upper bound on the exempt one.
+**Both figures are EXACT, and were bounds until they were re-counted.** They
+were first counted when this section's test was "touches memory", which makes
+them counts of blocks with a memory opcode — so a block exporting a computed
+pointer without one would have been filed under the 6 rather than the 18, and
+18 was recorded as a lower bound and 6 as an upper bound. The re-count is done
+(#2260, at `main` `a941c7873`, parsing each block's body with comments stripped
+and string literals blanked), and it closes both directions:
+
+- **6 is exact.** All six assign to `.slot` — a *storage* pointer. The
+  exported-pointer shape concerns pointers into **memory**, so no `.slot :=`
+  block can conceal an in-scope case. The six are `LibAccessControl`,
+  `LibERC721`, `LibPausable`, `LibReentrancyGuard`, `LibVaipakam` and
+  `GuardianPausable`; **no facet carries the idiom at all.**
+- **18 is exact.** Every non-idiom `src/` block already carries a memory
+  opcode, so the first shape catches all of them and the second adds nothing
+  on this tree.
+
+Two things the re-count turned up that a line-based `grep` gets wrong. The
+count of bare blocks is **34** (25 `src/` + 9 `test/` + 0 `script/`), not 36 —
+a raw grep also counts a fully commented-out block in `RiskFacet.sol:1807` and
+a natspec quotation in `DeployDiamondVerificationProbes.sol:20`. And one
+`test/` block is in **neither** class: `SignedOfferBook.t.sol:742` reads with
+`calldataload` into `bytes32`/`uint8` locals, so it touches no memory, exports
+no memory pointer, and is not the storage-pointer idiom either. Whether it
+needs an annotation is still the spec's call; the point is that two categories
+do not describe this tree.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
