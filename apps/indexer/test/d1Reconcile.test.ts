@@ -2742,6 +2742,44 @@ describe("a table set that changed is evidence too", () => {
     ).toBe(true);
   });
 
+  // #2281 r14 — `digest` prints each table's shape once per run, so a
+  // repeated shape line proves another run began even though a shape
+  // line after a count line is ordinary within one run.
+  it("voids a pending pairing when a shape line repeats", () => {
+    const d = "1".repeat(16);
+    const sh = "abcdef0123456789";
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        `shape t ${sh}`, // run 1's shape; its sequence section is lost
+        `shape t ${sh}`, // run 2 begins, cropped to shape + seq
+        "seq t 6",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(0);
+    expect(e.readings.unpaired).toBe(2);
+  });
+
+  it("still pairs a whole run that carries shape lines", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `u ${d}`,
+        `${"\u2014".repeat(8)}   0  (2 tables)`,
+        `shape t abcdef0123456789`,
+        `shape u 0123456789abcdef`,
+        "seq t 5",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.readings.paired).toBe(1);
+    expect(e.readings.unpaired).toBe(0);
+    expect(e.conflicts).toEqual([]);
+  });
+
   it("reads a database with no tables as a reading, not as silence", () => {
     // `digest` over a source carrying no application tables prints
     // exactly this. Both value maps come back empty, which is why the

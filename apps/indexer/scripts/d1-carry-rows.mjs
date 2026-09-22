@@ -1328,7 +1328,22 @@ function readManifest(path, src) {
         `  A write that committed before that reading is part of this ` +
         `baseline and cannot be reported as late by any run using it.` +
         (prov.interval === "covered"
-          ? ""
+          ? // WHAT THE PROMOTION STANDS ON, HERE TOO (#2281 r14). This is
+            // the surface an operator consults before the rollback, and
+            // "covered" alone conceals a coverage that never established
+            // row identity — leaving the distinction in a JSON field
+            // somebody has to know to open. A dimension not compared is
+            // disclosed wherever the verdict is reported, not only where
+            // it was decided.
+            `\n  Covered on: ${(prov.coveredDimensions ?? ["rows", "sequences"]).join(", ")}` +
+            ((prov.coveredDimensions ?? []).includes("shape")
+              ? ""
+              : `\n  NOT ESTABLISHED: how each table keys and projects ` +
+                `its rows at the mirror. The evidence carried no "shape" ` +
+                `lines, so a table recreated with a different primary ` +
+                `key over the same column-order values reads identical ` +
+                `to this baseline — and this run classifies rows by ` +
+                `exactly those fields.`)
           : `\n  BECAUSE THAT INTERVAL IS ${(prov.interval ?? "not stated").toUpperCase()}, ` +
             `a clean result here does NOT license the rollback's reverse ` +
             `mirror. A late write absorbed into this baseline reads as ` +
@@ -2015,6 +2030,7 @@ export function parseEvidence(text) {
   const unterminatedSeqs = [];
   const pairedRuns = [];
   let pendingEnumeration = null;
+  let openShapes = new Set();
   let openDigests = new Map();
   let openSeqs = new Map();
   let sawAnyComplete = false;
@@ -2026,6 +2042,7 @@ export function parseEvidence(text) {
     if (line.startsWith("seq-listing complete")) {
       seqReadings.push(openSeqs);
       openSeqs = new Map();
+      openShapes = new Set();
       sawAnyComplete = true;
       // AND IF AN ENUMERATION WAS CLOSED SINCE THE LAST ONE, THE TWO
       // ARE THE SAME RUN (#2281 r12). One `digest` run prints its
@@ -2061,6 +2078,7 @@ export function parseEvidence(text) {
       enumerations.push({ digests: openDigests, declared: Number(tot[1]) });
       pendingEnumeration = enumerations.length - 1;
       openDigests = new Map();
+      openShapes = new Set();
       if (openSeqs.size > 0) {
         // Never closed, so it contributes its values and no zeros.
         unterminatedSeqs.push(openSeqs);
@@ -2076,6 +2094,19 @@ export function parseEvidence(text) {
     );
     if (shp) {
       mentioned.add(shp[1]);
+      // A REPEATED SHAPE LINE IS ANOTHER RUN (#2281 r14). `digest`
+      // prints each table's shape ONCE per run, after the count line —
+      // so unlike a digest line, a shape line following an enumeration
+      // is ordinary. Seeing the SAME table twice is not: the second one
+      // belongs to a later run, whose own count line is not in the
+      // file. Leaving the pairing pending then joins run 1's tables to
+      // run 2's allocations, which is the r13 defect by the door r13
+      // opened.
+      if (openShapes.has(shp[1])) {
+        pendingEnumeration = null;
+        openShapes = new Set();
+      }
+      openShapes.add(shp[1]);
       put(shapes, "shape", shp[1], shp[2]);
       continue;
     }
