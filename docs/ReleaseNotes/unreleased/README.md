@@ -44,7 +44,11 @@ PRs landing the same day never append-conflict.
      published as-is. Refusing it was tried and removed: the advice it gave
      — re-save the file — changed the very line the duplicate guard matches
      on, which twice cost a fragment. No fragment has ever been saved that
-     way; if one is, the mark will sit visibly at the top of the section.
+     way. If one is, nothing looks wrong: the mark is zero-width, but it sits
+     before the `##`, so that line publishes as ordinary paragraph text and
+     the section arrives with no heading and no place in the outline. Save
+     without one — removing it after publication is the remediation that cost
+     those fragments.
    - A heading with **no PR reference at all** is not refused. That is not an
      oversight — most fragments written so far carry none, as do most
      published section headings. The `(PR #<n>)` convention is the template's,

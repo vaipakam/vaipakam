@@ -1895,23 +1895,24 @@ class Assembly:
             # pending source — two copies and exit 0. That is the one outcome
             # in this script that loses work rather than refusing, and it was
             # reproduced before this fix.
-            # A LEADING BOM IS STRIPPED FROM BOTH SIDES OF THE COMPARISON
-            # (#2290 r20), and the reason is a trap worth naming: THE FIX THIS
-            # SCRIPT ASKS FOR CHANGES THE EVIDENCE THIS GUARD MATCHES ON.
-            #
+            # A LEADING UTF-8 BOM IS STRIPPED FROM BOTH SIDES (#2290 r20).
             # A BOM-bearing fragment already folded into a legacy markerless
-            # file sits there as `<BOM>## Title`. `HEADING_RE` does not match
-            # a line starting with the BOM, so the guard found no heading and
-            # said nothing; the conformance check then refused the BOM and
-            # told the operator to save without one. After that remediation
-            # the fragment reads `## Title`, which no longer equals the
-            # published `<BOM>## Title` — so the rerun matched nothing,
-            # appended a second copy and consumed the source. Reproduced.
+            # file sits there as `<BOM>## Title`; without this, `HEADING_RE`
+            # matches neither side and the guard says nothing, so the rerun
+            # appends a second copy and consumes the source. Reproduced.
+            # It also survives an operator removing the mark by hand, which
+            # would otherwise leave the fragment reading `## Title` against a
+            # published `<BOM>## Title` — the class where the remedy edits the
+            # very text this guard compares (#2298), filed rather than patched
+            # in each path.
             #
-            # Normalising both sides makes the match survive the remediation.
-            # The same shape was fixed by reordering at r16; this is its BOM
-            # instance, and the class — a refusal whose remedy edits the text
-            # this guard compares — is filed rather than patched again.
+            # WHAT THIS DOES NOT REACH, stated rather than implied: a fragment
+            # in UTF-16 or UTF-32. Stripping its BOM would not help — the
+            # heading's own bytes are NUL-interleaved, so `HEADING_RE` cannot
+            # match them, and closing it needs decoding rather than a longer
+            # list of signatures. That hole is PRE-EXISTING: `main`'s guard
+            # strips no BOM at all, so it misses UTF-8 too. This narrows the
+            # guard's blind spot and widens nothing (#2290 r22, deferred).
             def _debom(b: bytes) -> bytes:
                 return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
 
