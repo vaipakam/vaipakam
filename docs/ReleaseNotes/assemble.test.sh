@@ -4430,6 +4430,30 @@ bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/nul
 check "the run succeeds"     "$?"              "0"
 check "nothing left pending" "$(pending "$W")" "0"
 
+# ── Front matter must not MASK the heading below it ─────────────────────────
+# A YAML closing fence is indistinguishable from a setext underline, so the
+# scan read `title: x` + `---` as a level-2 heading and stopped — and a real
+# `#` heading further down, placeholder and all, was never examined. Found by
+# testing the setext branch against non-heading dash constructs rather than by
+# a review round; it is the same permit-by-misrecognition as the three before.
+case_start "T217j: YAML front matter does not mask the heading under it"
+W="$ROOT/t217j"; build "$W"
+printf -- '---\ntitle: x\n---\n\n# Peer document title (PR #TBD)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-fm-bad.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                                             "1"
+check "naming the file"        "$(says "$msg" '0003-fm-bad.md')"                "1"
+check "for its real level"     "$(says "$msg" 'opens at level 1, not level 2')" "1"
+check "nothing was consumed"   "$(pending "$W")"                                "3"
+
+case_start "T217j2: front matter above a VALID heading still assembles"
+W="$ROOT/t217j2"; build "$W"
+printf -- '---\ntitle: x\n---\n\n## Thread - after front matter (PR #4246)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-fm-ok.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
+
 echo ""
 if (( RETIRED > 0 )); then
   echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"

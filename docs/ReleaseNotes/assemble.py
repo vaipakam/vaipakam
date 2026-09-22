@@ -133,7 +133,25 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     round.
     """
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
-    for i, line in enumerate(lines):
+    # YAML front matter is skipped before anything else. Its CLOSING fence is
+    # indistinguishable from a setext underline, so scanning through it read
+    # `title: x` + `---` as a level-2 heading and STOPPED THERE — masking a
+    # real `#` heading below it, placeholder and all. Found by testing the
+    # setext branch against non-heading dash constructs rather than by a
+    # review round, and it is the same permit-by-misrecognition failure as
+    # the three before it.
+    #
+    # Closeable, like the two-syntax rule: front matter is a `---` on the
+    # FIRST line closed by the next `---`. Anchored and delimited, unlike
+    # "every dash construct that is not an underline".
+    start = 0
+    if lines and lines[0].strip() == b"---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == b"---":
+                start = i + 1
+                break
+        # An unterminated opening fence is not front matter; scan from the top.
+    for i, line in enumerate(lines[start:], start):
         if HEADING_RE.match(line):
             marker = line.lstrip(b" ")
             return len(marker) - len(marker.lstrip(b"#")), line
