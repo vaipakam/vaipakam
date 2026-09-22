@@ -4253,8 +4253,12 @@ bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?
 
 # ── A fragment heading that will not survive assembly is refused (#2288) ─────
 # Two heading defects reached a publishable file in #2286 and nothing between
-# authoring and publication looked at the line. Both are unfixable afterwards,
-# because a dated release note is never re-edited.
+# authoring and publication looked at the line. Assembly is the last step that
+# reads the heading — the review pass afterwards is for wording and the intro,
+# not for auditing heading levels or PR numbers — so in practice what gets past
+# here stays. (Not "a dated note is never re-edited": that was false, the
+# README says editing wording is expected, and it took three rounds to remove
+# because the same sentence had been written into four places.)
 #
 # The LEVEL: a fragment opening at `#` lands in the dated file as a second
 # document title instead of nesting under the release title.

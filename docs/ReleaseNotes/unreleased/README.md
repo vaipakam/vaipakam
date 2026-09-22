@@ -28,6 +28,22 @@ PRs landing the same day never append-conflict.
    placeholder that gets past assembly stays. Around 179 published headings
    carry one, which is what this is there to stop adding to.
 
+   **What the refusal does and does not cover**, so it is not relied on for
+   more than it does:
+
+   - It reads the fragment's **opening line only**, and recognises a heading
+     there only in `#` form. A title underlined with `=` or `-` instead, or a
+     heading further down the file, is not examined — placeholder and all.
+   - A heading with **no PR reference at all** is not refused. That is not an
+     oversight: of the 758 fragments written so far, 457 carry none, and 69%
+     of published section headings carry none. The convention is the
+     template's, not a rule the corpus follows, so refusing its absence
+     would stop nine fragments in ten.
+
+   What is refused is narrow and worth stating exactly: a reference that is
+   **present and not a number**. That is the failure the template actually
+   produces — shipping `(PR #<n>)` and leaving it unsubstituted.
+
    The heading must also open at `##`, not `#` — a fragment opening at `#`
    lands in the dated file as a second document title rather than nesting
    under the release title, and assembly refuses it. `###` or deeper is

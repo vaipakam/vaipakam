@@ -1491,19 +1491,32 @@ class Assembly:
 
         THE PRESENCE of a PR reference. A heading carrying none is refused by
         nothing here; only a reference that is present and not a number is.
-        That is narrower than the template, and it was chosen against the
-        stricter rule after measuring it: requiring presence fails all 112
-        assertions that assemble anything, because `assemble.test.sh` builds
-        its fragments as bare `## <stem>` headings in about seventy places —
-        among them heredocs with their own escaping, and fixtures whose
-        headings deliberately carry NUL bytes, CRLF and control characters.
-        Conforming those is a large edit to the file that IS this script's
-        specification, in exchange for a defect class that has never occurred;
-        a fragment reaching assembly with no reference at all is a shape
-        neither the template nor any observed mistake produces, since the
-        template ships one and the failure mode is leaving it unsubstituted.
-        If a missing reference ever does ship, the answer is to conform the
-        fixtures and tighten this — not to conclude the check was wrong.
+
+        This was reconsidered in r6 and r7 and MEASURED rather than argued,
+        because the first version of this paragraph defended it by the cost of
+        conforming the test fixtures — which is not a reason to weaken a
+        production rule, and a review round said so. The corpus is the reason:
+
+            distinct fragments with an ATX opening heading     758
+              carrying NO `PR #` token at all                  457   (60%)
+              carrying a non-numeric token                     235
+              carrying only numbers                             66   ( 9%)
+
+            published level-2 section headings                1084
+              carrying NO `PR #` token at all                  758   (69%)
+
+        Requiring a reference would refuse **nine fragments in ten** and
+        contradict two thirds of everything already published. The template
+        ships `(PR #<n>)`, but the template's convention is not the corpus's
+        practice, and a rule that refuses the overwhelming majority of real
+        input is the rule that gets deleted — the same mistake this check made
+        with `level != 2`, caught the same way.
+
+        So what is refused is exactly the failure the template PRODUCES:
+        shipping the placeholder and leaving it unsubstituted. Deleting the
+        reference instead of replacing it does defeat the check; there is no
+        signal that distinguishes that from the 457 fragments that legitimately
+        carry none, and inventing one would refuse them too.
 
         RUNS BEFORE `clear_already_assembled`, which DELETES fragments. An
         earlier revision ran after it and claimed in this docstring to run
