@@ -830,9 +830,17 @@ because step 3 below is the part of it that had to be re-learned.
       >   (`d1-carry-rows.mjs:906-940`); a decision that includes it looks
       >   like new state every week, so an already-reviewed archive
       >   advance could never count as clean (#2286 r9).
-      > - **A manifest-only conflict** — record a **digest of the table as
-      >   compared**, the per-table digest the tooling already computes,
-      >   or re-review the whole table. **Not its counts.** It reports
+      > - **A manifest-only conflict** — **re-review the whole table**
+      >   before counting the run clean. That is the only option today,
+      >   and deliberately so: the per-table digest exists inside the run
+      >   but is NOT printed in the conflict output (`d1-carry-rows.mjs`
+      >   1643-1652, 3836-3841), so there is no digest for an operator to
+      >   record, and computing one with a later `digest` call observes a
+      >   DIFFERENT moment — which on a procedure that expressly allows
+      >   arbitrarily late source writes is a substitution, not a record
+      >   (#2286 r11). Printing the same-run digest in the conflict line
+      >   would make the cheaper option available; until it does, do not
+      >   reach for it. **And not the counts.** The line reports
       >   only how many rows were added, changed and deleted, so changing
       >   an already-changed row AGAIN leaves the line reading `0 added,
       >   1 changed, 0 deleted` exactly as before and a count-based record

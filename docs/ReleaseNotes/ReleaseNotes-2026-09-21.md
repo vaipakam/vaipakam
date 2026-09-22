@@ -423,11 +423,20 @@ cannot name a database. Watching a database hold still is evidence; removing
 the means to write to it is closer to proof, and the difference is what this
 step buys.
 
-**What a user sees during the window.** Indexed activity stops advancing, so
-recently confirmed on-chain actions take longer than usual to appear, and
-alerts and notifications pause. Most of that is delay rather than loss: the
-chain is the record, and the services resume reading from it when the move
-completes.
+**What a user sees during the window: the read surface is not slow, it is
+closed.** Every route the indexer and the agent serve answers 503 for the
+length of the window — including the live-update socket, and including agent
+routes that touch no database at all. That bluntness is deliberate: an answer
+drawn from a database about to be discarded would be worse than no answer, and
+a per-route list of which routes read the database is exactly the enumeration
+the mechanism exists to avoid. The practical consequence is that requests
+**fail rather than queue**, so anything a user was part-way through has to be
+retried once the window closes. Nothing resumes on its own.
+
+Indexed activity also stops advancing, so once the surface is back, recently
+confirmed on-chain actions take longer than usual to appear. *That* part is
+delay rather than loss: the chain is the record, and the services resume
+reading from it when the move completes.
 
 **Some of it is not delay, and the shape of the exception is worth stating
 rather than rounding to "nothing is lost".** The services' scheduled work is
@@ -440,11 +449,14 @@ disclosure it qualifies.** The keeper is deployed but deliberately
 **unscheduled** — its cron list is empty, by an operator decision taken after
 it was measured exceeding its CPU limit on essentially every invocation. Its
 passes therefore do not run today, before this window or after it. What follows
-is what the window costs **once that schedule is restored**. Attributing it to
-the move while the keeper is dark would blame a maintenance window for a
-standing outage.
+is what the window costs **once that schedule is restored and the pass in
+question is armed** — the keeper gates each pass on its own flag as well, so a
+restored cron with the liquidator still un-armed leaves first-party liquidation
+off for a reason that is again not this window. Attributing any of it to the
+move while the keeper is dark would blame a maintenance window for a standing
+outage.
 
-With the schedule restored, two especially direct examples. An alert that fires
+With both of those true, two especially direct examples. An alert that fires
 on a threshold being *crossed* is generated from the crossing, not from the
 state afterwards, so a position that crosses a health band and recovers again
 inside the window produces no alert at all, then or later. And the platform's
@@ -495,8 +507,11 @@ costs while it runs.
 **Every written reference to the database moves together, and a guard in the
 repository is what enforces that.** The database is named in four service
 configurations, in forty-three operator commands spread across runbooks and
-deploy scripts, and in one script that builds its command rather than spelling
-it out. A move that reached the configurations but not the commands would leave
+deploy scripts, and in two scripts that build their commands rather than
+spelling them out — one emitting restore commands by interpolation, the other
+holding the pinned name-and-id pair the cutover tools read, since they have to
+run during the barrier when no writer declares a binding at all. A move that
+reached the configurations but not the commands would leave
 a person applying schema changes to a database nothing reads — and both halves
 would look correct on their own. The guard refuses any state where those
 disagree.
