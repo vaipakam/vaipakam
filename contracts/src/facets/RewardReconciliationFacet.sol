@@ -449,9 +449,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         split was attested exceeds the attested cap of each component
     ///         (Codex #2276 r15 P1): a divergence the attestation recorded for
     ///         the correction path, zero for every packet classified after, or
-    ///         within, its caps.
+    ///         within, its caps. Reverts {ReconciliationPacketUnknown} for a
+    ///         hash no packet was recorded under.
     function getPacketClassificationExcess(bytes32 packetHash) external view returns (uint256 fresh, uint256 recycled) {
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        // An unrecorded hash is refused, as {getPacketReconciliation}'s
+        // existence rule refuses it (Codex #2276 r16 P2): a zero here means a
+        // recorded packet within its caps, never a hash nobody recorded.
+        if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
         return (p.classifiedFreshBeyondCap, p.classifiedRecycledBeyondCap);
     }
 

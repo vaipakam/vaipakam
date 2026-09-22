@@ -8,7 +8,6 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
-import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
@@ -1516,6 +1515,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (uint256 exF, uint256 exR) = RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
         assertEq(exF, 0);
         assertEq(exR, 5e18, "the recycled classification exceeds its cap by five: recorded");
+        // An unrecorded hash is refused, never read as a packet within its caps (Codex #2276 r16 P2).
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ReconciliationPacketUnknown.selector, keccak256("nobody")));
+        RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(keccak256("nobody"));
         (uint256 tf, uint256 tr, ) = _alloc(1, 3e18, 3e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
         assertEq(tf, 3e18, "the epoch's three are fresh room");
         assertEq(tr, 0, "and no recycled room remains under a cap the classification already exceeds");
