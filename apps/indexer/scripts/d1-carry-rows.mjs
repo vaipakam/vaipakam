@@ -2099,6 +2099,23 @@ export function parseEvidence(text) {
       );
     if (done) {
       const bucket = done[1] ? runOf(done[1]) : null;
+      // A MARKER THAT NAMES ITS RUN ALSO STATES ITS COUNT (#2281 r23).
+      // Both come from the same emitter, so an id without a count is a
+      // hand-edit or a crop — and leaving the count optional meant such
+      // a marker paired, recorded `run-pairing`, and skipped the very
+      // disclosure that says its completeness was never verifiable. The
+      // strongest-looking evidence carried the weakest guarantee.
+      if (done[1] && done[2] === undefined) {
+        conflicts.push(
+          `a sequence listing names run ${done[1]} but states no entry ` +
+            `count. A listing that names its run is written by a command ` +
+            `that also counts its entries, so this one has been altered ` +
+            `or cropped — and without the count a dropped line cannot be ` +
+            `told from a table that never allocated`,
+        );
+        closedSeqRuns.add(done[1]);
+        continue;
+      }
       // A DECLARED COUNT IS CHECKED, exactly as the digest block's is.
       // A listing short of what it declares was pasted in part, so its
       // silences are not zeros and it is not a closed reading at all.
@@ -2549,7 +2566,14 @@ export function coverageProblems(tables, evidence) {
  * and an UPDATE, a DELETE or an INSERT with a natural key moves neither
  * the table set, nor any declaration, nor a counter.
  *
- * NOT caught, second: anything completed BEFORE a dimension's first
+ * NOT caught, and the reason to read every claim here as a
+ * COMPARISON rather than a guarantee: two equal readings establish
+ * that they AGREED, not that nothing happened between them. A row
+ * added and removed again, or changed and changed back, leaves the
+ * second reading matching the first (#2281 r23). Nothing in this file
+ * watches a database; it compares readings of one.
+ *
+ * NOT caught, and anything completed BEFORE a dimension's first
  * observation (#2281 r19). `readStartedAt` precedes every read, which
  * is the conservative direction for the claimed window — but the first
  * table-set and schema reads happen after it, so a table created and

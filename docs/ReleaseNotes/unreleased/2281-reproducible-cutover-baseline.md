@@ -58,10 +58,15 @@ And each kind of reading has a **first** observation, which cannot see a change
 completed before it. The record says it was taken from a moment early enough to
 precede every reading it contains, so a table created and filled in the gap
 between that moment and the first reading of the table set appears, identically,
-in everything that follows — and looks original. The window is small and the
-record errs toward claiming less than it looked at, but "nothing changed during
-this" is not what it can promise; what it promises is that nothing changed
-between the two readings of each thing.
+in everything that follows — and looks original.
+
+**What two equal readings establish is that they agreed, which is weaker than
+nothing having happened.** A row can be added and removed again, or changed and
+changed back, between them; the second reading then matches the first and the
+record is accepted. Nothing here can see that, because nothing here watches —
+it compares. So the honest form of the promise is: every check reports that its
+two readings agreed, and a database that was genuinely still is the only reason
+they should.
 
 Within those bounds the coverage is broad: the table set and the shape of every
 table are each read once more after all the row reading is finished — as one

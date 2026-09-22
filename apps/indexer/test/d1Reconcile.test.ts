@@ -2584,7 +2584,7 @@ describe("a table set that changed is evidence too", () => {
         `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq t 6 run:aa0001",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (0 entries)",
         "",
       ].join("\n"),
     );
@@ -2672,7 +2672,7 @@ describe("a table set that changed is evidence too", () => {
         `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq t 5 run:aa0001",
-        "seq-listing complete run:aa0001",
+        "seq-listing complete run:aa0001 (1 entries)",
         "",
       ].join("\n"),
     );
@@ -2769,7 +2769,7 @@ describe("a table set that changed is evidence too", () => {
         "t 1111111111111111 run:aa0099",
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0099`,
         "seq t 5 run:aa0099",
-        "seq-listing complete run:aa0099",
+        "seq-listing complete run:aa0099 (1 entries)",
       ].join("\n"),
     );
     expect(e.readings.paired).toBe(1);
@@ -2786,7 +2786,7 @@ describe("a table set that changed is evidence too", () => {
         "t 1111111111111111 run:aa0001",
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq t 6 run:aa0001",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (0 entries)",
       ].join("\n"),
     );
     expect(e.readings.paired).toBe(0);
@@ -2822,7 +2822,7 @@ describe("a table set that changed is evidence too", () => {
         `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "seq t 5 run:aa0001",
-        "seq-listing complete run:aa0001",
+        "seq-listing complete run:aa0001 (1 entries)",
         // a later crop, contributing only a post-migration shape
         "shape t bbbbbbbbbbbbbbbb",
       ].join("\n"),
@@ -2840,7 +2840,7 @@ describe("a table set that changed is evidence too", () => {
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
         "shape t aaaaaaaaaaaaaaaa run:aa0002",
         "seq t 5 run:aa0002",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (1 entries)",
       ].join("\n"),
     );
     expect(e.shapes.get("t")).toBe("aaaaaaaaaaaaaaaa");
@@ -2860,12 +2860,12 @@ describe("a table set that changed is evidence too", () => {
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         // run 1 enumerated `t` and said nothing about its shape
         "seq t 5 run:aa0001",
-        "seq-listing complete run:aa0001",
+        "seq-listing complete run:aa0001 (1 entries)",
         `t ${d} run:aa0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
         "shape t bbbbbbbbbbbbbbbb run:aa0002", // run 2, after a migration
         "seq t 5 run:aa0002",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (1 entries)",
       ].join("\n"),
     );
     expect([...e.shapes]).toEqual([]);
@@ -2894,12 +2894,12 @@ describe("a table set that changed is evidence too", () => {
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0001`,
         "shape t aaaaaaaaaaaaaaaa run:cc0001",
         "seq t 5 run:cc0001",
-        "seq-listing complete run:cc0001",
+        "seq-listing complete run:cc0001 (1 entries)",
         `t ${d} run:cc0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:cc0002`,
         "shape t bbbbbbbbbbbbbbbb run:cc0002",
         "seq t 5 run:cc0002",
-        "seq-listing complete run:cc0002",
+        "seq-listing complete run:cc0002 (1 entries)",
       ].join("\n"),
     );
     expect(
@@ -2925,7 +2925,7 @@ describe("a table set that changed is evidence too", () => {
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
         "shape t bbbbbbbbbbbbbbbb run:aa0001",
         "seq t 5 run:aa0001",
-        "seq-listing complete run:aa0001",
+        "seq-listing complete run:aa0001 (1 entries)",
       ].join("\n"),
     );
     expect([...e.shapes]).toEqual([]);
@@ -2938,7 +2938,7 @@ describe("a table set that changed is evidence too", () => {
       [
         `t ${d} run:aa0001`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
-        "seq-listing complete run:aa0001 WAS NOT CAPTURED",
+        "seq-listing complete run:aa0001 (1 entries) WAS NOT CAPTURED",
       ].join("\n"),
     );
     expect(e.readings.sequences).toBe(0);
@@ -2952,14 +2952,14 @@ describe("a table set that changed is evidence too", () => {
         `t ${d} run:aa0002`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
         "seq t 5 run:aa0002",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (1 entries)",
       ].join("\n"),
     );
     expect(plain.readings.paired).toBe(1);
     const never = parseEvidence(
       [
         `${"\u2014".repeat(8)}   0  (0 tables) run:aa0003`,
-        "seq-listing complete run:aa0003   (nothing has ever allocated here)",
+        "seq-listing complete run:aa0003 (0 entries)   (nothing has ever allocated here)",
       ].join("\n"),
     );
     expect(never.readings.paired).toBe(1);
@@ -2977,7 +2977,7 @@ describe("a table set that changed is evidence too", () => {
         `t ${d}`, // run 2 begins, its count line cropped
         "shape t bbbbbbbbbbbbbbbb run:aa0002",
         "seq t 5",
-        "seq-listing complete run:aa0002",
+        "seq-listing complete run:aa0002 (0 entries)",
       ].join("\n"),
     );
     expect([...e.shapes]).toEqual([]);
@@ -2995,7 +2995,7 @@ describe("a table set that changed is evidence too", () => {
         // run B enumerates y and z, but its z line is cropped
         `y ${d} run:bbbbb2`,
         `${"\u2014".repeat(8)}   0  (2 tables) run:bbbbb2`,
-        "seq-listing complete run:bbbbb2",
+        "seq-listing complete run:bbbbb2 (0 entries)",
       ].join("\n"),
     );
     // Positionally, `x` and `y` sit in the block the summary closes and
@@ -3031,7 +3031,7 @@ describe("a table set that changed is evidence too", () => {
         `t ${d} run:aaaaa1`,
         `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa1`,
         "seq t 5 run:aaaaa1",
-        "seq-listing complete run:aaaaa1",
+        "seq-listing complete run:aaaaa1 (1 entries)",
         // a later run, cropped before its marker — it still proves an
         // allocation happened
         "seq t 6 run:bbbbb2",
@@ -3087,6 +3087,45 @@ describe("a table set that changed is evidence too", () => {
     );
     expect(e.conflicts).toEqual([]);
     expect(e.readings.paired).toBe(1);
+  });
+
+  // #2281 r23 — a marker that names its run also states its count.
+  // Leaving the count optional meant the previously emitted
+  // `seq-listing complete run:<id>` paired, recorded `run-pairing`,
+  // and SKIPPED the disclosure that says its completeness was never
+  // verifiable — the strongest-looking evidence carrying the weakest
+  // guarantee.
+  it("refuses a marker that names its run but states no count", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d} run:aaaaa1`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aaaaa1`,
+        "seq t 5 run:aaaaa1",
+        "seq-listing complete run:aaaaa1",
+      ].join("\n"),
+    );
+    expect(e.conflicts.some((c) => c.includes("states no entry count"))).toBe(
+      true,
+    );
+    expect(e.readings.sequences).toBe(0);
+  });
+
+  it("still accepts a legacy marker that names neither", () => {
+    // Evidence written before either existed. It cannot be refused —
+    // the mirror it describes has passed — so it is disclosed instead.
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.conflicts).toEqual([]);
+    expect(e.readings.sequences).toBe(1);
+    expect(e.readings.unidentified).toBe(2);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {
