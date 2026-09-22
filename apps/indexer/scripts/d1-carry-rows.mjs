@@ -2048,9 +2048,22 @@ export function parseEvidence(text) {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     // Closes a SEQUENCE reading, and only that.
-    if (line.startsWith("seq-listing complete")) {
-      const id = /\brun:([0-9a-f]{6,64})\b/.exec(line);
-      seqReadings.push({ seqs: openSeqs, run: id ? id[1] : null });
+    // THE PRODUCER'S MARKER, NOT A PREFIX OF IT (#2281 r18). Every other
+    // line this parser recognises is matched by an anchored pattern;
+    // this one tested `startsWith`, so `seq-listing complete run:aa0001
+    // WAS NOT CAPTURED` — a note an operator might reasonably write
+    // beside a listing they could not take — parsed as a CLOSED reading,
+    // and every table it did not mention became a stated zero. A
+    // reconstruction carrying those zeros then passed.
+    //
+    // `digest` emits exactly two forms, with and without the
+    // never-allocated note, so those are the two accepted.
+    const done =
+      /^seq-listing complete(?:\s+run:([0-9a-f]{6,64}))?(?:\s+\(nothing has ever allocated here\))?$/.exec(
+        line,
+      );
+    if (done) {
+      seqReadings.push({ seqs: openSeqs, run: done[1] ?? null });
       openSeqs = new Map();
       openRun = null;
       sawAnyComplete = true;
@@ -2266,12 +2279,19 @@ export function parseEvidence(text) {
   // observe it. One reading that stayed silent is missing evidence, not
   // agreement — and `cover` then declines to claim the dimension rather
   // than claiming it from whichever reading happened to speak.
-  const pairedReadings = readings.filter(
-    (e) => e.run && paired.includes(e.run),
-  );
+  // EVERY complete reading, not only the paired ones (#2281 r18). The
+  // rule above says "every complete reading that saw the table", and
+  // the first implementation of it filtered to paired runs — so an
+  // ANONYMOUS mirror-time reading that enumerated the table and said
+  // nothing about its shape did not block the dimension, and a later
+  // identified run supplied the post-migration answer. Narrowing the
+  // rule to the readings that carry an identifier is exactly the
+  // assembly this rule exists to stop; a reading enumerated the table
+  // or it did not, and whether it named its run has no bearing on
+  // whether its silence is evidence.
   const shapes = new Map();
   for (const table of mentioned) {
-    const sawIt = pairedReadings.filter((e) => e.digests.has(table));
+    const sawIt = readings.filter((e) => e.digests.has(table));
     if (sawIt.length === 0) continue;
     const stated = sawIt.map((e) => e.shapes.get(table));
     if (stated.some((v) => v === undefined)) continue;
@@ -3759,8 +3779,12 @@ async function main() {
       fail(`cover needs --manifest <path> and --expect <path>\n\n${USAGE}`);
     }
     let doc;
+    // THE BYTES THIS VERDICT IS ABOUT, kept so publication can prove it
+    // is still writing over the same document (#2281 r18).
+    let opened;
     try {
-      doc = JSON.parse(readFileSync(path, "utf8"));
+      opened = readFileSync(path, "utf8");
+      doc = JSON.parse(opened);
     } catch (err) {
       fail(`could not read the manifest at ${path} — ${err.message}`);
     }
@@ -3946,6 +3970,40 @@ async function main() {
             `no "run:<id>", so it was NOT established that both halves ` +
             `came from one run`),
     };
+    // THE FILE THIS VERDICT IS ABOUT MUST STILL BE THE FILE AT THE PATH
+    // (#2281 r18). `cover` reads the manifest, then reads and parses the
+    // evidence, then renames over the path — and the manifest write
+    // learned this lesson already at r10. If the original mirror
+    // artifact is restored in that window, or another run replaces the
+    // reconstruction, this would destroy it AND publish a verdict about
+    // the document that was read earlier.
+    //
+    // So the bytes are compared with what was opened, and a change
+    // refuses. The residual is stated rather than implied: a
+    // replacement landing between this check and the rename is not
+    // caught, because the filesystem offers no compare-and-swap here.
+    // It narrows a window measured in the time it takes to read and
+    // parse an evidence file down to one measured in a syscall.
+    let current;
+    try {
+      current = readFileSync(path, "utf8");
+    } catch (err) {
+      fail(
+        `${path} could not be re-read before publishing the verdict — ` +
+          `${err.message}. Nothing was written.`,
+      );
+    }
+    if (current !== opened) {
+      fail(
+        `${path} CHANGED while the evidence was being read, so the ` +
+          `coverage verdict just computed is about a document that is no ` +
+          `longer there.\n\nWriting it would publish a verdict for the ` +
+          `older contents and destroy whatever replaced them — which, if ` +
+          `that is the mirror's own manifest restored from a backup, is ` +
+          `the one artifact that cannot be remade.\n\nNothing was ` +
+          `written. Re-run \`cover\` against the file as it now stands.`,
+      );
+    }
     writeFileSync(
       `${path}.tmp-${process.pid}`,
       `${JSON.stringify(doc, null, 2)}\n`,

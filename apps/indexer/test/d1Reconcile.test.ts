@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -2616,6 +2616,69 @@ describe("a table set that changed is evidence too", () => {
     expect(prov.coveredDimensions).not.toContain("run-pairing");
   });
 
+  it("will not publish a verdict about a manifest that changed", async () => {
+    // #2281 r18 — `cover` reads the manifest, then reads and parses the
+    // evidence, then writes. A REAL race is simulated here: `--expect`
+    // is a FIFO, so the command blocks inside its evidence read while
+    // the manifest is swapped underneath it. An earlier version of this
+    // test swapped the file BEFORE the command ran, which exercised the
+    // provenance guard instead and stayed green with the byte check
+    // removed — the inert shape this PR keeps finding.
+    const dir = mkdtempSync(join(tmpdir(), "cover-swap-"));
+    const manifest = join(dir, "m.json");
+    const fifo = join(dir, "e.fifo");
+    const d = "1".repeat(16);
+    execFileSync("mkfifo", [fifo]);
+    writeFileSync(
+      manifest,
+      JSON.stringify(
+        reconstructed({
+          t: { key: ["id"], cols: ["id"], seq: 5, rows: {}, digest: d },
+        }),
+      ),
+    );
+    const child = spawn(
+      process.execPath,
+      [
+        new URL("../scripts/d1-carry-rows.mjs", import.meta.url).pathname,
+        "cover",
+        "--manifest",
+        manifest,
+        "--expect",
+        fifo,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let out = "";
+    child.stdout.on("data", (b) => (out += b));
+    child.stderr.on("data", (b) => (out += b));
+
+    // The child is now blocked opening the FIFO, AFTER reading the
+    // manifest. Replace it with the artifact this guard exists to save.
+    const restored = '{"the":"original mirror manifest, restored"}\n';
+    await new Promise((r) => setTimeout(r, 300));
+    writeFileSync(manifest, restored);
+
+    // Release the evidence; the command proceeds to publish.
+    writeFileSync(
+      fifo,
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        "seq t 5",
+        "seq-listing complete run:aa0001",
+        "",
+      ].join("\n"),
+    );
+    const code: number = await new Promise((r) => child.on("close", r));
+
+    expect(code).not.toBe(0);
+    expect(out).toContain("CHANGED while the evidence was being read");
+    // Byte for byte: the restored artifact is untouched.
+    expect(readFileSync(manifest, "utf8")).toBe(restored);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("will not promote a manifest that carries no provenance at all", () => {
     // Written before provenance existed, so the mirror wrote it — which
     // is what `readManifest` concludes from the same absence. Promoting
@@ -2836,6 +2899,63 @@ describe("a table set that changed is evidence too", () => {
       e.conflicts.some((c) => c.includes("keys and projects its rows")),
     ).toBe(true);
     expect([...e.shapes]).toEqual([]);
+  });
+
+  // #2281 r18 — the rule says EVERY complete reading that saw the
+  // table, and the first implementation narrowed it to paired runs.
+  it("lets an anonymous reading's silence block the shape dimension", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        // an anonymous mirror-time run that enumerated `t` and said
+        // nothing about its shape
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 5",
+        "seq-listing complete",
+        // a later identified run, after a key migration
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        "shape t bbbbbbbbbbbbbbbb",
+        "seq t 5",
+        "seq-listing complete run:aa0001",
+      ].join("\n"),
+    );
+    expect([...e.shapes]).toEqual([]);
+  });
+
+  // #2281 r18 — a marker is the producer's marker, not a prefix of it.
+  it("does not read prose after the marker as a closed reading", () => {
+    const d = "1".repeat(16);
+    const e = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0001`,
+        "seq-listing complete run:aa0001 WAS NOT CAPTURED",
+      ].join("\n"),
+    );
+    expect(e.readings.sequences).toBe(0);
+    expect(e.seqListingComplete).toBe(false);
+  });
+
+  it("still accepts both forms the digest command emits", () => {
+    const d = "1".repeat(16);
+    const plain = parseEvidence(
+      [
+        `t ${d}`,
+        `${"\u2014".repeat(8)}   0  (1 tables) run:aa0002`,
+        "seq t 5",
+        "seq-listing complete run:aa0002",
+      ].join("\n"),
+    );
+    expect(plain.readings.paired).toBe(1);
+    const never = parseEvidence(
+      [
+        `${"\u2014".repeat(8)}   0  (0 tables) run:aa0003`,
+        "seq-listing complete run:aa0003   (nothing has ever allocated here)",
+      ].join("\n"),
+    );
+    expect(never.readings.paired).toBe(1);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {
