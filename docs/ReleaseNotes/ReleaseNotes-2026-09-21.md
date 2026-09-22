@@ -429,15 +429,27 @@ alerts and notifications pause. Most of that is delay rather than loss: the
 chain is the record, and the services resume reading from it when the move
 completes.
 
-**Two things are not merely delayed, and this note names them rather than
-rounding them to "nothing is lost".** An alert that fires on a threshold being
-*crossed* is generated from the crossing, not from the state afterwards — so a
-position that crosses a health band and recovers again inside the window
-produces no alert at all, then or later. And the platform's own liquidator
-declines every scheduled tick for as long as the window lasts, so a position
-that becomes undercollateralised during it is not acted on by the protocol's
-own keeper. Liquidation is permissionless and a third party can still act; what
-is paused is the first-party cover, not the mechanism.
+**Some of it is not delay, and the shape of the exception is worth stating
+rather than rounding to "nothing is lost".** The services' scheduled work is
+not replayed when they come back — a tick that did not happen does not happen
+later. So anything that depends on a *moment passing* is missed outright rather
+than deferred.
+
+Two consequences are worth naming because they are the ones a user feels. An
+alert that fires on a threshold being *crossed* is generated from the crossing,
+not from the state afterwards, so a position that crosses a health band and
+recovers again inside the window produces no alert at all, then or later. And
+the platform's own liquidator declines every scheduled tick for as long as the
+window lasts, so a position that becomes undercollateralised during it is not
+acted on by the protocol's own keeper — liquidation is permissionless and a
+third party can still act, so what pauses is the first-party cover, not the
+mechanism.
+
+**Those two are examples, not a bound.** Every scheduled pass is suspended, so
+any of them that is deadline- or window-sensitive can miss its moment the same
+way — a grace period that expires inside the window, a once-a-day snapshot
+whose only opportunity falls inside it. Which passes are enabled is a matter of
+deployment configuration, and this note does not claim to enumerate them.
 
 The move itself neither holds nor transfers funds — it carries off-chain
 bookkeeping between two databases, and the database being left behind is
@@ -729,7 +741,7 @@ under a fresh identifier — a real write that has to be made, after which only
 the report persists.
 
 Those are recorded once with the decision taken, and the weekly comparison
-continues, since its job is to surface what is new. **Two limits on that are
+continues, since its job is to surface what is new. **The limits on that are
 stated rather than implied.** A report names a table and a kind of difference
 but deliberately not the record's contents, so a record that changes *again*
 after a decision was taken about it produces the same line and can be waved

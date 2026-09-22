@@ -811,36 +811,37 @@ because step 3 below is the part of it that had to be re-learned.
       > advance is per TABLE (`d1-carry-rows.mjs:932-941`), and the
       > manifest-only classification deliberately emits conflicts with no
       > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
-      > table, or its key, looks like from archive's side. Record those by
-      > **table, the kind of line, AND THE STATE THE LINE EXPOSES** —
-      > which differs by line, so take each on its own terms. A sequence
-      > advance exposes both marks, and those marks move whenever the
-      > allocation does, so recording them is enough.
+      > table, or its key, looks like from archive's side.
       >
-      > **A manifest-only conflict does NOT expose enough** (#2286 r8).
-      > It reports only how many rows were added, changed and deleted, so
-      > changing an already-changed row AGAIN leaves the line reading
-      > `0 added, 1 changed, 0 deleted` exactly as before, and a
-      > count-based record accepts the second write as the decided one.
-      > Counts are an identity that does not move when the data does.
-      > For these, record a **digest of the table as compared** — the
-      > per-table digest the tooling already computes — or re-review the
-      > whole table before counting the run clean. Do not record counts
-      > and treat them as state.
+      > **Record these by table, the kind of line, and STATE THAT MOVES
+      > WHEN THE DATA MOVES.** Table-plus-kind alone is not enough, for
+      > the same reason the by-key test is not (#2286 r7): a sequence that
+      > advances again after a decision, or a dropped table taking another
+      > late write, reports under the same table and the same kind. The
+      > re-read above rescues neither — an allocation that was inserted
+      > and deleted has no row left to re-read, and a manifest-only
+      > finding carries no row identity to re-read BY. What state to take
+      > differs by line:
+      >
+      > - **A sequence advance** — record archive's current mark and the
+      >   mirror baseline it is compared against. **Not warm's mark.** The
+      >   line carries it, but `compareSequences` prints it as CONTEXT
+      >   precisely because warm advances it on its own ordinary writes
+      >   (`d1-carry-rows.mjs:906-940`); a decision that includes it looks
+      >   like new state every week, so an already-reviewed archive
+      >   advance could never count as clean (#2286 r9).
+      > - **A manifest-only conflict** — record a **digest of the table as
+      >   compared**, the per-table digest the tooling already computes,
+      >   or re-review the whole table. **Not its counts.** It reports
+      >   only how many rows were added, changed and deleted, so changing
+      >   an already-changed row AGAIN leaves the line reading `0 added,
+      >   1 changed, 0 deleted` exactly as before and a count-based record
+      >   accepts the second write as the decided one (#2286 r8). Counts
+      >   are an identity that does not move when the data does.
       >
       > Then treat a run carrying only already-recorded lines as clean on
       > the same terms, and the SAME line with DIFFERENT state as new and
       > undecided.
-      >
-      > Table-plus-kind alone is not enough, and for the same reason the
-      > by-key test is not (#2286 r7): a sequence that advances again
-      > after a decision, or a dropped table taking another late write,
-      > reports under the same table and the same kind. The re-read above
-      > cannot rescue these — an allocation that was inserted and deleted
-      > has no row left to re-read, and a manifest-only finding carries no
-      > row identity to re-read BY. The reported figures are the only
-      > state these lines expose, so they are what a decision has to be
-      > recorded against.
       >
       > Without some identity here they could never be recorded to the
       > rule's satisfaction at all and the retirement gate would stay
@@ -2073,11 +2074,13 @@ sequence is:
    `check-live-d1-bindings.mjs --expect vaipakam-archive`.
 6. **Reconcile, and keep reconciling** —
    `reconcile --from vaipakam-warm --to vaipakam-archive --since
-   rollback-mirror.json` until **two consecutive** runs report nothing. It
-   reads and reports; it writes nothing, so anything it finds is applied by
-   a deliberate human step. The #2279 exception applies here too, in the
-   same three situations and for the same reason — the direction of the
-   move does not change which resolutions alter data.
+   rollback-mirror.json` until **two consecutive** runs come back clean in
+   the §4 step-6 sense — not necessarily silent. It reads and reports; it
+   writes nothing, so anything it finds is applied by a deliberate human
+   step. The #2279 exception applies here too, for the same reason and to
+   the same lines: the direction of the move does not change which
+   resolutions alter data, so any line whose settlement changes no data
+   repeats here as well.
 
    **Then weekly, for as long as warm is retained** (#2267 r36). The
    direction inverts but the reasoning does not: an invocation holding the
