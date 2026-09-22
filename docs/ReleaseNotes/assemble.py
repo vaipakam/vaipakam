@@ -1539,7 +1539,10 @@ class Assembly:
         line is refused. The check therefore does not enumerate bad shapes —
         it names one good one — so a shape nobody has anticipated is closed
         in advance instead of being discovered in a published note. Eleven
-        shapes reached publication through the allowance this replaced.
+        shapes were SHOWN to take the allowance this replaced — each by a
+        test or a review reproduction, none of them ever written by an
+        author (#2301 r2). What was published, and what motivates the check,
+        is the separate matter of headings no check ever looked at.
 
         `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
         things about that line are load-bearing the moment the fragment is
@@ -1739,19 +1742,31 @@ class Assembly:
                 # be ALLOWED, and that allowance was the amplifier behind
                 # every misrecognition finding on #2290: some shape was not
                 # recognised as a heading, this returned None, and the
-                # fragment was PUBLISHED AND CONSUMED. Eleven shapes reached
-                # that outcome across sixteen review rounds — an indented
-                # marker, a tab delimiter, a setext underline, a YAML fence,
-                # a list above a thematic break, four byte-order marks, a
-                # CR-only line ending, a heading inside a blockquote.
+                # fragment was PUBLISHED AND CONSUMED. Eleven shapes were
+                # shown to reach that outcome across sixteen review rounds —
+                # an indented marker, a tab delimiter, a setext underline, a
+                # YAML fence, a list above a thematic break, four byte-order
+                # marks, a CR-only line ending, a heading inside a blockquote.
+                #
+                # SHOWN, NOT OBSERVED, and the distinction is load-bearing
+                # (#2301 r2). Each was demonstrated by a test or reproduced
+                # during review; NONE was ever written by an author, because
+                # all 759 fragments in the archive open with an ATX heading.
+                # Writing these up as incidents would claim a history the
+                # repository's own evidence contradicts — and the argument
+                # does not need it. A defect that is certain to occur the
+                # first time somebody saves a file differently is worth
+                # closing on its own terms.
                 #
                 # Recognising one more shape per round only moved the
                 # boundary. The input is author-written Markdown in arbitrary
                 # encodings: the set of things that are not an ATX heading is
                 # unbounded, so a rule that must ENUMERATE them can always be
-                # surprised, and each surprise cost a release note and a
-                # source file. Refusing instead inverts the failure direction
-                # — an unanticipated shape now costs its author one message.
+                # surprised — and a surprise here costs a release note and a
+                # source file, since the fragment is published mangled and
+                # then deleted. Refusing instead inverts the failure
+                # direction: an unanticipated shape now costs its author one
+                # message.
                 #
                 # THE INVERSION IS WHY THIS FUNCTION NEED NOT GROW. Every
                 # shape above is closed as a consequence rather than
@@ -1941,9 +1956,12 @@ class Assembly:
             for line in out_data.split(b"\n")
             if line.startswith(MARKER_PREFIX.encode())
         )
-        normalised = b"\n".join(
-            ln[:-1] if ln.endswith(b"\r") else ln for ln in out_data.split(b"\n")
-        )
+        # ONE SPLIT, not a normalise-then-split (#2301 r2). This used to strip
+        # a trailing `\r` from each `\n`-delimited line and rejoin, which
+        # handled CRLF and left a lone CR sitting inside a line. `LINE_END_RE`
+        # already covers all three endings, so the rejoin bought nothing and
+        # gave the file a second, weaker idea of where a line ends.
+        out_lines_raw = LINE_END_RE.split(out_data)
 
         suspect = []
         for f in self.frags:
@@ -2002,9 +2020,23 @@ class Assembly:
             def _debom(b: bytes) -> bytes:
                 return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
 
-            out_lines = [_debom(o) for o in normalised.split(b"\n")]
-            for ln in body.split(b"\n"):
-                line = _debom(ln[:-1] if ln.endswith(b"\r") else ln)
+            # SPLIT CR-AWARE ON BOTH SIDES (#2301 r2), and this guard is the
+            # reason the line definition is shared rather than local. Teaching
+            # `first_heading` about CR-only files while leaving this scan on
+            # `\n` alone made a CR-only fragment publishable whose heading this
+            # could no longer see: the whole file read as ONE line, matched
+            # nothing in the dated file, so the run appended a second copy and
+            # consumed the source. The parent commit had REFUSED that same
+            # fragment, so the gap turned a refusal into data loss. Reproduced
+            # before and after.
+            #
+            # A definition of "a line" that two scans hold separately is a
+            # divergence waiting to happen, and this is the second time it has
+            # happened here — the first was `first_heading` and the `---`
+            # check disagreeing about blankness.
+            out_lines = [_debom(o) for o in out_lines_raw]
+            for ln in LINE_END_RE.split(body):
+                line = _debom(ln)
                 if not HEADING_RE.match(line):
                     continue
                 if any(line == other for other in out_lines):

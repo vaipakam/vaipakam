@@ -4841,6 +4841,27 @@ check "the run refuses"       "$?"                            "1"
 check "as a placeholder"      "$(says "$msg" 'placeholder')"   "1"
 check "nothing was consumed"  "$(pending "$W")"                "3"
 
+# ── THE DUPLICATE GUARD MUST SPLIT LINES THE SAME WAY (#2301 r2) ──────────
+# A DATA-LOSS path, and a regression this PR introduced before catching it:
+# making CR-only fragments publishable while `check_markerless_duplicates`
+# still split on `\n` alone meant the guard read such a fragment as ONE line,
+# matched nothing in a legacy markerless dated file that already held the
+# section, appended a SECOND copy and consumed the source. The parent commit
+# had refused the same fragment, so the gap turned a refusal into lost work.
+case_start "T217v: a CR-only fragment already published is not appended twice"
+W="$ROOT/t217v"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+d="$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md"
+# A markerless dated file that already holds the section, with LF endings.
+printf '# Release Notes — 2026-08-17\n\nintro\n\n## Thread — already folded in (PR #4255)\n\nbody\n' > "$d"
+# The same fragment still pending, saved with CR endings.
+printf -- '## Thread — already folded in (PR #4255)\rbody\r' > "$u/0003-cr-dup.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                                  "1"
+check "naming the fragment"    "$(says "$msg" '0003-cr-dup.md')"     "1"
+check "the source is retained" "$(pending "$W")"                     "3"
+check "not appended twice"     "$(count_in '^## Thread — already folded in' "$d")" "1"
+
 # ── BLANK MEANS SPACES AND TABS, not Python's idea of whitespace (#2301) ───
 # `bytes.strip()` also counts a vertical tab, a form feed and the C0
 # separators. A fragment opening with a lone `\x0b` was therefore skipped past

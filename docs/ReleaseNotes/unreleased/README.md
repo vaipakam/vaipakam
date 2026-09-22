@@ -44,8 +44,11 @@ PRs landing the same day never append-conflict.
 
      It reads as strict and costs nothing: of the 759 fragments ever written
      in this repository, **all 759 open with a `#` heading**. The rule exists
-     because the opposite default — publish what it cannot read — put eleven
-     different mangled shapes into released notes and deleted their sources.
+     because the opposite default — publish what it cannot read — was shown
+     eleven separate times, by a test or during review, to publish a mangled
+     section and delete its source. None of those was a real fragment; they
+     did not have to be, since any one of them lands the first time somebody
+     saves a file a little differently.
    - A fragment that **opens with `---`** is refused with its own message,
      naming front matter. The verdict would be the same without it (a `---`
      is not a heading); the separate message exists because an author who

@@ -9,16 +9,22 @@ as the outcome of being correct — except that what arrived in the released
 notes was whatever the author had actually written, rendered as something
 nobody intended, with the source gone.
 
-That default is what let eleven different malformed shapes into published
-notes. Each was found the same way, one per review round: a title underlined
-instead of prefixed, a heading indented a little too far, a file saved with
-an invisible byte-order mark, a heading written inside a quotation or a list.
-Each time, the fix was to teach the assembler to recognise one more shape —
-and each time, the next round found another. That was never going to end. The
-material is prose written by people in whatever editor they use; the number
-of ways a line can fail to be a heading has no limit, so a rule that has to
-list them can always be caught out, and being caught out cost a release note
-and a file.
+Eleven different malformed shapes were shown to slip through that way, one
+per review round: a title underlined instead of prefixed, a heading indented
+a little too far, a file saved with an invisible byte-order mark, a heading
+written inside a quotation or a list. Each time, the fix was to teach the
+assembler to recognise one more shape — and each time, the next round found
+another.
+
+None of the eleven was a real fragment. Every one was demonstrated by a test
+or reproduced during review, and the archive contains no example: all 759
+fragments ever written open with an ordinary heading. That is worth stating
+plainly rather than letting the list imply a history of damaged releases,
+because the argument does not rest on one. What makes these worth closing is
+that any of them arrives the first time somebody saves a file a little
+differently — and the number of ways a line can fail to be a heading has no
+limit, so a rule that has to list them can always be caught out. Being caught
+out costs a release note and a file.
 
 The rule now runs the other way round. The opening line has to be a heading
 written with `#`, and anything else is refused by name, before a word is
