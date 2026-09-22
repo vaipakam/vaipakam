@@ -83,6 +83,16 @@ MARKER_RE = re.compile(
 HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # The three line endings CommonMark recognises. `\r\n` must come first, or a
 # CRLF file splits into a trailing empty field per line.
+#
+# INVARIANT: NOTHING IN THIS FILE SPLITS LINES ANY OTHER WAY, and it is
+# pinned by `T217w` rather than left to memory (#2301 r3). Three consecutive
+# review rounds each found a different scan still on `\n` alone — the `---`
+# check, the markerless duplicate guard, then the two marker scans — because
+# a local `split(b"\n")` reads as obviously correct at every call site and is
+# wrong only in relation to the others. The failures were not cosmetic: one
+# appended a duplicate section and consumed the source, and one published an
+# embedded marker record that a later LF-normalisation would make
+# authoritative, clearing an unrelated fragment unread.
 LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 # A BLANK LINE, as CommonMark defines one: empty, or spaces and tabs only.
 # NOT `bytes.strip()`, which also treats a vertical tab, a form feed and the
@@ -1122,7 +1132,7 @@ class Assembly:
         with open(snap, "rb") as fh:
             data = fh.read()
         prefix = os.fsencode(MARKER_PREFIX)
-        for raw in data.split(b"\n"):
+        for raw in LINE_END_RE.split(data):
             if not raw.startswith(prefix):
                 continue
             if b"\0" in raw:
@@ -1210,7 +1220,7 @@ class Assembly:
             )
             checked(f"scanning {base} for assembly markers", lambda: None)
             prefix = os.fsencode(MARKER_PREFIX)
-            for raw in data.split(b"\n"):
+            for raw in LINE_END_RE.split(data):
                 if not raw.startswith(prefix):
                     continue
                 if b"\0" in raw:
@@ -1953,7 +1963,7 @@ class Assembly:
         )
         out_has_markers = any(
             MARKER_RE.match(line.decode("utf-8", errors="replace"))
-            for line in out_data.split(b"\n")
+            for line in LINE_END_RE.split(out_data)
             if line.startswith(MARKER_PREFIX.encode())
         )
         # ONE SPLIT, not a normalise-then-split (#2301 r2). This used to strip

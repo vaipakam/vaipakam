@@ -4841,6 +4841,35 @@ check "the run refuses"       "$?"                            "1"
 check "as a placeholder"      "$(says "$msg" 'placeholder')"   "1"
 check "nothing was consumed"  "$(pending "$W")"                "3"
 
+# ── ONE LINE DEFINITION, ENFORCED RATHER THAN REMEMBERED (#2301 r3) ───────
+# THE ROOT ARREST. Three consecutive review rounds each found a DIFFERENT
+# scan still splitting on `\n` alone after `first_heading` learned about
+# CR-only files: r1 the `---` check's idea of blankness, r2 the markerless
+# duplicate guard, r3 the two marker scans and `out_has_markers`. Every one
+# was found by a human reading the file, one site per round, and each fix
+# left the remaining sites looking exactly as correct as the fixed one.
+#
+# Patching a fourth would be the same move a fourth time. What makes it stop
+# is that the invariant is now CHECKED: no line-splitting in the assembler
+# except through the shared definition.
+#
+# This is a test on a STRING, deliberately — the presence of a literal
+# idiom in one file — and not an inference about what any call site means.
+# That distinction is why it is safe to have; `CLAUDE.md` records at length
+# (#1995) what happens to a guard that tries to reason about behaviour
+# instead.
+case_start "T217w: the assembler splits lines in exactly one way"
+bad_splits="$(grep -nE '\.split\(b"\\n"\)|\.splitlines\(\)' "$IMPL" || true)"
+check "no ad-hoc line splitting" "$([ -z "$bad_splits" ] && echo 0 || echo 1)" "0"
+if [ -n "$bad_splits" ]; then
+  echo "     sites still splitting outside LINE_END_RE:" >&2
+  echo "$bad_splits" | sed 's/^/       /' >&2
+fi
+# The shared definition itself must exist and cover all three endings, or the
+# check above passes against a splitter that is silently LF-only again.
+check "LINE_END_RE covers CR, LF and CRLF" \
+  "$(grep -cE 'LINE_END_RE = re\.compile\(rb"\\r\\n\|\\r\|\\n"\)' "$IMPL")" "1"
+
 # ── THE DUPLICATE GUARD MUST SPLIT LINES THE SAME WAY (#2301 r2) ──────────
 # A DATA-LOSS path, and a regression this PR introduced before catching it:
 # making CR-only fragments publishable while `check_markerless_duplicates`
@@ -4848,6 +4877,20 @@ check "nothing was consumed"  "$(pending "$W")"                "3"
 # matched nothing in a legacy markerless dated file that already held the
 # section, appended a SECOND copy and consumed the source. The parent commit
 # had refused the same fragment, so the gap turned a refusal into lost work.
+# The r3 chain, end to end: a CR-only fragment carrying a marker-shaped line
+# must be refused for that line, not published with the record embedded. If
+# it publishes, a later normalisation of the dated file to LF makes the
+# record authoritative to `scan_markers`, which can clear a DIFFERENT pending
+# fragment unread — data loss at one remove.
+case_start "T217v0: a marker record inside a CR-only fragment is caught"
+W="$ROOT/t217v0"; build "$W"
+printf -- '## Thread — carries a record (PR #4256)\rbody\r<!-- assembled-fragment: 0001-a.md sha256=%064d -->\r' 0 \
+  > "$W/docs/ReleaseNotes/unreleased/0003-cr-marker.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                                      "1"
+check "naming the fragment"    "$(says "$msg" '0003-cr-marker.md')"      "1"
+check "nothing was consumed"   "$(pending "$W")"                         "3"
+
 case_start "T217v: a CR-only fragment already published is not appended twice"
 W="$ROOT/t217v"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
