@@ -1677,17 +1677,28 @@ class Assembly:
                 continue
             found = first_heading(body)
             if found is None:
-                # A fragment with NO heading is outside this check's scope —
-                # see the docstring. It is not a shape the template produces,
-                # and refusing it here failed T10, whose fixture is a bare
-                # line of prose because it is testing rename pairing rather
-                # than headings.
+                # An unrecognised opening line is ALLOWED, and that allowance
+                # is the amplifier behind every misrecognition finding on this
+                # change: some shape is not recognised as a heading, this
+                # returns None, and the fragment is PUBLISHED AND CONSUMED.
                 #
-                # Reaching here means the opening line is not an ATX heading.
-                # That is USUALLY prose, and it also covers the one shape
-                # `first_heading` no longer recognises — a setext-underlined
-                # title. Both are permitted, and the docstring there says why
-                # the second is worth permitting rather than chasing.
+                # INVERTING IT IS THE RIGHT FIX AND IS NOT MADE HERE — see
+                # the issue filed from #2290 r16. Measured: of the 759
+                # fragments ever committed, 759 open with an ATX heading and
+                # ZERO rely on this allowance, so refusing costs nothing real
+                # and turns an unknown shape into one message to the author
+                # rather than a mangled note and a deleted source.
+                #
+                # It is not made here because it is a RE-CUT, not a patch:
+                # it fails 17 assertions across 13 cases, several of which
+                # exist specifically to pin this allowance and would have to
+                # be inverted rather than conformed. Attempting that on a
+                # change already past its review cap is how the r15 fix
+                # introduced the r16 regression.
+                #
+                # Fixture cost is NOT the reason — that argument was made at
+                # r3 and correctly rejected. The reason is that the work is a
+                # separate deliberate change, and it is filed as one.
                 continue
             level, first = found
             shown = first.decode("utf-8", errors="replace")
@@ -1748,7 +1759,21 @@ class Assembly:
             # characters may follow a number: `)` was missed, then `:`, then an
             # em dash. Testing one character asks a question with no separator
             # list in it at all.
-            bads = [t for t in PR_REF_RE.findall(first) if not t[:1].isdigit()]
+            # WHERE THE NUMBER ENDS, which is a boundary and not a separator
+            # list (#2290 r16). Testing only the first byte — the r15 rule —
+            # accepted `PR #1TBD` and `PR #123abc`, publishing an untraceable
+            # section: too weak in exactly the direction the enumeration had
+            # been too narrow.
+            #
+            # `\d+($|[^0-9A-Za-z])` says the digits must end at a
+            # non-alphanumeric or at the end of the token. `123—final` and
+            # `456/backport` are a number followed by prose; `1TBD` and `12a`
+            # are not a number at all. Verified over 2,076 published headings:
+            # the same 179 refusals, not one heading changing verdict.
+            bads = [
+                t for t in PR_REF_RE.findall(first)
+                if not re.match(rb"\d+($|[^0-9A-Za-z])", t)
+            ]
             if bads:
                 bad.append(
                     f"{name}: heading still carries the template's placeholder "
@@ -2240,14 +2265,25 @@ class Assembly:
         # leaves a refused run with input already consumed — and the docstring
         # claimed the opposite, which is worse than the ordering itself.
         self.frags = pending
+
+        # MARKERLESS RECOVERY IS ASKED FIRST (#2290 r16). Both checks only
+        # refuse — neither consumes or writes — so the order is free, and it
+        # decides which question the operator is asked to answer first.
+        #
+        # Asking about the heading first was a trap on a legacy markerless
+        # file that already held the fragment: the run refused the heading,
+        # the operator changed `# Title` to `## Title` as instructed, and the
+        # rerun then searched the dated file for the NEW line, missed the copy
+        # already published under the old one, appended a duplicate and
+        # consumed the source. The remediation invalidated the evidence the
+        # next check depends on. Reproduced before this reorder.
+        self.check_markerless_duplicates()
         self.check_heading_conformance()
 
         if already:
             self.clear_already_assembled(already)
         if not pending:
             self.nothing_pending()
-
-        self.check_markerless_duplicates()
         self.build()
         self.publish()
         self.clear()
