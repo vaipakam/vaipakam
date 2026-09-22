@@ -4260,7 +4260,7 @@ bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?
 # document title instead of nesting under the release title.
 # The PR REFERENCE: `_TEMPLATE.md` ships the placeholder literally, and a
 # fragment that keeps it publishes a section nothing can trace.
-case_start "T215: a fragment heading that cannot survive assembly is refused"
+case_start "T217: a fragment heading that cannot survive assembly is refused"
 W="$ROOT/t215"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
 printf '# Thread — opens at the wrong level (PR #4243)\n' > "$u/0003-level.md"
@@ -4271,7 +4271,7 @@ check "and what is wrong with it"    "$(says "$msg" 'opens at #, not ##')" "1"
 check "nothing was consumed"         "$(pending "$W")"                    "3"
 check "no dated file was written"    "$([ -f "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md" ] && echo yes || echo no)" "no"
 
-case_start "T215b: an unsubstituted PR placeholder is refused"
+case_start "T217b: an unsubstituted PR placeholder is refused"
 W="$ROOT/t215b"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
 printf '## Thread — never filled in (PR #NNNN)\n' > "$u/0003-placeholder.md"
@@ -4284,7 +4284,7 @@ check "nothing was consumed"        "$(pending "$W")"                         "3
 # The residuals, pinned so that narrowing them later is a deliberate act and
 # not an accident. Each is a shape the check deliberately allows; see the
 # `check_heading_conformance` docstring for why.
-case_start "T215c: the check allows what it deliberately does not police"
+case_start "T217c: the check allows what it deliberately does not police"
 W="$ROOT/t215c"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
 # No PR reference at all: allowed. Requiring one fails every fixture in this
