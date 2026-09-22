@@ -161,3 +161,10 @@ cutover-mirror*.json
 rollback-mirror*.json
 cutover-mirror*.json.tmp-*
 rollback-mirror*.json.tmp-*
+
+# Python bytecode caches. `assemble.py` (#1877) is the only Python in the
+# tree and it is run in place, so these appear next to it on any run — and
+# a `git add -A` then commits a 128 KB, interpreter-version-specific binary.
+# That happened in #2290.
+__pycache__/
+*.py[cod]

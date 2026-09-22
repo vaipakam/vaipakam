@@ -68,7 +68,40 @@ MARKER_PREFIX = "<!-- assembled-fragment: "
 MARKER_RE = re.compile(
     r"^" + re.escape(MARKER_PREFIX) + r"(.+) sha256=([0-9a-f]{64}) -->\r?$"
 )
-HEADING_RE = re.compile(rb"^#{1,6} ")
+# Markdown allows an ATX heading up to THREE leading spaces; at four it is
+# an indented code block. Anchoring on `#` made ` # Thread — x (PR #1)`
+# invisible here while GitHub still rendered it as a level-1 heading, so a
+# fragment could take the deliberate no-heading allowance and publish the very
+# peer-document defect the conformance check exists to stop (#2290 r1).
+#
+# The delimiter after the marker is a space, a TAB, or the end of the line —
+# `#\tTitle` and a bare `#` are both level-1 headings to a Markdown renderer
+# (#2290 r2). Requiring a literal space let either through the same allowance,
+# which is the second time this regex has turned an exemption into a bypass:
+# a check that misses a shape does not merely fail to refuse it, it actively
+# permits it via the no-heading branch.
+HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
+# The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
+# literal `#NNNN`, and a present-but-unsubstituted one is the defect this
+# catches (#2288).
+#
+# The token stops at the first comma or space, because `(PR #2184, issue
+# #2099)` is an established heading shape here — seventeen of them — and
+# capturing to the closing parenthesis refused every one (#2290 r1).
+#
+# And `PR #` is matched WHEREVER it appears in the heading, not only just
+# inside the parenthesis. Eight published headings put it last —
+# `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
+# and the placeholder sailed through as "no reference at all" (#2290 r2).
+# Up to the next comma, bracket or space — the shape `(PR #123, issue #99)`
+# and `(PR #123)` both need. The token is then required to be ALL DIGITS; see
+# `check_heading_conformance` for why that rule stops being refined there.
+PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
+# There is deliberately no setext-underline pattern here. `first_heading`
+# recognises ATX only; its docstring records why the setext branch was
+# removed rather than refined (#2290 r6).
+
+
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 
@@ -97,6 +130,124 @@ for _stream in (sys.stdout, sys.stderr):
         # replaced by something without the method) is not worth dying
         # over here — the writes below tolerate it.
         pass
+
+
+def first_heading(body: bytes) -> tuple[int, bytes] | None:
+    """The heading a fragment OPENS with, as `(level, line)`, or None.
+
+    THIS IS A LINT ON THE FRAGMENT'S OPENING LINE, NOT A MARKDOWN PARSER,
+    and that distinction is the whole design (#2290 r5).
+
+    It used to SCAN for the first heading anywhere in the fragment. Six
+    review findings came out of that, every one the same shape: something
+    was misread as a heading or a fence, the scan STOPPED there, and a real
+    `#` heading below was never examined — an indented ATX marker (r1), a
+    tab delimiter (r2), setext (r3), a YAML fence (self-found), an INDENTED
+    `---` taken for a fence (r5), and a list item above a thematic break
+    (r5). Each fix bought one case and left the structure that produced it:
+    deciding Markdown BLOCK CONTEXT with regexes. That cannot be done —
+    whether `---` closes front matter, underlines a heading, or is a
+    thematic break depends on everything above it.
+
+    So it no longer scans. `_TEMPLATE.md` puts the heading on the first
+    line, every fragment in this repository does the same, and that is the
+    line this reads. Nothing is skipped over, so nothing can be masked, and
+    a misread at the opening line can only mis-describe that line rather
+    than hide another.
+
+    THE WEAKENING IS REAL AND DELIBERATE. A `#` heading further down a
+    fragment is no longer examined and would still land in the dated file as
+    a peer document title. No fragment does that; it is malformed in a way a
+    reader sees; and the alternative is a Markdown parser — a dependency and
+    an unbounded surface for a lint on a house convention. Six rounds of
+    evidence say the scanning version was the more dangerous of the two,
+    because its failures were silent and this one's is visible.
+
+    Recognises ATX only — `## Title`, one to six `#`, up to three leading
+    spaces, closed by a space, a tab, or end of line.
+
+    SETEXT IS DELIBERATELY NOT RECOGNISED, and removing it is a root fix
+    rather than a gap (#2290 r6). It was added in r4 for a shape nobody had
+    observed, and it then produced a finding in each of the three rounds
+    that followed: a list above a thematic break read as a heading (r5); the
+    markerless-duplicate guard comparing a title line without its underline,
+    which refuses a fragment over ordinary prose (r6); and a title wrapped
+    across lines before its underline, which this would miss (r6). Each was
+    a real edge, and each existed only because the branch did.
+
+    The corpus settles it. Of the 758 distinct fragments ever committed to
+    `unreleased/`, 758 open with an ATX heading and ZERO contain a
+    setext-shaped pair anywhere. So the branch guarded nothing that has ever
+    happened while generating four findings, which is the pattern #2149
+    records: an edge-producing speculative branch is removed, not refined.
+
+    The residual is stated plainly: a fragment whose title is underlined
+    rather than `#`-prefixed takes the no-heading allowance and is published
+    unexamined. That is one exotic shape, never once used, in exchange for
+    an entire class of misreading.
+
+    Front matter is NOT skipped — it is refused, by `check_heading_conformance`
+    and before this function is reached. An earlier revision skipped it, and
+    this paragraph still described that after the behaviour changed (#2290
+    r12), which is the opposite of the truth for anyone reading the contract
+    here rather than the caller.
+
+    The same holds for raw HTML — `<h1>Title</h1>` renders as a heading on
+    GitHub but is not Markdown syntax and is not detected. Zero occurrences
+    anywhere in `docs/ReleaseNotes`, checked; and recognising it properly
+    means parsing HTML, which is the unbounded surface this function exists
+    to avoid.
+    """
+    # NOTHING IS NORMALISED HERE, and that is the point (#2290 r12).
+    #
+    # Two earlier revisions did normalise: a leading UTF-8 BOM was stripped,
+    # and YAML front matter was skipped, before looking for the heading. Both
+    # were wrong in the same structural way — `build()` appends the fragment's
+    # RAW bytes after the release title, so the check was deciding about one
+    # document and the assembler publishing another:
+    #
+    #   - `BOM + ## Heading` passed, and published mid-document the U+FEFF is
+    #     an ordinary zero-width character, so the line renders as a PARAGRAPH
+    #     rather than a section. The check blessed a fragment it had made
+    #     unpublishable.
+    #   - `---` / `title: x` / `---` passed, and published after the title the
+    #     opening `---` is a thematic break and `title: x` over `---` is a
+    #     SETEXT heading. The fragment gained a section nobody wrote.
+    #
+    # Both shapes are refused by `check_heading_conformance` instead, which is
+    # why this function can read one line and trust it. Zero of the 759
+    # fragments ever committed begin with either, so the refusal costs nothing
+    # and the normalisation was guarding a case that has never occurred —
+    # #2149's pattern for the third time on this change.
+    #
+    # TWO NORMALISATIONS DO SURVIVE BELOW, and the rule separating them from
+    # the two above is worth stating, because "it normalises" is not by itself
+    # the defect:
+    #
+    #   NORMALISE ONLY WHAT CANNOT CHANGE HOW THE PUBLISHED BYTES RENDER.
+    #
+    # Leading blank lines are skipped, and a trailing `\r` is stripped, purely
+    # so the line can be MATCHED. Neither changes what the fragment renders as
+    # once folded: blank lines before a heading leave it a heading, and CRLF
+    # is an ordinary line ending. A BOM and a front-matter fence both fail
+    # that test — each renders as one thing at the top of its own file and as
+    # something else mid-document, which is precisely why deciding on the
+    # normalised form and publishing the raw form disagreed.
+    #
+    # Audited against `build()` for this reason (#2290 r12): it appends the
+    # snapshot verbatim, so any transformation here that the published bytes
+    # do not also undergo is a divergence waiting to be found.
+    lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return None
+    line = lines[i]
+    if HEADING_RE.match(line):
+        marker = line.lstrip(b" ")
+        return len(marker) - len(marker.lstrip(b"#")), line
+    return None
 
 
 def out_line(msg: str = "") -> None:
@@ -1335,6 +1486,360 @@ class Assembly:
         out_line(f"Nothing left to assemble for {self.date}.")
         raise SystemExit(0)
 
+    # ── fragment heading conformance (#2288) ─────────────────────────────
+
+    def check_heading_conformance(self) -> None:
+        """Refuse a fragment whose OPENING LINE does not match the template.
+
+        Not "its first heading": a fragment that opens with prose and carries
+        a `#` heading further down is published unexamined, deliberately, and
+        that narrowing is what `first_heading` exists to state (#2290 r21).
+
+        `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
+        things about that line are load-bearing the moment the fragment is
+        folded, and nothing downstream looks at either — assembly is the last
+        step that reads the heading at all:
+
+          - THE LEVEL. A fragment opening at `#` lands in the dated file as a
+            second document title rather than nesting under the release
+            title, so outlines, generated tables of contents and
+            screen-reader heading navigation all read it as a peer document.
+          - THE PR REFERENCE. The template ships the placeholder literally,
+            and a fragment that keeps it publishes a section nothing can
+            trace back to the change it documents.
+
+        ONLY LEVEL 1 IS REFUSED — not "any level but 2" (#2290 r6, measured).
+        An earlier revision required exactly level 2, which reads as the
+        obvious rule and is wrong against practice: of the 758 distinct
+        fragments ever committed, 605 open at `##`, 81 at `#` and **72 at
+        `###`**, one of the last in a pull request open at the time this was
+        written and owned by other work. Refusing a fifth of every fragment
+        ever written, some of it already in flight elsewhere, is how a check
+        gets disabled.
+
+        A LEVEL-3 OPENER IS WARNED, NOT IGNORED, and it is not merely untidy
+        — an earlier revision of this docstring said it "nests under nothing",
+        which is false (#2290 r10). In the assembled file it becomes a CHILD
+        of the nearest preceding `##`, which belongs to the fragment folded
+        before it, so outlines and screen-reader navigation attribute the
+        change to a different change. Two fragments in
+        `ReleaseNotes-2026-08-25.md` sit under `## What it does not change` for
+        exactly this reason, each presented as something an unrelated change
+        does NOT do.
+
+        So the three outcomes are distinct on purpose: level 1 is REFUSED
+        (a second document title, unrecoverable once folded), level 3+ is
+        WARNED (recoverable by the author, at a moment they can still act),
+        and level 2 passes silently.
+
+        Both reached a publishable file in #2286 — two fragments at `#`, one
+        still carrying the placeholder — and nothing between authoring and
+        publication had ever looked at the line. This is the one place every
+        fragment passes through.
+
+        WHAT IT DOES NOT CHECK, deliberately.
+
+        The `Thread —` prefix and the wording after it. Neither has produced a
+        defect, and a check on prose would fail correct fragments for style.
+
+        THE PRESENCE of a PR reference. A heading carrying none is refused by
+        nothing here; only a reference that is present and not a number is.
+
+        This was reconsidered in r6 and r7 and MEASURED rather than argued,
+        because the first version of this paragraph defended it by the cost of
+        conforming the test fixtures — which is not a reason to weaken a
+        production rule, and a review round said so. The corpus is the reason.
+
+        MEASURED OVER THE FRAGMENTS COMMITTED BEFORE THIS CHANGE, which is a
+        real cutoff and not a rounding: the change adds a fragment of its own,
+        so it would otherwise be counting itself and the totals below would be
+        wrong the moment they were written (#2290 r12). Quoting 759 instead
+        would be wrong again as soon as the next fragment lands, so the table
+        states a baseline rather than chasing a live number. The conclusions
+        are about proportions across hundreds of fragments and no single
+        addition moves them.
+
+            distinct fragments with an ATX opening heading     758
+              carrying NO `PR #` token at all                  457   (60%)
+              carrying a non-numeric token                     235
+              carrying only numbers                             66   ( 9%)
+
+            published level-2 section headings                1084
+              carrying NO `PR #` token at all                  758   (69%)
+              carrying an UNSUBSTITUTED placeholder            179  (1 in 6)
+
+        That last row is the defect itself, already published: 179 sections
+        in the dated notes that nothing can trace back to the change they
+        describe. It is the motivation for the rule, not an argument about
+        its scope, and it is the figure the contributor README points at.
+
+        Read those two rows carefully, because conflating them is easy and a
+        review round caught this paragraph doing it. Requiring a reference to
+        be PRESENT stops the 457 — six fragments in ten — *in addition to* the
+        235 already refused for carrying a placeholder. Nine in ten is the
+        combined figure for requiring a NUMERIC reference; six in ten is what
+        requiring presence adds.
+
+        The two policies do not have the same cost on the published side
+        either, and an earlier revision said "either way … two thirds", which
+        flattened them. Against the 1084 published section headings:
+        requiring PRESENCE contradicts the 758 that carry no token — about
+        seven in ten. Requiring a NUMERIC reference contradicts those plus
+        the 179 carrying a placeholder — nearer nine in ten. The stricter
+        policy is the more expensive one on both corpora, and saying "either
+        way" understated it. The template
+        ships `(PR #<n>)`, but the template's convention is not the corpus's
+        practice, and a rule that refuses the overwhelming majority of real
+        input is the rule that gets deleted — the same mistake this check made
+        with `level != 2`, caught the same way.
+
+        So what is refused is exactly the failure the template PRODUCES:
+        shipping the placeholder and leaving it unsubstituted. Deleting the
+        reference instead of replacing it does defeat the check; there is no
+        signal that distinguishes that from the 457 fragments that legitimately
+        carry none, and inventing one would refuse them too.
+
+        RUNS BEFORE `clear_already_assembled`, which DELETES fragments. An
+        earlier revision ran after it and claimed in this docstring to run
+        "before anything is appended or cleared" — a run refused here would
+        have left recovered fragments already consumed, and the comment said
+        otherwise (#2290 r1).
+
+        SCOPED TO `self.frags`, which is the PENDING set. A fragment in
+        `already` has its text in the dated file: its heading was published
+        by some earlier run, so refusing it would block the clearing of
+        finished work over a decision that can no longer be acted on.
+
+        Reads the SNAPSHOT, like every other content check here, because the
+        original may be being edited while this runs.
+        """
+        bad: list[str] = []
+        deep: list[str] = []
+        for f in self.frags:
+            name = self.frag_name[f]
+            body = checked(
+                f"reading {name}",
+                lambda p=self.frag_snap[f]: open(p, "rb").read(),
+            )
+            # REFUSED BEFORE THE HEADING IS EVEN LOOKED AT: a fragment whose
+            # first bytes need normalising to be understood (#2290 r12). The
+            # assembler publishes the fragment's raw bytes after the release
+            # title, so anything that reads differently at the top of its own
+            # file than it does mid-document is a fragment the check cannot
+            # honestly bless — see `first_heading` for the two worked cases.
+            # THERE IS NO BOM REFUSAL, and removing it is the fix rather than
+            # a gap (#2290 r21). It was added in r11 to close a
+            # permit-by-misrecognition, and then caused three findings of its
+            # own: it recognised only UTF-8 (r15), and twice it produced a
+            # REPRODUCED DATA-LOSS path (r20, r21) — refusing a BOM tells the
+            # author to re-save the file, and that edit is exactly what makes
+            # the markerless duplicate guard stop recognising the copy already
+            # published, so the rerun appended a second one and consumed the
+            # source.
+            #
+            # It guarded nothing: ZERO of the 759 fragments ever committed
+            # begin with any byte-order mark. A refusal that has never been
+            # needed and has caused two data-loss paths is the speculative
+            # branch this change has already removed twice — the setext
+            # parser, and normalising-to-decide.
+            #
+            # Patching it again meant adding four more byte prefixes to the
+            # guard's de-BOM helper, which is precisely the grow-a-list option
+            # #2298 argues is the weaker one, because it couples a list of
+            # remedies to a list of refusals.
+            #
+            # A BOM-bearing fragment is therefore ALLOWED, exactly as it is on
+            # `main`, which has no heading check at all — so this is a strict
+            # non-regression. #2295 refuses it properly when it lands, as an
+            # unrecognised opening line, without ever asking for a re-save.
+            _first_content = next(
+                (
+                    ln[:-1] if ln.endswith(b"\r") else ln
+                    for ln in body.split(b"\n")
+                    if ln.strip()
+                ),
+                None,
+            )
+            # `rstrip` of spaces and tabs ONLY (#2290 r14). `---   ` and
+            # `---\t` are valid YAML delimiters, and an exact comparison let
+            # either through the refusal and on to the no-heading allowance.
+            # Leading whitespace is deliberately NOT stripped: an indented
+            # `---` is a thematic break rather than a fence, which is the r5
+            # finding, and `.strip()` here would re-make that mistake.
+            if _first_content is not None and _first_content.rstrip(b" \t") == b"---":
+                bad.append(
+                    f"{name}: opens with `---`, which is front matter in its own "
+                    f"file and a thematic break once folded  ->  open with the "
+                    f"## heading itself"
+                )
+                continue
+            found = first_heading(body)
+            if found is None:
+                # An unrecognised opening line is ALLOWED, and that allowance
+                # is the amplifier behind every misrecognition finding on this
+                # change: some shape is not recognised as a heading, this
+                # returns None, and the fragment is PUBLISHED AND CONSUMED.
+                #
+                # INVERTING IT IS THE RIGHT FIX AND IS NOT MADE HERE — see
+                # the issue filed from #2290 r16. Measured: of the 759
+                # fragments ever committed, 759 open with an ATX heading and
+                # ZERO rely on this allowance, so refusing costs nothing real
+                # and turns an unknown shape into one message to the author
+                # rather than a mangled note and a deleted source.
+                #
+                # It is not made here because it is a RE-CUT, not a patch:
+                # it fails 17 assertions across 13 cases, several of which
+                # exist specifically to pin this allowance and would have to
+                # be inverted rather than conformed. Attempting that on a
+                # change already past its review cap is how the r15 fix
+                # introduced the r16 regression.
+                #
+                # Fixture cost is NOT the reason — that argument was made at
+                # r3 and correctly rejected. The reason is that the work is a
+                # separate deliberate change, and it is filed as one.
+                continue
+            level, first = found
+            shown = first.decode("utf-8", errors="replace")
+            if level == 1:
+                # Level, not `#`-count: a setext heading carries no `#` at
+                # all, and "opens at #, not ##" describing `Title` over
+                # `=====` is a message that sends the reader looking for a
+                # character that is not there (#2290 r3). Setext is no longer
+                # recognised at all (r6), but "level" remains the honest word
+                # for what was measured.
+                #
+                # Level 3 and deeper are ALLOWED — see the docstring. They are
+                # untidy, not a second document title.
+                bad.append(
+                    f"{name}: opens at level 1, a second document title  ->  {shown}"
+                )
+                continue
+            if level >= 3:
+                # Allowed, but NOT harmless, and the previous revision of this
+                # said "nests under nothing" — which is false (#2290 r10). In
+                # the assembled file a `###` opener becomes a CHILD of the
+                # nearest preceding `##`, which belongs to the fragment above
+                # it. Outlines and screen-reader navigation then attribute the
+                # change to a different change.
+                #
+                # It has happened, twice, in published notes: two fragments in
+                # ReleaseNotes-2026-08-25 sit under `## What it does not
+                # change`, a subsection of the fragment before them — so a
+                # reader's outline presents each as something an unrelated
+                # change does NOT do.
+                #
+                # Warned rather than refused because refusing it stops a
+                # substantial minority of real fragments, including work in
+                # flight in other pull requests. A warning is visible at the
+                # one moment somebody can still act on it, and costs nobody a
+                # release. See the docstring for the figures.
+                #
+                # NO `continue` HERE, deliberately: a warning must not exempt
+                # the fragment from the PR-reference check below, or
+                # `### Title (PR #TBD)` would publish its placeholder because
+                # the heading was merely deep. Warnings and refusals are
+                # independent; the first revision of this block got that wrong.
+                deep.append(f"{name}: opens at level {level}  ->  {shown}")
+            # EVERY `PR #` token on the line, not just the first (#2290 r6).
+            # `(PR #123, PR #TBD)` is accepted by a `search`, which returns
+            # the numeric one and never looks further — the guard passing on
+            # the evidence that it should have refused. No heading in the
+            # corpus carries two tokens, so this refuses nothing that exists;
+            # it removes a way for the check to be satisfied by a prefix.
+            # THE FIRST CHARACTER AFTER `PR #`, and nothing else (#2290 r15).
+            # A reference that has been substituted begins with a digit; the
+            # template's placeholder does not. Every placeholder the corpus
+            # contains — `<n>`, `TBD`, `__`, `PLACEHOLDER`, `NNNN`, `?` —
+            # starts with a non-digit, and no real reference does.
+            #
+            # This is the ROOT of three rounds of findings. Earlier revisions
+            # classified the whole token, so each one needed to know which
+            # characters may follow a number: `)` was missed, then `:`, then an
+            # em dash. Testing one character asks a question with no separator
+            # list in it at all.
+            # THE TOKEN IS ALL DIGITS. Nothing subtler, deliberately, and
+            # this is where the rule stops being refined (#2290 r17).
+            #
+            # Five consecutive rounds found an edge here, and each fix opened
+            # the next: capture to `)` missed `:`; allowing punctuation missed
+            # an em dash; testing the first byte accepted `1TBD`; a
+            # non-alphanumeric boundary accepted `123_TBD`. Nine findings
+            # across eight rounds, more than any other rule on this change.
+            #
+            # What settles it is that EVERY disputed shape is hypothetical.
+            # Across 2,076 published headings, the number of tokens that begin
+            # with a digit but are not all digits is ZERO. `123:`, `123—final`,
+            # `1TBD`, `123_TBD` — none has ever been written. The rule was
+            # being tuned against invented input.
+            #
+            # So it takes the STRICT side, because the two directions are not
+            # symmetric. Refusing a valid-but-ornamented reference costs one
+            # message to an author who can add a space. Accepting a non-number
+            # publishes a section nothing can trace and deletes the source.
+            # The message below says "not a plain number" rather than claiming
+            # a placeholder, which was the real harm in the r14 finding.
+            bads = [t for t in PR_REF_RE.findall(first) if not t.isdigit()]
+            if bads:
+                # Says what is true — the token is not a plain number — rather
+                # than asserting it is the template's placeholder (#2290 r14).
+                # It usually IS the placeholder, but `PR #123:` is not, and
+                # telling that author to "replace the placeholder" sends them
+                # looking for something that is not there.
+                shown_tok = ", ".join(
+                    t.decode("utf-8", errors="replace") for t in bads
+                )
+                bad.append(
+                    f"{name}: `PR #{shown_tok}` is not a plain number  ->  "
+                    f"write the number alone, as `(PR #2290)`  ->  {shown}"
+                )
+        if not bad:
+            if deep:
+                err("Warning: these fragment headings open below level 2:")
+                err("")
+                for line in deep:
+                    err(f"  {line}")
+                err("")
+                err("A ## heading becomes a section of the release. A deeper one becomes")
+                err("a SUBSECTION of whatever shallower heading precedes it in the")
+                err("finished file, and something always does — the dated file opens")
+                err("with its own `# Release Notes` title. WHICH heading that is")
+                err("depends on the fold order and on the levels of every fragment")
+                err("ahead of yours: another change's ## section, another fragment's")
+                err("own ### subheading, or — if nothing else is shallower — the")
+                err("release title itself, which leaves your heading skipping a level.")
+                err("")
+                err("Two published sections were absorbed under another change, and")
+                err("one hangs off the title.")
+                err("")
+                err("WHICH of those you get is not stated here, on purpose. It depends")
+                err("on the fold order and on the levels of every fragment ahead of")
+                err("yours, this check runs before the file is built, and working it out")
+                err("a second time here is how two answers to one question drift apart.")
+                err("Open at ## and none of it applies.")
+                err("")
+                err("Assembly continues — this is a warning, not a refusal.")
+                err("")
+            return
+
+        err("Error: these fragment headings do not match the template:")
+        err("")
+        for line in bad:
+            err(f"  {line}")
+        err("")
+        err("  docs/ReleaseNotes/unreleased/_TEMPLATE.md opens:")
+        err("    ## Thread — <short title> (PR #<n>)")
+        err("")
+        err("The LEVEL matters because a fragment opening at # lands in the dated")
+        err("file as a second document title instead of nesting under the release")
+        err("title. Only level 1 is refused; ### and deeper are untidy, not that.")
+        err("The PR NUMBER matters because a section that keeps the placeholder")
+        err("cannot be traced to the change it documents. Both of these reached a")
+        err("publishable file before this check existed (#2286), and assembly is")
+        err("the last step that looks at the heading.")
+        err("")
+        err("Fix the heading(s) and run again.")
+        self.refuse_reporting_consumed()
+
     # ── markerless duplicate-heading guard ───────────────────────────────
 
     def check_markerless_duplicates(self) -> None:
@@ -1361,13 +1866,64 @@ class Assembly:
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            if True:
-                for raw in body.split(b"\n"):
-                    line = raw[:-1] if raw.endswith(b"\r") else raw
-                    if HEADING_RE.match(line):
-                        if any(line == other for other in normalised.split(b"\n")):
-                            suspect.append(self.frag_name[f])
-                        break
+            # The SAME parser the conformance check uses (#2290 r5). This used
+            # to run its own `HEADING_RE` scan, and the two drifted the moment
+            # `first_heading` learned a form this did not: a fragment already
+            # folded into a markerless dated file went unrecognised here, and
+            # would have been appended a second time and then CONSUMED — the
+            # one outcome in this script that loses work rather than refusing.
+            # Two ways of deciding what a fragment's heading is, disagreeing.
+            #
+            # One parser matters more now, not less. Comparing a whole ATX
+            # line is exact; r6 showed the alternative, where a two-line
+            # construct compared by its text alone refuses a fragment because
+            # the dated file happens to contain that sentence as prose.
+            # ITS OWN SCAN, and NOT `first_heading` (#2290 r12). Sharing the
+            # parser was right when the two consumers differed by accident;
+            # it is wrong now that they ask genuinely different questions.
+            #
+            # `check_heading_conformance` judges the line a fragment OPENS
+            # with — a fragment whose heading is further down is allowed, and
+            # deliberately unexamined. This guard asks something else: does
+            # this fragment's text already sit in a markerless dated file?
+            # For that, the heading has to be found WHEREVER it is, because a
+            # legacy interrupted run wrote the fragment's whole body.
+            #
+            # Using the opening-only parser here returned None for a fragment
+            # that opens with prose, so the guard saw nothing to match, the
+            # run appended the fragment a SECOND time and then consumed the
+            # pending source — two copies and exit 0. That is the one outcome
+            # in this script that loses work rather than refusing, and it was
+            # reproduced before this fix.
+            # A LEADING UTF-8 BOM IS STRIPPED FROM BOTH SIDES (#2290 r20).
+            # A BOM-bearing fragment already folded into a legacy markerless
+            # file sits there as `<BOM>## Title`; without this, `HEADING_RE`
+            # matches neither side and the guard says nothing, so the rerun
+            # appends a second copy and consumes the source. Reproduced.
+            # It also survives an operator removing the mark by hand, which
+            # would otherwise leave the fragment reading `## Title` against a
+            # published `<BOM>## Title` — the class where the remedy edits the
+            # very text this guard compares (#2298), filed rather than patched
+            # in each path.
+            #
+            # WHAT THIS DOES NOT REACH, stated rather than implied: a fragment
+            # in UTF-16 or UTF-32. Stripping its BOM would not help — the
+            # heading's own bytes are NUL-interleaved, so `HEADING_RE` cannot
+            # match them, and closing it needs decoding rather than a longer
+            # list of signatures. That hole is PRE-EXISTING: `main`'s guard
+            # strips no BOM at all, so it misses UTF-8 too. This narrows the
+            # guard's blind spot and widens nothing (#2290 r22, deferred).
+            def _debom(b: bytes) -> bytes:
+                return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
+
+            out_lines = [_debom(o) for o in normalised.split(b"\n")]
+            for ln in body.split(b"\n"):
+                line = _debom(ln[:-1] if ln.endswith(b"\r") else ln)
+                if not HEADING_RE.match(line):
+                    continue
+                if any(line == other for other in out_lines):
+                    suspect.append(self.frag_name[f])
+                break
 
         if suspect and not out_has_markers and not self.force:
             err(f"Error: {os.path.basename(self.out)} carries no assembly markers at all, and already")
@@ -1743,13 +2299,30 @@ class Assembly:
         marker_seen, marker_where = self.scan_markers()
         already, pending = self.classify(marker_seen, marker_where)
 
+        # BEFORE the recovery clear, not merely before the append (#2290 r1).
+        # `clear_already_assembled` DELETES fragments, so validating after it
+        # leaves a refused run with input already consumed — and the docstring
+        # claimed the opposite, which is worse than the ordering itself.
+        self.frags = pending
+
+        # MARKERLESS RECOVERY IS ASKED FIRST (#2290 r16). Both checks only
+        # refuse — neither consumes or writes — so the order is free, and it
+        # decides which question the operator is asked to answer first.
+        #
+        # Asking about the heading first was a trap on a legacy markerless
+        # file that already held the fragment: the run refused the heading,
+        # the operator changed `# Title` to `## Title` as instructed, and the
+        # rerun then searched the dated file for the NEW line, missed the copy
+        # already published under the old one, appended a duplicate and
+        # consumed the source. The remediation invalidated the evidence the
+        # next check depends on. Reproduced before this reorder.
+        self.check_markerless_duplicates()
+        self.check_heading_conformance()
+
         if already:
             self.clear_already_assembled(already)
         if not pending:
             self.nothing_pending()
-
-        self.frags = pending
-        self.check_markerless_duplicates()
         self.build()
         self.publish()
         self.clear()

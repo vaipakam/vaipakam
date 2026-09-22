@@ -16,6 +16,88 @@ PRs landing the same day never append-conflict.
    developer/operator reader. **No code snippets.** Match the tone of the
    committed `ReleaseNotes-<date>.md` files.
 3. Commit it as part of the PR.
+4. **Once GitHub has assigned the PR number, put it in the heading.** The
+   template ships `(PR #<n>)` as a placeholder, and assembly refuses a
+   fragment that still carries one — so this is not a tidiness step, it is
+   the difference between the run folding your fragment and stopping on it.
+
+   The refusal exists because nothing downstream will catch a placeholder.
+   Assembly is the last step that looks at the heading, and afterwards the
+   section is just text in a dated file — the review pass below is for
+   wording and the intro, not for auditing PR numbers, so in practice a
+   placeholder that gets past assembly stays. A sixth of all published
+   section headings already carry one, which is what this is there to stop
+   adding to. (Count with the rule, as below.)
+
+   **What the refusal does and does not cover**, so it is not relied on for
+   more than it does:
+
+   - It reads **one line**: the fragment's first line of content, after any
+     blank lines. Nothing below that line is examined — not a heading
+     further down the file, and not a title underlined with `=` or `-`
+     rather than prefixed with `#`.
+   - A fragment that **opens with `---` is refused outright**, before its
+     heading is looked at. In its own file that is front matter; once folded
+     into the dated note it is a thematic break, and the lines under it
+     become a heading nobody wrote. Open with the `##` heading itself.
+   - A fragment saved with a **byte-order mark** is *not* refused, and is
+     published as-is. Refusing it was tried and removed: the advice it gave
+     — re-save the file — changed the very line the duplicate guard matches
+     on, which twice cost a fragment. No fragment has ever been saved that
+     way. If one is, nothing looks wrong: the mark is zero-width, but it sits
+     before the `##`, so that line publishes as ordinary paragraph text and
+     the section arrives with no heading and no place in the outline. Save
+     without one — removing it after publication is the remediation that cost
+     those fragments.
+   - A heading with **no PR reference at all** is not refused. That is not an
+     oversight — most fragments written so far carry none, as do most
+     published section headings. The `(PR #<n>)` convention is the template's,
+     not a rule the corpus follows, so refusing its absence would stop the
+     majority of real fragments. (The counts behind that live with the rule,
+     in `assemble.py`'s `check_heading_conformance` docstring, and are
+     deliberately not copied here — three review rounds were spent on figures
+     that had drifted between files.)
+
+   What is refused is worth stating exactly, because it is **stricter than
+   "not a placeholder"**: a `PR #…` reference that is present must be a
+   **plain number and nothing else**. `(PR #2290)` and `(PR #2290, issue
+   #99)` pass. `PR #2290:` and `PR #2290—follow-up` do **not** — the colon
+   and the dash are part of the token, so the token is not a plain number.
+   Put the reference in its own parentheses, or leave a space after it.
+
+   That is deliberately blunt. Five review rounds were spent trying to tell
+   an ornamented reference from a placeholder, and every disputed shape
+   turned out to be one nobody had ever written. The strict rule refuses a
+   few things it need not; the permissive ones kept publishing sections
+   nothing could trace. An over-refusal costs you this message.
+
+   The heading must also open at `##`, not `#` — a fragment opening at `#`
+   lands in the dated file as a second document title rather than nesting
+   under the release title, and assembly refuses it. `###` or deeper is
+   **not** refused, but it is not harmless either, and assembly prints a
+   warning naming the file. A `##` heading becomes a section of the release;
+   a deeper one becomes a **subsection of the nearest preceding heading
+   shallower than itself**, so outlines and screen-reader navigation file
+   your change under that one. That is usually the fragment folded before
+   you, but not always — if that fragment ends in a `####`, your `###`
+   closes it and attaches further back instead. This has happened twice in
+   published notes: two fragments in `ReleaseNotes-2026-08-25.md` sit under
+   `## What it does not change`, a subsection of an earlier change, so a
+   reader's outline presents each as something an unrelated change does
+   *not* do.
+
+   It warns rather than refuses because about one fragment in ten opens that
+   way, and refusing them would block work already in flight. (Counts with
+   the rule, as above.) Open at `##` unless you mean to be a subsection of
+   something — and you cannot know what that will be.
+
+   Something shallower always precedes you — the dated file opens with its
+   own `# Release Notes` title — so the question is only *what*. If a `##`
+   section of another change comes first, your heading is filed under that
+   change. If only the release title comes first, your heading hangs off it
+   at a level that skips one. Which you get depends on the fold order and on
+   the heading levels of every fragment ahead of yours, so the warning names
+   both rather than guessing.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
