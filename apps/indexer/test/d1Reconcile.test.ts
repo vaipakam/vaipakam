@@ -34,6 +34,7 @@ import {
   stopsBeforeVerification,
   unsupportedUniqueReason,
   verdictProblems,
+  exactSequence,
   newManifestTables,
   writeManifest,
 } from "../scripts/d1-carry-rows.mjs";
@@ -2606,6 +2607,32 @@ describe("a table set that changed is evidence too", () => {
     expect(problems.some((p) => p.includes("this baseline does not"))).toBe(
       true,
     );
+  });
+
+  // #2281 r11 — past 2^53 two different high-water marks are the same
+  // JavaScript number, so an equality check silently stops checking.
+  it("refuses a sequence it cannot compare exactly", () => {
+    expect(exactSequence("42")).toBe(42);
+    expect(exactSequence(0)).toBe(0);
+    // 9007199254740993 rounds to ...992, so a mark that moved would
+    // compare equal to one that did not.
+    expect(exactSequence("9007199254740993")).toBeNull();
+    expect(exactSequence("9007199254740992")).toBeNull();
+    expect(exactSequence("18446744073709551615")).toBeNull();
+  });
+
+  it("treats an uncomparable sequence in the evidence as a conflict", () => {
+    const e = parseEvidence(
+      [
+        "t 1111111111111111",
+        `${"\u2014".repeat(8)}   0  (1 tables)`,
+        "seq t 9007199254740993",
+        "seq-listing complete",
+      ].join("\n"),
+    );
+    expect(e.conflicts.some((c) => c.includes("compare exactly"))).toBe(true);
+    // And it is not recorded as a value that could then be matched.
+    expect(e.seqs.get("t")).not.toBe(9007199254740992);
   });
 
   it("reads a database with no tables as a reading, not as silence", () => {

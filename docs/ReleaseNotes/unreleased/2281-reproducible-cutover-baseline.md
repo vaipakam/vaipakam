@@ -47,13 +47,18 @@ read.
 
 **That is change detection, not a single instant's photograph of the whole
 database, and the difference is worth stating plainly.** There is no way here to
-freeze everything at one moment, so a change confined to a table that has
-already been read twice — made while later tables are still being read — would
-not be caught. What the checks do cover is broad: anything touching the table
-set, any table's shape, the identifier counters, or any table not yet finished
-is seen, and the interval spans the whole read. But the procedure's real
-protection is that it is run against a database nothing is writing to. These
-checks exist to catch that precondition having failed, not to stand in for it.
+freeze everything at one moment, so one gap remains and is named rather than
+implied: a change to the **contents** of a table that has already been read
+twice, made while later tables are still being read, would not be caught. Every
+other kind is. The table set and the shape of every table are each read once
+more after all the row reading is finished — as one reading of the whole
+database, not table by table, so a change landing on a table whose own checks
+have already passed is still seen — and the identifier counters are compared
+across the entire read.
+
+But the procedure's real protection is that it is run against a database
+nothing is writing to. These checks exist to catch that precondition having
+failed, not to stand in for it.
 
 The same care applies to the figures recorded at the time of the move, which may
 be several runs' worth of output. Two runs that disagree are not a later reading

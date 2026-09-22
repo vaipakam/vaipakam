@@ -744,6 +744,35 @@ function digestOf(rows, cols) {
 }
 
 /**
+ * A sequence high-water mark, or a refusal — never a rounded one.
+ *
+ * `sqlite_sequence.seq` is a 64-bit integer and this file compares
+ * those marks for EQUALITY to decide whether anything was allocated
+ * during an interval. Past 2^53 a JavaScript number cannot hold every
+ * one of them: 9007199254740993 becomes 9007199254740992, so a mark
+ * that MOVED compares equal to one that did not, and a reconstruction
+ * taken after that allocation can be promoted and license the rollback
+ * (#2281 r11).
+ *
+ * Refusing is the honest answer rather than a shortcoming. Reaching
+ * this range takes nine quadrillion allocations, so no real database
+ * arrives here — but a comparison that silently equates two different
+ * values is a check that has stopped checking, and this file's whole
+ * subject is not doing that. The alternative, carrying exact decimal
+ * strings end to end, would change the manifest format that artifacts
+ * already on disk are written in, for a case that cannot occur.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function exactSequence(raw) {
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || String(n) !== String(raw).trim()) {
+    return null;
+  }
+  return n;
+}
+
+/**
  * Is this the specific error that means "nothing has ever allocated"?
  *
  * It has to be exactly that and nothing near it. `\b` is what keeps
@@ -1991,14 +2020,27 @@ export function parseEvidence(text) {
     const seq = /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)$/.exec(line);
     if (seq) {
       mentioned.add(seq[1]);
+      // EXACTLY, or not at all (#2281 r11) — the same rule the manifest
+      // reader holds to. A mark this file cannot tell apart from its
+      // neighbour must not be compared as though it could.
+      const value = exactSequence(seq[2]);
+      if (value === null) {
+        conflicts.push(
+          `${seq[1]}: the evidence records a sequence of ${seq[2]}, which ` +
+            `is outside the range this tool can compare exactly. Two ` +
+            `different marks in that range read as the same number here, ` +
+            `so it cannot stand for the mirror`,
+        );
+        continue;
+      }
       const had = openSeqs.get(seq[1]);
-      if (had !== undefined && had !== Number(seq[2])) {
+      if (had !== undefined && had !== value) {
         conflicts.push(
           `${seq[1]}: one sequence listing gives it twice, as ${had} and ` +
             `${seq[2]}`,
         );
       }
-      openSeqs.set(seq[1], Number(seq[2]));
+      openSeqs.set(seq[1], value);
       continue;
     }
     // `<table> [rowcount] <16-hex>` — the digest command prints a count
@@ -2178,11 +2220,17 @@ export function coverageProblems(tables, evidence) {
  * readings. Those span the whole read, so most concurrent writing shows
  * up somewhere.
  *
- * NOT caught: a change confined to a table whose second reading has
- * already happened, made while later tables are still being read. That
- * table is not read again, and the table set, the shapes and the
- * counters are all unmoved by an UPDATE, a DELETE, or an INSERT with a
- * natural key.
+ * NOT caught, and this is now the only one: a change to the CONTENTS of
+ * a table whose second reading has already happened, made while later
+ * tables are still being read. That table's rows are not read again,
+ * and an UPDATE, a DELETE or an INSERT with a natural key moves neither
+ * the table set, nor any declaration, nor a counter.
+ *
+ * The SHAPE version of that race is closed rather than disclosed
+ * (#2281 r11): the per-table checks are themselves sequential, so a
+ * terminal reading of the whole schema follows all of them — one query
+ * over `sqlite_master` — and catches an ALTER landing on a table whose
+ * own check has already passed.
  *
  * Which is why the procedure runs this against a database nothing is
  * writing to. These checks are here to catch that precondition having
@@ -2197,7 +2245,20 @@ async function takeManifest(db) {
         db.id,
         "SELECT name, seq FROM sqlite_sequence",
       )) {
-        if (!NEVER_CARRIED(r.name)) seen.set(r.name, Number(r.seq));
+        if (NEVER_CARRIED(r.name)) continue;
+        const exact = exactSequence(r.seq);
+        if (exact === null) {
+          fail(
+            `"${r.name}" has a sequence high-water mark of ${r.seq}, which ` +
+              `is outside the range this tool can compare EXACTLY.\n\n` +
+              `Coverage turns on whether that mark moved during an ` +
+              `interval, and past 2^53 two different marks compare equal ` +
+              `here — so a baseline recording one could be promoted over ` +
+              `an allocation that really happened. It refuses rather than ` +
+              `recording a value it cannot tell apart from its neighbour.`,
+          );
+        }
+        seen.set(r.name, exact);
       }
     } catch (err) {
       if (!isMissingSequenceTable(err)) throw err;
@@ -2379,6 +2440,32 @@ async function takeManifest(db) {
           `table, so a column added and populated in that gap changes ` +
           `neither the projection nor its digest — the baseline would ` +
           `simply not contain it, permanently, while every check passed.`,
+      );
+    }
+  }
+
+  // AND ONE WHOLE-SCHEMA READING AFTER ALL OF THEM (#2281 r11). The
+  // loop above is itself sequential: it checks one table, then the
+  // next, so an ALTER landing on a table it has already passed — while
+  // it is still working through the rest — is seen by nothing. The
+  // table set is unchanged, the sequences are unchanged, and the
+  // per-table check for that table already ran.
+  //
+  // `sqlite_master` is a few kilobytes and `declarations` reads the
+  // whole of it in ONE query, so a terminal comparison costs one round
+  // trip and closes the schema race for the entire read rather than
+  // per table. What it cannot close is the ROW race — a table already
+  // read twice, changed while later tables are still being read — and
+  // that limitation is stated rather than implied, here and in the
+  // release note.
+  const ddlFinal = await declarations(db.id, { fresh: true });
+  for (const table of new Set([...ddlAtRead.keys(), ...ddlFinal.keys()])) {
+    if ((ddlFinal.get(table) ?? null) !== (ddlAtRead.get(table) ?? null)) {
+      fail(
+        `"${table}" was REDECLARED before this read finished.\n\nThe ` +
+          `per-table checks run one after another, so a change landing ` +
+          `on a table they have already passed is caught only here — by ` +
+          `one reading of the whole schema, taken after all of them.`,
       );
     }
   }

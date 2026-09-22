@@ -501,18 +501,25 @@ because step 3 below is the part of it that had to be re-learned.
       > `seq <table> <n>` high-water marks, and the `seq-listing complete`
       > line that says the sequence listing is whole.
       >
-      > **PASTE THE RULE-AND-COUNT LINE TOO** — the
-      > `————…  1384  (43 tables)` line that closes the digest block
-      > (#2281 r8). It looks like formatting and is not: it is how a
-      > reading says it enumerated the whole table set, and it is what
-      > lets `cover` treat a table missing from one recorded run and
-      > present in another as proof the database gained a table in
-      > between. Strip it and the digests still compare — the table-set
-      > check simply stops applying, with nothing to show that it did.
-      > The same holds for `seq-listing complete` on the sequence side.
-      > If the count and the number of digest lines disagree, `cover`
-      > says so and refuses rather than reading a part-pasted block as a
-      > complete reading.
+      > **PASTE THE WHOLE `digest` RUN — BOTH CLOSING LINES ARE
+      > MANDATORY** (#2281 r8, r10). The rule-and-count line
+      > `————…  1384  (43 tables)` closes the digest block, and
+      > `seq-listing complete` closes the sequence block. They look like
+      > formatting and are not: each is how a reading says it covered
+      > the whole of its side, which is what lets `cover` treat a table
+      > present in one recorded run and absent from another as proof the
+      > database gained or lost a table in between.
+      >
+      > **`cover` REFUSES without one of each, before comparing
+      > anything.** An earlier revision of this box said instead that
+      > stripping a line merely switched the matching check off — which
+      > described a silent downgrade as though it were a choice, on the
+      > command that licenses the reverse mirror. It is now an error you
+      > will see, and the remedy is to paste the block again.
+      >
+      > It also refuses if the count and the number of digest lines
+      > disagree, rather than reading a part-pasted block as a complete
+      > reading.
       >
       > **Rows alone cannot cover an interval.** A straggler that inserts
       > an AUTOINCREMENT row after the mirror and deletes it again leaves
