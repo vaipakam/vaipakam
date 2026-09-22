@@ -21,11 +21,12 @@ PRs landing the same day never append-conflict.
    fragment that still carries one — so this is not a tidiness step, it is
    the difference between the run folding your fragment and stopping on it.
 
-   The refusal exists because a placeholder that survives assembly is
-   unfixable: it publishes a section nothing can trace back to the change
-   it documents, and a dated release note is never re-edited afterwards.
-   Around 170 published headings carry one, which is what the check is
-   there to stop adding to.
+   The refusal exists because nothing downstream will catch a placeholder.
+   Assembly is the last step that looks at the heading, and afterwards the
+   section is just text in a dated file — the review pass below is for
+   wording and the intro, not for auditing PR numbers, so in practice a
+   placeholder that gets past assembly stays. Around 179 published headings
+   carry one, which is what this is there to stop adding to.
 
    The heading must also open at `##`, not `#` — a fragment opening at `#`
    lands in the dated file as a second document title rather than nesting

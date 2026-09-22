@@ -101,68 +101,6 @@ PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
 SETEXT_UNDERLINE_RE = re.compile(rb"^ {0,3}(=+|-+)[ \t]*$")
 
 
-def first_heading(body: bytes) -> tuple[int, bytes] | None:
-    """The fragment's first heading as `(level, line)`, or None if it has none.
-
-    MARKDOWN HAS EXACTLY TWO HEADING SYNTAXES, and that is the point of this
-    function — it makes the enumeration closeable rather than another shape to
-    be caught next round:
-
-      ATX     `## Title`   — one to six `#`, up to three leading spaces,
-                             closed by a space, a tab, or end of line.
-      setext  `Title`      — a non-blank line underlined by `=` (level 1)
-              `=====`        or by `-` (level 2).
-
-    Three consecutive review rounds each found one form the check did not
-    recognise — an indented ATX marker (#2290 r1), a tab-or-EOL delimiter
-    (r2), and setext (r3) — and all three did the SAME damage. An
-    unrecognised heading does not merely go unrefused: it falls to the
-    deliberate no-heading allowance and is PERMITTED, publishing the very
-    peer-document title the check exists to stop. That is why this is one
-    function covering both syntaxes rather than a third patch to a regex.
-
-    ONE RESIDUAL, stated rather than left for a fourth round. Raw HTML —
-    `<h1>Title</h1>` — renders as a heading on GitHub but is not Markdown
-    syntax, and this does not detect it. Two reasons, and the second is the
-    load-bearing one: no fragment or dated note in this repository uses it
-    (checked, zero occurrences), and recognising it properly means parsing
-    HTML — attributes, case, whitespace, split tags — which is exactly the
-    open-ended enumeration this function exists to replace. "Markdown has
-    two heading syntaxes" is a closeable claim; "every way a heading can
-    render" is not, and a check built on the second would be back here next
-    round.
-    """
-    lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
-    # YAML front matter is skipped before anything else. Its CLOSING fence is
-    # indistinguishable from a setext underline, so scanning through it read
-    # `title: x` + `---` as a level-2 heading and STOPPED THERE — masking a
-    # real `#` heading below it, placeholder and all. Found by testing the
-    # setext branch against non-heading dash constructs rather than by a
-    # review round, and it is the same permit-by-misrecognition failure as
-    # the three before it.
-    #
-    # Closeable, like the two-syntax rule: front matter is a `---` on the
-    # FIRST line closed by the next `---`. Anchored and delimited, unlike
-    # "every dash construct that is not an underline".
-    start = 0
-    if lines and lines[0].strip() == b"---":
-        for i in range(1, len(lines)):
-            if lines[i].strip() == b"---":
-                start = i + 1
-                break
-        # An unterminated opening fence is not front matter; scan from the top.
-    for i, line in enumerate(lines[start:], start):
-        if HEADING_RE.match(line):
-            marker = line.lstrip(b" ")
-            return len(marker) - len(marker.lstrip(b"#")), line
-        # setext: THIS line is the text, the NEXT is the underline. The text
-        # has to be non-blank — an underline under nothing is a thematic
-        # break, not a heading.
-        if line.strip() and i + 1 < len(lines):
-            u = SETEXT_UNDERLINE_RE.match(lines[i + 1])
-            if u:
-                return (1 if u.group(1).startswith(b"=") else 2), line
-    return None
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 
@@ -191,6 +129,81 @@ for _stream in (sys.stdout, sys.stderr):
         # replaced by something without the method) is not worth dying
         # over here — the writes below tolerate it.
         pass
+
+
+def first_heading(body: bytes) -> tuple[int, bytes] | None:
+    """The heading a fragment OPENS with, as `(level, line)`, or None.
+
+    THIS IS A LINT ON THE FRAGMENT'S OPENING LINE, NOT A MARKDOWN PARSER,
+    and that distinction is the whole design (#2290 r5).
+
+    It used to SCAN for the first heading anywhere in the fragment. Six
+    review findings came out of that, every one the same shape: something
+    was misread as a heading or a fence, the scan STOPPED there, and a real
+    `#` heading below was never examined — an indented ATX marker (r1), a
+    tab delimiter (r2), setext (r3), a YAML fence (self-found), an INDENTED
+    `---` taken for a fence (r5), and a list item above a thematic break
+    (r5). Each fix bought one case and left the structure that produced it:
+    deciding Markdown BLOCK CONTEXT with regexes. That cannot be done —
+    whether `---` closes front matter, underlines a heading, or is a
+    thematic break depends on everything above it.
+
+    So it no longer scans. `_TEMPLATE.md` puts the heading on the first
+    line, every fragment in this repository does the same, and that is the
+    line this reads. Nothing is skipped over, so nothing can be masked, and
+    a misread at the opening line can only mis-describe that line rather
+    than hide another.
+
+    THE WEAKENING IS REAL AND DELIBERATE. A `#` heading further down a
+    fragment is no longer examined and would still land in the dated file as
+    a peer document title. No fragment does that; it is malformed in a way a
+    reader sees; and the alternative is a Markdown parser — a dependency and
+    an unbounded surface for a lint on a house convention. Six rounds of
+    evidence say the scanning version was the more dangerous of the two,
+    because its failures were silent and this one's is visible.
+
+    Recognises both Markdown heading syntaxes on that line:
+
+      ATX     `## Title`   — one to six `#`, up to three leading spaces,
+                             closed by a space, a tab, or end of line.
+      setext  `Title`      — the opening line underlined by `=` (level 1)
+              `=====`        or by `-` (level 2).
+
+    Front matter is skipped first, matched STRICTLY: `---` alone at column
+    zero on the first line, closed by the same. Indented, `---` is a
+    thematic break and not a fence, which is what r5 caught in the previous
+    `.strip()` version.
+
+    ONE RESIDUAL beyond the weakening above. Raw HTML — `<h1>Title</h1>` —
+    renders as a heading on GitHub but is not Markdown syntax and is not
+    detected. Zero occurrences anywhere in `docs/ReleaseNotes`, checked; and
+    recognising it properly means parsing HTML, which is the unbounded
+    surface this function exists to avoid.
+    """
+    lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
+    i = 0
+    # Front matter: `---` EXACTLY at column zero, line one, closed the same.
+    if lines and lines[0] == b"---":
+        for j in range(1, len(lines)):
+            if lines[j] == b"---":
+                i = j + 1
+                break
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return None
+    line = lines[i]
+    if HEADING_RE.match(line):
+        marker = line.lstrip(b" ")
+        return len(marker) - len(marker.lstrip(b"#")), line
+    u = (
+        SETEXT_UNDERLINE_RE.match(lines[i + 1])
+        if i + 1 < len(lines)
+        else None
+    )
+    if u:
+        return (1 if u.group(1).startswith(b"=") else 2), line
+    return None
 
 
 def out_line(msg: str = "") -> None:
@@ -1569,13 +1582,19 @@ class Assembly:
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            if True:
-                for raw in body.split(b"\n"):
-                    line = raw[:-1] if raw.endswith(b"\r") else raw
-                    if HEADING_RE.match(line):
-                        if any(line == other for other in normalised.split(b"\n")):
-                            suspect.append(self.frag_name[f])
-                        break
+            # The SAME parser the conformance check uses (#2290 r5). This
+            # used to run its own `HEADING_RE` scan, so when setext became an
+            # accepted heading form only one of the two consumers learned
+            # about it: a setext-headed fragment already folded into a
+            # markerless dated file was not recognised, and would have been
+            # appended a second time and then consumed. Two ways of deciding
+            # what a fragment's heading is, disagreeing — which is the defect
+            # this whole PR keeps finding in one shape or another.
+            opening = first_heading(body)
+            if opening is not None:
+                line = opening[1]
+                if any(line == other for other in normalised.split(b"\n")):
+                    suspect.append(self.frag_name[f])
 
         if suspect and not out_has_markers and not self.force:
             err(f"Error: {os.path.basename(self.out)} carries no assembly markers at all, and already")
