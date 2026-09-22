@@ -1,4 +1,24 @@
-# The record a database move is checked against can be taken again
+# Release Notes — 2026-09-22
+
+One behaviour-changing merge, finishing the database move the previous day's
+notes describe. Four others landed the same day and are not written up below,
+each for its own reason. PR #2271 and PR #2283 revised the contributor
+handbook's guidance on inline-assembly annotations and bytecode size — #2271
+also touched three Solidity files, in which every changed line is a comment.
+PR #2274 added a design-document scout of the next reward-transport step.
+PR #2285 lowered the review-round ceiling for documentation-only pull requests,
+which changes how this repository is worked on rather than anything it ships.
+
+The move leaves the old database in place and keeps comparing it against the
+new one, because work suspended across the move can still commit afterwards.
+That comparison — and the documented way back, which consults the same record
+before reversing anything — is only meaningful against a record of what the
+old database held at the moment of the move. Producing that record used to
+require writing to a database, which after the move is the live one. This
+release makes it obtainable by reading alone, and makes the record state what
+it does and does not stand for rather than leaving either to be assumed.
+
+## Thread — the record a database move is checked against can be taken again (PR #2282)
 
 Moving the platform's off-chain database leaves one obligation behind: the old
 database is kept, and it keeps being compared against the new one, because work
@@ -20,10 +40,16 @@ nothing.
 **What it cannot do is prove the database has not changed since the move, and
 it no longer implies otherwise.** Consider the very case the ongoing comparison
 exists to find: work suspended across the move commits afterwards, and the old
-database then goes quiet. Every check available today passes — it is not
-changing, nothing is connected to it — and a record taken now *contains that
-late write*, so every future comparison treats it as original and can never
-report it. Stillness now says nothing about what happened earlier.
+database then goes quiet. Every check the record's own taking can perform
+passes — it is not changing, nothing is connected to it — and a record taken
+now *contains that late write*, so every future comparison treats it as
+original and can never report it. Stillness now says nothing about what
+happened earlier.
+
+The evidence recorded at the time of the move is the exception, and it is the
+reason the promotion below exists: compared against that, a late row or a
+handed-out identifier makes the promotion fail. What cannot rescue a
+reconstruction is anything it can observe about the database *now*.
 
 So a record taken this way is always marked **not covering** the gap since the
 move, and nothing about the command that takes it can say otherwise. A separate
@@ -117,3 +143,4 @@ rather than describing a reconstruction as the original.
 Verified against the real thing: a record taken this way after the move was
 compared against the one the copy produced during it — 43 tables, **no
 differences at all**.
+<!-- assembled-fragment: 2281-reproducible-cutover-baseline.md sha256=6c734072481e58ad6d9fe5c93962bbe8a79bf43a5cf95cca2f3679305ffc1165 -->

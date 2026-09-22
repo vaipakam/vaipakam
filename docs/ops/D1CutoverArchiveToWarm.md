@@ -718,14 +718,26 @@ because step 3 below is the part of it that had to be re-learned.
       one place, the answer is a name, and the code that acts on it handles
       every name or throws — so a dropped question cannot be written.
 
-      > **THREE OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
+      > **SOME OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
       > GAP IN THIS PROCEDURE RATHER THAN A MISTAKE BY THE OPERATOR WHO
       > HITS IT** (#2279, found scouting the same seam for the fourth
-      > round running). The tool compares data. Three of the situations
-      > above have a legitimate resolution that **changes no data** — it is
-      > a decision to leave things as they are — and a decision is not
-      > something either database holds, so the next pass compares the same
-      > two rows and reports the same difference. Forever.
+      > round running). The tool compares data. Where a situation's
+      > legitimate resolution **changes no data** — a decision to leave
+      > things as they are — the next pass compares the same two rows and
+      > reports the same difference. Forever, because a decision is not
+      > something either database holds.
+      >
+      > **The table below names examples, not the whole set** (#2286 r8).
+      > It said THREE and was read as exhaustive, which is wrong in the
+      > direction that hurts: `destination-deleted-source-changed` can
+      > legitimately resolve by letting warm's deletion stand, and the
+      > source-deleted branch by keeping warm's newer value — both
+      > change no data and therefore both report forever, and neither is
+      > in the table. An operator who trusts a bound either forces a data
+      > change to make a line go away, which can undo a privacy deletion,
+      > or refuses to count a properly decided run as clean. **The test is
+      > the property, not membership of a list: if the resolution changes
+      > no data, the line will repeat.**
       >
       > Driving the shipped classifier against each resolution shows which:
       >
@@ -756,7 +768,95 @@ because step 3 below is the part of it that had to be re-learned.
       > decision, treat a run carrying only already-recorded keys as the
       > clean run for the two-run rule, and keep the weekly re-runs
       > going** — their job is to surface anything NEW, and a fixed set of
-      > known-and-decided lines does not stop them doing it. What it does cost is the property that made
+      > known-and-decided lines does not stop them doing it.
+      >
+      > **The by-key test is weaker than it sounds** (#2286 r5, r6). No
+      > report carries the row's CONTENTS — table, key and kind, and
+      > deliberately nothing more. So a row that changes AGAIN after a
+      > decision was recorded about it emits a line identical to the
+      > settled one, and the by-key test waves it through. Until #2279
+      > binds a decision to the state it was taken in, treat a recurring
+      > line as decided only for the state you actually REVIEWED, and
+      > **re-read the row itself** before counting a run clean on the
+      > strength of a line you have seen before.
+      >
+      > **Rows in credential-keyed tables cannot be re-read that way, and
+      > must not be recorded by their printed key either** (#2286 r7).
+      > `telegram_links` is keyed by the live handshake code, so the
+      > report prints an HMAC under a key generated fresh per run and
+      > never stored (`d1-carry-rows.mjs:1094-1148`). Cross-run
+      > correlation is given up DELIBERATELY there — a six-digit code is
+      > a million candidates, so a stable fingerprint would hand the
+      > reader the credential. Consequences, both of them: the printed
+      > value cannot be used to query the database, and the same row
+      > carries a different value in this week's report than in last
+      > week's, so it can never match a previously recorded decision.
+      > Record and review these **at table level**, and note the
+      > mitigation the tool's own design rests on: the code is live for
+      > ten minutes, so a conflict that survives into the next weekly run
+      > is a conflict about a credential that has already expired.
+      >
+      > Do not narrow that to a list of situations. An intermediate
+      > revision of this note named `source-changed` and
+      > `destination-deleted-source-changed`, which is wrong in the
+      > dangerous direction: `key-collision` is re-derived from the rows on
+      > every run (`d1-carry-rows.mjs:1502-1515`), so a straggler updating
+      > the archive record after you copied it across leaves warm's copy
+      > stale behind an unchanged line, and the `new-on-source` unique
+      > clash behaves the same way. The property belongs to the REPORT
+      > FORMAT, not to particular situations, so it applies to all of them.
+      >
+      > **Some lines have no row identity at all, and "recorded by table
+      > and key" is not a test they can satisfy** (#2286 r6). A sequence
+      > advance is per TABLE (`d1-carry-rows.mjs:932-941`), and the
+      > manifest-only classification deliberately emits conflicts with no
+      > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
+      > table, or its key, looks like from archive's side.
+      >
+      > **Record these by table, the kind of line, and STATE THAT MOVES
+      > WHEN THE DATA MOVES.** Table-plus-kind alone is not enough, for
+      > the same reason the by-key test is not (#2286 r7): a sequence that
+      > advances again after a decision, or a dropped table taking another
+      > late write, reports under the same table and the same kind. The
+      > re-read above rescues neither — an allocation that was inserted
+      > and deleted has no row left to re-read, and a manifest-only
+      > finding carries no row identity to re-read BY. What state to take
+      > differs by line:
+      >
+      > - **A sequence advance** — record archive's current mark and the
+      >   mirror baseline it is compared against. **Not warm's mark.** The
+      >   line carries it, but `compareSequences` prints it as CONTEXT
+      >   precisely because warm advances it on its own ordinary writes
+      >   (`d1-carry-rows.mjs:906-940`); a decision that includes it looks
+      >   like new state every week, so an already-reviewed archive
+      >   advance could never count as clean (#2286 r9).
+      > - **A manifest-only conflict** — **re-review the whole table**
+      >   before counting the run clean. That is the only option today,
+      >   and deliberately so: the per-table digest exists inside the run
+      >   but is NOT printed in the conflict output (`d1-carry-rows.mjs`
+      >   1643-1652, 3836-3841), so there is no digest for an operator to
+      >   record, and computing one with a later `digest` call observes a
+      >   DIFFERENT moment — which on a procedure that expressly allows
+      >   arbitrarily late source writes is a substitution, not a record
+      >   (#2286 r11). Printing the same-run digest in the conflict line
+      >   would make the cheaper option available; until it does, do not
+      >   reach for it. **And not the counts.** The line reports
+      >   only how many rows were added, changed and deleted, so changing
+      >   an already-changed row AGAIN leaves the line reading `0 added,
+      >   1 changed, 0 deleted` exactly as before and a count-based record
+      >   accepts the second write as the decided one (#2286 r8). Counts
+      >   are an identity that does not move when the data does.
+      >
+      > Then treat a run carrying only already-recorded lines as clean on
+      > the same terms, and the SAME line with DIFFERENT state as new and
+      > undecided.
+      >
+      > Without some identity here they could never be recorded to the
+      > rule's satisfaction at all and the retirement gate would stay
+      > blocked forever, which is the check-that-can-never-pass shape this
+      > procedure keeps having to remove — but an identity that cannot
+      > change is the opposite failure, and waves a real late write
+      > through. What it does cost is the property that made
       > "repeat until clean" self-checking, which is why this is written
       > down rather than left for an operator to work out at 2am.
       >
@@ -1982,11 +2082,13 @@ sequence is:
    `check-live-d1-bindings.mjs --expect vaipakam-archive`.
 6. **Reconcile, and keep reconciling** —
    `reconcile --from vaipakam-warm --to vaipakam-archive --since
-   rollback-mirror.json` until **two consecutive** runs report nothing. It
-   reads and reports; it writes nothing, so anything it finds is applied by
-   a deliberate human step. The #2279 exception applies here too, in the
-   same three situations and for the same reason — the direction of the
-   move does not change which resolutions alter data.
+   rollback-mirror.json` until **two consecutive** runs come back clean in
+   the §4 step-6 sense — not necessarily silent. It reads and reports; it
+   writes nothing, so anything it finds is applied by a deliberate human
+   step. The #2279 exception applies here too, for the same reason and to
+   the same lines: the direction of the move does not change which
+   resolutions alter data, so any line whose settlement changes no data
+   repeats here as well.
 
    **Then weekly, for as long as warm is retained** (#2267 r36). The
    direction inverts but the reasoning does not: an invocation holding the
@@ -2168,6 +2270,20 @@ Order matters here, and this plan does not own all of it:
       writes to neither, so it costs minutes. Record each run's result in
       the run log — including the clean ones, because the value of the
       record is that a gap in it is visible.
+
+      **"Whoever holds the runbook" is a duty, not an owner, and that is
+      an open gap** (#2287). It names no person, team or rotation, so a
+      week that is skipped is skipped by nobody in particular.
+
+      **What that costs is time, not the safety of the deletion.** This
+      box demands the re-run has been kept up, and the run log is written
+      so that a gap in it is visible — so an honest pass over this list
+      stops at a lapsed cadence rather than deleting through one. What an
+      unowned cadence does cost: a late write stays undiscovered for as
+      long as the lapse runs, and the predecessor is retained indefinitely
+      behind a box nobody is tasked with keeping green. Assigning an
+      accountable party is an owner decision; until it is made, treat this
+      box as unowned rather than as covered.
 
       **This is the prerequisite that makes the rest of the list safe, and
       it was missing** (#2267 r15). The whole reconciliation procedure
