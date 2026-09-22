@@ -148,5 +148,16 @@ ops/lz-watcher/generated/
 # not match. The rule named the one directory the file is least likely to
 # appear in. It matches by NAME now, wherever the operator ran the
 # command from.
-cutover-mirror.json
-rollback-mirror.json
+# MATCHED BY PREFIX, NOT BY EXACT NAME (#2281 r6). The runbook's
+# recovery path tells the operator to write
+# `cutover-mirror-reconstructed.json`, a name an exact-match rule does
+# not cover — so following the documented procedure and then running
+# `git add .` would have committed the whole key inventory. That is the
+# same defect as the root-anchoring one above, arrived at from the other
+# end: the rule was right about the file it named and the procedure had
+# moved on. The `.tmp-` forms are the atomic-write staging files, which
+# hold identical content for as long as they exist.
+cutover-mirror*.json
+rollback-mirror*.json
+cutover-mirror*.json.tmp-*
+rollback-mirror*.json.tmp-*

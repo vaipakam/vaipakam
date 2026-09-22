@@ -454,13 +454,181 @@ because step 3 below is the part of it that had to be re-learned.
       621 and 979 of this document, so there is one spelling of it.
    6. **Reconcile, and keep reconciling.**
       `reconcile --from vaipakam-archive --to vaipakam-warm --since
-      cutover-mirror.json`, which **reads both sides and reports. It writes
-      nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      cutover-mirror.json` — or `--since "$MANIFEST"` if the baseline was
+      recovered under the step-6 recovery box's name — which **reads both
+      sides and reports. It writes nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
       runs report nothing at all — with one documented exception: three of
       the situations below have a resolution that changes no data and so
       report on every subsequent pass. See the #2279 box under the
       situation table before concluding that a repeating line means
       something is unresolved.
+
+      > **IF THE MANIFEST IS LOST, TAKE ANOTHER — DO NOT RE-RUN THE
+      > MIRROR** (#2281). `reconcile` refuses to run without `--since`,
+      > and the rollback consumes the same file, so for a while the
+      > baseline was an irreplaceable artifact in the middle of a recovery
+      > procedure: the only thing that produced one was `carry --mirror`,
+      > which writes to a destination that is now LIVE. Re-running the
+      > mirror to recover a baseline would roll warm's newer rows back to
+      > archive's stale ones — worse than the problem.
+      >
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
+      >   --db vaipakam-archive --out cutover-mirror-reconstructed.json \
+      >   --stands-for "<which moment, and what establishes it>"
+      > ```
+      >
+      > **A NEW PATH, not the one the mirror used.** The verb refuses an
+      > existing `--out`. Replacing a manifest the mirror wrote with a
+      > reconstruction destroys the only baseline that was ever a direct
+      > observation, and no error is needed to do it (#2281 r2).
+      >
+      > **IT IS ALWAYS WRITTEN UNCOVERED, and it cannot be otherwise**
+      > (#2281 r3). An earlier revision took the coverage verdict as a
+      > flag here — which recorded the claim BEFORE printing the digests
+      > meant to substantiate it, so no operator could have compared
+      > anything at the moment the artifact said "covered". Promotion is
+      > a separate step that actually checks:
+      >
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs cover \
+      >   --manifest cutover-mirror-reconstructed.json \
+      >   --expect mirror-time-digests.txt
+      > ```
+      >
+      > `--expect` holds what step 2 recorded AT the mirror. The `digest`
+      > command’s own output pastes in as-is: per-table digests, the
+      > `seq <table> <n>` high-water marks, and the `seq-listing complete`
+      > line that says the sequence listing is whole.
+      >
+      > **PASTE THE WHOLE `digest` RUN — BOTH CLOSING LINES ARE
+      > MANDATORY** (#2281 r8, r10). The rule-and-count line
+      > `————…  1384  (43 tables)` closes the digest block, and
+      > `seq-listing complete` closes the sequence block. They look like
+      > formatting and are not: each is how a reading says it covered
+      > the whole of its side, which is what lets `cover` treat a table
+      > present in one recorded run and absent from another as proof the
+      > database gained or lost a table in between.
+      >
+      > **`cover` REFUSES without one of each, before comparing
+      > anything.** An earlier revision of this box said instead that
+      > stripping a line merely switched the matching check off — which
+      > described a silent downgrade as though it were a choice, on the
+      > command that licenses the reverse mirror. It is now an error you
+      > will see, and the remedy is to paste the block again.
+      >
+      > It also refuses if the count and the number of digest lines
+      > disagree, rather than reading a part-pasted block as a complete
+      > reading, and if the two closing lines come from DIFFERENT runs —
+      > one run's tables joined to another run's allocations is two
+      > moments presented as one.
+      >
+      > **Both closing lines carry the same `run:<id>`** (#2281 r15) —
+      > the rule-and-count line and `seq-listing complete`. That is how
+      > `cover` knows the table set and the allocation marks came from
+      > ONE run. Paste them as printed; do not edit the ids, and do not
+      > assemble a "clean" block from two runs, which is precisely what
+      > the identifier exists to catch.
+      >
+      > Evidence recorded before the identifier existed carries none.
+      > `cover` does not refuse it — the mirror it describes has passed
+      > and cannot be re-recorded — but it cannot establish that the two
+      > halves came from one run, so it says so and leaves
+      > `run-pairing` out of `coveredDimensions`.
+      >
+      > **`digest` also prints a `shape <table> <hex>` line per table**
+      > (#2281 r13) — how that table keys and projects its rows. Paste
+      > those too. Contents cannot speak for row identity: a table
+      > recreated with a different primary key over the same
+      > column-order values produces the SAME digest and need not move
+      > its sequence, and reconciliation classifies rows by exactly the
+      > fields that changed.
+      >
+      > Evidence recorded before this line existed has none, and a
+      > mirror that has passed cannot be re-recorded — so `cover` does
+      > not refuse for want of it. It compares shape where the evidence
+      > carries it, prints what it did NOT establish when it does not,
+      > and writes `coveredDimensions` into the artifact so the record
+      > says which dimensions it stands on. **Read that field before
+      > relying on a promotion made from older evidence.**
+      >
+      > **Rows alone cannot cover an interval.** A straggler that inserts
+      > an AUTOINCREMENT row after the mirror and deletes it again leaves
+      > every row digest and count identical while the high-water mark
+      > moves. A reconstruction absorbs the moved value, and promoting on
+      > row evidence alone would make the sequence comparison treat that
+      > late allocation as original — switching off the one check written
+      > for exactly that case. So `cover` requires BOTH, per table, and
+      > refuses the whole promotion if any table is short of either.
+      >
+      > A refusal leaves the artifact untouched and uncovered. That is
+      > still usable for finding NEW differences; what it must not do is
+      > license the rollback’s reverse mirror.
+      >
+      > **CARRY THE RECOVERED PATH FORWARD — every `--since` in this
+      > document names `cutover-mirror.json`** (#2281 r10). That file is
+      > the one you just established is missing, so following this box
+      > and then resuming the procedure as written fails on the very next
+      > command. The recovered manifest is a REPLACEMENT for it, under a
+      > different name because the original must never be written over.
+      >
+      > From here to the end of the rollback window, read every
+      > `--since cutover-mirror.json` in this document as
+      > `--since cutover-mirror-reconstructed.json`. Setting it once in
+      > the shell keeps the two from drifting apart mid-procedure:
+      >
+      > ```
+      > MANIFEST=cutover-mirror-reconstructed.json   # or cutover-mirror.json
+      > ```
+      >
+      > and pass `--since "$MANIFEST"` thereafter. **Do not rename the
+      > reconstruction to `cutover-mirror.json`** to make the commands
+      > match: the name is what tells the next reader which of the two
+      > kinds of baseline they have, and the artifact says so of itself
+      > for the same reason.
+      >
+      >
+      > Read-only; it writes no database.
+      >
+      > **PRESENT STILLNESS DOES NOT ESTABLISH PAST EQUALITY, and an
+      > earlier draft of this box implied it did** (#2281 r1). What the
+      > verb records is archive **as it is now**. Take the exact case this
+      > step exists to find — a suspended invocation commits to archive
+      > after the mirror, and archive then goes inert. Every present-tense
+      > test passes: the digests are stable, nothing binds it. And a
+      > baseline taken now **contains that late write**, so every later
+      > run treats it as original and can never report it. The check is
+      > not weakened; it is turned against itself.
+      >
+      > What substantiates the claim is evidence recorded **at** the
+      > mirror — the digests step 2 took, and the post-carry reading in
+      > step 4 — compared with what this reading finds.
+      >
+      > **Two verbs, and only one of them can decide this** (#2281 r4, an
+      > earlier draft said flatly that "the tool cannot make that
+      > comparison", which contradicted the `cover` command printed
+      > above it). `manifest` cannot: it reads the database as it is now
+      > and has no access to anything recorded earlier, so it writes the
+      > baseline UNCOVERED and takes `--stands-for` only as a statement
+      > for a human reader, carried **in the artifact** rather than in a
+      > log that can be separated from it. `cover` can, and does: it is
+      > handed the mirror-time evidence and machine-checks it against the
+      > readings the artifact recorded, table by table, on both the
+      > digest and the sequence.
+      >
+      > So `--stands-for` is not the coverage decision and never was —
+      > it says which moment a reader should understand this baseline to
+      > be about. `reconcile` prints it, along with `RECONSTRUCTED
+      > baseline` and the coverage verdict, rather than calling any of it
+      > "the mirror".
+      >
+      > **[run] 2026-09-21** — taken from archive after the cutover and
+      > compared against the manifest the mirror wrote at 19:56: 43
+      > tables, **zero differing entries**, and a reconciliation against
+      > it returned VERIFIED with 0 conflicts. Here the evidence does
+      > exist — step 2's digests at 19:40 and 19:51 and step 4's reading
+      > at 19:57 are identical — so the interval is covered and the
+      > reproduced baseline is the same baseline.
 
       > **TWO CLEAN RUNS PAUSE THIS STEP. THEY DO NOT END IT** (#2267
       > r34/r35). There is no fence on archive — see the banner at the
@@ -1673,8 +1841,12 @@ sequence is:
 
    ```
    node apps/indexer/scripts/d1-carry-rows.mjs reconcile \
-     --from vaipakam-archive --to vaipakam-warm --since cutover-mirror.json
+     --from vaipakam-archive --to vaipakam-warm --since "${MANIFEST:-cutover-mirror.json}"
    ```
+
+   (`MANIFEST` is unset in the ordinary case and the default applies; the
+   step-6 recovery box sets it when the baseline had to be reconstructed
+   under another name.)
 
    Run it, and keep the output with the digest. It reads both databases
    and writes to neither, so it costs minutes and risks nothing.
@@ -1749,7 +1921,33 @@ sequence is:
    reverse mirror, because the mirror destroys it** (#2267 r15).
 
    `reconcile --from vaipakam-archive --to vaipakam-warm --since
-   cutover-mirror.json`, read-only, and **resolve everything it reports**.
+   cutover-mirror.json` — or `--since "$MANIFEST"` for a baseline
+   recovered under the step-6 recovery box's name — read-only, and
+   **resolve everything it reports**.
+
+   > **A RECONSTRUCTED BASELINE MARKED `uncovered` DOES NOT LICENSE THIS
+   > ROLLBACK, and an earlier draft called such a baseline "usable with
+   > care"** (#2281 r2). It is usable for spotting NEW differences. It is
+   > not usable HERE, and the difference is destructive.
+   >
+   > Follow it through. A straggler updates a row on archive after the
+   > forward mirror. The baseline is later reconstructed and absorbs that
+   > value, so archive now MATCHES its own baseline. Warm has since
+   > changed the same row on its own. The comparison reads source =
+   > baseline, destination ≠ baseline — `destination-moved`, which is not
+   > a conflict and is not reported. Step 3 then mirrors warm over
+   > archive and destroys the only copy of the straggler's write, with
+   > every check having said clean.
+   >
+   > So: if the manifest in hand carries `provenance.interval:
+   > "uncovered"` — `reconcile` prints it at the top of every run —
+   > **the automated rollback is unavailable.** Say so in the run log,
+   > and recover through the export path §4 step 0a describes, by hand.
+   > That is a limitation NAMED, in the same way as the migration case
+   > below it.
+   >
+   > A manifest the mirror wrote carries no `interval` and needs none: it
+   > observed the moment it describes, so there is no gap to cover.
 
    The trap here is exact and worth spelling out: `--mirror` makes archive
    the DESTINATION, and a mirror deletes destination-only keys and

@@ -120,14 +120,22 @@
  * this one moves rows a person's money position is described by.
  */
 
-import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { PREDECESSOR, SUCCESSOR } from "./lib/cutover-databases.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO = join(__dirname, '..', '..', '..');
+const REPO = join(__dirname, "..", "..", "..");
 
 /**
  * BOTH ENDPOINTS come from one pinned pair — see
@@ -137,7 +145,7 @@ const REPO = join(__dirname, '..', '..', '..');
  * performable; nothing else is, in either direction.
  */
 const NEVER_CARRIED = (t) =>
-  t.startsWith('sqlite_') || t.startsWith('_cf_') || t === 'd1_migrations';
+  t.startsWith("sqlite_") || t.startsWith("_cf_") || t === "d1_migrations";
 
 /**
  * D1 caps bound parameters per statement. 90 is the working headroom the
@@ -156,14 +164,14 @@ function fail(msg) {
 
 /** Strip JSONC comments without mangling string contents. */
 function parseJsonc(src, file) {
-  let out = '';
+  let out = "";
   let i = 0;
   while (i < src.length) {
     const c = src[i];
     if (c === '"') {
       let j = i + 1;
       while (j < src.length) {
-        if (src[j] === '\\') {
+        if (src[j] === "\\") {
           j += 2;
           continue;
         }
@@ -174,13 +182,13 @@ function parseJsonc(src, file) {
       i = j + 1;
       continue;
     }
-    if (c === '/' && src[i + 1] === '/') {
-      while (i < src.length && src[i] !== '\n') i += 1;
+    if (c === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
       continue;
     }
-    if (c === '/' && src[i + 1] === '*') {
+    if (c === "/" && src[i + 1] === "*") {
       i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i += 1;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
       i += 2;
       continue;
     }
@@ -188,7 +196,7 @@ function parseJsonc(src, file) {
     i += 1;
   }
   try {
-    return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+    return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
   } catch (err) {
     fail(`${file}: not parseable as JSONC — ${err.message}`);
   }
@@ -208,7 +216,7 @@ const DB_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function checked(value, pattern, what) {
-  if (typeof value !== 'string' || !pattern.test(value)) {
+  if (typeof value !== "string" || !pattern.test(value)) {
     fail(`${what} is not a well-formed value: ${JSON.stringify(value)}`);
   }
   return value;
@@ -216,8 +224,8 @@ function checked(value, pattern, what) {
 
 function sharedDatabase() {
   return {
-    name: checked(SUCCESSOR.name, DB_NAME, 'SUCCESSOR.name'),
-    id: checked(SUCCESSOR.id, UUID, 'SUCCESSOR.id'),
+    name: checked(SUCCESSOR.name, DB_NAME, "SUCCESSOR.name"),
+    id: checked(SUCCESSOR.id, UUID, "SUCCESSOR.id"),
   };
 }
 
@@ -225,7 +233,7 @@ function sharedDatabase() {
 
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const API = 'https://api.cloudflare.com/client/v4';
+const API = "https://api.cloudflare.com/client/v4";
 
 /**
  * One request against an ACCOUNT-RELATIVE path. The account id is joined
@@ -242,7 +250,7 @@ async function cf(subpath, init = {}) {
         ...init,
         headers: {
           Authorization: `Bearer ${TOKEN}`,
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...(init.headers ?? {}),
         },
       });
@@ -262,7 +270,9 @@ async function cf(subpath, init = {}) {
     // The body is the diagnosis and must never be swallowed: the batching
     // bug in the first copy looked like a bare "HTTP 400" for exactly as
     // long as the wrapper printed only the status.
-    lastErr = new Error(`HTTP ${res.status} on ${subpath}\n${text.slice(0, 2000)}`);
+    lastErr = new Error(
+      `HTTP ${res.status} on ${subpath}\n${text.slice(0, 2000)}`,
+    );
     if (res.status < 500) break;
     await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
   }
@@ -272,18 +282,21 @@ async function cf(subpath, init = {}) {
 /** One statement against one database. `params` are bound, never spliced. */
 async function query(dbId, sql, params = []) {
   const result = await cf(
-    `/d1/database/${checked(dbId, UUID, 'database id')}/query`,
-    { method: 'POST', body: JSON.stringify({ sql, params }) },
+    `/d1/database/${checked(dbId, UUID, "database id")}/query`,
+    { method: "POST", body: JSON.stringify({ sql, params }) },
   );
   return result?.[0]?.results ?? [];
 }
 
 async function resolveByName(name) {
-  checked(name, DB_NAME, 'database name');
+  checked(name, DB_NAME, "database name");
   const list = await cf(`/d1/database?name=${encodeURIComponent(name)}`);
   const hit = (list ?? []).find((d) => d.name === name);
   if (!hit) fail(`no D1 database named "${name}" in this account`);
-  return { name, id: checked(hit.uuid, UUID, `id the API reports for ${name}`) };
+  return {
+    name,
+    id: checked(hit.uuid, UUID, `id the API reports for ${name}`),
+  };
 }
 
 // -------------------------------------------------------------- table shapes
@@ -294,7 +307,7 @@ async function tablesOf(dbId) {
     `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`,
   );
   return rows
-    .map((r) => checked(r.name, IDENT, 'table name from sqlite_master'))
+    .map((r) => checked(r.name, IDENT, "table name from sqlite_master"))
     .filter((t) => !NEVER_CARRIED(t));
 }
 
@@ -312,20 +325,21 @@ async function tablesOf(dbId) {
  * Exported for `test/d1Reconcile.test.ts`.
  */
 export function unsupportedUniqueReason(idx, terms) {
-  if (idx.partial === 1) return 'it is a PARTIAL index, so it constrains only some rows';
-  if (terms.some((c) => typeof c.name !== 'string')) {
-    return 'it indexes an EXPRESSION, which has no column to compare';
+  if (idx.partial === 1)
+    return "it is a PARTIAL index, so it constrains only some rows";
+  if (terms.some((c) => typeof c.name !== "string")) {
+    return "it indexes an EXPRESSION, which has no column to compare";
   }
   const collated = [
     ...new Set(
       terms
         .map((c) => c.coll)
-        .filter((c) => typeof c === 'string' && c.toUpperCase() !== 'BINARY'),
+        .filter((c) => typeof c === "string" && c.toUpperCase() !== "BINARY"),
     ),
   ];
   if (collated.length > 0) {
     return (
-      `it uses collation(s) ${collated.join(', ')}, under which values ` +
+      `it uses collation(s) ${collated.join(", ")}, under which values ` +
       `this tool would read as different are the same row`
     );
   }
@@ -377,9 +391,13 @@ async function shapeOf(dbId, table) {
     const parts = await query(dbId, `PRAGMA index_xinfo("${idx.name}")`);
     // `key: 0` rows are the rowid/auxiliary terms every index carries,
     // not part of the constraint.
-    const terms = [...parts].filter((c) => c.key === 1).sort((a, b) => a.seqno - b.seqno);
+    const terms = [...parts]
+      .filter((c) => c.key === 1)
+      .sort((a, b) => a.seqno - b.seqno);
     const why = unsupportedUniqueReason(idx, terms);
-    const columns = terms.map((c) => c.name).filter((n) => typeof n === 'string');
+    const columns = terms
+      .map((c) => c.name)
+      .filter((n) => typeof n === "string");
     if (why !== null) {
       // A PRIMARY KEY RESTATED ELSEWHERE is already how rows are
       // matched, so an unusable duplicate of it is not a loss and is not
@@ -399,7 +417,9 @@ async function shapeOf(dbId, table) {
     if (columns.join() === key.join()) continue;
     uniques.push({
       name: idx.name,
-      columns: columns.map((c) => checked(c, IDENT, `unique column in ${table}`)),
+      columns: columns.map((c) =>
+        checked(c, IDENT, `unique column in ${table}`),
+      ),
     });
   }
   // THE DECLARATION ITSELF, not a list of the parts of it we remembered
@@ -436,7 +456,7 @@ async function shapeOf(dbId, table) {
  * simply opens the next.
  */
 export function collapseOutsideLiterals(sql) {
-  let out = '';
+  let out = "";
   let quote = null;
   for (const ch of sql) {
     if (quote) {
@@ -444,13 +464,13 @@ export function collapseOutsideLiterals(sql) {
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === "'" || ch === '"' || ch === '`') {
+    if (ch === "'" || ch === '"' || ch === "`") {
       quote = ch;
       out += ch;
       continue;
     }
     if (/\s/.test(ch)) {
-      if (!out.endsWith(' ')) out += ' ';
+      if (!out.endsWith(" ")) out += " ";
       continue;
     }
     out += ch;
@@ -463,9 +483,9 @@ export function collapseOutsideLiterals(sql) {
  * `sqlite_master` holds it. Indexes are sorted by name so the comparison
  * does not depend on creation order.
  */
-async function declarationOf(dbId, table) {
-  const all = await declarations(dbId);
-  return all.get(table) ?? '';
+async function declarationOf(dbId, table, { fresh = false } = {}) {
+  const all = await declarations(dbId, { fresh });
+  return all.get(table) ?? "";
 }
 
 /**
@@ -478,9 +498,18 @@ async function declarationOf(dbId, table) {
  * and the window is the scarce thing.
  */
 const _declCache = new Map();
-async function declarations(dbId) {
+/**
+ * `fresh` bypasses the cache, and a stability pass MUST pass it (#2281
+ * r3). The cache is right for a window where the writers are stopped and
+ * the same declaration is asked for repeatedly. It is exactly wrong for
+ * a second reading taken to detect a change: the "second" read returned
+ * the first read's answer, so the revalidation added a round earlier
+ * could not fail — an inert check, of precisely the kind this PR has
+ * been catching elsewhere, in my own fix for it.
+ */
+async function declarations(dbId, { fresh = false } = {}) {
   const hit = _declCache.get(dbId);
-  if (hit) return hit;
+  if (hit && !fresh) return hit;
   const rows = await query(
     dbId,
     `SELECT type, name, tbl_name, sql FROM sqlite_master ` +
@@ -488,12 +517,12 @@ async function declarations(dbId) {
   );
   const byTable = new Map();
   for (const r of rows) {
-    if (typeof r.sql !== 'string' || typeof r.tbl_name !== 'string') continue;
+    if (typeof r.sql !== "string" || typeof r.tbl_name !== "string") continue;
     const line = `${r.type} ${r.name}: ${collapseOutsideLiterals(r.sql)}`;
     byTable.set(r.tbl_name, [...(byTable.get(r.tbl_name) ?? []), line]);
   }
   const out = new Map();
-  for (const [t, lines] of byTable) out.set(t, lines.sort().join('\n'));
+  for (const [t, lines] of byTable) out.set(t, lines.sort().join("\n"));
   _declCache.set(dbId, out);
   return out;
 }
@@ -508,7 +537,7 @@ async function orderByDependency(dbId, tables) {
   for (const t of tables) {
     for (const fk of await query(dbId, `PRAGMA foreign_key_list("${t}")`)) {
       const parent = fk.table;
-      if (typeof parent === 'string' && parent !== t && parentsOf.has(parent)) {
+      if (typeof parent === "string" && parent !== t && parentsOf.has(parent)) {
         parentsOf.get(t).add(parent);
       }
     }
@@ -516,17 +545,17 @@ async function orderByDependency(dbId, tables) {
   const state = new Map();
   const ordered = [];
   const visit = (t, stack) => {
-    if (state.get(t) === 'done') return;
-    if (state.get(t) === 'active') {
+    if (state.get(t) === "done") return;
+    if (state.get(t) === "active") {
       fail(
-        `foreign-key cycle: ${[...stack, t].join(' → ')}. No insert order ` +
+        `foreign-key cycle: ${[...stack, t].join(" → ")}. No insert order ` +
           `satisfies a cycle, so this needs deferred constraints and a ` +
           `decision — it is not something this tool should guess at.`,
       );
     }
-    state.set(t, 'active');
+    state.set(t, "active");
     for (const p of parentsOf.get(t)) visit(p, [...stack, t]);
-    state.set(t, 'done');
+    state.set(t, "done");
     ordered.push(t);
   };
   for (const t of tables) visit(t, []);
@@ -567,8 +596,14 @@ async function orderByDependency(dbId, tables) {
  * two pages, at a sort position the first pass has already read, and
  * asserts it is in the result.
  */
-export async function readAll(dbId, table, cols, run = query, { key = null, live = false } = {}) {
-  const quoted = cols.map((c) => `"${c}"`).join(', ');
+export async function readAll(
+  dbId,
+  table,
+  cols,
+  run = query,
+  { key = null, live = false } = {},
+) {
+  const quoted = cols.map((c) => `"${c}"`).join(", ");
 
   // A LIVE SIDE CANNOT BE ASKED TO HOLD STILL, AND DOES NOT HAVE TO
   // (#2267 r42).
@@ -603,13 +638,13 @@ export async function readAll(dbId, table, cols, run = query, { key = null, live
           `the stability gate exists to catch, with the gate turned off.`,
       );
     }
-    const keyCols = key.map((c) => `"${c}"`).join(', ');
+    const keyCols = key.map((c) => `"${c}"`).join(", ");
     const lhs = key.length === 1 ? keyCols : `(${keyCols})`;
-    const rhs = key.length === 1 ? '?' : `(${key.map(() => '?').join(', ')})`;
+    const rhs = key.length === 1 ? "?" : `(${key.map(() => "?").join(", ")})`;
     const out = [];
     let cursor = null;
     for (;;) {
-      const where = cursor === null ? '' : `WHERE ${lhs} > ${rhs} `;
+      const where = cursor === null ? "" : `WHERE ${lhs} > ${rhs} `;
       const rows = await run(
         dbId,
         `SELECT ${quoted} FROM "${table}" ${where}ORDER BY ${keyCols} LIMIT ${PAGE}`,
@@ -689,18 +724,52 @@ const ABSENT_COLUMN = { __columnNotInTable: true };
  */
 const canonical = (row, cols, present = null) =>
   JSON.stringify(
-    cols.map((c) => (present !== null && !present.has(c) ? ABSENT_COLUMN : (row[c] ?? null))),
+    cols.map((c) =>
+      present !== null && !present.has(c) ? ABSENT_COLUMN : (row[c] ?? null),
+    ),
   );
 
 /** A row's identity-independent content, short enough to store per row. */
 const rowHash = (row, cols, present = null) =>
-  createHash('sha256').update(canonical(row, cols, present)).digest('hex').slice(0, 16);
+  createHash("sha256")
+    .update(canonical(row, cols, present))
+    .digest("hex")
+    .slice(0, 16);
 
 function digestOf(rows, cols) {
   const lines = rows.map((r) => canonical(r, cols)).sort();
-  const h = createHash('sha256');
-  for (const l of lines) h.update(l).update('\n');
-  return { digest: h.digest('hex').slice(0, 16), count: rows.length };
+  const h = createHash("sha256");
+  for (const l of lines) h.update(l).update("\n");
+  return { digest: h.digest("hex").slice(0, 16), count: rows.length };
+}
+
+/**
+ * A sequence high-water mark, or a refusal — never a rounded one.
+ *
+ * `sqlite_sequence.seq` is a 64-bit integer and this file compares
+ * those marks for EQUALITY to decide whether anything was allocated
+ * during an interval. Past 2^53 a JavaScript number cannot hold every
+ * one of them: 9007199254740993 becomes 9007199254740992, so a mark
+ * that MOVED compares equal to one that did not, and a reconstruction
+ * taken after that allocation can be promoted and license the rollback
+ * (#2281 r11).
+ *
+ * Refusing is the honest answer rather than a shortcoming. Reaching
+ * this range takes nine quadrillion allocations, so no real database
+ * arrives here — but a comparison that silently equates two different
+ * values is a check that has stopped checking, and this file's whole
+ * subject is not doing that. The alternative, carrying exact decimal
+ * strings end to end, would change the manifest format that artifacts
+ * already on disk are written in, for a case that cannot occur.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function exactSequence(raw) {
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || String(n) !== String(raw).trim()) {
+    return null;
+  }
+  return n;
 }
 
 /**
@@ -751,7 +820,7 @@ async function sequenceProblems(src, dst) {
     const out = new Map();
     let rows;
     try {
-      rows = await query(db.id, 'SELECT name, seq FROM sqlite_sequence');
+      rows = await query(db.id, "SELECT name, seq FROM sqlite_sequence");
     } catch (err) {
       // SQLite creates `sqlite_sequence` on the first AUTOINCREMENT
       // allocation and not before, so a database where none has ever
@@ -776,7 +845,7 @@ async function sequenceProblems(src, dst) {
     if (held !== undefined && held >= seq) continue;
     problems.push(
       `${table}: the source has allocated identifiers up to ${seq}, the ` +
-        `destination ${held === undefined ? 'has allocated none' : `only to ${held}`}` +
+        `destination ${held === undefined ? "has allocated none" : `only to ${held}`}` +
         `.\n      Rows carry values, not the promise that an identifier is ` +
         `spent, so the destination would reissue ${
           held === undefined ? 1 : held + 1
@@ -805,7 +874,10 @@ async function sequenceAdvances(src, dst, since) {
   const read = async (db) => {
     const out = new Map();
     try {
-      for (const r of await query(db.id, 'SELECT name, seq FROM sqlite_sequence')) {
+      for (const r of await query(
+        db.id,
+        "SELECT name, seq FROM sqlite_sequence",
+      )) {
         if (!NEVER_CARRIED(r.name)) out.set(r.name, Number(r.seq));
       }
     } catch (err) {
@@ -863,7 +935,7 @@ export function compareSequences(now, since, held = new Map()) {
         `reported above; if they are NOT, they were inserted and deleted, ` +
         `and the identifiers are spent on the source while the destination ` +
         `still considers them free.\n      The destination has ` +
-        `${there === undefined ? 'never allocated here' : `reached ${there}`}` +
+        `${there === undefined ? "never allocated here" : `reached ${there}`}` +
         `, which is CONTEXT and not resolution: it advances on its own ` +
         `writes, so reaching the same number says nothing about whether ` +
         `this allocation was ever applied (#2279).`,
@@ -885,7 +957,10 @@ export function compareSequences(now, since, held = new Map()) {
  * least as many rows as the source, and whether the SOURCE moved while
  * the run was working. Neither claims the destination stood still.
  */
-async function digestDatabase(db, { live = false, only = null, skipped = null } = {}) {
+async function digestDatabase(
+  db,
+  { live = false, only = null, skipped = null } = {},
+) {
   const out = new Map();
   for (const table of await tablesOf(db.id)) {
     // `only` is the source's table list: digesting a table the verdict
@@ -910,21 +985,44 @@ async function digestDatabase(db, { live = false, only = null, skipped = null } 
       key: live ? key : null,
       live,
     });
-    out.set(table, digestOf(rows, cols));
+    out.set(table, {
+      ...digestOf(rows, cols),
+      shape: shapeFingerprint(key, cols),
+    });
   }
   return out;
 }
 
-function printDigest(label, map) {
+function printDigest(label, map, runId = null) {
   console.log(`\n${label}`);
   let rows = 0;
-  for (const [table, { digest, count }] of [...map].sort()) {
+  const shapes = [];
+  for (const [table, { digest, count, shape }] of [...map].sort()) {
     rows += count;
-    console.log(`  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}`);
+    // THE SHAPE LINE NAMES ITS OWN RUN (#2281 r19). Binding it by
+    // POSITION — to whichever enumeration was open — is defeated by
+    // cropping the lines in between, which is the r15 lesson: a
+    // boundary read off the surroundings can always have the
+    // surroundings removed. The producer states the binding instead.
+    if (shape) {
+      shapes.push(
+        `  shape ${table.padEnd(28)} ${shape}` + (runId ? ` run:${runId}` : ""),
+      );
+    }
+    console.log(
+      `  ${table.padEnd(32)} ${String(count).padStart(6)}  ${digest}` +
+        (runId ? ` run:${runId}` : ""),
+    );
   }
   console.log(
-    `  ${'—'.repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)`,
+    `  ${"—".repeat(32)} ${String(rows).padStart(6)}  (${map.size} tables)` +
+      (runId ? ` run:${runId}` : ""),
   );
+  // AFTER the count line, so the line that closes the table-set reading
+  // still does (#2281 r13). These say how each table keys and projects
+  // its rows — the part of a manifest that content equality cannot
+  // speak for.
+  for (const line of shapes) console.log(line);
 }
 
 // ------------------------------------------------------------------- carry
@@ -976,13 +1074,13 @@ const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
  */
 const CREDENTIAL_KEY_COLUMNS = new Map([
   [
-    'telegram_links',
+    "telegram_links",
     {
-      columns: ['code'],
+      columns: ["code"],
       why:
-        'the primary key IS the six-digit handshake code, live for ten ' +
-        'minutes, and whoever holds it can bind that wallet to their own ' +
-        'Telegram chat',
+        "the primary key IS the six-digit handshake code, live for ten " +
+        "minutes, and whoever holds it can bind that wallet to their own " +
+        "Telegram chat",
     },
   ],
 ]);
@@ -1025,7 +1123,7 @@ const RUN_FINGERPRINT_KEY = randomBytes(32);
 
 export function makeFingerprinter(key) {
   return (v) =>
-    `fp:${createHmac('sha256', key).update(String(v)).digest('hex').slice(0, 12)}`;
+    `fp:${createHmac("sha256", key).update(String(v)).digest("hex").slice(0, 12)}`;
 }
 
 const fingerprint = makeFingerprinter(RUN_FINGERPRINT_KEY);
@@ -1062,14 +1160,13 @@ function assertRedactionsApply(table, cols) {
   if (missing.length === 0) return;
   fail(
     `"${table}" is declared as having credential-bearing key column(s) ` +
-      `${missing.map((c) => `"${c}"`).join(', ')}, and the table does not ` +
-      `have ${missing.length > 1 ? 'them' : 'it'} any more.\n\n` +
+      `${missing.map((c) => `"${c}"`).join(", ")}, and the table does not ` +
+      `have ${missing.length > 1 ? "them" : "it"} any more.\n\n` +
       `${declared.why}.\n\nA renamed or dropped column means the ` +
       `redaction silently stopped applying, and this tool prints keys. ` +
       `Update CREDENTIAL_KEY_COLUMNS in this file to match the schema.`,
   );
 }
-
 
 /**
  * THE MANIFEST — what the mirror carry saw, so the reconciliation after
@@ -1098,10 +1195,22 @@ function assertRedactionsApply(table, cols) {
  * the function, and a promise the runbook makes to an operator during a
  * cutover is not one to leave unexercised.
  */
-export function writeManifest(path, src, tables) {
+export function writeManifest(path, src, tables, provenance = null, opts = {}) {
   const doc = {
     source: { name: src.name, id: src.id },
     takenAt: new Date().toISOString(),
+    // PROVENANCE IS PART OF THE ARTIFACT, not of a run log that can be
+    // separated from it (#2281 r1). A manifest the MIRROR wrote observes
+    // the moment it describes. A manifest taken afterwards observes a
+    // LATER moment and only stands in for the earlier one — and which of
+    // the two a reader has in front of them changes what its contents
+    // mean. Leaving that distinction to a file kept somewhere else is a
+    // recovery artifact making a claim about itself that may be false.
+    provenance: provenance ?? {
+      producer: "carry --mirror",
+      observes: "the moment this manifest was taken",
+      standsFor: null,
+    },
     tables,
   };
   // 0600, because of what is in it. The manifest keys every row by its
@@ -1129,12 +1238,50 @@ export function writeManifest(path, src, tables) {
   // The temporary file carries the same 0600 for the same reason the
   // final one does — it holds the identical key inventory for as long as
   // it exists — and is removed if the rename cannot happen.
+  //
+  // AND THE REFUSAL TO REPLACE HAS TO BE PART OF THE PUBLICATION, not a
+  // test taken before it (#2281 r8). The manifest verb checks that its
+  // `--out` is free and then reads a remote database table by table,
+  // which takes minutes; a rename at the end of that replaces whatever
+  // is at the path by then. If the original manifest was restored from a
+  // backup in the meantime — precisely the thing the operator would be
+  // doing while a reconstruction runs — the reconstruction destroys the
+  // one artifact that observed the moment it describes, and the refusal
+  // printed in the help text was true only of the instant it was made.
+  //
+  // `link` fails with EEXIST rather than replacing, and it is the same
+  // atomic same-directory operation the rename was chosen for. Falling
+  // back to a replace when a filesystem cannot link would defeat the
+  // point, so a link that fails for any other reason is surfaced.
+  const noReplace = opts.noReplace === true;
   const tmp = `${path}.tmp-${process.pid}`;
   try {
     writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
     chmodSync(tmp, 0o600);
-    renameSync(tmp, path);
+    if (noReplace) {
+      linkSync(tmp, path);
+      unlinkSync(tmp);
+    } else {
+      renameSync(tmp, path);
+    }
   } catch (err) {
+    if (noReplace && err?.code === "EEXIST") {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // The manifest at `path` is what matters, and it is untouched.
+      }
+      fail(
+        `${path} was created while this manifest was being read, and ` +
+          `this verb will not replace it.\n\nThe read takes minutes. A ` +
+          `file that appeared during it is newer than the check that ` +
+          `found the path free — and if it is the original manifest, ` +
+          `restored, then replacing it with a reconstruction destroys ` +
+          `the only baseline that was ever a direct observation.\n\n` +
+          `The reconstruction was NOT written. Re-run it against a new ` +
+          `path if you still need one.`,
+      );
+    }
     try {
       unlinkSync(tmp);
     } catch {
@@ -1161,7 +1308,7 @@ export function writeManifest(path, src, tables) {
 function readManifest(path, src) {
   let doc;
   try {
-    doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc = JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
     fail(`could not read the manifest at ${path} — ${err.message}`);
   }
@@ -1173,35 +1320,87 @@ function readManifest(path, src) {
         `report every row as a conflict.`,
     );
   }
-  console.log(`  reconciling against the mirror of ${doc.takenAt}`);
+  // SAY WHICH KIND OF BASELINE THIS IS. Calling a reconstruction "the
+  // mirror of <date>" is the artifact's false provenance claim repeated
+  // by the tool that reads it (#2281 r1).
+  const prov = doc.provenance ?? { producer: "carry --mirror" };
+  if (prov.producer === "carry --mirror") {
+    console.log(`  reconciling against the mirror of ${doc.takenAt}`);
+  } else {
+    const read =
+      prov.readStartedAt && prov.readCompletedAt
+        ? `between ${prov.readStartedAt} and ${prov.readCompletedAt}`
+        : `at ${doc.takenAt}`;
+    console.log(
+      `  reconciling against a RECONSTRUCTED baseline, read from ` +
+        `${doc.source?.name} ${read} — NOT the record the mirror wrote.\n` +
+        `  It stands for: ${prov.standsFor}\n` +
+        `  Interval since the mirror: ${prov.interval ?? "NOT STATED"}\n` +
+        `  A write that committed before that reading is part of this ` +
+        `baseline and cannot be reported as late by any run using it.` +
+        (prov.interval === "covered"
+          ? // WHAT THE PROMOTION STANDS ON, HERE TOO (#2281 r14). This is
+            // the surface an operator consults before the rollback, and
+            // "covered" alone conceals a coverage that never established
+            // row identity — leaving the distinction in a JSON field
+            // somebody has to know to open. A dimension not compared is
+            // disclosed wherever the verdict is reported, not only where
+            // it was decided.
+            `\n  Covered on: ${(prov.coveredDimensions ?? ["rows", "sequences"]).join(", ")}` +
+            ((prov.coveredDimensions ?? []).includes("run-pairing")
+              ? ""
+              : `\n  NOT ESTABLISHED: that the table set and the ` +
+                `allocation marks in the evidence came from the SAME ` +
+                `"digest" run. Halves from two runs describe two ` +
+                `moments, and an identifier allocated and released ` +
+                `between them is absorbed into this baseline.`) +
+            ((prov.coveredDimensions ?? []).includes("shape")
+              ? ""
+              : `\n  NOT ESTABLISHED: how each table keys and projects ` +
+                `its rows at the mirror. The evidence carried no "shape" ` +
+                `lines, so a table recreated with a different primary ` +
+                `key over the same column-order values reads identical ` +
+                `to this baseline — and this run classifies rows by ` +
+                `exactly those fields.`)
+          : `\n  BECAUSE THAT INTERVAL IS ${(prov.interval ?? "not stated").toUpperCase()}, ` +
+            `a clean result here does NOT license the rollback's reverse ` +
+            `mirror. A late write absorbed into this baseline reads as ` +
+            `\`destination-moved\`, reports no conflict, and the reverse ` +
+            `mirror would then destroy the only copy of it.`),
+    );
+  }
   return doc.tables ?? {};
 }
 
 /** Chunk so a statement never exceeds the bound-parameter cap. */
 function chunk(items, perBatch) {
   const out = [];
-  for (let i = 0; i < items.length; i += perBatch) out.push(items.slice(i, i + perBatch));
+  for (let i = 0; i < items.length; i += perBatch)
+    out.push(items.slice(i, i + perBatch));
   return out;
 }
 
 async function upsert(dst, table, rows, cols, key, onlyMissing) {
   if (rows.length === 0) return 0;
-  const quoted = cols.map((c) => `"${c}"`).join(', ');
-  const conflict = key.map((c) => `"${c}"`).join(', ');
+  const quoted = cols.map((c) => `"${c}"`).join(", ");
+  const conflict = key.map((c) => `"${c}"`).join(", ");
   const nonKey = cols.filter((c) => !key.includes(c));
   // `DO NOTHING` is what --only-missing means at the statement level: an
   // existing row is left exactly as the destination has it. A key-only
   // table has nothing to update either way.
   const action =
     onlyMissing || nonKey.length === 0
-      ? 'NOTHING'
-      : `UPDATE SET ${nonKey.map((c) => `"${c}" = excluded."${c}"`).join(', ')}`;
+      ? "NOTHING"
+      : `UPDATE SET ${nonKey.map((c) => `"${c}" = excluded."${c}"`).join(", ")}`;
 
-  for (const batch of chunk(rows, Math.max(1, Math.floor(MAX_PARAMS / cols.length)))) {
+  for (const batch of chunk(
+    rows,
+    Math.max(1, Math.floor(MAX_PARAMS / cols.length)),
+  )) {
     await query(
       dst.id,
       `INSERT INTO "${table}" (${quoted}) VALUES ` +
-        batch.map(() => `(${cols.map(() => '?').join(', ')})`).join(', ') +
+        batch.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ") +
         ` ON CONFLICT (${conflict}) DO ${action}`,
       batch.flatMap((r) => cols.map((c) => r[c] ?? null)),
     );
@@ -1214,8 +1413,8 @@ async function deleteKeys(dst, table, keyRows, key) {
   const perBatch = Math.max(1, Math.floor(MAX_PARAMS / key.length));
   for (const batch of chunk(keyRows, perBatch)) {
     const predicate = batch
-      .map(() => `(${key.map((c) => `"${c}" = ?`).join(' AND ')})`)
-      .join(' OR ');
+      .map(() => `(${key.map((c) => `"${c}" = ?`).join(" AND ")})`)
+      .join(" OR ");
     await query(
       dst.id,
       `DELETE FROM "${table}" WHERE ${predicate}`,
@@ -1264,7 +1463,7 @@ export function situationOf({
 }) {
   const mirrored = mirroredHash !== undefined;
   if (destRow === undefined) {
-    if (!mirrored) return 'new-on-source';
+    if (!mirrored) return "new-on-source";
     // THE SOURCE'S OWN STATE STILL MATTERS WHEN THE DESTINATION HAS
     // DELETED THE ROW, and asking only about the destination hid half of
     // it (#2267 r27). If the source ALSO changed the row after the
@@ -1273,8 +1472,8 @@ export function situationOf({
     // "leave this alone", and the late source value is discarded on the
     // way to a clean pass.
     return mirroredHash === sourceHash
-      ? 'destination-deleted'
-      : 'destination-deleted-source-changed';
+      ? "destination-deleted"
+      : "destination-deleted-source-changed";
   }
   // THE DESTINATION'S ROW IS PROJECTED AS ITS OWN TABLE ACTUALLY IS
   // (#2267 r39). `destCols` is the destination's column set when the two
@@ -1301,16 +1500,21 @@ export function situationOf({
   // would read as agreement; that distinction is unrecoverable at the
   // destination anyway.
   if (mirrored) {
-    if (rowHash(destRow, cols, destCols) === sourceHash) return 'agreed';
+    if (rowHash(destRow, cols, destCols) === sourceHash) return "agreed";
   } else {
-    const shared = destCols === null ? cols : cols.filter((c) => destCols.has(c));
-    if (sourceRow !== null && canonical(destRow, shared) === canonical(sourceRow, shared)) {
-      return 'agreed';
+    const shared =
+      destCols === null ? cols : cols.filter((c) => destCols.has(c));
+    if (
+      sourceRow !== null &&
+      canonical(destRow, shared) === canonical(sourceRow, shared)
+    ) {
+      return "agreed";
     }
-    if (sourceRow === null && rowHash(destRow, cols) === sourceHash) return 'agreed';
-    return 'key-collision';
+    if (sourceRow === null && rowHash(destRow, cols) === sourceHash)
+      return "agreed";
+    return "key-collision";
   }
-  return mirroredHash === sourceHash ? 'destination-moved' : 'source-changed';
+  return mirroredHash === sourceHash ? "destination-moved" : "source-changed";
 }
 
 /**
@@ -1330,7 +1534,8 @@ export function splitUniquesByEvaluability(uniques, sourceCols) {
   const has = new Set(sourceCols);
   const usable = [];
   const unevaluable = [];
-  for (const u of uniques) (u.columns.every((c) => has.has(c)) ? usable : unevaluable).push(u);
+  for (const u of uniques)
+    (u.columns.every((c) => has.has(c)) ? usable : unevaluable).push(u);
   return { usable, unevaluable };
 }
 
@@ -1350,7 +1555,11 @@ export function splitUniquesByEvaluability(uniques, sourceCols) {
  *
  * Exported for `test/d1Reconcile.test.ts`.
  */
-export function stopsBeforeVerification({ reconciling, refused = [], conflicts = [] }) {
+export function stopsBeforeVerification({
+  reconciling,
+  refused = [],
+  conflicts = [],
+}) {
   return !reconciling && (refused.length > 0 || conflicts.length > 0);
 }
 
@@ -1386,7 +1595,7 @@ export function classifyAgainstManifestOnly({
   // terms. Two situations reach here and they are NOT the same fact: a
   // table a migration dropped, and one whose key it dropped — the second
   // still holds the data, which changes what the operator does next.
-  why = 'the destination has since DROPPED this table, so nothing here can be applied where the data now lives',
+  why = "the destination has since DROPPED this table, so nothing here can be applied where the data now lives",
 }) {
   if (wasSeen === null || wasSeen === undefined) {
     return {
@@ -1394,11 +1603,11 @@ export function classifyAgainstManifestOnly({
       conflicts: [
         {
           table,
-          kind: 'no record',
+          kind: "no record",
           detail:
-            'the destination no longer has this table and the manifest ' +
-            'has no record of it either, so nothing can be said about ' +
-            'what the source holds here',
+            "the destination no longer has this table and the manifest " +
+            "has no record of it either, so nothing can be said about " +
+            "what the source holds here",
         },
       ],
     };
@@ -1426,13 +1635,14 @@ export function classifyAgainstManifestOnly({
   let deleted = 0;
   for (const k of Object.keys(wasSeen)) if (!present.has(k)) deleted += 1;
 
-  if (added === 0 && changed === 0 && deleted === 0) return { insert: [], conflicts: [] };
+  if (added === 0 && changed === 0 && deleted === 0)
+    return { insert: [], conflicts: [] };
   return {
     insert: [],
     conflicts: [
       {
         table,
-        kind: 'written to after the mirror, in a table this run cannot compare',
+        kind: "written to after the mirror, in a table this run cannot compare",
         detail:
           `${added} row(s) added, ${changed} changed and ${deleted} ` +
           `DELETED on the source since the mirror, and ${why}. Decide ` +
@@ -1460,10 +1670,10 @@ export function classifyForReconcile({
   if (wasSeen === null || wasSeen === undefined) {
     conflicts.push({
       table,
-      kind: 'no record',
+      kind: "no record",
       detail:
-        'the manifest has no record of this table, so none of the cases ' +
-        'below can be told apart from the destination simply moving on',
+        "the manifest has no record of this table, so none of the cases " +
+        "below can be told apart from the destination simply moving on",
     });
     return { insert, conflicts };
   }
@@ -1505,20 +1715,20 @@ export function classifyForReconcile({
     // branch that stopped asking one of the three questions — and neither
     // was visible at the point of the edit.
     switch (situation) {
-      case 'agreed':
+      case "agreed":
         // The two sides hold the same row. Whatever the manifest says,
         // there is nothing to reconcile: this covers a row a previous
         // pass carried and a conflict an operator has already resolved.
         break;
 
-      case 'destination-moved':
+      case "destination-moved":
         // The source is exactly as the mirror saw it, so only the
         // destination changed — which after the switch is the live
         // database doing its job, `indexer_cursor` advancing every
         // minute. Not a conflict.
         break;
 
-      case 'new-on-source': {
+      case "new-on-source": {
         // Absent by primary key is not the same as insertable: a
         // secondary unique index can already hold this row's tuple under
         // another key, and `ON CONFLICT (pk)` would not catch it.
@@ -1529,7 +1739,7 @@ export function classifyForReconcile({
           conflicts.push({
             table,
             key: safeKey(table, key, k),
-            kind: 'already present under a different key',
+            kind: "already present under a different key",
             // THE OTHER KEY IS A KEY TOO (#2267 r41). It was interpolated
             // raw while this finding's own key went through `safeKey`,
             // which is the same defect the redaction exists to prevent,
@@ -1538,7 +1748,7 @@ export function classifyForReconcile({
             // credential into output that gets pasted into run logs.
             detail:
               `the destination holds a row with the same ${clash.u.columns.join(
-                '+',
+                "+",
               )} under key ${safeKey(table, key, clash.u.byValue.get(clash.t))} — ` +
               `the same logical row reached both sides and was numbered ` +
               `differently`,
@@ -1549,55 +1759,55 @@ export function classifyForReconcile({
         break;
       }
 
-      case 'key-collision':
+      case "key-collision":
         conflicts.push({
           table,
           key: safeKey(table, key, k),
-          kind: 'key allocated on both sides',
+          kind: "key allocated on both sides",
           detail:
-            'this key is new on the source since the mirror and the ' +
-            'destination holds a DIFFERENT row under it — two records ' +
-            'with one id, which an insert would silently drop',
+            "this key is new on the source since the mirror and the " +
+            "destination holds a DIFFERENT row under it — two records " +
+            "with one id, which an insert would silently drop",
         });
         break;
 
-      case 'source-changed':
+      case "source-changed":
         conflicts.push({
           table,
           key: safeKey(table, key, k),
-          kind: 'changed on the source after the mirror',
+          kind: "changed on the source after the mirror",
           detail:
-            'the destination holds a different row under that key. ' +
-            'Resolve it by making the two sides agree; a later pass then ' +
-            'passes over it silently',
+            "the destination holds a different row under that key. " +
+            "Resolve it by making the two sides agree; a later pass then " +
+            "passes over it silently",
         });
         break;
 
-      case 'destination-deleted':
+      case "destination-deleted":
         conflicts.push({
           table,
           key: safeKey(table, key, k),
-          kind: 'deleted on the destination',
+          kind: "deleted on the destination",
           detail:
-            'the mirror carried this row and the destination no longer ' +
-            'has it, so it was deleted there — re-inserting it would undo ' +
-            'that, and such a deletion may be a retention or privacy ' +
-            'obligation',
+            "the mirror carried this row and the destination no longer " +
+            "has it, so it was deleted there — re-inserting it would undo " +
+            "that, and such a deletion may be a retention or privacy " +
+            "obligation",
         });
         break;
 
-      case 'destination-deleted-source-changed':
+      case "destination-deleted-source-changed":
         conflicts.push({
           table,
           key: safeKey(table, key, k),
-          kind: 'deleted on the destination, and CHANGED on the source',
+          kind: "deleted on the destination, and CHANGED on the source",
           detail:
-            'the destination deleted this row — which may be a retention ' +
-            'or privacy obligation — AND the source has changed it since ' +
-            'the mirror, so there is a late source value here that no ' +
-            'reading of the destination will show. Both facts belong in ' +
-            'the decision: restoring the row undoes a deliberate deletion, ' +
-            'and leaving it discards the newer value',
+            "the destination deleted this row — which may be a retention " +
+            "or privacy obligation — AND the source has changed it since " +
+            "the mirror, so there is a late source value here that no " +
+            "reading of the destination will show. Both facts belong in " +
+            "the decision: restoring the row undoes a deliberate deletion, " +
+            "and leaving it discards the newer value",
         });
         break;
 
@@ -1641,19 +1851,1076 @@ export function classifyForReconcile({
       table,
       key: safeKey(table, key, k),
       kind: unchangedSinceMirror
-        ? 'deleted on the source after the mirror'
-        : 'deleted on the source, and CHANGED on the destination',
+        ? "deleted on the source after the mirror"
+        : "deleted on the source, and CHANGED on the destination",
       detail: unchangedSinceMirror
-        ? 'the destination still holds the row the mirror carried, so it ' +
-          'is stale there — but whether to delete it is a decision this ' +
-          'tool will not make on a live database'
-        : 'the source deleted it and the destination now holds a ' +
-          'DIFFERENT row under the same key, so the destination has its ' +
-          'own newer value. Deleting it would discard that; this is a ' +
-          'decision, not a stale row',
+        ? "the destination still holds the row the mirror carried, so it " +
+          "is stale there — but whether to delete it is a decision this " +
+          "tool will not make on a live database"
+        : "the source deleted it and the destination now holds a " +
+          "DIFFERENT row under the same key, so the destination has its " +
+          "own newer value. Deleting it would discard that; this is a " +
+          "decision, not a stale row",
     });
   }
   return { insert, conflicts };
+}
+
+/**
+ * A fingerprint of a table's ROW IDENTITY and PROJECTION.
+ *
+ * Coverage compared contents and allocations and nothing else, so it
+ * never established that a reconstruction keys and projects its rows the
+ * way the mirror-time baseline did (#2281 r13). A migration after the
+ * mirror can rename a column, or recreate a table with a different
+ * primary key over the same column-order values: `digestOf` reads the
+ * same bytes in the same order and returns the same digest, the
+ * sequence need not move, and the artifact is promoted with different
+ * `key` and `cols` than the mirror would have written. Reconciliation
+ * then classifies rows by those fields and licenses a reverse mirror on
+ * the strength of it.
+ *
+ * Content equality is not manifest equality, and this is the part of a
+ * manifest that content cannot speak for.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function shapeFingerprint(key, cols) {
+  return createHash("sha256")
+    .update(JSON.stringify({ key: key ?? [], cols: cols ?? [] }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * The container a manifest's tables go in — prototype-free, always.
+ *
+ * A TABLE MAY BE CALLED `__proto__` (#2281 r10). It is a legal SQLite
+ * identifier and it matches every table-name pattern in this file.
+ * Assigned onto a plain object it invokes the legacy prototype setter
+ * instead of creating an own property, so the table is read and
+ * digested and then vanishes: `Object.keys`, `Object.entries` and
+ * `JSON.stringify` all skip it, and the baseline is written without it
+ * and without a refusal naming it — a silently incomplete record of
+ * what a database held, which is the one thing this artifact must not
+ * be.
+ *
+ * It is a named function rather than two `Object.create(null)` calls so
+ * the rule has one home, and a third place that builds a manifest
+ * cannot quietly reintroduce a plain object.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function newManifestTables() {
+  return Object.create(null);
+}
+
+/**
+ * ONE PER-TABLE MANIFEST ENTRY, built in one place because there are now
+ * two producers of it — the mirror, and `manifest` — and a baseline whose
+ * shape depends on which verb wrote it is a baseline the reconciliation
+ * cannot read (#2281).
+ *
+ * `seq` is the allocation high-water mark, so a later reconciliation can
+ * see the source allocate past it (#2267 r36). ZERO AND NULL MEAN
+ * DIFFERENT THINGS (#2267 r37): a table that has never allocated has a
+ * KNOWN baseline of zero, while `null` means the baseline is unknown and
+ * the comparison skips it. A straggler inserting and then deleting the
+ * FIRST row of `diag_legal_hold_audit` is exactly the case that
+ * distinction catches.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function manifestEntry({ key, cols, seq, rows, digest = undefined }) {
+  // `digest` is the content digest of the reading this entry was built
+  // from. The mirror does not record one (its own verification covers
+  // it); a reconstruction does, because promoting it to "covered" means
+  // comparing it with what was recorded at the mirror, and that
+  // comparison has to be possible from the artifact alone (#2281 r3).
+  return digest === undefined
+    ? { key, cols, seq, rows }
+    : { key, cols, seq, rows, digest };
+}
+
+/**
+ * Take a manifest from ONE database, writing to none.
+ *
+ * WHY THIS EXISTS (#2281). A manifest is a record of what a database held
+ * at a moment, and nothing about that requires a write. Until now the
+ * only thing that produced one was `carry --mirror` — so the baseline
+ * that `reconcile` refuses to run without, and that the documented
+ * rollback consumes before its reverse mirror, could only be obtained by
+ * writing to a destination. After the cutover that destination is LIVE,
+ * which makes re-taking a lost baseline strictly worse than the problem:
+ * a mirror would roll the live database's newer rows back to the retained
+ * source's stale ones.
+ *
+ * That left the baseline an irreplaceable artifact in the middle of a
+ * recovery procedure, which is the kind of thing that should not be
+ * irreplaceable. This makes it reproducible.
+ *
+ * WHAT IT DOES NOT KNOW, and says so rather than implying otherwise: it
+ * records the source AS IT IS NOW. That is a valid substitute for the
+ * mirror's baseline only if the source has not changed since the mirror —
+ * true of a retained predecessor that no Worker binds any more, and NOT
+ * something this tool can establish on its own. Establishing it is what
+ * the digest comparison is for, and the caller is told to do it.
+ *
+ * The read is the same two-pass gate the mirror uses, so a source that is
+ * still moving fails here rather than producing a baseline that describes
+ * no moment at all.
+ */
+/**
+ * Parse the evidence file `cover` checks a reconstruction against.
+ *
+ * It is whatever the operator recorded AT the mirror, pasted in: lines of
+ * `<table> <digest>` and lines of `seq <table> <n>`. Anything else — row
+ * counts, prose, the run log's own headings — is ignored, because the
+ * file people actually have is a copy-paste of a terminal, not a format
+ * anyone designed.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function parseEvidence(text) {
+  const digests = new Map();
+  // Every shape line anywhere, so a disagreement between runs is still
+  // a conflict. What `cover` COMPARES against comes from paired
+  // readings only — see `shapes` below.
+  const shapeLines = new Map();
+  let openRun = null;
+  // A RUN LOG HOLDS SEVERAL READINGS, AND THEY MAY DISAGREE (#2281 r4).
+  // The documented barrier takes two digests ten minutes apart and a
+  // third after the carry, so pasting the log in means repeated table
+  // names. Taking the LAST silently prefers the reading that agrees with
+  // the reconstruction — which is precisely backwards when a straggler
+  // changed a row during the mirror: the earlier reading differs, the
+  // later one matches, and coverage would be granted over the top of the
+  // recorded disagreement. Identical repeats are fine and expected; a
+  // disagreement is evidence in itself and is kept as one.
+  const conflicts = [];
+  const put = (map, kind, table, value) => {
+    const had = map.get(table);
+    if (had !== undefined && had !== value) {
+      conflicts.push(
+        `${table}: the evidence gives two different ${kind} readings — ` +
+          `${had} and ${value}. Something changed between them, so ` +
+          `neither can stand for the mirror on its own`,
+      );
+      return;
+    }
+    map.set(table, value);
+  };
+
+  // THREE THINGS ARE BEING READ OUT OF ONE PASTED LOG, AND THEY HAVE
+  // THEIR OWN BOUNDARIES (#2281 r9 — the root of rounds 5 through 9).
+  //
+  // Every round since r5 has found another way for this parser to reach
+  // a clean verdict over a log that records a change, and every one was
+  // the same underlying mistake: ONE block structure, delimited by the
+  // sequence marker, doing duty for three separate questions. A digest
+  // block whose count line is present but whose `seq-listing complete`
+  // is missing merged into the next run and overwrote its count. A
+  // digest block with no count line, closed by a sequence marker, was
+  // neither an enumeration nor "trailing", so the tables it named
+  // stopped counting as named at all. Patching either in place would
+  // have left the other, and the next one after that.
+  //
+  // So the text is read as three things that do not share a delimiter:
+  //
+  //   ENUMERATIONS — digest lines closed by `printDigest`'s own
+  //     rule-and-count line. Nothing else closes one. An enumeration is
+  //     a reading of the WHOLE table set, so what it does not name was
+  //     not there; that is the only thing in this file that can say so.
+  //     A count that disagrees with the lines present means a part
+  //     paste, and it is reported and not used.
+  //
+  //   SEQUENCE READINGS — `seq` lines closed by `seq-listing complete`.
+  //     Within one, a table the evidence names anywhere and this
+  //     reading does not is a known zero.
+  //
+  //   APPEARANCES — every table named by any line anywhere, closed
+  //     block or not, digest line or sequence line. Each one names a
+  //     table that was there when the line was written.
+  //
+  // The asymmetry from r7 is now the whole rule, and it needs no cases:
+  // a table that APPEARS anywhere and is MISSING from any enumeration is
+  // a table set that changed between two moments in the log. It does not
+  // matter which came first — either direction is a change — so there is
+  // no ordering to get wrong, and no "trailing" special case to forget.
+  // A RUN'S EVIDENCE IS THE SET OF LINES THAT NAME IT (#2281 r20).
+  //
+  // Every positional rule in this parser has now been defeated by a
+  // crop: the pairing of halves (r12-r15), the binding of shape lines
+  // (r16-r19), and finally the digest lines themselves — leave one line
+  // of run A after its summary is cropped, and it joins run B's lines
+  // in the block that B's summary closes, producing an enumeration
+  // whose declared count matches and whose table set no run ever read.
+  //
+  // So `digest` now names its run on EVERY line it emits, and lines are
+  // grouped by the name rather than by what surrounds them. Nothing a
+  // crop leaves behind can join a run it does not name.
+  //
+  // Lines carrying no name at all are legacy evidence, written before
+  // the identifier existed. They still accumulate positionally, because
+  // there is nothing else to go on — and they can only ever form an
+  // UNIDENTIFIED reading, which cannot pair and is disclosed as such.
+  const byRun = new Map();
+  const closedSeqRuns = new Set();
+  // A RUN IS CLOSED BY ITS MARKER, AND CLOSED MEANS CLOSED (#2281 r24).
+  // Counts were checked against the LIVE per-run maps, so a line naming
+  // a run whose listing had already been accepted still landed in it:
+  // `seq t 5 run:A`, the marker declaring one entry, then `seq x 7
+  // run:A` — validated at one, used as two. `digest` never emits a line
+  // for a run after that run's marker, so one that appears has been
+  // added by hand or assembled from elsewhere.
+  const closedRuns = new Set();
+  const namesClosedRun = (id) => {
+    if (!id || !closedRuns.has(id)) return false;
+    conflicts.push(
+      `a line names run ${id} after that run's listing was closed. ` +
+        `Nothing this tool writes does that, so the evidence has been ` +
+        `assembled or edited — and a line accepted after its listing was ` +
+        `counted is a value the count never saw`,
+    );
+    return true;
+  };
+  const runOf = (id) => {
+    if (!byRun.has(id)) {
+      byRun.set(id, { digests: new Map(), shapes: new Map(), seqs: new Map() });
+    }
+    return byRun.get(id);
+  };
+  const enumerations = [];
+  const seqReadings = [];
+  const unterminatedSeqs = [];
+  let openDigests = new Map();
+  let openSeqs = new Map();
+  let sawAnyComplete = false;
+  const mentioned = new Set();
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    // Closes a SEQUENCE reading, and only that.
+    // THE PRODUCER'S MARKER, NOT A PREFIX OF IT (#2281 r18). Every other
+    // line this parser recognises is matched by an anchored pattern;
+    // this one tested `startsWith`, so `seq-listing complete run:aa0001
+    // WAS NOT CAPTURED` — a note an operator might reasonably write
+    // beside a listing they could not take — parsed as a CLOSED reading,
+    // and every table it did not mention became a stated zero. A
+    // reconstruction carrying those zeros then passed.
+    //
+    // `digest` emits exactly two forms, with and without the
+    // never-allocated note, so those are the two accepted.
+    const done =
+      /^seq-listing complete(?:\s+run:([0-9a-f]{6,64}))?(?:\s+\((\d+) entries\))?(?:\s+\(nothing has ever allocated here\))?$/.exec(
+        line,
+      );
+    if (done) {
+      const bucket = done[1] ? runOf(done[1]) : null;
+      // A MARKER THAT NAMES ITS RUN ALSO STATES ITS COUNT (#2281 r23).
+      // Both come from the same emitter, so an id without a count is a
+      // hand-edit or a crop — and leaving the count optional meant such
+      // a marker paired, recorded `run-pairing`, and skipped the very
+      // disclosure that says its completeness was never verifiable. The
+      // strongest-looking evidence carried the weakest guarantee.
+      if (done[1] && done[2] === undefined) {
+        conflicts.push(
+          `a sequence listing names run ${done[1]} but states no entry ` +
+            `count. A listing that names its run is written by a command ` +
+            `that also counts its entries, so this one has been altered ` +
+            `or cropped — and without the count a dropped line cannot be ` +
+            `told from a table that never allocated`,
+        );
+        closedSeqRuns.add(done[1]);
+        continue;
+      }
+      // A DECLARED COUNT IS CHECKED, exactly as the digest block's is.
+      // A listing short of what it declares was pasted in part, so its
+      // silences are not zeros and it is not a closed reading at all.
+      if (done[2] !== undefined) {
+        const present = (bucket ? bucket.seqs : openSeqs).size;
+        if (Number(done[2]) !== present) {
+          conflicts.push(
+            `a sequence listing declares ${done[2]} entr(ies) and carries ` +
+              `${present}. Part of it is missing, so a table it does not ` +
+              `name cannot be read as one that never allocated`,
+          );
+          if (done[1]) closedSeqRuns.add(done[1]);
+          else openSeqs = new Map();
+          continue;
+        }
+      }
+      if (done[1]) {
+        closedSeqRuns.add(done[1]);
+        closedRuns.add(done[1]);
+      }
+      seqReadings.push({
+        // A SNAPSHOT, taken after the count was validated. With the
+        // closed-run guard above in place no input can reach this — it
+        // is defence in depth against a future path that fills a bucket
+        // without passing the line guard, not a second check, and it is
+        // not independently reachable today.
+        seqs: bucket ? new Map(bucket.seqs) : openSeqs,
+        run: done[1] ?? null,
+      });
+      if (!bucket) openSeqs = new Map();
+      openRun = null;
+      sawAnyComplete = true;
+      continue;
+    }
+    // Closes a DIGEST reading. `printDigest` prints this line at the end
+    // of every run, including when the count is zero — which is why an
+    // empty enumeration is still an enumeration.
+    //
+    // AND IT MARKS THE START OF A RUN'S SEQUENCE SECTION (#2281 r10).
+    // One `digest` run prints its digests, then this line, then its
+    // `seq` lines, then `seq-listing complete`. So a count line can only
+    // appear once a NEW run's output has begun — and any sequence block
+    // still open at that point belongs to a previous run whose closing
+    // marker is not in the file.
+    //
+    // Left merged, the two runs' sequence lines become one map that the
+    // NEXT marker closes as a single complete reading. A table at 5 in
+    // the first run and omitted from the second — a known zero, which is
+    // a RESET — then reads as one reading of 5, and a reconstruction
+    // sitting at 5 passes over a log that proves the sequence moved.
+    const tot =
+      /^[—–\-]{3,}\s+\d+\s+\((\d+)\s+tables?\)(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
+    if (tot) {
+      const bucket = tot[2] ? runOf(tot[2]) : null;
+      const entry = {
+        // A SNAPSHOT, not the live map the count was checked against —
+        // same defence in depth as the sequence side below.
+        digests: bucket ? new Map(bucket.digests) : openDigests,
+        declared: Number(tot[1]),
+        run: tot[2] ?? null,
+        shapes: bucket ? bucket.shapes : new Map(),
+      };
+      enumerations.push(entry);
+      openRun = entry;
+      if (!bucket) openDigests = new Map();
+      if (openSeqs.size > 0) {
+        // Never closed, so it contributes its values and no zeros.
+        unterminatedSeqs.push(openSeqs);
+        openSeqs = new Map();
+      }
+      continue;
+    }
+    // `shape <table> <16-hex>` — how that table keyed and projected its
+    // rows at the moment of the reading (#2281 r13). It is a value like
+    // the digest, not a boundary: it closes nothing.
+    const shp =
+      /^shape\s+([A-Za-z_][A-Za-z0-9_]*)\s+([0-9a-f]{16})(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
+    if (shp) {
+      if (namesClosedRun(shp[3])) continue;
+      mentioned.add(shp[1]);
+      // A SHAPE BELONGS TO THE RUN IT NAMES (#2281 r19, replacing the
+      // positional binding of r16).
+      //
+      // r16 attached a shape line to whichever enumeration was open.
+      // That is a boundary read off the surroundings, and the
+      // surroundings can be cropped: run 1 keeps its count line and
+      // loses its shape and sequence section, run 2 keeps a
+      // post-migration shape and its marker and loses its count line —
+      // and run 2's shape lands on run 1. Closing the open run at the
+      // next digest line does not fix it either, because a crop can
+      // remove the digest lines too. The same door, a fourth time.
+      //
+      // So the producer states the binding, exactly as it does for the
+      // two lines that close a run. A shape that names no run, or names
+      // one with no enumeration, binds to nothing — it is still
+      // recorded for conflict detection, because two runs disagreeing
+      // about a table's shape is evidence wherever the lines sit.
+      put(shapeLines, "shape", shp[1], shp[2]);
+      // AN ANONYMOUS SHAPE BINDS TO NOTHING (#2281 r20). The r19
+      // fallback kept the positional rule alive for legacy evidence: an
+      // anonymous run keeping its enumeration but losing its shape and
+      // sequence section, then a cropped run contributing only a
+      // post-migration anonymous shape, still landed on the first. A
+      // shape that cannot say which reading observed it cannot
+      // substantiate any reading — and legacy evidence carries no shape
+      // lines at all, so nothing real is lost by refusing to guess.
+      if (shp[3]) runOf(shp[3]).shapes.set(shp[1], shp[2]);
+      continue;
+    }
+    const seq =
+      /^seq\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
+    if (seq) {
+      if (namesClosedRun(seq[3])) continue;
+      mentioned.add(seq[1]);
+      // EXACTLY, or not at all (#2281 r11) — the same rule the manifest
+      // reader holds to. A mark this file cannot tell apart from its
+      // neighbour must not be compared as though it could.
+      const value = exactSequence(seq[2]);
+      if (value === null) {
+        conflicts.push(
+          `${seq[1]}: the evidence records a sequence of ${seq[2]}, which ` +
+            `is outside the range this tool can compare exactly. Two ` +
+            `different marks in that range read as the same number here, ` +
+            `so it cannot stand for the mirror`,
+        );
+        continue;
+      }
+      const had = seq[3]
+        ? runOf(seq[3]).seqs.get(seq[1])
+        : openSeqs.get(seq[1]);
+      if (had !== undefined && had !== value) {
+        conflicts.push(
+          `${seq[1]}: one sequence listing gives it twice, as ${had} and ` +
+            `${seq[2]}`,
+        );
+      }
+      if (seq[3]) runOf(seq[3]).seqs.set(seq[1], value);
+      else openSeqs.set(seq[1], value);
+      continue;
+    }
+    // `<table> [rowcount] <16-hex>` — the digest command prints a count
+    // between them, and a hand-kept note may not.
+    const dig =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s+(?:\d+\s+)?([0-9a-f]{16})(?:\s+run:([0-9a-f]{6,64}))?$/.exec(
+        line,
+      );
+    if (dig) {
+      if (namesClosedRun(dig[3])) continue;
+      mentioned.add(dig[1]);
+      if (dig[3]) runOf(dig[3]).digests.set(dig[1], dig[2]);
+      else openDigests.set(dig[1], dig[2]);
+      put(digests, "digest", dig[1], dig[2]);
+    }
+  }
+  // Whatever is still open was never closed, so it names tables — which
+  // `mentioned` already holds — and says nothing by omission.
+  if (openSeqs.size > 0) unterminatedSeqs.push(openSeqs);
+  // AND A NAMED BUCKET WHOSE MARKER NEVER ARRIVED (#2281 r21). Moving
+  // sequence lines into per-run buckets made an unclosed named run
+  // vanish: its `seq` lines were filed under its name, no reading was
+  // ever created for it, and only the ANONYMOUS leftovers were kept as
+  // partial observations. A line proving an allocation was therefore
+  // dropped from the comparison entirely — evidence deleted by being
+  // filed, which is worse than evidence never read.
+  //
+  // An unclosed named bucket is an unterminated block like any other:
+  // it contributes the values it states and no zeros, because nothing
+  // says its silences are complete.
+  for (const [id, bucket] of byRun) {
+    if (bucket.seqs.size > 0 && !closedSeqRuns.has(id)) {
+      unterminatedSeqs.push(bucket.seqs);
+    }
+  }
+
+  // A declared count that does not match the lines present means the
+  // block was pasted in part. It is then not a reading of the table set
+  // either, and it says so rather than being quietly downgraded.
+  const readings = enumerations.filter((e, i) => {
+    if (e.declared === e.digests.size) return true;
+    conflicts.push(
+      `complete reading ${i + 1} declares ${e.declared} table(s) but ` +
+        `carries ${e.digests.size} digest line(s). Part of it is ` +
+        `missing, so what it does not name cannot be read as a table ` +
+        `that was not there`,
+    );
+    return false;
+  });
+
+  // THE TABLE SET, in one rule: named anywhere, missing from a reading
+  // of the whole set.
+  for (const table of mentioned) {
+    const missing = readings.filter((e) => !e.digests.has(table)).length;
+    if (missing === 0) continue;
+    conflicts.push(
+      `${table}: the evidence has ${readings.length} complete reading(s) ` +
+        `of the table set and this table is missing from ${missing} of ` +
+        `them, while being named elsewhere in the same evidence. A table ` +
+        `that comes or goes between readings is a database that changed, ` +
+        `whatever the digests say`,
+    );
+  }
+
+  // PAIRING IS STATED, NOT INFERRED (#2281 r15). Rounds 12 through 15
+  // each found another crop that joined one run's tables to another
+  // run's allocations, and each fix read the boundary off a line that
+  // happened to be present — a digest line, a repeated shape line.
+  // There was always another crop, because the boundary was never IN
+  // the evidence. It is now: both lines that close a run carry the same
+  // `run:<id>`, and halves pair when they agree on it.
+  //
+  // Evidence recorded before the identifier existed carries none. That
+  // pairing cannot be established at all — a single enumeration and a
+  // single sequence listing look identical whether they came from one
+  // run or two — so it is reported as unestablished rather than
+  // guessed. The caller decides what to do about it; this function does
+  // not pretend to know.
+  const runsWithIds = new Set(
+    [...readings, ...seqReadings].map((r) => r.run).filter(Boolean),
+  );
+  const paired = [...runsWithIds].filter(
+    (id) =>
+      readings.some((e) => e.run === id) &&
+      seqReadings.some((r) => r.run === id),
+  );
+  const unidentified =
+    readings.filter((e) => !e.run).length +
+    seqReadings.filter((r) => !r.run).length;
+
+  const seqs = new Map();
+  for (const table of mentioned) {
+    // ONE RULE OVER EVERY BLOCK (#2281 r10). A CLOSED reading always
+    // observes a value — no line inside one means zero. An UNTERMINATED
+    // block observes a value only where it has a line, because its
+    // silences may be a truncated paste rather than a zero. There can be
+    // several unterminated blocks now that a digest summary parks one,
+    // so this is a fold over observations rather than a closed pass with
+    // a trailing special case bolted on.
+    const seen = [
+      ...seqReadings.map((r) => (r.seqs.has(table) ? r.seqs.get(table) : 0)),
+      ...unterminatedSeqs.filter((r) => r.has(table)).map((r) => r.get(table)),
+    ];
+    let agreed;
+    for (const value of seen) {
+      if (agreed === undefined) {
+        agreed = value;
+      } else if (agreed !== value) {
+        conflicts.push(
+          `${table}: the evidence gives two different sequence readings — ` +
+            `${agreed} and ${value}. Something allocated between them, so ` +
+            `neither can stand for the mirror on its own`,
+        );
+        agreed = undefined;
+        break;
+      }
+    }
+    if (agreed !== undefined) seqs.set(table, agreed);
+  }
+
+  // EVERY COMPLETE READING THAT SAW THE TABLE MUST STATE IT, or the
+  // dimension is not established for that table (#2281 r17 — the root
+  // of r13, r16 and r17 together).
+  //
+  // Three rounds each fixed a different way for shape evidence to be
+  // ASSEMBLED out of several readings: taken globally, then unioned
+  // across paired runs, then an absent shape in one run answered by a
+  // present one in another. Each fix narrowed the assembly. The
+  // assembly was the defect.
+  //
+  // What the other two dimensions have and this one lacked is that
+  // THEIR ABSENCE IS ITSELF A STATEMENT. An enumeration names every
+  // table it read, so a table missing from one is a table that was not
+  // there — the table-set rule. A closed sequence listing means a
+  // missing line is a stated zero — the r5 rule. A missing SHAPE line
+  // says nothing at all, and nothing was making that silence count.
+  //
+  // So shape is held to the same standard the other two already meet:
+  // for each table, every paired run that ENUMERATED it must also state
+  // its shape, and they must agree. `printDigest` emits a shape for
+  // every table it enumerates, so a genuine run always satisfies this;
+  // what it rejects is a file assembled from runs that did not each
+  // observe it. One reading that stayed silent is missing evidence, not
+  // agreement — and `cover` then declines to claim the dimension rather
+  // than claiming it from whichever reading happened to speak.
+  // EVERY complete reading, not only the paired ones (#2281 r18). The
+  // rule above says "every complete reading that saw the table", and
+  // the first implementation of it filtered to paired runs — so an
+  // ANONYMOUS mirror-time reading that enumerated the table and said
+  // nothing about its shape did not block the dimension, and a later
+  // identified run supplied the post-migration answer. Narrowing the
+  // rule to the readings that carry an identifier is exactly the
+  // assembly this rule exists to stop; a reading enumerated the table
+  // or it did not, and whether it named its run has no bearing on
+  // whether its silence is evidence.
+  const shapes = new Map();
+  for (const table of mentioned) {
+    const sawIt = readings.filter((e) => e.digests.has(table));
+    if (sawIt.length === 0) continue;
+    const stated = sawIt.map((e) => e.shapes.get(table));
+    if (stated.some((v) => v === undefined)) continue;
+    if (new Set(stated).size > 1) {
+      conflicts.push(
+        `${table}: complete readings disagree about how it keys and ` +
+          `projects its rows — ${[...new Set(stated)].join(" and ")}. The ` +
+          `table was REDECLARED between them, so neither can stand for ` +
+          `the mirror`,
+      );
+      continue;
+    }
+    shapes.set(table, stated[0]);
+  }
+
+  return {
+    digests,
+    shapes,
+    shapeLines,
+    seqs,
+    seqListingComplete: sawAnyComplete,
+    // HOW MANY CLOSED READINGS THERE WERE, so a caller can tell an
+    // evidence file that says nothing from one that says the database
+    // was empty (#2281 r9). Both have empty maps.
+    readings: {
+      tableSets: readings.length,
+      sequences: seqReadings.length,
+      // How many runs closed BOTH halves, with the enumeration still
+      // valid — the only kind of reading that describes one moment.
+      paired: paired.length,
+      // Halves that CARRY an identifier and did not find their partner.
+      // Each is a run whose other half is missing from the file.
+      unpaired:
+        readings.filter((e) => e.run && !paired.includes(e.run)).length +
+        seqReadings.filter((r) => r.run && !paired.includes(r.run)).length,
+      // Halves that carry NO identifier, so nothing about them can be
+      // paired or refuted. Evidence recorded before `run:<id>` existed
+      // is entirely of this kind.
+      unidentified,
+    },
+    conflicts,
+  };
+}
+
+/**
+ * Does this evidence substantiate this reconstruction?
+ *
+ * BOTH DIMENSIONS OR NEITHER (#2281 r3). Row digests alone are not
+ * enough: a straggler that inserts an AUTOINCREMENT row after the mirror
+ * and deletes it again leaves every row digest and count identical while
+ * `sqlite_sequence` has advanced. A reconstruction absorbs that advanced
+ * value, and promoting it on row evidence alone would make
+ * `compareSequences` treat the late allocation as original — switching
+ * off the one check written for exactly that case.
+ *
+ * So a table with no sequence evidence is not covered, even when its
+ * rows agree. Saying "the rows match, so it is fine" is the whole
+ * mistake this function exists to prevent.
+ *
+ * Exported for `test/d1Reconcile.test.ts`.
+ */
+export function coverageProblems(tables, evidence) {
+  // A disagreement inside the evidence is reported before anything is
+  // compared against it: there is no single reading to compare with.
+  const problems = [...(evidence.conflicts ?? [])];
+  for (const [table, entry] of Object.entries(tables)) {
+    const expectedDigest = evidence.digests.get(table);
+    if (expectedDigest === undefined) {
+      problems.push(`${table}: the evidence records no digest for it`);
+    } else if (entry.digest === undefined) {
+      problems.push(
+        `${table}: this artifact records no digest, so nothing can be ` +
+          `compared — it predates the field and cannot be promoted`,
+      );
+    } else if (entry.digest !== expectedDigest) {
+      problems.push(
+        `${table}: the evidence says ${expectedDigest}, this baseline ` +
+          `read ${entry.digest} — the source CHANGED between the two`,
+      );
+    }
+    // A table that never allocated has no line in the listing at all, so
+    // absence reads as zero ONLY when the listing says it is whole.
+    // Otherwise it means "not recorded", and that is not coverage.
+    const expectedSeq = evidence.seqs.has(table)
+      ? evidence.seqs.get(table)
+      : evidence.seqListingComplete
+        ? 0
+        : undefined;
+    if (expectedSeq === undefined) {
+      problems.push(
+        `${table}: the evidence records no sequence high-water mark, and ` +
+          `does not say the listing is complete. An identifier allocated ` +
+          `and released after the mirror leaves every row identical, so ` +
+          `rows alone cannot cover it`,
+      );
+    } else if ((entry.seq ?? 0) !== expectedSeq) {
+      problems.push(
+        `${table}: the evidence says sequence ${expectedSeq}, this ` +
+          `baseline read ${entry.seq ?? 0} — something allocated in ` +
+          `between`,
+      );
+    }
+    // SHAPE, WHERE THE EVIDENCE CARRIES IT (#2281 r13). Contents and
+    // allocations cannot speak for row identity: a migration that
+    // renames a column, or recreates a table with a different primary
+    // key over the same column-order values, leaves the digest and the
+    // sequence untouched while `key` and `cols` differ from what the
+    // mirror would have written — and reconciliation classifies rows by
+    // exactly those fields.
+    const expectedShape = evidence.shapes?.get(table);
+    if (expectedShape !== undefined) {
+      const mine = shapeFingerprint(entry.key, entry.cols);
+      if (mine !== expectedShape) {
+        problems.push(
+          `${table}: the evidence records shape ${expectedShape}, this ` +
+            `baseline keys and projects its rows as ${mine} — the table ` +
+            `was REDECLARED between the mirror and this reading, so its ` +
+            `rows are not identified the same way`,
+        );
+      }
+    }
+  }
+  // BOTH MAPS, NOT JUST THE DIGESTS (#2281 r5). A `seq <table> <n>` line
+  // for a table the baseline does not contain is the evidence itself
+  // saying the mirror held state this reconstruction does not represent
+  // — and checking only the digest side let that pass. At the limit an
+  // empty baseline plus one sequence line produced no findings at all.
+  for (const table of new Set([
+    ...evidence.digests.keys(),
+    ...evidence.seqs.keys(),
+  ])) {
+    // OWN PROPERTY, not `in` — `"__proto__" in {}` and
+    // `"toString" in {}` are both true, so `in` would read an inherited
+    // name as a table this baseline represents (#2281 r10).
+    if (!Object.hasOwn(tables, table)) {
+      problems.push(
+        `${table}: the evidence names it and this baseline does not`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * WHAT THE STABILITY PASS BELOW DOES AND DOES NOT ESTABLISH (#2281 r8).
+ *
+ * It is CHANGE DETECTION over the read, not a snapshot of the database
+ * at one instant — D1 offers this tool no such instant, and a check
+ * that cannot be had should be described rather than implied.
+ *
+ * Caught: any change to the table set, to any table's declaration or
+ * shape, to the identifier counters, or to any table between its two
+ * readings. Those span the whole read, so most concurrent writing shows
+ * up somewhere.
+ *
+ * NOT caught, first of two: a change to the CONTENTS of
+ * a table whose second reading has already happened, made while later
+ * tables are still being read. That table's rows are not read again,
+ * and an UPDATE, a DELETE or an INSERT with a natural key moves neither
+ * the table set, nor any declaration, nor a counter.
+ *
+ * NOT caught, and the reason to read every claim here as a
+ * COMPARISON rather than a guarantee: two equal readings establish
+ * that they AGREED, not that nothing happened between them. A row
+ * added and removed again, or changed and changed back, leaves the
+ * second reading matching the first (#2281 r23). Nothing in this file
+ * watches a database; it compares readings of one.
+ *
+ * NOT caught, and anything completed BEFORE a dimension's first
+ * observation (#2281 r19). `readStartedAt` precedes every read, which
+ * is the conservative direction for the claimed window — but the first
+ * table-set and schema reads happen after it, so a table created and
+ * filled in that gap appears identically in every later reading and
+ * reads as original. What this function establishes is that nothing
+ * changed BETWEEN the two readings of each thing, not that nothing
+ * changed during the interval the artifact names.
+ *
+ * The SHAPE version of the sequential race is closed rather than
+ * disclosed (#2281 r11): the per-table checks are themselves
+ * sequential, so a terminal reading of the whole schema follows all of
+ * them — one query over `sqlite_master` — and catches an ALTER landing
+ * on a table whose own check has already passed.
+ *
+ * Which is why the procedure runs this against a database nothing is
+ * writing to. These checks are here to catch that precondition having
+ * failed — they do not replace it, and a caller that treats a clean run
+ * as proof the database was frozen is claiming more than was measured.
+ */
+async function takeManifest(db) {
+  const readSequences = async () => {
+    const seen = new Map();
+    try {
+      for (const r of await query(
+        db.id,
+        "SELECT name, seq FROM sqlite_sequence",
+      )) {
+        if (NEVER_CARRIED(r.name)) continue;
+        const exact = exactSequence(r.seq);
+        if (exact === null) {
+          fail(
+            `"${r.name}" has a sequence high-water mark of ${r.seq}, which ` +
+              `is outside the range this tool can compare EXACTLY.\n\n` +
+              `Coverage turns on whether that mark moved during an ` +
+              `interval, and past 2^53 two different marks compare equal ` +
+              `here — so a baseline recording one could be promoted over ` +
+              `an allocation that really happened. It refuses rather than ` +
+              `recording a value it cannot tell apart from its neighbour.`,
+          );
+        }
+        seen.set(r.name, exact);
+      }
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
+    }
+    return seen;
+  };
+
+  // THE INTERVAL STARTS BEFORE THE FIRST READ (#2281 r16). Stamped
+  // after the opening sequence, schema and table-set queries, the
+  // artifact claimed a window that excluded observations the baseline
+  // is built on — so an operator correlating it against a write or
+  // migration log was given a narrower interval than was actually
+  // looked at. The window has to contain every reading that went into
+  // the record, not merely the row reads.
+  const readStartedAt = new Date().toISOString();
+  const before = await readSequences();
+  // THE WHOLE SCHEMA AS IT WAS, not just the carried tables' share of it
+  // (#2281 r12). The terminal comparison below is whole-to-whole, so
+  // both sides have to be whole: `ddlAtRead` is filled only inside the
+  // carried-table loop, and `declarations` returns every object with a
+  // declaration — `d1_migrations`, views, anything `tablesOf` excludes —
+  // so comparing one against the other reported a difference on every
+  // ordinary database and aborted the run.
+  //
+  // Whole-to-whole is also the stronger check: a migration applied while
+  // this manifest is being taken changes `d1_migrations`, and that is a
+  // database that moved, whatever it did to the carried tables.
+  const ddlWholeAtRead = new Map(await declarations(db.id, { fresh: true }));
+  const tables = await tablesOf(db.id);
+  const manifest = newManifestTables();
+  const refused = [];
+  const digestAtRead = new Map();
+  const ddlAtRead = new Map();
+
+  for (const table of tables) {
+    const { cols, key } = await shapeOf(db.id, table);
+    ddlAtRead.set(table, await declarationOf(db.id, table));
+    if (key.length === 0) {
+      // Same rule as the carry: without a key nothing identifies a row,
+      // so there is nothing to record it under.
+      refused.push(`${table}: no primary key, so no row here can be keyed`);
+      continue;
+    }
+    const rows = await readAll(db.id, table, cols);
+    const nullKeyed = rows.find((r) =>
+      key.some((c) => r[c] === null || r[c] === undefined),
+    );
+    if (nullKeyed) {
+      refused.push(
+        `${table}: a row carries NULL in its key (${key.join(", ")}), which ` +
+          `SQL equality never matches, so it cannot be recorded or later ` +
+          `looked up`,
+      );
+      continue;
+    }
+    const seen = {};
+    for (const r of rows) seen[keyOf(r, key)] = rowHash(r, cols);
+    digestAtRead.set(table, digestOf(rows, cols).digest);
+    manifest[table] = manifestEntry({
+      key,
+      cols,
+      seq: before.get(table) ?? 0,
+      rows: seen,
+      digest: digestOf(rows, cols).digest,
+    });
+  }
+
+  // A SECOND READING OF EVERY TABLE, because the sequence check does not
+  // cover the rows and `readAll`'s gate does not cover the database
+  // (#2281 r1).
+  //
+  // The first version claimed a moving source would fail here, and that
+  // was wrong three ways. `readAll` repeats only tables that PAGE, so a
+  // table under one page is read once. An UPDATE, a DELETE, and an
+  // INSERT under a natural key all leave `sqlite_sequence` untouched.
+  // And the tables are read one after another, so a baseline can be
+  // assembled from moments that never coexisted even when every
+  // individual read was clean.
+  //
+  // D1 offers this tool no snapshot, so the honest substitute is to read
+  // everything again and require it to agree. Nothing here makes that a
+  // proof — two identical readings around a change and back would pass —
+  // but it is the same standard the cutover's own drain barrier uses,
+  // and it fails loudly on the ordinary case rather than quietly.
+  //
+  // THE SHAPE IS RE-READ TOO, not only the rows (#2281 r2). A migration
+  // that ADDS a column and populates it changes neither digest, because
+  // both passes project onto the columns the first `shapeOf` saw — and a
+  // reconciliation later projects onto the columns the manifest
+  // recorded, so a write confined to that new column is invisible
+  // forever while every run reports VERIFIED. Comparing the stored
+  // declaration is what catches it, the same instrument the carry uses
+  // for the same reason.
+  // A FRESH declaration read, not the cached one the first pass filled
+  // (#2281 r3). Taken once for the whole database, so the per-table
+  // comparisons below all read the same new snapshot.
+  await declarations(db.id, { fresh: true });
+  const tablesNow = await tablesOf(db.id);
+  if (
+    JSON.stringify([...tablesNow].sort()) !== JSON.stringify([...tables].sort())
+  ) {
+    fail(
+      `the SET OF TABLES changed while this manifest was being taken.\n\n` +
+        `A baseline assembled from a moving database describes no moment ` +
+        `that ever existed.`,
+    );
+  }
+  for (const [table, entry] of Object.entries(manifest)) {
+    // THE COLUMNS TOO, because the first pass can be internally mixed
+    // (#2281 r4). `shapeOf` reads `PRAGMA table_info` and the
+    // declaration separately; a migration committing between them gives
+    // an entry with the OLD columns and the NEW declaration. The
+    // declaration then compares equal here, and the rows are re-read
+    // through those same old columns, so both checks pass while a newly
+    // added and populated column is omitted from the baseline forever.
+    const shapeNow = await shapeOf(db.id, table);
+    if (
+      JSON.stringify(shapeNow.cols) !== JSON.stringify(entry.cols) ||
+      JSON.stringify(shapeNow.key) !== JSON.stringify(entry.key)
+    ) {
+      fail(
+        `"${table}" changed COLUMNS or KEY while this manifest was being ` +
+          `taken.\n      recorded: cols ${entry.cols.join(", ")} | key ` +
+          `${entry.key.join(", ")}\n      now:      cols ` +
+          `${shapeNow.cols.join(", ")} | key ${shapeNow.key.join(", ")}\n\n` +
+          `A baseline built from one reading's columns and another's ` +
+          `contents describes no moment that ever existed, and a column ` +
+          `added in that window would be absent from it permanently.`,
+      );
+    }
+    const ddlNow = await declarationOf(db.id, table);
+    if (ddlNow !== ddlAtRead.get(table)) {
+      fail(
+        `"${table}" was REDECLARED while this manifest was being taken.\n\n` +
+          `A column added and populated in that window changes no digest ` +
+          `here — both passes project onto the columns the first reading ` +
+          `saw — and the manifest would then record a projection that ` +
+          `hides every write to the new column, permanently, while later ` +
+          `runs report clean.`,
+      );
+    }
+    const rows = await readAll(db.id, table, entry.cols);
+    const now = digestOf(rows, entry.cols).digest;
+    if (now !== digestAtRead.get(table)) {
+      fail(
+        `"${table}" CHANGED while this manifest was being taken: it read ` +
+          `${digestAtRead.get(table)} and now reads ${now}.\n\nA baseline ` +
+          `assembled from a moving database describes no moment that ever ` +
+          `existed. This is what a source that has NOT stopped looks like.`,
+      );
+    }
+  }
+
+  // AND ONE MORE SCHEMA READING, AFTER THE ROWS (#2281 r6).
+  //
+  // Every check above happens BEFORE its table's rows are re-read, so a
+  // migration that adds and populates a column in the gap between them
+  // still slips through: the row query projects `entry.cols`, which no
+  // longer describes the table, and its digest is unchanged precisely
+  // because the new column is not in it. Nothing later looks again.
+  //
+  // So the row reads are BRACKETED. A schema read before them and
+  // another after, both fresh, both required to agree with what was
+  // recorded — which is the same shape as the two-pass row read, applied
+  // to the thing the row read depends on.
+  await declarations(db.id, { fresh: true });
+  // THE TABLE SET AFTER THE ROWS TOO, not only the shapes (#2281 r9).
+  // The loop below walks the manifest, so it can only ever re-examine
+  // tables the first pass already found. A table CREATED and populated
+  // while the existing tables were being read is in none of them: the
+  // shapes it would fail are not consulted, and if it is keyed
+  // naturally there is no sequence row to move either. The baseline is
+  // then accepted without it, and every later reconciliation reads that
+  // table's entire contents as original.
+  const tablesAfterRows = await tablesOf(db.id);
+  if (
+    JSON.stringify([...tablesAfterRows].sort()) !==
+    JSON.stringify([...tables].sort())
+  ) {
+    fail(
+      `the SET OF TABLES changed while the rows were being re-read.\n\n` +
+        `A table created in that window is in no part of this baseline, ` +
+        `and nothing later would look for it — every row it holds would ` +
+        `read as original for as long as this manifest is used.`,
+    );
+  }
+  for (const [table, entry] of Object.entries(manifest)) {
+    const after = await shapeOf(db.id, table);
+    const ddlAfter = await declarationOf(db.id, table);
+    if (
+      ddlAfter !== ddlAtRead.get(table) ||
+      JSON.stringify(after.cols) !== JSON.stringify(entry.cols) ||
+      JSON.stringify(after.key) !== JSON.stringify(entry.key)
+    ) {
+      fail(
+        `"${table}" was REDECLARED after its rows were re-read.\n\nThe ` +
+          `rows above were selected over the columns recorded for this ` +
+          `table, so a column added and populated in that gap changes ` +
+          `neither the projection nor its digest — the baseline would ` +
+          `simply not contain it, permanently, while every check passed.`,
+      );
+    }
+  }
+
+  // AND ONE WHOLE-SCHEMA READING AFTER ALL OF THEM (#2281 r11). The
+  // loop above is itself sequential: it checks one table, then the
+  // next, so an ALTER landing on a table it has already passed — while
+  // it is still working through the rest — is seen by nothing. The
+  // table set is unchanged, the sequences are unchanged, and the
+  // per-table check for that table already ran.
+  //
+  // `sqlite_master` is a few kilobytes and `declarations` reads the
+  // whole of it in ONE query, so a terminal comparison costs one round
+  // trip and closes the schema race for the entire read rather than
+  // per table. What it cannot close is the ROW race — a table already
+  // read twice, changed while later tables are still being read — and
+  // that limitation is stated rather than implied, here and in the
+  // release note.
+  // THE WINDOW CLOSES BEFORE THE TERMINAL READS ARE ISSUED (#2281 r13).
+  // Stamping this after the schema response ARRIVES leaves the flight
+  // time inside the claimed window: SQLite executes the query, an ALTER
+  // commits, the response comes back describing the older schema, and
+  // the change precedes a completion time that nothing observed.
+  //
+  // Taken first, every terminal observation happens after it, so the
+  // window is bounded by a moment both of them are later than. It is
+  // the conservative endpoint rather than the latest defensible one,
+  // which is the right direction for a claim an artifact makes about
+  // itself.
+  const readCompletedAt = new Date().toISOString();
+  const ddlFinal = await declarations(db.id, { fresh: true });
+  for (const name of new Set([...ddlWholeAtRead.keys(), ...ddlFinal.keys()])) {
+    if ((ddlFinal.get(name) ?? null) !== (ddlWholeAtRead.get(name) ?? null)) {
+      fail(
+        `"${name}" was REDECLARED before this read finished.\n\nThe ` +
+          `per-table checks run one after another, so a change landing ` +
+          `on a table they have already passed is caught only here — by ` +
+          `one reading of the whole schema, taken after all of them.`,
+      );
+    }
+  }
+
+  // AND the sequences, which the row digests cannot see: an identifier
+  // allocated and released leaves no row behind.
+  const after = await readSequences();
+  // THE UNION, not just the later reading (self-review). Iterating only
+  // `after` asks "did anything move up", and a table present in the
+  // first reading and absent from the second would answer that with
+  // silence — the one direction a check written as a loop over the new
+  // values cannot see.
+  for (const table of new Set([...before.keys(), ...after.keys()])) {
+    const seq = after.get(table) ?? 0;
+    if ((before.get(table) ?? 0) !== seq) {
+      fail(
+        `"${table}" allocated identifiers WHILE this manifest was being ` +
+          `taken: ${before.get(table) ?? 0} before, ${seq} now.\n\nA ` +
+          `baseline taken across a moving database describes no moment ` +
+          `that ever existed. This is what a source that has NOT stopped ` +
+          `looks like.`,
+      );
+    }
+  }
+
+  // THE DIGESTS THIS READ ACCEPTED are returned, because the procedure
+  // asks the operator to compare them with what was recorded at the
+  // mirror — and running `digest` separately afterwards observes a
+  // DIFFERENT interval, so it is not evidence about the rows in this
+  // artifact (#2281 r2).
+  return {
+    manifest,
+    refused,
+    digests: digestAtRead,
+    readStartedAt,
+    readCompletedAt,
+  };
 }
 
 async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
@@ -1678,7 +2945,10 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   const readSequences = async () => {
     const seen = new Map();
     try {
-      for (const r of await query(src.id, 'SELECT name, seq FROM sqlite_sequence')) {
+      for (const r of await query(
+        src.id,
+        "SELECT name, seq FROM sqlite_sequence",
+      )) {
         if (!NEVER_CARRIED(r.name)) seen.set(r.name, Number(r.seq));
       }
     } catch (err) {
@@ -1752,9 +3022,9 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     plan.push({
       table,
       refused:
-        'the destination has this table and the source does not. That is ' +
-        'a schema difference, so it is a migration decision — this tool ' +
-        'will not drop it and will not carry rows while it exists',
+        "the destination has this table and the source does not. That is " +
+        "a schema difference, so it is a migration decision — this tool " +
+        "will not drop it and will not carry rows while it exists",
     });
   }
 
@@ -1777,15 +3047,15 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // mirror. That is answered below rather than refused.
     const destTableGone = !dstTables.has(table);
     if (destTableGone && !reportOnly) {
-      plan.push({ table, refused: 'the destination has no such table' });
+      plan.push({ table, refused: "the destination has no such table" });
       continue;
     }
     if (key.length === 0) {
       plan.push({
         table,
         refused:
-          'no primary key, so nothing identifies a row: an upsert has no ' +
-          'conflict target and a re-run would duplicate every row',
+          "no primary key, so nothing identifies a row: an upsert has no " +
+          "conflict target and a re-run would duplicate every row",
       });
       continue;
     }
@@ -1807,7 +3077,9 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // declarations imply equal columns, key and unique indexes, so the
     // source's are used for both sides. That is 43 fewer round trips per
     // run, inside the window where the writers are stopped.
-    const dstDdl = destTableGone ? ddl : ((await declarations(dst.id)).get(table) ?? '');
+    const dstDdl = destTableGone
+      ? ddl
+      : ((await declarations(dst.id)).get(table) ?? "");
     if (destTableGone) {
       driftNotes.push({
         table,
@@ -1858,8 +3130,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           `this covers types, nullability, defaults, CHECK constraints, ` +
           `foreign-key semantics and triggers, not a list of features ` +
           `someone remembered to check.\n` +
-          `      source:      ${ddl.replace(/\n/g, '\n                   ')}\n` +
-          `      destination: ${dstDdl.replace(/\n/g, '\n                   ')}\n` +
+          `      source:      ${ddl.replace(/\n/g, "\n                   ")}\n` +
+          `      destination: ${dstDdl.replace(/\n/g, "\n                   ")}\n` +
           `      Carrying rows across a schema difference is a migration ` +
           `decision, not a copy`,
       });
@@ -1883,9 +3155,12 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // both onto the manifest's columns, so a column the destination no
     // longer has reads as absent and shows up as a difference to look
     // at rather than as a crash.
-    const heldShape = reportOnly && !destTableGone ? await shapeOf(dst.id, table) : null;
+    const heldShape =
+      reportOnly && !destTableGone ? await shapeOf(dst.id, table) : null;
     const heldCols = heldShape ? heldShape.cols : cols;
-    const missingKey = destTableGone ? [] : key.filter((c) => !heldCols.includes(c));
+    const missingKey = destTableGone
+      ? []
+      : key.filter((c) => !heldCols.includes(c));
     // A THIRD WAY THE DESTINATION LEAVES THE COMPARISON, and it was
     // still taking the refusal path (#2267 r45). Without the key columns
     // there, rows cannot be matched across the two sides — that part of
@@ -1902,7 +3177,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         table,
         detail:
           `the destination no longer has key column(s) ` +
-          `${missingKey.map((c) => `"${c}"`).join(', ')}, so its rows ` +
+          `${missingKey.map((c) => `"${c}"`).join(", ")}, so its rows ` +
           `cannot be matched to the source's at all. The source is still ` +
           `compared against the manifest below, so a late write here is ` +
           `still reported`,
@@ -1914,7 +3189,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         cols,
         refused:
           `the destination no longer has key column(s) ` +
-          `${missingKey.map((c) => `"${c}"`).join(', ')}.\n      Rows here ` +
+          `${missingKey.map((c) => `"${c}"`).join(", ")}.\n      Rows here ` +
           `cannot be matched to the source at all without them, so ` +
           `nothing this run said about this table would mean anything`,
       });
@@ -1932,10 +3207,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // than dropped quietly — the operator is then told the comparison
     // is narrower than the destination's real constraints, instead of
     // being left to infer it.
-    const { usable: evaluableUniques, unevaluable } = splitUniquesByEvaluability(
-      heldShape ? heldShape.uniques : uniques,
-      cols,
-    );
+    const { usable: evaluableUniques, unevaluable } =
+      splitUniquesByEvaluability(heldShape ? heldShape.uniques : uniques, cols);
     // Uniqueness the tuple comparison cannot honestly reproduce —
     // collated, partial or over an expression. Named rather than
     // silently simplified, on whichever side judges the insert.
@@ -1953,7 +3226,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         table,
         detail:
           `the destination declares uniqueness this run cannot check — ` +
-          unsupported.map((u) => `"${u.name}" (${u.why})`).join('; ') +
+          unsupported.map((u) => `"${u.name}" (${u.why})`).join("; ") +
           `. A row reported as missing here may still be rejected, or ` +
           `accepted, by a rule this comparison does not reproduce`,
       });
@@ -1963,7 +3236,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         table,
         detail:
           `the destination declares unique index(es) ` +
-          `${unevaluable.map((u) => `"${u.name}"`).join(', ')} over ` +
+          `${unevaluable.map((u) => `"${u.name}"`).join(", ")} over ` +
           `column(s) the source does not have, so this run cannot say ` +
           `whether a row it reports as missing would collide there. ` +
           `Check before applying one`,
@@ -1987,7 +3260,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // is read and the duplicates become visible. Matching rows to the
     // source still uses the source's key, unchanged.
     const heldPagingKey = heldShape ? heldShape.key : key;
-    const destKeyless = reportOnly && !destTableGone && heldPagingKey.length === 0;
+    const destKeyless =
+      reportOnly && !destTableGone && heldPagingKey.length === 0;
     if (destKeyless) {
       // NO KEY ON THE LIVE SIDE IS A BLIND SPOT, AND IT IS NAMED AS ONE.
       // Without a unique cursor there, the only paging left is OFFSET,
@@ -2018,7 +3292,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     // a note and then said VERIFIED — no unresolved late write was found,
     // having not looked. A blind spot that is merely printed is not a
     // blind spot that is handled.
-    const destOutOfComparison = destTableGone || destKeyless || destKeyColumnsGone;
+    const destOutOfComparison =
+      destTableGone || destKeyless || destKeyColumnsGone;
     if (destOutOfComparison) manifestOnly.add(table);
     const held = destOutOfComparison
       ? []
@@ -2048,7 +3323,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
       plan.push({
         table,
         refused:
-          `a row carries NULL in its key (${key.join(', ')}). Row identity ` +
+          `a row carries NULL in its key (${key.join(", ")}). Row identity ` +
           `is what this tool compares and deletes by, and SQL equality does ` +
           `not match NULL — so such a row can be neither reliably matched ` +
           `nor removed`,
@@ -2144,7 +3419,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
           cols,
           refused:
             `the manifest recorded ${mirroredCols.length} column(s) and ` +
-            `${lost.map((c) => `"${c}"`).join(', ')} no longer exist(s).\n` +
+            `${lost.map((c) => `"${c}"`).join(", ")} no longer exist(s).\n` +
             `      Its row hashes were computed over columns this table ` +
             `does not have, so every row would compare as changed. Take a ` +
             `fresh mirror as the baseline before reconciling across a ` +
@@ -2176,8 +3451,8 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         cols,
         refused:
           `the manifest keyed this table by ` +
-          `${mirroredKey.map((c) => `"${c}"`).join(', ')} and it is now ` +
-          `keyed by ${key.map((c) => `"${c}"`).join(', ')}.\n      Every ` +
+          `${mirroredKey.map((c) => `"${c}"`).join(", ")} and it is now ` +
+          `keyed by ${key.map((c) => `"${c}"`).join(", ")}.\n      Every ` +
           `row in the manifest is indexed under the old serialisation, so ` +
           `nothing here can be matched against it. Take a fresh mirror as ` +
           `the baseline — a primary-key change is a migration decision, ` +
@@ -2200,7 +3475,7 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
         cols,
         refused:
           `${duplicateHeldKeys} destination row(s) share a key with ` +
-          `another under the source's key (${key.join(', ')}), so that ` +
+          `another under the source's key (${key.join(", ")}), so that ` +
           `key no longer identifies a single row there.\n      Every ` +
           `comparison this tool makes matches rows by it, so anything ` +
           `said about this table would be about whichever duplicate was ` +
@@ -2230,32 +3505,32 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
                 `it is live — these writes may or may not already be there`,
         })
       : onlyMissing
-      ? classifyForReconcile({
-          table,
-          // The projection the manifest's hashes were taken over, which
-          // is today's columns unless a migration added some since.
-          cols: hashCols,
-          key,
-          rows,
-          sourceKeys,
-          heldByKey: heldByKey,
-          wasSeen,
-          // THE UNIQUENESS THAT WOULD ACTUALLY JUDGE THE INSERT IS THE
-          // DESTINATION'S (#2267 r39). The source's list is the right one
-          // for a mirror, where parity is required before anything is
-          // written. For the weekly reconciliation the two sides may
-          // legitimately differ, and it is the destination that would
-          // reject — or silently duplicate — a row the operator applies.
-          // Using the retained source's indexes there reports a row as
-          // plainly missing when the destination's own new index already
-          // holds it under another key, and points the operator at an
-          // insert that fails.
-          uniques: evaluableUniques,
-          // What the destination's table actually has, so a column it
-          // dropped is compared as absent rather than as NULL.
-          destCols: heldShape ? new Set(heldCols) : null,
-        })
-      : { insert: [], conflicts: [] };
+        ? classifyForReconcile({
+            table,
+            // The projection the manifest's hashes were taken over, which
+            // is today's columns unless a migration added some since.
+            cols: hashCols,
+            key,
+            rows,
+            sourceKeys,
+            heldByKey: heldByKey,
+            wasSeen,
+            // THE UNIQUENESS THAT WOULD ACTUALLY JUDGE THE INSERT IS THE
+            // DESTINATION'S (#2267 r39). The source's list is the right one
+            // for a mirror, where parity is required before anything is
+            // written. For the weekly reconciliation the two sides may
+            // legitimately differ, and it is the destination that would
+            // reject — or silently duplicate — a row the operator applies.
+            // Using the retained source's indexes there reports a row as
+            // plainly missing when the destination's own new index already
+            // holds it under another key, and points the operator at an
+            // insert that fails.
+            uniques: evaluableUniques,
+            // What the destination's table actually has, so a column it
+            // dropped is compared as absent rather than as NULL.
+            destCols: heldShape ? new Set(heldCols) : null,
+          })
+        : { insert: [], conflicts: [] };
 
     plan.push({
       table,
@@ -2295,25 +3570,17 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
     console.log(`  ${n.table.padEnd(32)} schema drift — ${n.detail}`);
   }
   const manifestOf = () => {
-    const m = {};
+    const m = newManifestTables();
     for (const step of plan) {
       if (step.refused) continue;
-      m[step.table] = {
+      m[step.table] = manifestEntry({
         key: step.key,
         cols: step.cols,
-        // The allocation high-water mark at mirror time, so a later
-        // reconciliation can see the source allocate past it (#2267 r36).
-        //
-        // ZERO AND NULL MEAN DIFFERENT THINGS (#2267 r37). A table that
-        // has never allocated has a known baseline of zero, and writing
-        // `null` for it would be indistinguishable from a manifest taken
-        // before this field existed — which the comparison skips. A
-        // straggler inserting and deleting the FIRST row of
-        // `diag_legal_hold_audit` is exactly that case, and it would
-        // have gone unreported.
-        seq: sequenceBaselineKnown ? (sequenceAtMirror.get(step.table) ?? 0) : null,
+        seq: sequenceBaselineKnown
+          ? (sequenceAtMirror.get(step.table) ?? 0)
+          : null,
         rows: step.seen,
-      };
+      });
     }
     return m;
   };
@@ -2361,7 +3628,14 @@ async function carry(src, dst, { onlyMissing, since, reportOnly = false }) {
   let written = 0;
   for (const step of plan) {
     const rows = onlyMissing ? step.insert : step.all;
-    written += await upsert(dst, step.table, rows, step.cols, step.key, onlyMissing);
+    written += await upsert(
+      dst,
+      step.table,
+      rows,
+      step.cols,
+      step.key,
+      onlyMissing,
+    );
     const note = onlyMissing
       ? `${step.insert.length} missing`
       : `${step.all.length} upserted, ${step.surplus.length} removed`;
@@ -2552,7 +3826,8 @@ export function verdictProblems({
   // it and then exited zero with "VERIFIED", which would let an operator,
   // or a script reading the exit code, carry the cutover forward having
   // silently omitted an entire table.
-  for (const r of refused) problems.push(`${r.table}: NOT CARRIED — ${r.refused}`);
+  for (const r of refused)
+    problems.push(`${r.table}: NOT CARRIED — ${r.refused}`);
 
   // Likewise a conflict, and it names the TABLE and the KEY and nothing
   // else: `support_tickets` puts the user's message and email immediately
@@ -2582,7 +3857,7 @@ export function verdictProblems({
 function reportProblems(problems, dst) {
   console.error(
     `\nSTOPPED — ${problems.length} problem(s):\n` +
-      problems.map((p) => `  - ${p}`).join('\n') +
+      problems.map((p) => `  - ${p}`).join("\n") +
       `\n\nThese are of three kinds and they do not mean the same thing. A ` +
       `DIGEST difference is not always a fault: a source with live writers ` +
       `moves on while a carry runs. A REFUSED table was not carried at ` +
@@ -2598,12 +3873,18 @@ function reportProblems(problems, dst) {
 // -------------------------------------------------------------------- main
 
 const USAGE =
-  'usage:\n' +
-  '  d1-carry-rows.mjs digest    --db <name>\n' +
-  '  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n' +
-  '      WRITES. Only ever against a destination nothing is writing to.\n' +
-  '  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n' +
-  '      READ ONLY. Reports every difference; writes nothing, ever.';
+  "usage:\n" +
+  "  d1-carry-rows.mjs digest    --db <name>\n" +
+  "  d1-carry-rows.mjs manifest  --db <name> --out <path> --stands-for <text>\n" +
+  "      READ ONLY. Takes a baseline from one database; writes no database.\n" +
+  "      Always written UNCOVERED: it cannot know what happened before it ran.\n" +
+  "  d1-carry-rows.mjs cover     --manifest <path> --expect <path>\n" +
+  "      Promotes a reconstruction to covered, and ONLY by comparing its\n" +
+  "      recorded digests AND sequences with evidence from the mirror.\n" +
+  "  d1-carry-rows.mjs carry     --from <n> --to <n> --mirror --manifest <path>\n" +
+  "      WRITES. Only ever against a destination nothing is writing to.\n" +
+  "  d1-carry-rows.mjs reconcile --from <n> --to <n> --since <path>\n" +
+  "      READ ONLY. Reports every difference; writes nothing, ever.";
 
 /**
  * Strict parsing, because the destructive mode must never be something a
@@ -2623,7 +3904,8 @@ function parseArgs(argv, { flags, switches }) {
     }
     if (flags.includes(a)) {
       const v = argv[i + 1];
-      if (v === undefined || v.startsWith('--')) fail(`${a} needs a value.\n\n${USAGE}`);
+      if (v === undefined || v.startsWith("--"))
+        fail(`${a} needs a value.\n\n${USAGE}`);
       out[a] = v;
       i += 1;
       continue;
@@ -2640,32 +3922,548 @@ function parseArgs(argv, { flags, switches }) {
 async function main() {
   const [mode, ...rest] = process.argv.slice(2);
 
-  if (!ACCOUNT || !TOKEN) {
-    fail('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.');
-  }
-  const shared = sharedDatabase();
-
-  if (mode === 'digest') {
-    const opts = parseArgs(rest, { flags: ['--db'], switches: [] });
-    const name = opts['--db'];
-    if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
-    const db = name === shared.name ? shared : await resolveByName(name);
-    printDigest(`${db.name} (${db.id})`, await digestDatabase(db));
+  // `cover` RUNS BEFORE THE CREDENTIAL CHECK, because it touches no
+  // database (#2281 r4). It reads a manifest and an evidence file, both
+  // local, and rewrites the manifest. Requiring an API token to do that
+  // would block the recovery promotion for exactly the operator this
+  // path exists for: someone holding the retained artifacts, later, in a
+  // session with no live access.
+  if (mode === "cover") {
+    const opts = parseArgs(rest, {
+      flags: ["--manifest", "--expect"],
+      switches: [],
+    });
+    const path = opts["--manifest"];
+    const expect = opts["--expect"];
+    if (!path || !expect) {
+      fail(`cover needs --manifest <path> and --expect <path>\n\n${USAGE}`);
+    }
+    let doc;
+    // THE BYTES THIS VERDICT IS ABOUT, kept so publication can prove it
+    // is still writing over the same document (#2281 r18).
+    let opened;
+    try {
+      opened = readFileSync(path, "utf8");
+      doc = JSON.parse(opened);
+    } catch (err) {
+      fail(`could not read the manifest at ${path} — ${err.message}`);
+    }
+    // THE SAME LEGACY DEFAULT `readManifest` USES (#2281 r10). A
+    // manifest written before provenance existed carries none, and
+    // `readManifest` reads that absence as the mirror — correctly,
+    // because the mirror was the only thing that wrote one. Reading it
+    // as `{}` here let a zero-table mirror artifact be promoted and
+    // rewritten with `interval: "covered"` and no producer, after which
+    // every later run reads the one direct observation as a
+    // reconstruction. The absence has to mean the same thing in both
+    // places or the artifact changes identity by being read.
+    const prov = doc?.provenance ?? { producer: "carry --mirror" };
+    if (prov.producer === "carry --mirror") {
+      fail(
+        `${path} was written by the mirror. It observed the moment it ` +
+          `describes, so there is no interval to cover and nothing here ` +
+          `to promote.`,
+      );
+    }
+    if (prov.interval === "covered") {
+      fail(`${path} is already marked covered.`);
+    }
+    const evidence = parseEvidence(readFileSync(expect, "utf8"));
+    // A DATABASE WITH NO TABLES PRODUCES EXACTLY THIS, and it is not the
+    // same as an empty file (#2281 r9). `digest` over a source carrying
+    // no application tables prints `(0 tables)` and `seq-listing
+    // complete` and nothing else — a complete reading of a table set
+    // that is empty, and a complete reading of an empty sequence table.
+    // Both value maps come back empty, so a guard that looks only at
+    // them reads valid evidence as no evidence, and the matching empty
+    // reconstruction could never be promoted. A rollback path that
+    // cannot be followed on a legitimate database state is a check that
+    // can never pass, which is the shape this PR exists to remove.
+    // AND IT HAS TO CARRY A READING OF EACH KIND (#2281 r10). Warning
+    // the operator that a missing count line disables the table-set
+    // check was the wrong shape: it left a silent, unannounced downgrade
+    // reachable by a paste that drops one line, and the thing it
+    // licenses is the reverse mirror.
+    //
+    // Cropping `--expect` so that one mirror-time table's digest lines
+    // AND the count line are gone leaves a digest map that agrees, a
+    // complete sequence listing, and no name for the missing table — so
+    // `coverageProblems` has nothing to compare and promotes. If that
+    // table is naturally keyed and also absent from the reconstruction,
+    // nothing anywhere establishes that the two table sets match.
+    //
+    // So a promotion requires evidence that actually read each side:
+    // one valid enumeration of the table set, and one complete sequence
+    // listing. Refusing is cheap — re-paste the block — and the failure
+    // it prevents is not recoverable.
+    if (evidence.readings.tableSets === 0) {
+      fail(
+        `${expect} carries no complete reading of the table set, so it ` +
+          `cannot establish that the mirror held the same tables as this ` +
+          `reconstruction.\n\nPaste the whole of a "digest" run, ` +
+          `including the rule-and-count line that closes it — the ` +
+          `\`———…  (N tables)\` line. Without it the digests still ` +
+          `compare and a table missing from BOTH the evidence and the ` +
+          `reconstruction is simply never named, which is exactly what ` +
+          `coverage is supposed to rule out.`,
+      );
+    }
+    if (evidence.readings.sequences === 0) {
+      fail(
+        `${expect} carries no complete sequence listing, so a table with ` +
+          `no "seq" line cannot be read as a known zero rather than as a ` +
+          `line that was not pasted.\n\nPaste the whole of a "digest" ` +
+          `run, including the "seq-listing complete" line that closes ` +
+          `its sequence section.`,
+      );
+    }
+    // AND BOTH HALVES FROM THE SAME RUN (#2281 r12). Counting the two
+    // kinds of reading separately accepted one of each from DIFFERENT
+    // runs, which is two moments presented as one. An early block that
+    // kept its count line but lost its sequence section, followed by a
+    // whole block recorded after an AUTOINCREMENT insert-and-delete,
+    // gives unchanged row digests and only the later, advanced
+    // sequence — no conflict anywhere, and a reconstruction carrying
+    // that late allocation is promoted with no mirror-time sequence
+    // evidence at all.
+    // A HALF THAT NAMES ITS RUN AND FINDS NO PARTNER IS A REFUSAL; a
+    // half that names no run at all is a DISCLOSURE (#2281 r15).
+    //
+    // Identified halves can be checked, so they are: an unpaired one is
+    // a run recorded without its other half, and the run beside it
+    // would answer in its place. Unidentified halves cannot be checked
+    // in either direction — a lone enumeration and a lone sequence
+    // listing look the same whether they came from one run or two — and
+    // that is the state of every record made before `run:<id>` existed,
+    // including the one covering the retained database now. Refusing
+    // those would make the documented rollback unfollowable for exactly
+    // the artifact this verb rebuilds, which is the defect this PR
+    // removes rather than adds. So it says so instead, here and in the
+    // artifact and in every later `reconcile`.
+    if (evidence.readings.unpaired > 0) {
+      fail(
+        `${expect} does not hold a whole "digest" run: ` +
+          `${evidence.readings.paired} run(s) closed both halves and ` +
+          `${evidence.readings.unpaired} half-run(s) are recorded ` +
+          `without their other half.\n\nEach half describes the moment ` +
+          `its own run was taken, so halves from different runs describe ` +
+          `two moments. A run recorded WITHOUT its sequence section is ` +
+          `the dangerous shape: the row digests still agree, the run ` +
+          `beside it answers for the sequences in its place, and if that ` +
+          `other run was taken after an AUTOINCREMENT insert-and-delete ` +
+          `it carries an allocation the mirror never saw. One unpaired ` +
+          `half is enough for that, which is why every closed reading ` +
+          `has to belong to a run and not merely one of them.\n\nPaste ` +
+          `each "digest" run whole: its digests, its rule-and-count ` +
+          `line, its "seq" lines, and its "seq-listing complete".`,
+      );
+    }
+    const saidSomething =
+      evidence.digests.size > 0 ||
+      evidence.seqs.size > 0 ||
+      evidence.readings.tableSets > 0 ||
+      evidence.readings.sequences > 0;
+    if (!saidSomething) {
+      fail(
+        `nothing usable was found in ${expect}. It should hold what was ` +
+          `recorded AT the mirror: lines of "<table> <digest>" — the ` +
+          `digest command's own output pastes in as-is — and lines of ` +
+          `"seq <table> <n>" for the allocation high-water marks.`,
+      );
+    }
+    const problems = coverageProblems(doc.tables ?? {}, evidence);
+    if (problems.length > 0) {
+      // NOT `reportProblems`, whose trailer explains digests, refusals
+      // and conflicts against a DESTINATION — the carry's vocabulary,
+      // and none of it true here. Borrowing it would have this command
+      // say things it does not mean, which is the defect this whole PR
+      // keeps being about.
+      console.error(
+        `\n[d1-carry-rows] coverage REFUSED — ${problems.length} problem(s):`,
+      );
+      for (const line of problems) console.error(`  - ${line}`);
+      console.error(
+        `\n${path} is UNCHANGED and remains uncovered. Coverage is the ` +
+          `claim that this reconstruction equals what the mirror saw; the ` +
+          `evidence above does not support it, so the claim is not ` +
+          `recorded.\n\nA baseline that stays uncovered is still useful ` +
+          `for finding NEW differences. What it must not do is license ` +
+          `the rollback's reverse mirror.\n`,
+      );
+      process.exit(1);
+    }
+    // Promoted only here, with the comparison that licenses it recorded
+    // alongside — so the artifact says what was checked, not merely that
+    // something was.
+    // WHICH DIMENSIONS WERE ACTUALLY COMPARED (#2281 r13). Shape
+    // evidence is newer than the evidence some operators already hold —
+    // the record made at a mirror that has passed cannot be re-taken —
+    // so requiring it would make the rollback unfollowable for exactly
+    // the artifact this verb exists to rebuild. But a dimension that
+    // was not compared must not be left to be assumed: the artifact
+    // records what it stands on, and the command says so out loud.
+    const nTables = Object.keys(doc.tables ?? {}).length;
+    const shapesSeen = [...Object.keys(doc.tables ?? {})].filter((t) =>
+      evidence.shapes?.has(t),
+    ).length;
+    const dimensions = ["rows", "sequences"];
+    if (shapesSeen === nTables && nTables > 0) dimensions.push("shape");
+    // Pairing counts as established only when NO half is anonymous: one
+    // unidentified half is enough for the file to be two moments.
+    if (evidence.readings.paired > 0 && evidence.readings.unidentified === 0) {
+      dimensions.push("run-pairing");
+    }
+    doc.provenance = {
+      ...prov,
+      interval: "covered",
+      coveredAt: new Date().toISOString(),
+      coveredDimensions: dimensions,
+      coveredBy:
+        `${nTables} table(s) matched on ${dimensions.join(", ")} against ` +
+        `${expect}` +
+        (dimensions.includes("shape")
+          ? ""
+          : ` — no "shape" lines, so row identity was NOT established`) +
+        (dimensions.includes("run-pairing")
+          ? ""
+          : ` — ${evidence.readings.unidentified} half-reading(s) carry ` +
+            `no "run:<id>", so it was NOT established that both halves ` +
+            `came from one run`),
+    };
+    // THE FILE THIS VERDICT IS ABOUT MUST STILL BE THE FILE AT THE PATH
+    // (#2281 r18). `cover` reads the manifest, then reads and parses the
+    // evidence, then renames over the path — and the manifest write
+    // learned this lesson already at r10. If the original mirror
+    // artifact is restored in that window, or another run replaces the
+    // reconstruction, this would destroy it AND publish a verdict about
+    // the document that was read earlier.
+    //
+    // So the bytes are compared with what was opened, and a change
+    // refuses. The residual is stated rather than implied: a
+    // replacement landing between this check and the rename is not
+    // caught, because the filesystem offers no compare-and-swap here.
+    // It narrows a window measured in the time it takes to read and
+    // parse an evidence file down to one measured in a syscall.
+    let current;
+    try {
+      current = readFileSync(path, "utf8");
+    } catch (err) {
+      fail(
+        `${path} could not be re-read before publishing the verdict — ` +
+          `${err.message}. Nothing was written.`,
+      );
+    }
+    if (current !== opened) {
+      fail(
+        `${path} CHANGED while the evidence was being read, so the ` +
+          `coverage verdict just computed is about a document that is no ` +
+          `longer there.\n\nWriting it would publish a verdict for the ` +
+          `older contents and destroy whatever replaced them — which, if ` +
+          `that is the mirror's own manifest restored from a backup, is ` +
+          `the one artifact that cannot be remade.\n\nNothing was ` +
+          `written. Re-run \`cover\` against the file as it now stands.`,
+      );
+    }
+    writeFileSync(
+      `${path}.tmp-${process.pid}`,
+      `${JSON.stringify(doc, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
+    chmodSync(`${path}.tmp-${process.pid}`, 0o600);
+    renameSync(`${path}.tmp-${process.pid}`, path);
+    console.log(
+      `${path} is now COVERED: every table in it matches ${expect} on ` +
+        `${dimensions.join(", ")}.\n\n` +
+        (dimensions.includes("run-pairing")
+          ? ""
+          : `WHAT THIS DOES NOT COVER: ${evidence.readings.unidentified} ` +
+            `half-reading(s) carry no "run:<id>", so whether the table ` +
+            `set and the allocation marks were recorded by the SAME ` +
+            `"digest" run could not be established. Halves from two runs ` +
+            `describe two moments, and an identifier allocated and ` +
+            `released between them would be absorbed here.\n\nSuch a ` +
+            `listing also states no entry count, so that a "seq" line ` +
+            `dropped from the paste cannot be told from a table that ` +
+            `never allocated — its absence is read as a zero either way. ` +
+            `Evidence recorded before these were emitted cannot carry ` +
+            `them, and a mirror that has passed cannot be re-recorded.\n\n`) +
+        (dimensions.includes("shape")
+          ? ""
+          : `AND: the evidence carries no "shape" ` +
+            `lines, so how each table keys and projects its rows at the ` +
+            `mirror was not established — only that the rows and the ` +
+            `allocation marks agree. A table recreated with a different ` +
+            `primary key over the same column-order values reads ` +
+            `identical here. Newer "digest" output records shape; ` +
+            `evidence taken before it cannot, and a mirror that has ` +
+            `passed cannot be re-recorded. The artifact says which ` +
+            `dimensions it stands on.\n\n`) +
+        `That is what licenses the rollback's reverse mirror. Record in ` +
+        `the run log where the evidence came from — this artifact now ` +
+        `says WHAT was compared, and only you know where it was written ` +
+        `down.`,
+    );
     return;
   }
 
-  if (mode !== 'carry' && mode !== 'reconcile') fail(USAGE);
+  if (!ACCOUNT || !TOKEN) {
+    fail("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set.");
+  }
+  const shared = sharedDatabase();
+
+  if (mode === "digest") {
+    const opts = parseArgs(rest, { flags: ["--db"], switches: [] });
+    const name = opts["--db"];
+    if (!name) fail(`digest needs --db <name>\n\n${USAGE}`);
+    const db = name === shared.name ? shared : await resolveByName(name);
+    // ONE RUN, ONE IDENTIFIER, ON BOTH CLOSING LINES (#2281 r15).
+    //
+    // Rounds 12, 13, 14 and 15 each found another way to pair one run's
+    // tables with another run's allocations, and each fix inferred the
+    // boundary from a line that happened to be there — a digest line, a
+    // repeated shape line. r15 is the crop that leaves none of them: a
+    // run reduced to a `seq` line and its marker. There is always
+    // another crop, because the boundary was never IN the evidence; it
+    // was being guessed from what surrounded it.
+    //
+    // So the producer states it. Both lines that close a run carry the
+    // same identifier, and `cover` pairs halves that agree on it rather
+    // than halves that nothing came between. No inference is left to
+    // defeat.
+    const runId = randomBytes(6).toString("hex");
+    printDigest(`${db.name} (${db.id})`, await digestDatabase(db), runId);
+    // THE SEQUENCES TOO, so a run log made from this output carries the
+    // evidence `cover` requires (#2281 r3). Rows alone cannot cover an
+    // interval: an identifier allocated and released after a mirror
+    // leaves every row digest identical while the high-water mark moves,
+    // and a later reconstruction would absorb the moved value. This
+    // output is what an operator pastes into the record at barrier time,
+    // so it is where the missing half belongs.
+    try {
+      const seqs = await query(db.id, "SELECT name, seq FROM sqlite_sequence");
+      const usable = seqs.filter((r) => !NEVER_CARRIED(r.name));
+      console.log("");
+      for (const r of [...usable].sort((a, b) =>
+        String(a.name).localeCompare(b.name),
+      )) {
+        console.log(
+          `  seq ${String(r.name).padEnd(28)} ${Number(r.seq)} run:${runId}`,
+        );
+      }
+      // ABSENCE HAS TO BE READABLE. A table that has never allocated has
+      // no row here at all, so a missing line means either "never
+      // allocated" — a known zero — or "the operator pasted only part of
+      // this". Those are different facts, and `cover` must not guess
+      // between them, so the listing says of itself that it is whole.
+      // THE MARKER CARRIES ITS COUNT, as the digest block's closing
+      // line has since it was written (#2281 r22). "Complete" on its
+      // own is a claim nothing can check: drop one `seq` line from a
+      // pasted listing and the table it named reads as a stated ZERO —
+      // a reset or a recreated table, promoted as original.
+      console.log(
+        `  seq-listing complete run:${runId} (${usable.length} entries)`,
+      );
+    } catch (err) {
+      if (!isMissingSequenceTable(err)) throw err;
+      console.log(
+        `\n  seq-listing complete run:${runId} (0 entries)   (nothing ` +
+          `has ever allocated here)`,
+      );
+    }
+    return;
+  }
+
+  if (mode === "manifest") {
+    const opts = parseArgs(rest, {
+      flags: ["--db", "--out", "--stands-for"],
+      switches: [],
+    });
+    const name = opts["--db"];
+    const out = opts["--out"];
+    const standsFor = opts["--stands-for"];
+    if (!name || !out)
+      fail(`manifest needs --db <name> and --out <path>\n\n${USAGE}`);
+    // PRESENT QUIESCENCE CANNOT SUBSTANTIATE HISTORICAL EQUALITY, and
+    // the first version of this verb implied it could (#2281 r1).
+    //
+    // Take the exact case the reconciliation exists to find: a suspended
+    // invocation commits to the source AFTER the mirror, and the source
+    // then goes inert. Every present-tense test passes — the digests are
+    // stable, nothing binds it any more — and the manifest taken now
+    // CONTAINS that late write. A reconciliation reading it then treats
+    // the write as part of the original baseline and can never report
+    // it. The check is not merely weakened; it is turned against itself.
+    //
+    // What could substantiate the claim is evidence captured AT the
+    // mirror — its recorded digests, its row counts — compared with what
+    // this reading finds. This tool cannot perform that comparison: the
+    // evidence lives in a run log it has no access to. So it does the
+    // one thing it honestly can, which is refuse to produce an
+    // unattributed baseline: the operator must state what moment this
+    // stands for and what establishes it, and that statement is written
+    // INTO the artifact, as a claim, attributed.
+    if (!standsFor) {
+      fail(
+        `manifest needs --stands-for "<which moment this baseline stands ` +
+          `for, and what establishes it>".\n\n` +
+          `This verb reads ${name} as it is NOW. That is a stand-in for a ` +
+          `mirror's baseline only if ${name} has not changed since the ` +
+          `mirror — and NOTHING observable today can establish that. A ` +
+          `write that committed after the mirror and before this reading ` +
+          `is inside this baseline, indistinguishable from what the ` +
+          `mirror saw, and no later reconciliation can report it. Present ` +
+          `stillness does not substantiate past equality; only evidence ` +
+          `recorded AT the mirror does — its per-table digests AND its ` +
+          `sequence high-water marks, compared with what this reading ` +
+          `finds. Row counts are not that evidence: an AUTOINCREMENT row ` +
+          `inserted and deleted again leaves every count and every digest ` +
+          `identical while the mark has moved, which is the case the ` +
+          `marks exist for.\n\n` +
+          `If you have that evidence, name it. If you do not, say so ` +
+          `plainly. An uncovered baseline is still useful for finding NEW ` +
+          `differences — what it must NEVER do is license the rollback's ` +
+          `reverse mirror, and one that hides its uncovered interval ` +
+          `invites exactly that.\n\n` +
+          `  --stands-for "archive at the 19:56 mirror; digests and ` +
+          `seq-listings at 19:40/19:51/19:57 identical, 43 tables"\n` +
+          `  --stands-for "archive as of this reading only; the interval ` +
+          `since the mirror is NOT covered"\n\n${USAGE}`,
+      );
+    }
+    // WHETHER THE INTERVAL IS COVERED IS NOT THIS COMMAND'S TO RECORD
+    // (#2281 r3). An earlier revision took `--interval covered` here and
+    // wrote it BEFORE printing the digests that are supposed to
+    // substantiate it — so the artifact asserted coverage at a moment
+    // when no operator could yet have compared anything, and a
+    // comparison that later failed, or never happened, left a baseline
+    // claiming to license the destructive reverse mirror.
+    //
+    // So every reconstruction is written UNCOVERED, and `cover` is a
+    // separate command that promotes it only by actually checking the
+    // recorded readings against evidence from the mirror.
+    // Either end of the cutover, and nothing else — the same pinning the
+    // carry uses, for the same reason: a baseline is only meaningful
+    // about a database this procedure is actually between.
+    if (name !== shared.name && name !== PREDECESSOR.name) {
+      fail(
+        `this tool takes a baseline from exactly two databases: the ` +
+          `shared one (${shared.name}) and its recorded predecessor ` +
+          `(${PREDECESSOR.name}). It was asked for "${name}".`,
+      );
+    }
+    const db = name === shared.name ? shared : await resolveByName(name);
+    if (db.name === PREDECESSOR.name && db.id !== PREDECESSOR.id) {
+      fail(
+        `"${db.name}" resolves to ${db.id}, but the recorded predecessor ` +
+          `is ${PREDECESSOR.id}. A database carrying that name today is ` +
+          `not necessarily the one this tool was written for.`,
+      );
+    }
+    // THE ORIGINAL IS NOT REPLACEABLE, AND THIS VERB IS ONLY NEEDED WHEN
+    // IT IS ABSENT (#2281 r2). Writing over an existing artifact needs no
+    // error to destroy it: a reconstruction that may have absorbed late
+    // writes would silently take the place of the one baseline that
+    // observed the moment it describes, and nothing can recreate that.
+    if (existsSync(out)) {
+      fail(
+        `${out} already exists, and this verb will not replace it.\n\n` +
+          `A manifest the MIRROR wrote observed the moment it describes. ` +
+          `A reconstruction only stands in for that moment, and may have ` +
+          `absorbed writes that committed after it. Replacing the first ` +
+          `with the second destroys the only baseline that was ever a ` +
+          `direct observation — and that cannot be undone.\n\n` +
+          `Write to a new path. If the existing file is known to be ` +
+          `unusable, move it aside deliberately first.`,
+      );
+    }
+    console.log(
+      `taking a manifest of ${db.name} (${db.id})\n` +
+        `     READ ONLY — no database is written. This records ${db.name} ` +
+        `AS IT IS NOW.\n` +
+        `     It stands for: ${standsFor}\n` +
+        `     Interval since the mirror: UNCOVERED until \`cover\` says ` +
+        `otherwise\n` +
+        `     A write that committed before this reading is INSIDE this ` +
+        `baseline and no reconciliation using it can report the write as ` +
+        `late.`,
+    );
+    const { manifest, refused, digests, readStartedAt, readCompletedAt } =
+      await takeManifest(db);
+    // A PARTIAL BASELINE IS NOT A BASELINE, and writing one would also
+    // destroy whatever valid artifact was at this path (#2281 r1). The
+    // refusals are reported and nothing is written.
+    if (refused.length > 0) {
+      reportProblems(
+        [
+          ...refused,
+          `nothing was written to ${out}. A manifest missing a table is ` +
+            `a baseline that reports nothing about it forever, and ` +
+            `writing one here would have replaced whatever was at that ` +
+            `path with it.`,
+        ],
+        db,
+      );
+    }
+    writeManifest(
+      out,
+      db,
+      manifest,
+      {
+        producer: "manifest (reconstructed)",
+        // BOUNDS, not the file-write time (#2281 r2). `takenAt` is stamped
+        // when the artifact is written, which is AFTER the last read — so
+        // a transaction committing in between precedes `takenAt` and is
+        // absent from the baseline. A sentence claiming everything before
+        // `takenAt` is included says the opposite of what the file holds.
+        readStartedAt,
+        readCompletedAt,
+        observes: `${db.name} as read between the two times above`,
+        standsFor,
+        interval: "uncovered",
+      },
+      // NOT A REPLACE. The check that `--out` was free happened before a
+      // read measured in minutes; this is the one that holds at the
+      // moment of writing.
+      { noReplace: true },
+    );
+    // THE EVIDENCE THE PROCEDURE ASKS FOR, from the reading that was
+    // actually accepted. Running `digest` afterwards observes a
+    // different interval and says nothing about the rows in this file.
+    console.log(`\nper-table digest of the reading recorded in ${out}:`);
+    for (const [table, digest] of [...digests].sort()) {
+      console.log(`  ${table.padEnd(32)} ${digest}`);
+    }
+    console.log(
+      `\nrecorded ${Object.keys(manifest).length} table(s), read between ` +
+        `${readStartedAt} and ${readCompletedAt}.\n\n` +
+        `WRITTEN UNCOVERED, and only \`cover\` can change that. It will ` +
+        `surface NEW differences as it stands, and it must NOT license ` +
+        `the rollback's reverse mirror until the interval since the ` +
+        `mirror has been accounted for:\n\n` +
+        `  d1-carry-rows.mjs cover --manifest ${out} --expect <file>\n\n` +
+        `where <file> holds what was recorded AT the mirror — the ` +
+        `per-table digests AND the sequence high-water marks. \`cover\` ` +
+        `compares them with the readings in the artifact and promotes it ` +
+        `only on exact agreement. An assertion made here instead would be ` +
+        `made before the evidence existed.`,
+    );
+    return;
+  }
+
+  if (mode !== "carry" && mode !== "reconcile") fail(USAGE);
 
   const opts = parseArgs(rest, {
-    flags: ['--from', '--to', '--manifest', '--since'],
-    switches: ['--mirror'],
+    flags: ["--from", "--to", "--manifest", "--since"],
+    switches: ["--mirror"],
   });
-  const fromName = opts['--from'];
-  const toName = opts['--to'];
+  const fromName = opts["--from"];
+  const toName = opts["--to"];
   if (!fromName || !toName) {
     fail(`carry needs both --from <name> and --to <name>\n\n${USAGE}`);
   }
-  if (fromName === toName) fail('--from and --to name the same database');
+  if (fromName === toName) fail("--from and --to name the same database");
   // BOTH ends are pinned, not just one. See PREDECESSOR: requiring only
   // that the shared database be one end let an unrelated account database
   // be mirrored OVER the live shared data, or the shared data be copied
@@ -2714,8 +4512,8 @@ async function main() {
   // to be applied automatically is now reported with the rest, and a
   // person applies it: for a straggler count expected to be zero, that is
   // a better trade than a race nobody can close.
-  const wantMirror = opts['--mirror'] === true;
-  const reconciling = mode === 'reconcile';
+  const wantMirror = opts["--mirror"] === true;
+  const reconciling = mode === "reconcile";
   if (reconciling && wantMirror) {
     fail(`reconcile never writes, so it takes no --mirror.\n\n${USAGE}`);
   }
@@ -2733,8 +4531,8 @@ async function main() {
   // Without it, "the destination already has this key" cannot distinguish
   // a row a straggler changed on the source after the mirror from one the
   // destination has legitimately moved on from.
-  const manifestPath = opts['--manifest'];
-  const sincePath = opts['--since'];
+  const manifestPath = opts["--manifest"];
+  const sincePath = opts["--since"];
   if (wantMirror && !manifestPath) {
     fail(
       `carry --mirror needs --manifest <path>: the reconciliation that ` +
@@ -2768,12 +4566,19 @@ async function main() {
   );
 
   const since = reconciling ? readManifest(sincePath, src) : null;
-  const { written, refused, conflicts, manifest, pending, classifiedSource, manifestOnly } =
-    await carry(
-    src,
-    dst,
-    { onlyMissing: reconciling, reportOnly: reconciling, since },
-  );
+  const {
+    written,
+    refused,
+    conflicts,
+    manifest,
+    pending,
+    classifiedSource,
+    manifestOnly,
+  } = await carry(src, dst, {
+    onlyMissing: reconciling,
+    reportOnly: reconciling,
+    since,
+  });
   for (const p of pending ?? []) {
     conflicts.push({
       table: p.table,
@@ -2781,11 +4586,11 @@ async function main() {
       // by the live handshake code, and a row present only on the source
       // is exactly a fresh one (#2267 r31).
       key: safeKey(p.table, p.key, keyOf(p.row, p.key)),
-      kind: 'present on the source and absent from the destination',
+      kind: "present on the source and absent from the destination",
       detail:
-        'it appeared on the source after the mirror. This is the one case ' +
-        'that could be applied mechanically, and reconcile does not write ' +
-        '— apply it deliberately, then re-run',
+        "it appeared on the source after the mirror. This is the one case " +
+        "that could be applied mechanically, and reconcile does not write " +
+        "— apply it deliberately, then re-run",
     });
   }
   console.log(`wrote ${written} row(s)`);
@@ -2873,7 +4678,7 @@ async function main() {
       : await sequenceProblems(src, dst)),
   ];
 
-  console.log('');
+  console.log("");
   if (problems.length > 0) reportProblems(problems, dst);
 
   // THE MANIFEST IS WRITTEN ONLY BY A RUN THAT SUCCEEDED, and this is the
@@ -2901,25 +4706,28 @@ async function main() {
         // where the schemas differ, the success line contradicted the
         // drift notes printed above it.
         `VERIFIED — no unresolved late write from ${src.name} was found. ` +
-        (manifestOnly.size > 0
-          ? `Every table whose rows this run could LINE UP holds at least ` +
-            `as many rows in ${dst.name}; ${manifestOnly.size} table(s) ` +
-            `could not be lined up at all and were compared against the ` +
-            `manifest alone — named above, with why. Nothing here says ` +
-            `how many rows ${dst.name} holds for those.`
-          : `Every table the two sides share holds at least as many rows ` +
-            `in ${dst.name}, and any table only one of them has is ` +
-            `reported as drift above.`) +
-        `\n  This mode deliberately does not claim the two sides are ` +
-        `identical: the destination is live and its own newer values are ` +
-        `left alone.`
+          (manifestOnly.size > 0
+            ? `Every table whose rows this run could LINE UP holds at least ` +
+              `as many rows in ${dst.name}; ${manifestOnly.size} table(s) ` +
+              `could not be lined up at all and were compared against the ` +
+              `manifest alone — named above, with why. Nothing here says ` +
+              `how many rows ${dst.name} holds for those.`
+            : `Every table the two sides share holds at least as many rows ` +
+              `in ${dst.name}, and any table only one of them has is ` +
+              `reported as drift above.`) +
+          `\n  This mode deliberately does not claim the two sides are ` +
+          `identical: the destination is live and its own newer values are ` +
+          `left alone.`
       : `VERIFIED — every table the source holds is present in ${dst.name} ` +
-        `with an identical content digest.`,
+          `with an identical content digest.`,
   );
 }
 
 // Only run when invoked as a command. A test that imports the decision
 // table must not thereby start carrying rows between live databases.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   main().catch((err) => fail(err.stack ?? String(err)));
 }
