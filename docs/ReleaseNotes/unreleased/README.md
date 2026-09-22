@@ -30,7 +30,10 @@ PRs landing the same day never append-conflict.
 
    The heading must also open at `##`, not `#` — a fragment opening at `#`
    lands in the dated file as a second document title rather than nesting
-   under the release title.
+   under the release title, and assembly refuses it. `###` or deeper is
+   untidy rather than wrong (it nests under nothing) and is **not** refused:
+   72 of the 758 fragments written so far open that way, and refusing them
+   would block work already in flight over a matter of style.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.

@@ -94,11 +94,9 @@ HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
 # and the placeholder sailed through as "no reference at all" (#2290 r2).
 PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
-# A setext underline: `=` for level 1, `-` for level 2, up to three leading
-# spaces, nothing else on the line. Requiring the WHOLE line keeps `- item`
-# and `--- a b` out; the caller additionally requires a non-blank text line
-# above it, without which `---` is a thematic break rather than a heading.
-SETEXT_UNDERLINE_RE = re.compile(rb"^ {0,3}(=+|-+)[ \t]*$")
+# There is deliberately no setext-underline pattern here. `first_heading`
+# recognises ATX only; its docstring records why the setext branch was
+# removed rather than refined (#2290 r6).
 
 
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
@@ -162,23 +160,39 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     evidence say the scanning version was the more dangerous of the two,
     because its failures were silent and this one's is visible.
 
-    Recognises both Markdown heading syntaxes on that line:
+    Recognises ATX only — `## Title`, one to six `#`, up to three leading
+    spaces, closed by a space, a tab, or end of line.
 
-      ATX     `## Title`   — one to six `#`, up to three leading spaces,
-                             closed by a space, a tab, or end of line.
-      setext  `Title`      — the opening line underlined by `=` (level 1)
-              `=====`        or by `-` (level 2).
+    SETEXT IS DELIBERATELY NOT RECOGNISED, and removing it is a root fix
+    rather than a gap (#2290 r6). It was added in r4 for a shape nobody had
+    observed, and it then produced a finding in each of the three rounds
+    that followed: a list above a thematic break read as a heading (r5); the
+    markerless-duplicate guard comparing a title line without its underline,
+    which refuses a fragment over ordinary prose (r6); and a title wrapped
+    across lines before its underline, which this would miss (r6). Each was
+    a real edge, and each existed only because the branch did.
+
+    The corpus settles it. Of the 758 distinct fragments ever committed to
+    `unreleased/`, 758 open with an ATX heading and ZERO contain a
+    setext-shaped pair anywhere. So the branch guarded nothing that has ever
+    happened while generating four findings, which is the pattern #2149
+    records: an edge-producing speculative branch is removed, not refined.
+
+    The residual is stated plainly: a fragment whose title is underlined
+    rather than `#`-prefixed takes the no-heading allowance and is published
+    unexamined. That is one exotic shape, never once used, in exchange for
+    an entire class of misreading.
 
     Front matter is skipped first, matched STRICTLY: `---` alone at column
     zero on the first line, closed by the same. Indented, `---` is a
     thematic break and not a fence, which is what r5 caught in the previous
     `.strip()` version.
 
-    ONE RESIDUAL beyond the weakening above. Raw HTML — `<h1>Title</h1>` —
-    renders as a heading on GitHub but is not Markdown syntax and is not
-    detected. Zero occurrences anywhere in `docs/ReleaseNotes`, checked; and
-    recognising it properly means parsing HTML, which is the unbounded
-    surface this function exists to avoid.
+    The same holds for raw HTML — `<h1>Title</h1>` renders as a heading on
+    GitHub but is not Markdown syntax and is not detected. Zero occurrences
+    anywhere in `docs/ReleaseNotes`, checked; and recognising it properly
+    means parsing HTML, which is the unbounded surface this function exists
+    to avoid.
     """
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
     i = 0
@@ -196,13 +210,6 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     if HEADING_RE.match(line):
         marker = line.lstrip(b" ")
         return len(marker) - len(marker.lstrip(b"#")), line
-    u = (
-        SETEXT_UNDERLINE_RE.match(lines[i + 1])
-        if i + 1 < len(lines)
-        else None
-    )
-    if u:
-        return (1 if u.group(1).startswith(b"=") else 2), line
     return None
 
 
@@ -1449,8 +1456,8 @@ class Assembly:
 
         `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
         things about that line are load-bearing the moment the fragment is
-        folded, and neither is recoverable afterwards, because a dated
-        release note is never re-edited:
+        folded, and nothing downstream looks at either — assembly is the last
+        step that reads the heading at all:
 
           - THE LEVEL. A fragment opening at `#` lands in the dated file as a
             second document title rather than nesting under the release
@@ -1459,6 +1466,17 @@ class Assembly:
           - THE PR REFERENCE. The template ships the placeholder literally,
             and a fragment that keeps it publishes a section nothing can
             trace back to the change it documents.
+
+        ONLY LEVEL 1 IS REFUSED — not "any level but 2" (#2290 r6, measured).
+        An earlier revision required exactly level 2, which reads as the
+        obvious rule and is wrong against practice: of the 758 distinct
+        fragments ever committed, 605 open at `##`, 81 at `#` and **72 at
+        `###`**, two of the last in PRs open at the time this was written and
+        owned by other work. A level-3 opener is a style inconsistency — it
+        nests under nothing — while a level-1 opener is the structural defect
+        this guard exists to prevent, and only the second is worth refusing a
+        release over. Refusing a fifth of every fragment ever written, some of
+        it already in flight elsewhere, is how a check gets disabled.
 
         Both reached a publishable file in #2286 — two fragments at `#`, one
         still carrying the placeholder — and nothing between authoring and
@@ -1515,22 +1533,36 @@ class Assembly:
                 # line of prose because it is testing rename pairing rather
                 # than headings.
                 #
-                # `first_heading` covers BOTH Markdown heading syntaxes, so
-                # reaching here means the fragment genuinely opens with prose
-                # — not that a heading went unrecognised, which is what this
-                # branch silently permitted three rounds running.
+                # Reaching here means the opening line is not an ATX heading.
+                # That is USUALLY prose, and it also covers the one shape
+                # `first_heading` no longer recognises — a setext-underlined
+                # title. Both are permitted, and the docstring there says why
+                # the second is worth permitting rather than chasing.
                 continue
             level, first = found
             shown = first.decode("utf-8", errors="replace")
-            if level != 2:
+            if level == 1:
                 # Level, not `#`-count: a setext heading carries no `#` at
                 # all, and "opens at #, not ##" describing `Title` over
                 # `=====` is a message that sends the reader looking for a
-                # character that is not there (#2290 r3).
-                bad.append(f"{name}: opens at level {level}, not level 2  ->  {shown}")
+                # character that is not there (#2290 r3). Setext is no longer
+                # recognised at all (r6), but "level" remains the honest word
+                # for what was measured.
+                #
+                # Level 3 and deeper are ALLOWED — see the docstring. They are
+                # untidy, not a second document title.
+                bad.append(
+                    f"{name}: opens at level 1, a second document title  ->  {shown}"
+                )
                 continue
-            ref = PR_REF_RE.search(first)
-            if ref is not None and not ref.group(1).isdigit():
+            # EVERY `PR #` token on the line, not just the first (#2290 r6).
+            # `(PR #123, PR #TBD)` is accepted by a `search`, which returns
+            # the numeric one and never looks further — the guard passing on
+            # the evidence that it should have refused. No heading in the
+            # corpus carries two tokens, so this refuses nothing that exists;
+            # it removes a way for the check to be satisfied by a prefix.
+            bads = [t for t in PR_REF_RE.findall(first) if not t.isdigit()]
+            if bads:
                 bad.append(
                     f"{name}: heading still carries the template's placeholder "
                     f"rather than a number  ->  {shown}"
@@ -1548,10 +1580,11 @@ class Assembly:
         err("")
         err("The LEVEL matters because a fragment opening at # lands in the dated")
         err("file as a second document title instead of nesting under the release")
-        err("title. The PR NUMBER matters because a section that keeps the")
-        err("placeholder cannot be traced to the change it documents. Both of")
-        err("these reached a publishable file before this check existed (#2286),")
-        err("and a dated release note is never re-edited afterwards.")
+        err("title. Only level 1 is refused; ### and deeper are untidy, not that.")
+        err("The PR NUMBER matters because a section that keeps the placeholder")
+        err("cannot be traced to the change it documents. Both of these reached a")
+        err("publishable file before this check existed (#2286), and assembly is")
+        err("the last step that looks at the heading.")
         err("")
         err("Fix the heading(s) and run again.")
         self.refuse_reporting_consumed()
@@ -1582,14 +1615,18 @@ class Assembly:
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            # The SAME parser the conformance check uses (#2290 r5). This
-            # used to run its own `HEADING_RE` scan, so when setext became an
-            # accepted heading form only one of the two consumers learned
-            # about it: a setext-headed fragment already folded into a
-            # markerless dated file was not recognised, and would have been
-            # appended a second time and then consumed. Two ways of deciding
-            # what a fragment's heading is, disagreeing — which is the defect
-            # this whole PR keeps finding in one shape or another.
+            # The SAME parser the conformance check uses (#2290 r5). This used
+            # to run its own `HEADING_RE` scan, and the two drifted the moment
+            # `first_heading` learned a form this did not: a fragment already
+            # folded into a markerless dated file went unrecognised here, and
+            # would have been appended a second time and then CONSUMED — the
+            # one outcome in this script that loses work rather than refusing.
+            # Two ways of deciding what a fragment's heading is, disagreeing.
+            #
+            # One parser matters more now, not less. Comparing a whole ATX
+            # line is exact; r6 showed the alternative, where a two-line
+            # construct compared by its text alone refuses a fragment because
+            # the dated file happens to contain that sentence as prose.
             opening = first_heading(body)
             if opening is not None:
                 line = opening[1]
