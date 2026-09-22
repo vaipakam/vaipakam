@@ -38,11 +38,13 @@ PRs landing the same day never append-conflict.
      the file, or a title underlined with `=` or `-` rather than prefixed
      with `#`, is not examined.
    - A heading with **no PR reference at all** is not refused. That is not an
-     oversight: of the 758 fragments written so far, **457 carry none** (60%),
-     and 69% of published section headings carry none. The convention is the
-     template's, not a rule the corpus follows, so refusing its absence would
-     stop six fragments in ten *on top of* the three in ten already refused
-     for carrying a placeholder — nine in ten between them.
+     oversight — most fragments written so far carry none, as do most
+     published section headings. The `(PR #<n>)` convention is the template's,
+     not a rule the corpus follows, so refusing its absence would stop the
+     majority of real fragments. (The counts behind that live with the rule,
+     in `assemble.py`'s `check_heading_conformance` docstring, and are
+     deliberately not copied here — three review rounds were spent on figures
+     that had drifted between files.)
 
    What is refused is narrow and worth stating exactly: a reference that is
    **present and not a number**. That is the failure the template actually
@@ -52,8 +54,9 @@ PRs landing the same day never append-conflict.
    lands in the dated file as a second document title rather than nesting
    under the release title, and assembly refuses it. `###` or deeper is
    untidy rather than wrong (it nests under nothing) and is **not** refused:
-   72 of the 758 fragments written so far open that way, and refusing them
-   would block work already in flight over a matter of style.
+   a substantial minority of fragments open that way, and refusing them would
+   block work already in flight over a matter of style. (Counts with the rule,
+   as above.)
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.

@@ -4264,6 +4264,22 @@ bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?
 # document title instead of nesting under the release title.
 # The PR REFERENCE: `_TEMPLATE.md` ships the placeholder literally, and a
 # fragment that keeps it publishes a section nothing can trace.
+#
+# ── ONE RULE FOR THE COMMENTS BELOW, and it is a root fix, not a style
+#    preference (#2290 r6/r7/r8). Three consecutive review rounds found a
+#    rationale corrected in `assemble.py` and left stale HERE — "a dated note
+#    is never re-edited", the fixture-cost argument, and a count that had been
+#    right in one file and wrong in the other. Each round fixed whichever copy
+#    the finding happened to cite, which is what a duplicated account does.
+#
+#    So: a MEASURED FIGURE lives in exactly one place — the docstring of the
+#    rule it supports — and every other mention states the rule and points
+#    there. These comments say what a case pins and why it exists; they do not
+#    re-derive the corpus. A figure written in two files is two figures.
+#
+#    (Figures that exist only here, like the counts of published headings that
+#    motivated an r1/r2 case, stay here. The rule is one home each, not one
+#    file for all of them.)
 case_start "T217: a fragment heading that cannot survive assembly is refused"
 W="$ROOT/t217"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
@@ -4291,9 +4307,10 @@ check "nothing was consumed"        "$(pending "$W")"                         "3
 case_start "T217c: the check allows what it deliberately does not police"
 W="$ROOT/t217c"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
-# No PR reference at all: allowed — because 457 of the 758 fragments ever
-# written carry none, and 69% of published section headings carry none. The
-# template's `(PR #<n>)` is a convention, not a rule the corpus follows.
+# No PR reference at all: allowed, because most real fragments carry none —
+# the template's `(PR #<n>)` is a convention, not a rule the corpus follows.
+# The figures are in `check_heading_conformance`'s docstring and deliberately
+# not repeated here; see the note at the top of this section.
 #
 # NOT because requiring one would need ~70 fixtures here conformed. That was
 # the reason this comment gave, a review round rejected it, and it is the
@@ -4405,10 +4422,10 @@ check "nothing was consumed"     "$(pending "$W")"               "4"
 # break read as a heading (r5); the markerless-duplicate guard comparing a
 # title line without its underline, refusing a fragment over ordinary prose
 # (r6); a title wrapped across lines before its underline, which it missed
-# (r6). The corpus settled it — of 758 distinct fragments ever committed, 758
-# open with ATX and ZERO contain a setext-shaped pair anywhere. So the branch
-# was REMOVED rather than refined (#2149's pattern), and these cases pin the
-# residual that removal leaves: a setext title is published unexamined.
+# (r6). The corpus settled it: every fragment ever committed opens with ATX and
+# none contains a setext-shaped pair anywhere (counts in `first_heading`'s
+# docstring). So the branch was REMOVED rather than refined (#2149's pattern),
+# and these cases pin the residual: a setext title is published unexamined.
 #
 # Pinned so that re-adding setext is a deliberate act with these three rounds
 # in view, and not a well-meant "the check missed one" patch.
@@ -4484,11 +4501,12 @@ check "nothing left pending" "$(pending "$W")" "0"
 
 # ── ONLY level 1 is refused, measured against practice (#2290 r6) ───────────
 # An earlier revision required exactly level 2, which reads as the obvious
-# rule and is wrong against what people actually write: of the 758 distinct
-# fragments ever committed, 605 open at `##`, 81 at `#` and 72 at `###` — one
-# of the last in a pull request open while this was written and owned by other
-# work. Refusing a fifth of every fragment ever written, one of them in flight
-# elsewhere, is how a check gets deleted rather than obeyed. A `###` opener
+# rule and is wrong against what people actually write: about a fifth of every
+# fragment ever committed opens at some level other than `##`, most of them at
+# `###`, and one of those was in a pull request open while this was written and
+# owned by other work (the breakdown is in `check_heading_conformance`'s
+# docstring). Refusing a fifth of real input, some of it in flight elsewhere,
+# is how a check gets deleted rather than obeyed. A `###` opener
 # nests under nothing; it is untidy, not a second document title.
 case_start "T217k: a level-3 opener is untidy, not refused"
 W="$ROOT/t217k"; build "$W"
