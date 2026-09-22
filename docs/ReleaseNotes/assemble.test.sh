@@ -4251,6 +4251,53 @@ bash "$S" 2026-08-16 2026-08-17 >/dev/null 2>&1; check "two dates refused"   "$?
 bash "$S" 20260816            >/dev/null 2>&1; check "bad date format refused" "$?" "1"
 bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?" "0"
 
+# ── A fragment heading that will not survive assembly is refused (#2288) ─────
+# Two heading defects reached a publishable file in #2286 and nothing between
+# authoring and publication looked at the line. Both are unfixable afterwards,
+# because a dated release note is never re-edited.
+#
+# The LEVEL: a fragment opening at `#` lands in the dated file as a second
+# document title instead of nesting under the release title.
+# The PR REFERENCE: `_TEMPLATE.md` ships the placeholder literally, and a
+# fragment that keeps it publishes a section nothing can trace.
+case_start "T215: a fragment heading that cannot survive assembly is refused"
+W="$ROOT/t215"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '# Thread — opens at the wrong level (PR #4243)\n' > "$u/0003-level.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"              "$?"                                 "1"
+check "it names the offending file"  "$(says "$msg" '0003-level.md')"     "1"
+check "and what is wrong with it"    "$(says "$msg" 'opens at #, not ##')" "1"
+check "nothing was consumed"         "$(pending "$W")"                    "3"
+check "no dated file was written"    "$([ -f "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md" ] && echo yes || echo no)" "no"
+
+case_start "T215b: an unsubstituted PR placeholder is refused"
+W="$ROOT/t215b"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+printf '## Thread — never filled in (PR #NNNN)\n' > "$u/0003-placeholder.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"             "$?"                                      "1"
+check "it names the file"           "$(says "$msg" '0003-placeholder.md')"    "1"
+check "and says it is a placeholder" "$(says "$msg" 'placeholder')"           "1"
+check "nothing was consumed"        "$(pending "$W")"                         "3"
+
+# The residuals, pinned so that narrowing them later is a deliberate act and
+# not an accident. Each is a shape the check deliberately allows; see the
+# `check_heading_conformance` docstring for why.
+case_start "T215c: the check allows what it deliberately does not police"
+W="$ROOT/t215c"; build "$W"
+u="$W/docs/ReleaseNotes/unreleased"
+# No PR reference at all: allowed. Requiring one fails every fixture in this
+# suite, which builds bare `## <stem>` headings in ~70 places.
+printf '## a heading with no reference at all\n' > "$u/0003-noref.md"
+# No heading at all: allowed. T10's fixture is a bare line of prose because it
+# is testing rename pairing, not headings.
+printf 'no heading here, just prose\n'           > "$u/0004-noheading.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"          "$?"                                                            "0"
+check "all four are folded in"    "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
+check "nothing left pending"      "$(pending "$W")"                                               "0"
+
 echo ""
 if (( RETIRED > 0 )); then
   echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"

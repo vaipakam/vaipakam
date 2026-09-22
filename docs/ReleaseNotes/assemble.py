@@ -69,6 +69,11 @@ MARKER_RE = re.compile(
     r"^" + re.escape(MARKER_PREFIX) + r"(.+) sha256=([0-9a-f]{64}) -->\r?$"
 )
 HEADING_RE = re.compile(rb"^#{1,6} ")
+# The PR reference in a fragment heading, captured so the digits can be
+# tested rather than merely found: `_TEMPLATE.md` ships `(PR #<n>)` as the
+# literal `#NNNN`, and a present-but-unsubstituted reference is the defect
+# this exists to catch (#2288).
+PR_REF_RE = re.compile(rb"\(PR #([^)]*)\)")
 SKIP_NAMES = {"README.md", "_TEMPLATE.md"}
 
 
@@ -1335,6 +1340,110 @@ class Assembly:
         out_line(f"Nothing left to assemble for {self.date}.")
         raise SystemExit(0)
 
+    # ── fragment heading conformance (#2288) ─────────────────────────────
+
+    def check_heading_conformance(self) -> None:
+        """Refuse a fragment whose first heading does not match the template.
+
+        `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
+        things about that line are load-bearing the moment the fragment is
+        folded, and neither is recoverable afterwards, because a dated
+        release note is never re-edited:
+
+          - THE LEVEL. A fragment opening at `#` lands in the dated file as a
+            second document title rather than nesting under the release
+            title, so outlines, generated tables of contents and
+            screen-reader heading navigation all read it as a peer document.
+          - THE PR REFERENCE. The template ships the placeholder literally,
+            and a fragment that keeps it publishes a section nothing can
+            trace back to the change it documents.
+
+        Both reached a publishable file in #2286 — two fragments at `#`, one
+        still carrying the placeholder — and nothing between authoring and
+        publication had ever looked at the line. This is the one place every
+        fragment passes through.
+
+        WHAT IT DOES NOT CHECK, deliberately.
+
+        The `Thread —` prefix and the wording after it. Neither has produced a
+        defect, and a check on prose would fail correct fragments for style.
+
+        THE PRESENCE of a PR reference. A heading carrying none is refused by
+        nothing here; only a reference that is present and not a number is.
+        That is narrower than the template, and it was chosen against the
+        stricter rule after measuring it: requiring presence fails all 112
+        assertions that assemble anything, because `assemble.test.sh` builds
+        its fragments as bare `## <stem>` headings in about seventy places —
+        among them heredocs with their own escaping, and fixtures whose
+        headings deliberately carry NUL bytes, CRLF and control characters.
+        Conforming those is a large edit to the file that IS this script's
+        specification, in exchange for a defect class that has never occurred;
+        a fragment reaching assembly with no reference at all is a shape
+        neither the template nor any observed mistake produces, since the
+        template ships one and the failure mode is leaving it unsubstituted.
+        If a missing reference ever does ship, the answer is to conform the
+        fixtures and tighten this — not to conclude the check was wrong.
+
+        SCOPED TO `self.frags`, which is the PENDING set. A fragment in
+        `already` has its text in the dated file: its heading was published
+        by some earlier run, so refusing now would block the clearing of
+        finished work over a decision that can no longer be acted on.
+
+        Reads the SNAPSHOT, like every other content check here, because the
+        original may be being edited while this runs.
+        """
+        bad: list[str] = []
+        for f in self.frags:
+            name = self.frag_name[f]
+            body = checked(
+                f"reading {name}",
+                lambda p=self.frag_snap[f]: open(p, "rb").read(),
+            )
+            first = None
+            for raw in body.split(b"\n"):
+                line = raw[:-1] if raw.endswith(b"\r") else raw
+                if HEADING_RE.match(line):
+                    first = line
+                    break
+            if first is None:
+                # A fragment with NO heading is outside this check's scope —
+                # see the docstring. It is not a shape the template produces,
+                # and refusing it here failed T10, whose fixture is a bare
+                # line of prose because it is testing rename pairing rather
+                # than headings.
+                continue
+            shown = first.decode("utf-8", errors="replace")
+            level = len(first) - len(first.lstrip(b"#"))
+            if level != 2:
+                bad.append(f"{name}: opens at {'#' * level}, not ##  ->  {shown}")
+                continue
+            ref = PR_REF_RE.search(first)
+            if ref is not None and not ref.group(1).isdigit():
+                bad.append(
+                    f"{name}: heading still carries the template's placeholder "
+                    f"rather than a number  ->  {shown}"
+                )
+        if not bad:
+            return
+
+        err("Error: these fragment headings do not match the template:")
+        err("")
+        for line in bad:
+            err(f"  {line}")
+        err("")
+        err("  docs/ReleaseNotes/unreleased/_TEMPLATE.md opens:")
+        err("    ## Thread — <short title> (PR #<n>)")
+        err("")
+        err("The LEVEL matters because a fragment opening at # lands in the dated")
+        err("file as a second document title instead of nesting under the release")
+        err("title. The PR NUMBER matters because a section that keeps the")
+        err("placeholder cannot be traced to the change it documents. Both of")
+        err("these reached a publishable file before this check existed (#2286),")
+        err("and a dated release note is never re-edited afterwards.")
+        err("")
+        err("Fix the heading(s) and run again.")
+        self.refuse_reporting_consumed()
+
     # ── markerless duplicate-heading guard ───────────────────────────────
 
     def check_markerless_duplicates(self) -> None:
@@ -1749,6 +1858,9 @@ class Assembly:
             self.nothing_pending()
 
         self.frags = pending
+        # Before anything is appended or cleared: a heading defect is only
+        # fixable while the fragment is still pending (#2288).
+        self.check_heading_conformance()
         self.check_markerless_duplicates()
         self.build()
         self.publish()
