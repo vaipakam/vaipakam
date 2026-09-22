@@ -194,27 +194,29 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     means parsing HTML, which is the unbounded surface this function exists
     to avoid.
     """
-    # A UTF-8 BOM is stripped from the START OF THE FILE before anything else
-    # (#2290 r11). An editor that writes one leaves `\xef\xbb\xbf# Title` on
-    # line one; CommonMark ignores U+FEFF, so GitHub renders that as a level-1
-    # heading, while a byte-level match sees neither a `#` at column zero nor
-    # `---`. The fragment then took the no-heading allowance and published the
-    # peer title and its placeholder — permit-by-misrecognition, the same
-    # shape as the six findings that made this function stop scanning.
+    # NOTHING IS NORMALISED HERE, and that is the point (#2290 r12).
     #
-    # Only at offset zero, and only once: a U+FEFF anywhere else is a
-    # zero-width no-break space, which is content rather than an encoding
-    # artefact, and is left alone.
-    if body.startswith(b"\xef\xbb\xbf"):
-        body = body[3:]
+    # Two earlier revisions did normalise: a leading UTF-8 BOM was stripped,
+    # and YAML front matter was skipped, before looking for the heading. Both
+    # were wrong in the same structural way — `build()` appends the fragment's
+    # RAW bytes after the release title, so the check was deciding about one
+    # document and the assembler publishing another:
+    #
+    #   - `BOM + ## Heading` passed, and published mid-document the U+FEFF is
+    #     an ordinary zero-width character, so the line renders as a PARAGRAPH
+    #     rather than a section. The check blessed a fragment it had made
+    #     unpublishable.
+    #   - `---` / `title: x` / `---` passed, and published after the title the
+    #     opening `---` is a thematic break and `title: x` over `---` is a
+    #     SETEXT heading. The fragment gained a section nobody wrote.
+    #
+    # Both shapes are refused by `check_heading_conformance` instead, which is
+    # why this function can read one line and trust it. Zero of the 759
+    # fragments ever committed begin with either, so the refusal costs nothing
+    # and the normalisation was guarding a case that has never occurred —
+    # #2149's pattern for the third time on this change.
     lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
     i = 0
-    # Front matter: `---` EXACTLY at column zero, line one, closed the same.
-    if lines and lines[0] == b"---":
-        for j in range(1, len(lines)):
-            if lines[j] == b"---":
-                i = j + 1
-                break
     while i < len(lines) and not lines[i].strip():
         i += 1
     if i >= len(lines):
@@ -1576,6 +1578,34 @@ class Assembly:
                 f"reading {name}",
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
+            # REFUSED BEFORE THE HEADING IS EVEN LOOKED AT: a fragment whose
+            # first bytes need normalising to be understood (#2290 r12). The
+            # assembler publishes the fragment's raw bytes after the release
+            # title, so anything that reads differently at the top of its own
+            # file than it does mid-document is a fragment the check cannot
+            # honestly bless — see `first_heading` for the two worked cases.
+            if body.startswith(b"\xef\xbb\xbf"):
+                bad.append(
+                    f"{name}: starts with a UTF-8 byte-order mark, which is "
+                    f"invisible at the top of its own file and an ordinary "
+                    f"zero-width character once folded  ->  save it without one"
+                )
+                continue
+            _first_content = next(
+                (
+                    ln[:-1] if ln.endswith(b"\r") else ln
+                    for ln in body.split(b"\n")
+                    if ln.strip()
+                ),
+                None,
+            )
+            if _first_content == b"---":
+                bad.append(
+                    f"{name}: opens with `---`, which is front matter in its own "
+                    f"file and a thematic break once folded  ->  open with the "
+                    f"## heading itself"
+                )
+                continue
             found = first_heading(body)
             if found is None:
                 # A fragment with NO heading is outside this check's scope —
@@ -1651,18 +1681,19 @@ class Assembly:
                 for line in deep:
                     err(f"  {line}")
                 err("")
-                err("A ## heading becomes a section of the release. A ### one does not,")
-                err("and what happens to it depends on what precedes it in the finished")
-                err("file: after a ## section it becomes a SUBSECTION OF THAT OTHER")
-                err("CHANGE, so outlines and screen-reader navigation attribute it to")
-                err("them; with no ## before it, it sits under the release title at a")
-                err("level that skips one. The first has happened twice in published")
-                err("notes, the second once.")
+                err("A ## heading becomes a section of the release. A deeper one becomes")
+                err("a SUBSECTION of whatever shallower heading precedes it in the")
+                err("finished file — another change's section, or another fragment's own")
+                err("subheading — so outlines and screen-reader navigation file it under")
+                err("that. Where nothing shallower precedes it, it instead sits at a")
+                err("level that skips one. Both have happened: two published sections")
+                err("were absorbed under another change, and one skips a level.")
                 err("")
-                err("Which one you get is not stated here on purpose: it depends on the")
-                err("fold order and on the levels of the fragments ahead of you, and")
-                err("working it out a second time in this check is how the two answers")
-                err("drift apart. Open at ## and neither applies.")
+                err("WHICH of those you get is not stated here, on purpose. It depends")
+                err("on the fold order and on the levels of every fragment ahead of")
+                err("yours, this check runs before the file is built, and working it out")
+                err("a second time here is how two answers to one question drift apart.")
+                err("Open at ## and none of it applies.")
                 err("")
                 err("Assembly continues — this is a warning, not a refusal.")
                 err("")

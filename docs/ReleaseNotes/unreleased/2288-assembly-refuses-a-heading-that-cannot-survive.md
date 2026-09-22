@@ -19,10 +19,11 @@ deliberately narrow, and the narrowness is the point.** A heading at `###`
 or deeper is allowed, with a warning: about one fragment in ten opens that
 way, some of it work in flight, and refusing them would stop legitimate
 work over a heading level. The warning matters because such a heading is
-not merely untidy — folded after a `##` section it becomes a *subsection of
+not merely untidy — folded after a shallower one it becomes a *subsection of
 that other change*, so an outline can present it as something an unrelated
-change does or does not do. Three published sections are in that state
-today. A heading carrying no reference at all is likewise
+change does or does not do. Two published sections are in that state today;
+a third, with nothing shallower before it, instead skips a level. A heading
+carrying no reference at all is likewise
 allowed, because most fragments carry none: the template's convention is
 not a rule the corpus follows. What is refused is the failure the template
 actually produces — shipping the placeholder and leaving it unsubstituted.

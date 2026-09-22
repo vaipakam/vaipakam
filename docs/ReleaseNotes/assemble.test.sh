@@ -4543,29 +4543,35 @@ bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/nul
 check "the run succeeds"     "$?"              "0"
 check "nothing left pending" "$(pending "$W")" "0"
 
-# ── Front matter must not MASK the heading below it ─────────────────────────
-# A YAML closing fence is indistinguishable from a setext underline, so the
-# scan read `title: x` + `---` as a level-2 heading and stopped — and a real
-# `#` heading further down, placeholder and all, was never examined. Found by
-# testing the setext branch against non-heading dash constructs rather than by
-# a review round; it is the same permit-by-misrecognition as the three before.
-case_start "T217j: YAML front matter does not mask the heading under it"
+# ── Front matter is REFUSED, not skipped (#2290 r12) ───────────────────────
+# Skipping it was the previous answer, and it created a worse problem than
+# the masking it fixed: `build()` appends the fragment's RAW bytes after the
+# release title, so a fragment the check had validated by skipping its front
+# matter published that front matter as content — the opening `---` a
+# thematic break, `title: x` over `---` a setext heading. The check blessed a
+# document it had never actually looked at.
+#
+# Refusing costs nothing: zero of the 759 fragments ever committed open with
+# front matter. Both shapes below are now refused for the SAME reason, which
+# is the point — the old pair distinguished them by what came after.
+case_start "T217j: a fragment opening with front matter is refused"
 W="$ROOT/t217j"; build "$W"
 printf -- '---\ntitle: x\n---\n\n# Peer document title (PR #TBD)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-fm-bad.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"        "$?"                                             "1"
-check "naming the file"        "$(says "$msg" '0003-fm-bad.md')"                "1"
-check "for its real level"     "$(says "$msg" 'opens at level 1, a second document title')" "1"
-check "nothing was consumed"   "$(pending "$W")"                                "3"
+check "the run refuses"        "$?"                                  "1"
+check "naming the file"        "$(says "$msg" '0003-fm-bad.md')"     "1"
+check "saying why"             "$(says "$msg" 'thematic break once folded')" "1"
+check "nothing was consumed"   "$(pending "$W")"                     "3"
 
-case_start "T217j2: front matter above a VALID heading still assembles"
+case_start "T217j2: front matter above a VALID heading is refused too"
 W="$ROOT/t217j2"; build "$W"
 printf -- '---\ntitle: x\n---\n\n## Thread - after front matter (PR #4246)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-fm-ok.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                              "1"
+check "naming the file"      "$(says "$msg" '0003-fm-ok.md')"  "1"
+check "nothing was consumed" "$(pending "$W")"                 "3"
 
 # ── ONLY level 1 is refused, measured against practice (#2290 r6) ───────────
 # An earlier revision required exactly level 2, which reads as the obvious
@@ -4574,8 +4580,10 @@ check "nothing left pending" "$(pending "$W")" "0"
 # `###`, and one of those was in a pull request open while this was written and
 # owned by other work (the breakdown is in `check_heading_conformance`'s
 # docstring). Refusing a fifth of real input, some of it in flight elsewhere,
-# is how a check gets deleted rather than obeyed. A `###` opener
-# nests under nothing; it is untidy, not a second document title.
+# is how a check gets deleted rather than obeyed. It is WARNED instead, and
+# not because it is untidy: a deeper opener becomes a subsection of whatever
+# shallower heading precedes it in the finished file, which is usually another
+# change. See `check_heading_conformance`'s docstring.
 case_start "T217k: a level-3 opener is WARNED, and still folded"
 W="$ROOT/t217k"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
@@ -4590,50 +4598,55 @@ check "nothing left pending" "$(pending "$W")"                                  
 check "it warns"             "$(says "$msg" 'open below level 2')"        "1"
 check "naming the level-3"   "$(says "$msg" '0003-l3.md')"                "1"
 check "naming the level-4"   "$(says "$msg" '0004-l4.md')"                "1"
-check "and names the real outcome" "$(says "$msg" 'SUBSECTION OF THAT OTHER')"    "1"
+check "and names the real outcome" "$(says "$msg" 'SUBSECTION of whatever shallower heading')" "1"
 # The message is CONDITIONAL, because absorption depends on what precedes the
 # fragment in the finished file (#2290 r11). With no `##` before it, a `###`
 # opener is not absorbed at all — it sits under the release title at a level
 # that skips one. Telling the operator flatly that another change will own it
 # is wrong in that case, and the check deliberately does not re-derive the
 # fold order to find out which case applies.
-check "and states the other case"  "$(says "$msg" 'with no ## before it')"       "1"
+check "and states the other case"  "$(says "$msg" 'Where nothing shallower precedes it')" "1"
 check "and that it continues"      "$(says "$msg" 'not a refusal')"              "1"
 
 # A WARNING MUST NOT EXEMPT THE REFUSAL. The first version of the warning
 # block `continue`d, which let `### Title (PR #TBD)` publish its placeholder
 # because the heading happened to be deep. Warnings and refusals are
 # independent tests of the same line.
-# ── A UTF-8 BOM must not hide the heading behind it (#2290 r11) ────────────
-# An editor that writes a BOM leaves `\xef\xbb\xbf# Title` on line one.
-# CommonMark ignores U+FEFF, so GitHub renders a level-1 heading, while a
-# byte match sees no `#` at column zero — and the fragment took the
-# no-heading allowance and published both the peer title and its
-# placeholder. Same permit-by-misrecognition as the six findings that made
-# this function stop scanning.
-case_start "T217m: a BOM does not hide the heading behind it"
+# ── A UTF-8 BOM is REFUSED, not stripped (#2290 r11 → r12) ─────────────────
+# r11 stripped it, which let `BOM + # Title` be seen. r12 found the strip was
+# local to the check: `build()` publishes the raw bytes, and mid-document a
+# U+FEFF is an ordinary zero-width character, so `BOM + ## Heading` renders as
+# a PARAGRAPH. The check was blessing a fragment it had made unpublishable —
+# validating one document while the assembler published another.
+#
+# So it is refused, and the ACCEPTANCE case below is the one that matters:
+# under the r11 behaviour that fragment assembled and published wrong.
+case_start "T217m: a fragment starting with a BOM is refused"
 W="$ROOT/t217m"; build "$W"
 printf '\xef\xbb\xbf# Thread — hidden behind a byte-order mark (PR #4249)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                                "1"
-check "naming the file"      "$(says "$msg" '0003-bom.md')"      "1"
-check "as level 1"           "$(says "$msg" 'opens at level 1')" "1"
-check "nothing was consumed" "$(pending "$W")"                   "3"
-# And a BOM in front of a VALID heading still assembles — the allowance side.
+check "the run refuses"      "$?"                                  "1"
+check "naming the file"      "$(says "$msg" '0003-bom.md')"        "1"
+check "saying why"           "$(says "$msg" 'byte-order mark')"    "1"
+check "nothing was consumed" "$(pending "$W")"                     "3"
+# A BOM in front of an OTHERWISE VALID heading is refused too — this is the
+# case r11 accepted and published as a paragraph.
 W="$ROOT/t217m2"; build "$W"
-printf '\xef\xbb\xbf## Thread — valid, behind a mark (PR #4250)\n' \
+printf '\xef\xbb\xbf## Thread — valid but behind a mark (PR #4250)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom-ok.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"              "0"
-check "nothing left pending" "$(pending "$W")" "0"
-# A BOM before FRONT MATTER must not break the fence match either.
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"                                 "1"
+check "naming the file"      "$(says "$msg" '0003-bom-ok.md')"    "1"
+check "nothing was consumed" "$(pending "$W")"                    "3"
+# A BOM before front matter: refused for the BOM, which is checked first.
 W="$ROOT/t217m3"; build "$W"
 printf -- '\xef\xbb\xbf---\ntitle: x\n---\n\n# Peer title (PR #TBD)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom-fm.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "front matter still skipped" "$(says "$msg" 'opens at level 1')" "1"
-check "nothing was consumed"       "$(pending "$W")"                   "3"
+check "the run refuses"      "$?"                               "1"
+check "for the BOM"          "$(says "$msg" 'byte-order mark')" "1"
+check "nothing was consumed" "$(pending "$W")"                  "3"
 
 case_start "T217k2: a deep heading is still refused for its placeholder"
 W="$ROOT/t217k2"; build "$W"
