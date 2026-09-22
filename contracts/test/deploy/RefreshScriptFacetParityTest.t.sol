@@ -6,6 +6,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
+import {RedeployFacets} from "../../script/RedeployFacets.s.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 
 /**
@@ -79,6 +80,14 @@ import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 ///      it actually produced. A subclass is needed because `_deployItems()` must
 ///      stay non-public on the script itself — it DEPLOYS all 73 facets, so it is
 ///      not something an operator should be able to invoke by accident.
+/// @dev The curated refresh's retired vault-credit set, exposed for the pin
+///      below (Codex #2276 r13 P2).
+contract RedeployVaultRetiredProbe is RedeployFacets {
+    function vaultRetired() external pure returns (bytes4[] memory) {
+        return _legacyVaultFactoryRemovedSelectors();
+    }
+}
+
 contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function deployItemsForTest() external returns (Item[] memory) {
         return _deployItems();
@@ -460,6 +469,21 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
         }
         assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
+        // The curated refresh retires the four-argument vault credit too
+        // (Codex #2276 r13 P2): its set names exactly that selector, the
+        // all-facets refresh lists the same one, and the current deploy does
+        // not route it — so the Remove strands nothing and the two scripts
+        // cannot disagree about what a refreshed Diamond stops routing.
+        bytes4 vaultLegacy = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        bytes4[] memory curated = new RedeployVaultRetiredProbe().vaultRetired();
+        assertEq(curated.length, 1, "the curated refresh's vault removal set is exactly one selector");
+        assertEq(curated[0], vaultLegacy, "and it is the retired four-argument vault credit");
+        bool allFacetsNamesIt;
+        for (uint256 i; i < retired.length; ++i) {
+            if (retired[i] == vaultLegacy) allFacetsNamesIt = true;
+        }
+        assertTrue(allFacetsNamesIt, "the all-facets refresh retires the same selector");
+        assertEq(IDiamondLoupe(diamond).facetAddress(vaultLegacy), address(0), "the current deploy does not route it");
         // 3b-ii-A (Codex #2276 r3 P1) — the four-argument vault credit is
         // retired, and its five-argument successor is routed.
         bool namesOldVaultCredit;

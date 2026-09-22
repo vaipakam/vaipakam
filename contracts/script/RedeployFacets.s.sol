@@ -268,6 +268,16 @@ contract RedeployFacets is Script {
             _partitionByRouting(diamond, FacetSelectors.vaipakamNFT());
         (bytes4[] memory vfToAdd, bytes4[] memory vfToReplace) =
             _partitionByRouting(diamond, FacetSelectors.vaultFactory());
+        // #1566 transport epochs 3b-ii-A (Codex #2276 r3 P1, r13 P2) — the
+        // vault credit from reward custody gained a third, epoch leg, which
+        // changed its selector. The new one is Add'ed above; the retired
+        // four-argument one must be Removed on a Diamond cut before it, or it
+        // survives routed to the previous VaultFactoryFacet bytecode — the
+        // split-facet failure this script already prevents for the keeper
+        // and resident-payout signatures. Partitioned by routing, so a fresh
+        // or already-migrated Diamond cuts nothing.
+        (, bytes4[] memory vfToRemove) =
+            _partitionByRouting(diamond, _legacyVaultFactoryRemovedSelectors());
         // #1649 — the sale classifier's host. On a pre-#1503 diamond the seven
         // older preview selectors are routed (Replace) and `saleAdmission` is
         // not (Add); on a current one all eight are routed. The partition makes
@@ -305,7 +315,8 @@ contract RedeployFacets is Script {
             (rpsToAdd.length > 0 ? 1 : 0) + (rpsToReplace.length > 0 ? 1 : 0) +
             (encToAdd.length > 0 ? 1 : 0) + (encToReplace.length > 0 ? 1 : 0) +
             (encToRemove.length > 0 ? 1 : 0) +
-            (profToRemove.length > 0 ? 1 : 0);
+            (profToRemove.length > 0 ? 1 : 0) +
+            (vfToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -400,6 +411,11 @@ contract RedeployFacets is Script {
         if (nftToAdd.length > 0) {
             cuts[idx++] = _add(address(nftFacet), nftToAdd);
         }
+        // The retired vault-credit selector goes BEFORE the vault factory's
+        // Replace and Add, so no Diamond ever holds both arities at once.
+        if (vfToRemove.length > 0) {
+            cuts[idx++] = _remove(vfToRemove);
+        }
         if (vfToReplace.length > 0) {
             cuts[idx++] = _replace(address(vaultFactoryFacet), vfToReplace);
         }
@@ -449,6 +465,7 @@ contract RedeployFacets is Script {
         console.log("  Claim selectors added:", claimToAdd.length);
         console.log("  Claim selectors repl.:", claimToReplace.length);
         console.log("  Legacy uint8 keeper selectors removed:", profToRemove.length);
+        console.log("  Retired vault-credit selectors removed:", vfToRemove.length);
         console.log("  RiskPreview selectors added: ", rpToAdd.length);
         console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
         console.log("  RepayPeriodic selectors repl.:", rpsToReplace.length);
@@ -511,6 +528,20 @@ contract RedeployFacets is Script {
         s = new bytes4[](2);
         s[0] = bytes4(keccak256("approveKeeper(address,uint8)"));
         s[1] = bytes4(keccak256("setKeeperActions(address,uint8)"));
+    }
+
+    /// @dev #1566 transport epochs 3b-ii-A (Codex #2276 r13 P2) — the
+    ///      four-argument vault credit the custody cutover shipped, retired
+    ///      when the credit gained its epoch leg. The same selector
+    ///      `RefreshAllFacetsInPlace._retiredSelectors` names; the parity
+    ///      suite pins the two lists together.
+    function _legacyVaultFactoryRemovedSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @dev #394 (Codex #647 round-7) — split `selectors` into those NOT yet

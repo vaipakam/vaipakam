@@ -1384,6 +1384,38 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(order[4], hs[0]);
     }
 
+    /// @dev The compact overlay a day is handed carries the run's draws AND
+    ///      the day's settled mark (Codex #2276 r13 P1): sixty-four epochs one
+    ///      side exhausts exactly, a HALF-funded sixty-fifth, the other side on
+    ///      the same day. With the mark the second side skips the husks and
+    ///      reads the half; without it the preview counts the husks' full
+    ///      balances again and reports more than the claim pays. The
+    ///      round-9 across-sides cell cannot tell the two apart — there the
+    ///      double count lands on the same total — which is why the
+    ///      sixty-fifth is funded by half here.
+    function test_ThePreview_CarriesTheSettledMarkInTheCompactOverlay() public {
+        _mut().setDayPoolStampRaw(1, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        for (uint256 i; i < 64; ++i) {
+            _epochOf(NEED / 64, _one(1), 400 + i, keccak256(abi.encode("slice", i)));
+        }
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _epochOf(NEED / 2, _one(1), 500, keccak256("half"));
+        uint256 previewed = _preview();
+        assertLt(previewed, 2 * NEED, "the husks are not counted again on the second side");
+        assertEq(_claim(), previewed, "the claim pays what the preview said");
+    }
+
     /// @dev A forfeit's recycled slice is a commitment release and draws no
     ///      epoch value (Codex #2276 r5 P1), on Codex's shape: forfeited day A
     ///      (fresh + recycled) with an A-only epoch, live day B, live delivery

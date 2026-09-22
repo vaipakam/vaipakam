@@ -1740,6 +1740,62 @@ library LibRewardCustody {
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
     }
 
+    /// @dev Where a day's scan starts — after its cursor, on the list once it
+    ///      holds the day whole, else on the array from its array cursor —
+    ///      and how it steps: the ONE source every read of a day's epochs
+    ///      walks (the plan's skip and window, and {transportDayScanIds}).
+    function _scanStart(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view returns (bool listed, uint256 pos, bytes32 node) {
+        listed = _dayLinked(s, dayId);
+        if (listed) {
+            bytes32 cur = s.transportDayCursorNode[dayId];
+            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        } else {
+            bytes32[] storage arr = s.transportBatchesByDay[dayId];
+            pos = s.transportDayCursor[dayId];
+            node = pos < arr.length ? arr[pos] : bytes32(0);
+        }
+    }
+
+    function _scanNext(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bool listed,
+        uint256 pos,
+        bytes32 node
+    ) private view returns (uint256, bytes32) {
+        if (listed) return (pos, s.transportDayNext[dayId][node]);
+        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        unchecked { ++pos; }
+        return (pos, pos < arr.length ? arr[pos] : bytes32(0));
+    }
+
+    /// @notice The batch ids a plan of `dayId` can look up in an overlay: the
+    ///         nodes from the scan's start, at most one prune's worth and one
+    ///         window of them (Codex #2276 r13 P1). A dry run hands the plan a
+    ///         compact overlay of exactly these entries rather than its whole
+    ///         table, so what crosses the call is bounded by the scan and not
+    ///         by everything the run has drawn.
+    function transportDayScanIds(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal view returns (bytes32[] memory ids) {
+        (bool listed, uint256 pos, bytes32 node) = _scanStart(s, dayId);
+        bytes32[] memory buf = new bytes32[](2 * TRANSPORT_DRAW_SCAN_CAP);
+        uint256 n;
+        while (node != bytes32(0) && n < buf.length) {
+            buf[n] = node;
+            unchecked { ++n; }
+            (pos, node) = _scanNext(s, dayId, listed, pos, node);
+        }
+        assembly ("memory-safe") {
+            mstore(buf, n)
+        }
+        ids = buf;
+    }
+
     /// @dev Whether day `d`'s list holds every member of its array — false
     ///      for a day indexed before the list existed until a link has caught
     ///      it up (Codex #2276 r8 P1). While false the day is read from the
@@ -2094,7 +2150,8 @@ library LibRewardCustody {
         /// @dev The preview's simulation of draws already planned on earlier
         ///      days of the same dry run, by leg (a leg counts against its
         ///      cap's room), as a hash table over batch ids — length zero or
-        ///      a power of two, empty slots zero (Codex #2276 r12 P1); empty
+        ///      a power of two, empty slots zero (Codex #2276 r12 P1) — holding
+        ///      only the entries THIS day's plan can look up (r13 P1); empty
         ///      on the settle path.
         bytes32[] ovIds;
         uint256[] ovFresh;
@@ -2167,34 +2224,20 @@ library LibRewardCustody {
         // else the membership array from its array cursor — a day indexed
         // before the list existed, read as it was (Codex #2276 r8 P1). One
         // scan either way.
-        bool listed = _dayLinked(s, dayId);
+        (bool listed, uint256 pos, bytes32 node) = _scanStart(s, dayId);
         bytes32[] storage arr = s.transportBatchesByDay[dayId];
-        uint256 pos;
-        bytes32 node;
-        if (listed) {
-            bytes32 cur = s.transportDayCursorNode[dayId];
-            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
-        } else {
-            pos = s.transportDayCursor[dayId];
-            node = pos < arr.length ? arr[pos] : bytes32(0);
-        }
         // A day this dry run has already settled had its cursor advanced by
         // the live draw's prune before the next side read it (Codex #2276 r9
         // P2): mirror that here — pass the leading epochs exhausted net of
         // the overlay, at most one window of them, exactly the prune's bound
         // — so the preview's later side reads what the claim's would.
         {
-            (uint256 settled, ) = _overlayOf(ovIds, ovFresh, ovRecycled, transportDaySettledKey(dayId));
+            (uint256 settled, ) = overlayOf(ovIds, ovFresh, ovRecycled, transportDaySettledKey(dayId));
             uint256 passed;
             while (settled != 0 && node != bytes32(0) && passed < TRANSPORT_DRAW_SCAN_CAP) {
-                (uint256 f, uint256 r) = _overlayOf(ovIds, ovFresh, ovRecycled, node);
+                (uint256 f, uint256 r) = overlayOf(ovIds, ovFresh, ovRecycled, node);
                 if (!_exhaustedNet(s, node, f, r)) break;
-                if (listed) {
-                    node = s.transportDayNext[dayId][node];
-                } else {
-                    unchecked { ++pos; }
-                    node = pos < arr.length ? arr[pos] : bytes32(0);
-                }
+                (pos, node) = _scanNext(s, dayId, listed, pos, node);
                 unchecked { ++passed; }
             }
         }
@@ -2221,7 +2264,7 @@ library LibRewardCustody {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
-                (uint256 ovF, uint256 ovR) = _overlayOf(ovIds, ovFresh, ovRecycled, node);
+                (uint256 ovF, uint256 ovR) = overlayOf(ovIds, ovFresh, ovRecycled, node);
                 bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal != 0) {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
@@ -2254,12 +2297,7 @@ library LibRewardCustody {
                     unchecked { ++live; }
                 }
             }
-            if (listed) {
-                node = s.transportDayNext[dayId][node];
-            } else {
-                unchecked { ++pos; }
-                node = pos < arr.length ? arr[pos] : bytes32(0);
-            }
+            (pos, node) = _scanNext(s, dayId, listed, pos, node);
             unchecked { ++seen; }
         }
         plan.capHit = node != bytes32(0);
@@ -2414,12 +2452,12 @@ library LibRewardCustody {
     ///      full, so a probe is a few reads. A chunk of thirty days each
     ///      drawing a window of epochs was a linear scan of every prior draw
     ///      per plan entry — quadratic in the chunk — and is now a probe.
-    function _overlayOf(
+    function overlayOf(
         bytes32[] memory ovIds,
         uint256[] memory ovFresh,
         uint256[] memory ovRecycled,
         bytes32 id
-    ) private pure returns (uint256 f, uint256 r) {
+    ) internal pure returns (uint256 f, uint256 r) {
         uint256 n = ovIds.length;
         if (n == 0) return (0, 0);
         uint256 mask = n - 1;
@@ -2729,6 +2767,13 @@ library LibRewardCustody {
     ///      call: a day no epoch lists makes no call at all, on every chain,
     ///      and it needs no counter — so it is correct on an in-place upgrade
     ///      from a ledger that already holds batches (Codex #2276 r1).
+    /// @dev {transportDayScanIds} through the epoch facet, as a STATICCALL:
+    ///      the dry run's read of which entries a day's plan can look up.
+    function callTransportDayScanIds(uint256 dayId) internal view returns (bytes32[] memory ids) {
+        bytes memory ret = _selfStatic(abi.encodeWithSignature("getTransportDayScanIds(uint256)", dayId));
+        ids = abi.decode(ret, (bytes32[]));
+    }
+
     function callTransportAllocateForDay(
         LibVaipakam.Storage storage s,
         AllocRequest memory q

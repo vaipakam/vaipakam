@@ -2793,73 +2793,126 @@ library LibInteractionRewards {
 
     /// @dev Record in the dry run's overlay that this run settled day `d`
     ///      (Codex #2276 r9 P2), under the key the plan reads; once per day.
-    function _markDaySettled(DryRunState memory dry, DomainAcc memory acc, uint256 d) private pure {
-        _overlayAdd(dry, acc, LibRewardCustody.transportDaySettledKey(d), 1, 0);
+    function _markDaySettled(DomainAcc memory acc, uint256 d) private pure {
+        _overlayAdd(acc, LibRewardCustody.transportDaySettledKey(d), 1, 0);
     }
 
-    /// @dev Add a draw of `df` fresh / `dr` recycled from `key` to the dry
-    ///      run's overlay — an open-addressing hash table over batch ids
-    ///      (Codex #2276 r12 P1: three parallel arrays scanned per lookup and
-    ///      reallocated per insert made a thirty-day chunk quadratic). The
-    ///      table is kept under half full and grown by doubling, so an
-    ///      insert is amortized constant work and a probe a few reads;
-    ///      `acc.ovCount` is the live count, kept on the dry-run accumulator
-    ///      so the settle path's context struct is untouched.
-    function _overlayAdd(DryRunState memory dry, DomainAcc memory acc, bytes32 key, uint256 df, uint256 dr) private pure {
-        uint256 cap = dry.ovIds.length;
-        if ((acc.ovCount + 1) * 2 > cap) {
-            _overlayGrow(dry, cap == 0 ? 8 : cap * 2);
-            cap = dry.ovIds.length;
-        }
-        uint256 mask = cap - 1;
+    /// @dev Add `df` fresh / `dr` recycled under `key` in a table of a power
+    ///      of two slots with at least one empty slot; true if the key was
+    ///      new. The ONE probe-and-write every table in the dry run uses.
+    function _tableAdd(
+        bytes32[] memory ids,
+        uint256[] memory f,
+        uint256[] memory r,
+        bytes32 key,
+        uint256 df,
+        uint256 dr
+    ) private pure returns (bool inserted) {
+        uint256 mask = ids.length - 1;
         uint256 i = uint256(key) & mask;
         while (true) {
-            bytes32 k = dry.ovIds[i];
+            bytes32 k = ids[i];
             if (k == key) {
-                dry.ovFresh[i] += df;
-                dry.ovRecycled[i] += dr;
-                return;
+                f[i] += df;
+                r[i] += dr;
+                return false;
             }
             if (k == bytes32(0)) {
-                dry.ovIds[i] = key;
-                dry.ovFresh[i] = df;
-                dry.ovRecycled[i] = dr;
-                unchecked { ++acc.ovCount; }
-                return;
+                ids[i] = key;
+                f[i] = df;
+                r[i] = dr;
+                return true;
             }
             i = (i + 1) & mask;
         }
     }
 
-    /// @dev Rehash the overlay into a table of `cap` slots (a power of two).
-    function _overlayGrow(DryRunState memory dry, uint256 cap) private pure {
-        bytes32[] memory ids = dry.ovIds;
+    /// @dev Add a draw of `df` fresh / `dr` recycled from `key` to the RUN's
+    ///      overlay — an open-addressing hash table over batch ids kept on
+    ///      the accumulator (Codex #2276 r12 P1: three parallel arrays
+    ///      scanned per lookup and reallocated per insert made a thirty-day
+    ///      chunk quadratic). Kept under half full and grown by doubling, so
+    ///      an insert is amortized constant work and a probe a few reads.
+    function _overlayAdd(DomainAcc memory acc, bytes32 key, uint256 df, uint256 dr) private pure {
+        uint256 cap = acc.ovIds.length;
+        if ((acc.ovCount + 1) * 2 > cap) _overlayGrow(acc, cap == 0 ? 8 : cap * 2);
+        if (_tableAdd(acc.ovIds, acc.ovFresh, acc.ovRecycled, key, df, dr)) {
+            unchecked { ++acc.ovCount; }
+        }
+    }
+
+    /// @dev Rehash the run's overlay into a table of `cap` slots.
+    function _overlayGrow(DomainAcc memory acc, uint256 cap) private pure {
+        bytes32[] memory ids = acc.ovIds;
         bytes32[] memory nIds = new bytes32[](cap);
         uint256[] memory nF = new uint256[](cap);
         uint256[] memory nR = new uint256[](cap);
-        uint256 mask = cap - 1;
         for (uint256 j; j < ids.length; ) {
-            bytes32 k = ids[j];
-            if (k != bytes32(0)) {
-                uint256 i = uint256(k) & mask;
-                while (nIds[i] != bytes32(0)) i = (i + 1) & mask;
-                nIds[i] = k;
-                nF[i] = dry.ovFresh[j];
-                nR[i] = dry.ovRecycled[j];
-            }
+            if (ids[j] != bytes32(0)) _tableAdd(nIds, nF, nR, ids[j], acc.ovFresh[j], acc.ovRecycled[j]);
             unchecked { ++j; }
         }
-        dry.ovIds = nIds;
-        dry.ovFresh = nF;
-        dry.ovRecycled = nR;
+        acc.ovIds = nIds;
+        acc.ovFresh = nF;
+        acc.ovRecycled = nR;
     }
 
-    function _foldOverlay(DryRunState memory dry, DomainAcc memory acc, DayCharge memory charge) private pure {
+    /// @dev Hand the plan of day `d` a COMPACT overlay: only the entries it
+    ///      can look up — the ids the day's scan can reach (at most one
+    ///      prune's worth and one window, read from the epoch facet) and the
+    ///      day's settled mark — rebuilt as a small table from the run's full
+    ///      one (Codex #2276 r13 P1: the full table, up to thousands of slots
+    ///      over a chunk, crossed every day's call and was copied per day,
+    ///      growing memory past any budget). Empty when the run has drawn
+    ///      nothing yet, or the day lists no epoch, so the common case costs
+    ///      no read at all. What the settle path's seam carries is unchanged.
+    function _compactOverlayFor(
+        LibVaipakam.Storage storage s,
+        DryRunState memory dry,
+        DomainAcc memory acc,
+        uint256 d
+    ) private view {
+        dry.ovIds = new bytes32[](0);
+        dry.ovFresh = new uint256[](0);
+        dry.ovRecycled = new uint256[](0);
+        if (acc.ovCount == 0 || s.transportBatchesByDay[d].length == 0) return;
+        bytes32[] memory ids = LibRewardCustody.callTransportDayScanIds(d);
+        uint256 n = ids.length;
+        bytes32[] memory keys = new bytes32[](n + 1);
+        uint256[] memory fs = new uint256[](n + 1);
+        uint256[] memory rs = new uint256[](n + 1);
+        uint256 m;
+        for (uint256 i; i <= n; ) {
+            bytes32 k = i < n ? ids[i] : LibRewardCustody.transportDaySettledKey(d);
+            (uint256 f, uint256 r) = LibRewardCustody.overlayOf(acc.ovIds, acc.ovFresh, acc.ovRecycled, k);
+            if (f + r != 0) {
+                keys[m] = k;
+                fs[m] = f;
+                rs[m] = r;
+                unchecked { ++m; }
+            }
+            unchecked { ++i; }
+        }
+        if (m == 0) return;
+        uint256 cap = 8;
+        while (cap < 2 * m) cap <<= 1;
+        bytes32[] memory tIds = new bytes32[](cap);
+        uint256[] memory tF = new uint256[](cap);
+        uint256[] memory tR = new uint256[](cap);
+        for (uint256 i; i < m; ) {
+            _tableAdd(tIds, tF, tR, keys[i], fs[i], rs[i]);
+            unchecked { ++i; }
+        }
+        dry.ovIds = tIds;
+        dry.ovFresh = tF;
+        dry.ovRecycled = tR;
+    }
+
+    function _foldOverlay(DomainAcc memory acc, DayCharge memory charge) private pure {
         uint256 n = charge.planIds.length;
         for (uint256 k; k < n; ) {
             uint256 f = charge.planFresh[k];
             uint256 r = charge.planRecycled[k];
-            if (f + r != 0) _overlayAdd(dry, acc, charge.planIds[k], f, r);
+            if (f + r != 0) _overlayAdd(acc, charge.planIds[k], f, r);
             unchecked { ++k; }
         }
     }
@@ -2982,10 +3035,9 @@ library LibInteractionRewards {
         DryRunState memory dry;
         dry.active = true;
         dry.loanSide = new LoanSideCarry[](work.length);
-        // The overlay is the RUN's, not the side's (Codex #2276 r3 P1).
-        dry.ovIds = acc.ovIds;
-        dry.ovFresh = acc.ovFresh;
-        dry.ovRecycled = acc.ovRecycled;
+        // The overlay is the RUN's, not the side's (Codex #2276 r3 P1): it
+        // lives on `acc`, and each day is handed only what its plan can look
+        // up (r13 P1) — see {_compactOverlayFor}.
 
         while (daysSpent < daysLeft) {
             uint256 d = _dryLowestDay(s, work, cur);
@@ -2994,6 +3046,7 @@ library LibInteractionRewards {
             (uint256[] memory set, uint256[] memory setCur) =
                 _dryEntriesAtDay(s, work, cur, d);
             dry.setCursors = setCur;
+            _compactOverlayFor(s, dry, acc, d);
 
             (DayCharge memory charge, DaySlice[] memory slices) =
                 processUserSideDay(user, d, set, pool, dry);
@@ -3048,13 +3101,13 @@ library LibInteractionRewards {
             acc.fresh += charge.needFresh;
             acc.recycled += charge.needRecycled;
             _spendDomain(pool, charge);
-            _foldOverlay(dry, acc, charge);
+            _foldOverlay(acc, charge);
             // The live draw prunes the day's cursor before the next side reads
             // it (Codex #2276 r9 P2) — but only where the settlement reaches
             // the draw at all (r10 P2): a day paid with no epoch leg makes no
             // call and moves nothing. Mark the day settled by exactly that
             // rule, so the preview's later side reads what the claim's would.
-            if (_liveDrawReached(charge)) _markDaySettled(dry, acc, d);
+            if (_liveDrawReached(charge)) _markDaySettled(acc, d);
             _dryFoldDay(s, dry.loanSide, set, slices);
             // Advance the simulated cursors of the set members.
             for (uint256 i; i < work.length; ) {
@@ -3063,9 +3116,6 @@ library LibInteractionRewards {
             }
             unchecked { ++daysSpent; }
         }
-        acc.ovIds = dry.ovIds;
-        acc.ovFresh = dry.ovFresh;
-        acc.ovRecycled = dry.ovRecycled;
     }
 
     /// @dev Lowest simulated pending day; `max` when the side is done.

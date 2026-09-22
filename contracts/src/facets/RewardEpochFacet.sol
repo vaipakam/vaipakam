@@ -503,6 +503,14 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         }
     }
 
+    /// @notice The batch ids a plan of `dayId` can look up — the nodes from
+    ///         the scan's start, at most one prune's worth and one window —
+    ///         what a dry run hands the plan as a compact overlay (Codex
+    ///         #2276 r13 P1). See {LibRewardCustody.transportDayScanIds}.
+    function getTransportDayScanIds(uint256 dayId) external view returns (bytes32[] memory) {
+        return LibRewardCustody.transportDayScanIds(LibVaipakam.storageSlot(), dayId);
+    }
+
     /// @notice The state of `dayId`'s index: how much of its membership the
     ///         ordered list holds — equal figures for every day indexed under
     ///         the list, and for a day indexed before it once
