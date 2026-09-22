@@ -4691,48 +4691,60 @@ msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>
 check "the run refuses"      "$?"              "1"
 check "nothing was consumed" "$(pending "$W")" "3"
 
-# ── The reference test names no separator at all (#2290 r15) ──────────────
-# Three consecutive rounds landed on the capture, each naming a delimiter the
-# previous list had missed — `)`, then `:`, then an em dash with no spaces.
-# The rule is now "the first character after `PR #` is a digit", which asks a
-# question with no separator list in it. Verified across 2,076 published
-# headings: the same 179 refusals, not one heading changing verdict.
-case_start "T217q: a number followed by any separator is a real reference"
+# ── The reference token is ALL DIGITS, and that is where it stops (r17) ───
+# Five consecutive rounds found an edge in this one rule and each fix opened
+# the next: capture to `)` missed `:`; allowing punctuation missed an em dash;
+# testing the first byte accepted `1TBD`; a non-alphanumeric boundary accepted
+# `123_TBD`. Nine findings across eight rounds, more than any other rule here.
+#
+# What settles it is that EVERY disputed shape is hypothetical. Across the
+# 2,076 published headings, the count of tokens beginning with a digit but not
+# all digits is ZERO. The rule was being tuned against invented input.
+#
+# So it takes the strict side, deliberately, because the directions are not
+# symmetric: refusing an ornamented reference costs one message to an author
+# who can add a space, while accepting a non-number publishes a section
+# nothing can trace and deletes the source. These cases pin the OVER-REFUSAL
+# as intended behaviour, so that re-loosening it is a decision rather than a
+# patch.
+case_start "T217q: a number with anything appended is refused, on purpose"
 W="$ROOT/t217q"; build "$W"
-u="$W/docs/ReleaseNotes/unreleased"
-printf '## Thread — em dash, no spaces PR #123—final cleanup\n' > "$u/0003-emdash.md"
-printf '## Thread — slashed PR #456/backport\n'                 > "$u/0004-slash.md"
-bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
-check "the run succeeds"     "$?"                                                                  "0"
-check "both folded in"       "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
-check "nothing left pending" "$(pending "$W")"                                                     "0"
-# And a placeholder is still a placeholder whatever follows it.
-W="$ROOT/t217q2"; build "$W"
-printf '## Thread — still unsubstituted PR #<n>—cleanup\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-ph-emdash.md"
+printf '## Thread — em dash, no spaces PR #123—final cleanup\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-emdash.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                          "1"
-check "as a placeholder"     "$(says "$msg" 'placeholder')" "1"
-check "nothing was consumed" "$(pending "$W")"              "3"
+check "the run refuses"      "$?"                                 "1"
+check "naming the token"     "$(says "$msg" 'is not a plain number')" "1"
+check "nothing was consumed" "$(pending "$W")"                    "3"
+# The message must NOT claim a placeholder — that was the real harm in r14,
+# sending an author to look for something that is not in their heading.
+check "and does not cry placeholder" "$(says "$msg" "template's placeholder")" "0"
 
-case_start "T217o: a numeric reference followed by punctuation is accepted"
+case_start "T217o: a plain number is accepted, with or without a parenthesis"
 W="$ROOT/t217o"; build "$W"
 u="$W/docs/ReleaseNotes/unreleased"
-printf '## Thread — follow-up PR #123: final cleanup\n' > "$u/0003-colon.md"
-printf '## Thread — closes it out (PR #456).\n'         > "$u/0004-period.md"
+printf '## Thread — plain (PR #123)\n'                       > "$u/0003-plain.md"
+printf '## Thread — names its issue too (PR #456, issue #99)\n' > "$u/0004-meta.md"
 bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
 check "the run succeeds"     "$?"                                                                  "0"
 check "both folded in"       "$(count_in '^<!-- assembled-fragment:' "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "4"
 check "nothing left pending" "$(pending "$W")"                                                     "0"
-# The refusal side is unchanged: a token that does not start with a digit is
-# still a placeholder, punctuation or not.
-W="$ROOT/t217o2"; build "$W"
-printf '## Thread — still unsubstituted (PR #<n>): cleanup\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-ph-punct.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                              "1"
-check "as a placeholder"     "$(says "$msg" 'placeholder')"     "1"
-check "nothing was consumed" "$(pending "$W")"                  "3"
+
+# ── The raw-HTML residual, pinned (#2290 r17) ─────────────────────────────
+# `<h1>Title</h1>` renders as a heading on GitHub but is not Markdown syntax
+# and is not detected, so such a fragment is ALLOWED. That residual was
+# documented and never tested, while the release note claimed every residual
+# was pinned — a coverage claim the suite did not support.
+#
+# Pinned here so the claim is true and so removing the allowance later is a
+# visible decision rather than a silent behaviour change. Zero fragments have
+# ever opened this way.
+case_start "T217r: a raw-HTML heading is allowed — the documented residual"
+W="$ROOT/t217r"; build "$W"
+printf '<h1>Peer document title (PR #TBD)</h1>\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-rawhtml.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
 
 case_start "T217k2: a deep heading is still refused for its placeholder"
 W="$ROOT/t217k2"; build "$W"

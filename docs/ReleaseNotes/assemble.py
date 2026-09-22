@@ -93,18 +93,10 @@ HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
 # inside the parenthesis. Eight published headings put it last —
 # `(T-090 v1.2 #428, PR #<n>)` — so anchoring on `\(PR #` found nothing there
 # and the placeholder sailed through as "no reference at all" (#2290 r2).
-# Everything up to whitespace. The DELIMITER is deliberately not enumerated
-# (#2290 r15): three consecutive rounds landed on this capture, each naming a
-# separator the previous list had missed — first the closing bracket, then a
-# colon, then an em dash with no spaces around it. Each fix bought one
-# character and left the next one waiting, which is the shape this change
-# exists to stop repeating.
-#
-# The validation below tests only whether the FIRST character is a digit, so
-# the token's tail never has to be classified and there is no separator list
-# to be incomplete. Verified across 2,076 published headings: the same 179
-# refusals, and not one heading changes verdict.
-PR_REF_RE = re.compile(rb"PR #(\S*)")
+# Up to the next comma, bracket or space — the shape `(PR #123, issue #99)`
+# and `(PR #123)` both need. The token is then required to be ALL DIGITS; see
+# `check_heading_conformance` for why that rule stops being refined there.
+PR_REF_RE = re.compile(rb"PR #([^,)\s]*)")
 # There is deliberately no setext-underline pattern here. `first_heading`
 # recognises ATX only; its docstring records why the setext branch was
 # removed rather than refined (#2290 r6).
@@ -1759,25 +1751,40 @@ class Assembly:
             # characters may follow a number: `)` was missed, then `:`, then an
             # em dash. Testing one character asks a question with no separator
             # list in it at all.
-            # WHERE THE NUMBER ENDS, which is a boundary and not a separator
-            # list (#2290 r16). Testing only the first byte — the r15 rule —
-            # accepted `PR #1TBD` and `PR #123abc`, publishing an untraceable
-            # section: too weak in exactly the direction the enumeration had
-            # been too narrow.
+            # THE TOKEN IS ALL DIGITS. Nothing subtler, deliberately, and
+            # this is where the rule stops being refined (#2290 r17).
             #
-            # `\d+($|[^0-9A-Za-z])` says the digits must end at a
-            # non-alphanumeric or at the end of the token. `123—final` and
-            # `456/backport` are a number followed by prose; `1TBD` and `12a`
-            # are not a number at all. Verified over 2,076 published headings:
-            # the same 179 refusals, not one heading changing verdict.
-            bads = [
-                t for t in PR_REF_RE.findall(first)
-                if not re.match(rb"\d+($|[^0-9A-Za-z])", t)
-            ]
+            # Five consecutive rounds found an edge here, and each fix opened
+            # the next: capture to `)` missed `:`; allowing punctuation missed
+            # an em dash; testing the first byte accepted `1TBD`; a
+            # non-alphanumeric boundary accepted `123_TBD`. Nine findings
+            # across eight rounds, more than any other rule on this change.
+            #
+            # What settles it is that EVERY disputed shape is hypothetical.
+            # Across 2,076 published headings, the number of tokens that begin
+            # with a digit but are not all digits is ZERO. `123:`, `123—final`,
+            # `1TBD`, `123_TBD` — none has ever been written. The rule was
+            # being tuned against invented input.
+            #
+            # So it takes the STRICT side, because the two directions are not
+            # symmetric. Refusing a valid-but-ornamented reference costs one
+            # message to an author who can add a space. Accepting a non-number
+            # publishes a section nothing can trace and deletes the source.
+            # The message below says "not a plain number" rather than claiming
+            # a placeholder, which was the real harm in the r14 finding.
+            bads = [t for t in PR_REF_RE.findall(first) if not t.isdigit()]
             if bads:
+                # Says what is true — the token is not a plain number — rather
+                # than asserting it is the template's placeholder (#2290 r14).
+                # It usually IS the placeholder, but `PR #123:` is not, and
+                # telling that author to "replace the placeholder" sends them
+                # looking for something that is not there.
+                shown_tok = ", ".join(
+                    t.decode("utf-8", errors="replace") for t in bads
+                )
                 bad.append(
-                    f"{name}: heading still carries the template's placeholder "
-                    f"rather than a number  ->  {shown}"
+                    f"{name}: `PR #{shown_tok}` is not a plain number  ->  "
+                    f"write the number alone, as `(PR #2290)`  ->  {shown}"
                 )
         if not bad:
             if deep:
